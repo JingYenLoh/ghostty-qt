@@ -9,6 +9,7 @@
 #include <QSGMaterialShader>
 #include <QSGSimpleTextureNode>
 #include <QSGTexture>
+#include <rhi/qrhi.h>
 
 #include <array>
 #include <cstring>
@@ -37,37 +38,30 @@ static_assert(uniformBufferSize == 68);
 
 bool validImage(const TerminalKittyGraphicsImage &image)
 {
-    if (image.generation == 0 || image.straightRgbPlane.isNull()
-        || image.straightRgbPlane.format() != QImage::Format_RGBX8888) {
-        return false;
-    }
-    return image.fullyOpaque ? image.alphaPlane.isNull()
-                             : !image.alphaPlane.isNull()
-            && image.straightRgbPlane.size() == image.alphaPlane.size()
-            && image.alphaPlane.format() == QImage::Format_RGBX8888;
+    return image.generation != 0 && !image.straightRgba.isNull()
+        && image.straightRgba.format() == QImage::Format_RGBA8888;
 }
 
 QImage premultipliedImage(const TerminalKittyGraphicsImage &asset)
 {
     if (!validImage(asset)) return {};
-    if (asset.fullyOpaque) return asset.straightRgbPlane;
-    QImage result(asset.straightRgbPlane.size(),
+    if (asset.fullyOpaque) return asset.straightRgba;
+    QImage result(asset.straightRgba.size(),
                   QImage::Format_RGBA8888_Premultiplied);
     if (result.isNull()) return {};
     result.setDevicePixelRatio(1.0);
     for (int row = 0; row < result.height(); ++row) {
-        const uchar *rgb = asset.straightRgbPlane.constScanLine(row);
-        const uchar *alpha = asset.alphaPlane.constScanLine(row);
+        const uchar *source = asset.straightRgba.constScanLine(row);
         uchar *destination = result.scanLine(row);
         for (int column = 0; column < result.width(); ++column) {
             const qsizetype offset = static_cast<qsizetype>(column) * 4;
-            const quint32 a = alpha[offset];
+            const quint32 a = source[offset + 3];
             destination[offset] =
-                static_cast<uchar>((rgb[offset] * a + 127U) / 255U);
+                static_cast<uchar>((source[offset] * a + 127U) / 255U);
             destination[offset + 1] =
-                static_cast<uchar>((rgb[offset + 1] * a + 127U) / 255U);
+                static_cast<uchar>((source[offset + 1] * a + 127U) / 255U);
             destination[offset + 2] =
-                static_cast<uchar>((rgb[offset + 2] * a + 127U) / 255U);
+                static_cast<uchar>((source[offset + 2] * a + 127U) / 255U);
             destination[offset + 3] = static_cast<uchar>(a);
         }
     }
@@ -81,6 +75,78 @@ void configureTexture(QSGTexture &texture)
     texture.setHorizontalWrapMode(QSGTexture::ClampToEdge);
     texture.setVerticalWrapMode(QSGTexture::ClampToEdge);
 }
+
+// QQuickWindow's ordinary image path may premultiply alpha-bearing QImages
+// before upload. Keep the pixels explicitly straight and submit their bytes to
+// an RGBA8 RHI texture so linear filtering still happens before the shader's
+// premultiplication step.
+class TerminalKittyPackedTexture final {
+public:
+    static std::unique_ptr<TerminalKittyPackedTexture>
+    create(QQuickWindow *window, const QImage &straightRgba)
+    {
+        if (window == nullptr || straightRgba.isNull()
+            || straightRgba.format() != QImage::Format_RGBA8888) {
+            return {};
+        }
+        QRhi *const rhi = window->rhi();
+        if (rhi == nullptr) return {};
+        QRhiTexture *const raw =
+            rhi->newTexture(QRhiTexture::RGBA8, straightRgba.size());
+        if (raw == nullptr) return {};
+        if (!raw->create()) {
+            delete raw;
+            return {};
+        }
+        std::unique_ptr<QSGTexture> wrapper(window->createTextureFromRhiTexture(
+            raw, QQuickWindow::TextureHasAlphaChannel));
+        if (wrapper == nullptr) {
+            delete raw;
+            return {};
+        }
+        configureTexture(*wrapper);
+        return std::unique_ptr<TerminalKittyPackedTexture>(
+            new TerminalKittyPackedTexture(raw, std::move(wrapper),
+                                           straightRgba));
+    }
+
+    [[nodiscard]] QSGTexture *sampledTexture() const noexcept
+    {
+        return wrapper_.get();
+    }
+
+    void commit(QRhiResourceUpdateBatch *resourceUpdates)
+    {
+        if (!uploadPending_ || resourceUpdates == nullptr) return;
+        const QByteArray pixels = QByteArray::fromRawData(
+            reinterpret_cast<const char *>(straightRgba_.constBits()),
+            straightRgba_.sizeInBytes());
+        QRhiTextureSubresourceUploadDescription subresource(pixels);
+        subresource.setDataStride(
+            static_cast<quint32>(straightRgba_.bytesPerLine()));
+        subresource.setSourceSize(straightRgba_.size());
+        resourceUpdates->uploadTexture(
+            raw_,
+            QRhiTextureUploadDescription{
+                QRhiTextureUploadEntry{0, 0, subresource}});
+        uploadPending_ = false;
+    }
+
+private:
+    TerminalKittyPackedTexture(QRhiTexture *raw,
+                               std::unique_ptr<QSGTexture> wrapper,
+                               QImage straightRgba)
+        : raw_(raw)
+        , wrapper_(std::move(wrapper))
+        , straightRgba_(std::move(straightRgba))
+    {}
+
+    // createTextureFromRhiTexture transfers QRhiTexture ownership to wrapper_.
+    QRhiTexture *raw_ = nullptr;
+    std::unique_ptr<QSGTexture> wrapper_;
+    QImage straightRgba_;
+    bool uploadPending_ = true;
+};
 
 class TerminalKittyQsgMaterial;
 
@@ -126,9 +192,8 @@ public:
 
 class TerminalKittyQsgMaterial final : public QSGMaterial {
 public:
-    TerminalKittyQsgMaterial(QSGTexture *rgb, QSGTexture *alpha)
-        : rgb_(rgb)
-        , alpha_(alpha)
+    explicit TerminalKittyQsgMaterial(TerminalKittyPackedTexture *texture)
+        : texture_(texture)
     {
         setFlag(QSGMaterial::Blending);
     }
@@ -150,27 +215,27 @@ public:
         const auto *right =
             static_cast<const TerminalKittyQsgMaterial *>(other);
         const std::less<QSGTexture *> less;
-        if (rgb_ != right->rgb_) return less(rgb_, right->rgb_) ? -1 : 1;
-        if (alpha_ != right->alpha_) {
-            return less(alpha_, right->alpha_) ? -1 : 1;
-        }
-        return 0;
+        QSGTexture *const leftTexture = texture_->sampledTexture();
+        QSGTexture *const rightTexture = right->texture_->sampledTexture();
+        return leftTexture == rightTexture    ? 0
+            : less(leftTexture, rightTexture) ? -1
+                                              : 1;
     }
 
-    [[nodiscard]] QSGTexture *rgb() const noexcept { return rgb_; }
-    [[nodiscard]] QSGTexture *alpha() const noexcept { return alpha_; }
-
-    bool setTextures(QSGTexture *rgb, QSGTexture *alpha) noexcept
+    [[nodiscard]] TerminalKittyPackedTexture *texture() const noexcept
     {
-        if (rgb_ == rgb && alpha_ == alpha) return false;
-        rgb_ = rgb;
-        alpha_ = alpha;
+        return texture_;
+    }
+
+    bool setTexture(TerminalKittyPackedTexture *texture) noexcept
+    {
+        if (texture_ == texture) return false;
+        texture_ = texture;
         return true;
     }
 
 private:
-    QSGTexture *rgb_ = nullptr;
-    QSGTexture *alpha_ = nullptr;
+    TerminalKittyPackedTexture *texture_ = nullptr;
 };
 
 void TerminalKittyQsgShader::updateSampledImage(RenderState &state, int binding,
@@ -179,13 +244,15 @@ void TerminalKittyQsgShader::updateSampledImage(RenderState &state, int binding,
                                                 QSGMaterial *)
 {
     auto *material = static_cast<TerminalKittyQsgMaterial *>(newMaterial);
-    QSGTexture *selected = binding == 1 ? material->rgb()
-        : binding == 2                  ? material->alpha()
-                                        : nullptr;
+    TerminalKittyPackedTexture *const packed =
+        binding == 1 ? material->texture() : nullptr;
+    QSGTexture *selected =
+        packed != nullptr ? packed->sampledTexture() : nullptr;
     Q_ASSERT(selected != nullptr);
     if (selected == nullptr) return;
     *texture = selected;
     selected->commitTextureOperations(state.rhi(), state.resourceUpdateBatch());
+    packed->commit(state.resourceUpdateBatch());
 }
 
 struct PlacementNodeUpdate {
@@ -195,16 +262,17 @@ struct PlacementNodeUpdate {
 
 class TerminalKittyQsgNode final : public QSGGeometryNode {
 public:
-    TerminalKittyQsgNode(QSGTexture *rgb, QSGTexture *alpha,
+    TerminalKittyQsgNode(TerminalKittyPackedTexture *texture,
                          const QRectF &destination, const QRectF &source)
         : geometry_(new QSGGeometry(
               QSGGeometry::defaultAttributes_TexturedPoint2D(), 4))
-        , material_(new TerminalKittyQsgMaterial(rgb, alpha))
+        , material_(new TerminalKittyQsgMaterial(texture))
     {
         geometry_->setDrawingMode(QSGGeometry::DrawTriangleStrip);
         geometry_->setVertexDataPattern(QSGGeometry::DynamicPattern);
         destination_ = destination;
-        normalizedSource_ = rgb->convertToNormalizedSourceRect(source);
+        normalizedSource_ =
+            texture->sampledTexture()->convertToNormalizedSourceRect(source);
         QSGGeometry::updateTexturedRectGeometry(geometry_, destination_,
                                                 normalizedSource_);
         setGeometry(geometry_);
@@ -214,12 +282,12 @@ public:
         setFlag(QSGNode::OwnsMaterial);
     }
 
-    PlacementNodeUpdate update(QSGTexture *rgb, QSGTexture *alpha,
+    PlacementNodeUpdate update(TerminalKittyPackedTexture *texture,
                                const QRectF &destination, const QRectF &source)
     {
         PlacementNodeUpdate result;
         const QRectF normalizedSource =
-            rgb->convertToNormalizedSourceRect(source);
+            texture->sampledTexture()->convertToNormalizedSourceRect(source);
         if (destination_ != destination
             || normalizedSource_ != normalizedSource) {
             destination_ = destination;
@@ -229,7 +297,7 @@ public:
             markDirty(QSGNode::DirtyGeometry);
             result.geometryChanged = true;
         }
-        if (material_->setTextures(rgb, alpha)) {
+        if (material_->setTexture(texture)) {
             markDirty(QSGNode::DirtyMaterial);
             result.materialChanged = true;
         }
@@ -244,10 +312,9 @@ private:
 };
 
 struct TextureSet {
-    std::unique_ptr<QSGTexture> straightRgb;
-    std::unique_ptr<QSGTexture> alpha;
-    QSGTexture *sampledAlpha = nullptr;
+    std::unique_ptr<TerminalKittyPackedTexture> straightRgba;
     std::unique_ptr<QSGTexture> premultiplied;
+    quint64 logicalBytes = 0;
 };
 
 struct PlacementKey {
@@ -421,36 +488,21 @@ public:
         }
 
         auto result = std::make_unique<TextureSet>();
+        result->logicalBytes =
+            static_cast<quint64>(asset->straightRgba.sizeInBytes());
         if (useCustomMaterial) {
-            result->straightRgb.reset(quickWindow->createTextureFromImage(
-                asset->straightRgbPlane, QQuickWindow::TextureIsOpaque));
-            if (asset->fullyOpaque) {
-                if (opaqueAlpha == nullptr) {
-                    QImage white(1, 1, QImage::Format_RGBX8888);
-                    white.fill(Qt::white);
-                    opaqueAlpha.reset(quickWindow->createTextureFromImage(
-                        white, QQuickWindow::TextureIsOpaque));
-                    if (opaqueAlpha == nullptr) return nullptr;
-                    configureTexture(*opaqueAlpha);
-                    ++textureUploadCount;
-                }
-                result->sampledAlpha = opaqueAlpha.get();
-            } else {
-                result->alpha.reset(quickWindow->createTextureFromImage(
-                    asset->alphaPlane, QQuickWindow::TextureIsOpaque));
-                if (result->alpha == nullptr) return nullptr;
-                configureTexture(*result->alpha);
-                result->sampledAlpha = result->alpha.get();
-                ++textureUploadCount;
-            }
-            if (!result->straightRgb) return nullptr;
-            configureTexture(*result->straightRgb);
+            result->straightRgba = TerminalKittyPackedTexture::create(
+                quickWindow, asset->straightRgba);
+            if (!result->straightRgba) return nullptr;
             ++textureUploadCount;
         } else {
             const QImage image = premultipliedImage(*asset);
             if (image.isNull()) return nullptr;
             result->premultiplied.reset(
-                quickWindow->createTextureFromImage(image));
+                asset->fullyOpaque
+                    ? quickWindow->createTextureFromImage(
+                          image, QQuickWindow::TextureIsOpaque)
+                    : quickWindow->createTextureFromImage(image));
             if (!result->premultiplied) return nullptr;
             configureTexture(*result->premultiplied);
             ++textureUploadCount;
@@ -469,9 +521,8 @@ public:
         QSGNode *node = nullptr;
         if (useCustomMaterial) {
             node = new TerminalKittyQsgNode(
-                materialized.textures->straightRgb.get(),
-                materialized.textures->sampledAlpha, placement.destination,
-                placement.source);
+                materialized.textures->straightRgba.get(),
+                placement.destination, placement.source);
         } else {
             auto *textureNode = new QSGSimpleTextureNode;
             textureNode->setOwnsTexture(false);
@@ -508,9 +559,8 @@ public:
         PlacementNodeUpdate result;
         if (useCustomMaterial) {
             result = static_cast<TerminalKittyQsgNode *>(node.node)->update(
-                materialized.textures->straightRgb.get(),
-                materialized.textures->sampledAlpha, placement.destination,
-                placement.source);
+                materialized.textures->straightRgba.get(),
+                placement.destination, placement.source);
         } else {
             auto *textureNode = static_cast<QSGSimpleTextureNode *>(node.node);
             QSGTexture *const oldTexture = textureNode->texture();
@@ -676,7 +726,6 @@ public:
     {
         clearPlacementNodes();
         clearTextures();
-        opaqueAlpha.reset();
         rendered.clear();
         snapshot.reset();
         window = nullptr;
@@ -696,7 +745,6 @@ public:
     QRectF gridViewport;
     bool custom = false;
     std::map<quint64, std::unique_ptr<TextureSet>> textures;
-    std::unique_ptr<QSGTexture> opaqueAlpha;
     QVector<PlacementNode> placementNodes;
     QVector<TerminalKittyGraphicsRenderPlacement> rendered;
     quint64 textureUploadCount = 0;
@@ -736,7 +784,6 @@ void TerminalKittyGraphicsScene::update(
         impl_->snapshot.reset();
         if (windowChanged || materialPathChanged) {
             impl_->clearTextures();
-            impl_->opaqueAlpha.reset();
         }
     }
     impl_->window = window;
@@ -838,4 +885,14 @@ quint64 TerminalKittyGraphicsScene::textureSetEvictionCount() const noexcept
 qsizetype TerminalKittyGraphicsScene::textureCount() const noexcept
 {
     return static_cast<qsizetype>(impl_->textures.size());
+}
+
+quint64 TerminalKittyGraphicsScene::textureBytes() const noexcept
+{
+    quint64 result = 0;
+    for (const auto &[generation, texture] : impl_->textures) {
+        Q_UNUSED(generation);
+        result += texture->logicalBytes;
+    }
+    return result;
 }

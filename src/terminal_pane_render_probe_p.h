@@ -54,6 +54,7 @@ struct TerminalPaneRenderProbeSnapshot {
     quint64 kittyGraphicsMaterialAssignmentCount = 0;
     quint64 kittyGraphicsTextureSetEvictionCount = 0;
     qsizetype kittyGraphicsTextureCount = 0;
+    quint64 kittyGraphicsTextureBytes = 0;
     QVector<QRectF> kittyGraphicsDestinations;
     QVector<QRectF> kittyGraphicsSources;
     QVector<TerminalKittyGraphicsLayer> kittyGraphicsLayers;

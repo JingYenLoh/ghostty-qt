@@ -27,6 +27,8 @@ struct FrameCommands {
     QVector<QByteArray> packets;
     quint64 rawBytes = 0;
     quint64 wireBytes = 0;
+    int kittyFormat = 24;
+    bool fullyOpaque = true;
 };
 
 struct TimingSummary {
@@ -65,36 +67,40 @@ std::optional<quint64> processStatusKiB(const QByteArray &key)
     return std::nullopt;
 }
 
-std::optional<quint64> checkedMultiply(quint64 left, quint64 right)
+std::optional<FrameCommands>
+makeExplicitReplacementFrame(int width, int height, bool rgba, QString *error)
 {
-    if (right != 0 && left > std::numeric_limits<quint64>::max() / right) {
-        return std::nullopt;
-    }
-    return left * right;
-}
-
-std::optional<FrameCommands> makeMpvShapedFrame(int width, int height,
-                                                QString *error)
-{
-    const quint64 rawBytes =
-        static_cast<quint64>(width) * static_cast<quint64>(height) * 3ULL;
+    const quint64 bytesPerPixel = rgba ? 4ULL : 3ULL;
+    const quint64 rawBytes = static_cast<quint64>(width)
+        * static_cast<quint64>(height) * bytesPerPixel;
     if (rawBytes > maximumDecodedFrameBytes
         || rawBytes
             > static_cast<quint64>(std::numeric_limits<qsizetype>::max())) {
-        *error = QStringLiteral(
-            "decoded RGB24 frame exceeds the Kitty 400 MiB limit");
+        *error =
+            QStringLiteral("decoded frame exceeds the Kitty 400 MiB limit");
         return std::nullopt;
     }
 
     QByteArray raw(static_cast<qsizetype>(rawBytes), Qt::Uninitialized);
-    for (qsizetype index = 0; index < raw.size(); ++index) {
-        raw[index] = static_cast<char>(
-            (static_cast<quint64>(index) * 17ULL + 23ULL) % 251ULL);
+    const quint64 pixelCount =
+        static_cast<quint64>(width) * static_cast<quint64>(height);
+    for (quint64 pixel = 0; pixel < pixelCount; ++pixel) {
+        const qsizetype offset = static_cast<qsizetype>(pixel * bytesPerPixel);
+        raw[offset] = static_cast<char>((pixel * 17ULL + 23ULL) % 251ULL);
+        raw[offset + 1] = static_cast<char>((pixel * 31ULL + 47ULL) % 251ULL);
+        raw[offset + 2] = static_cast<char>((pixel * 43ULL + 71ULL) % 251ULL);
+        if (rgba) {
+            // Vary alpha while keeping every frame definitively translucent.
+            raw[offset + 3] =
+                static_cast<char>((pixel * 29ULL + 31ULL) % 251ULL);
+        }
     }
     const QByteArray encoded = raw.toBase64();
 
     FrameCommands result;
     result.rawBytes = rawBytes;
+    result.kittyFormat = rgba ? 32 : 24;
+    result.fullyOpaque = !rgba;
     result.packets.reserve(static_cast<qsizetype>(
         std::ceil(static_cast<double>(encoded.size())
                   / static_cast<double>(kittyPayloadBytes))));
@@ -107,9 +113,11 @@ std::optional<FrameCommands> makeMpvShapedFrame(int width, int height,
         const bool more = offset + payloadSize < encoded.size();
         QByteArray packet;
         if (first) {
-            packet = QByteArrayLiteral("\033[H\033_Ga=T,f=24,s=")
-                + QByteArray::number(width) + QByteArrayLiteral(",v=")
-                + QByteArray::number(height) + QByteArrayLiteral(",C=1,q=2,m=")
+            packet = QByteArrayLiteral("\033[H\033_Ga=T,i=1,p=1,f=")
+                + QByteArray::number(result.kittyFormat)
+                + QByteArrayLiteral(",s=") + QByteArray::number(width)
+                + QByteArrayLiteral(",v=") + QByteArray::number(height)
+                + QByteArrayLiteral(",C=1,q=2,m=")
                 + (more ? QByteArrayLiteral("1;") : QByteArrayLiteral("0;"));
         } else {
             packet = QByteArrayLiteral("\033_Gm=")
@@ -148,7 +156,7 @@ TimingSummary summarize(QVector<qint64> samples)
 }
 
 bool importFrame(GhosttyVtAdapter *adapter, const FrameCommands &commands,
-                 TerminalFrame *frame, QString *error)
+                 int width, int height, TerminalFrame *frame, QString *error)
 {
     for (const QByteArray &packet : commands.packets) {
         adapter->writeVt(packet);
@@ -170,17 +178,23 @@ bool importFrame(GhosttyVtAdapter *adapter, const FrameCommands &commands,
     }
     if (frame->kittyGraphics == nullptr
         || frame->kittyGraphics->placements.size() != 1) {
-        *error = QStringLiteral(
-            "opaque replacement frames did not retain one placement");
+        *error =
+            QStringLiteral("replacement frames did not retain one placement");
         return false;
     }
 
     const TerminalKittyGraphicsPlacement &placement =
         frame->kittyGraphics->placements.constFirst();
-    if (placement.image == nullptr || !placement.image->fullyOpaque
-        || !placement.image->alphaPlane.isNull()) {
+    const quint64 expectedPackedBytes =
+        static_cast<quint64>(width) * static_cast<quint64>(height) * 4ULL;
+    if (placement.image == nullptr
+        || placement.image->fullyOpaque != commands.fullyOpaque
+        || placement.image->straightRgba.format() != QImage::Format_RGBA8888
+        || placement.image->straightRgba.size() != QSize(width, height)
+        || static_cast<quint64>(placement.image->straightRgba.sizeInBytes())
+            != expectedPackedBytes) {
         *error = QStringLiteral(
-            "RGB24 frame did not use the opaque single-plane path");
+            "frame opacity or packed RGBA storage did not match the request");
         return false;
     }
     return true;
@@ -204,8 +218,8 @@ int main(int argc, char **argv)
         QStringLiteral("bench-terminal-kitty-graphics"));
 
     QCommandLineParser parser;
-    parser.setApplicationDescription(
-        QStringLiteral("Sustained mpv-shaped Kitty RGB24 import benchmark"));
+    parser.setApplicationDescription(QStringLiteral(
+        "Sustained Kitty explicit-replacement import benchmark"));
     parser.addHelpOption();
     const QCommandLineOption widthOption(
         QStringLiteral("width"), QStringLiteral("Frame width in pixels."),
@@ -219,8 +233,12 @@ int main(int argc, char **argv)
     const QCommandLineOption iterationsOption(
         QStringLiteral("iterations"), QStringLiteral("Measured frames."),
         QStringLiteral("count"), QStringLiteral("100"));
-    parser.addOptions(
-        {widthOption, heightOption, warmupOption, iterationsOption});
+    const QCommandLineOption pixelFormatOption(
+        QStringLiteral("pixel-format"),
+        QStringLiteral("Kitty source format: rgb24 or rgba32."),
+        QStringLiteral("format"), QStringLiteral("rgb24"));
+    parser.addOptions({widthOption, heightOption, warmupOption,
+                       iterationsOption, pixelFormatOption});
     parser.process(application);
 
     const std::optional<int> width = integerOption(parser.value(widthOption));
@@ -236,33 +254,23 @@ int main(int argc, char **argv)
                "warmup must be non-negative\n";
         return 2;
     }
+    const QString pixelFormat = parser.value(pixelFormatOption).toLower();
+    if (pixelFormat != QStringLiteral("rgb24")
+        && pixelFormat != QStringLiteral("rgba32")) {
+        QTextStream(stderr) << "pixel-format must be rgb24 or rgba32\n";
+        return 2;
+    }
+    const bool rgba = pixelFormat == QStringLiteral("rgba32");
 
     const quint64 totalFrames =
         static_cast<quint64>(*warmup) + static_cast<quint64>(*iterations);
     QString error;
     const std::optional<FrameCommands> commands =
-        makeMpvShapedFrame(*width, *height, &error);
+        makeExplicitReplacementFrame(*width, *height, rgba, &error);
     if (!commands.has_value()) {
         QTextStream(stderr) << error << '\n';
         return 2;
     }
-    const std::optional<quint64> totalRawBytes =
-        checkedMultiply(commands->rawBytes, totalFrames);
-    const std::optional<quint64> pixelsPerFrame = checkedMultiply(
-        static_cast<quint64>(*width), static_cast<quint64>(*height));
-    const std::optional<quint64> uncullBytesPerFrame =
-        pixelsPerFrame.has_value() ? checkedMultiply(*pixelsPerFrame, 8ULL)
-                                   : std::nullopt;
-    const std::optional<quint64> preChangeUnculledQtBytes =
-        uncullBytesPerFrame.has_value()
-        ? checkedMultiply(*uncullBytesPerFrame, totalFrames)
-        : std::nullopt;
-    if (!totalRawBytes.has_value() || !preChangeUnculledQtBytes.has_value()) {
-        QTextStream(stderr)
-            << "frame count and dimensions overflow byte metrics\n";
-        return 2;
-    }
-
     GhosttyVtAdapter::Options options;
     options.geometry = {
         .columns = std::max(1, (*width + 9) / 10),
@@ -270,11 +278,9 @@ int main(int argc, char **argv)
         .cellWidthPixels = 10,
         .cellHeightPixels = 20,
     };
-    if (*totalRawBytes > options.kittyImageStorageLimitBytes) {
+    if (commands->rawBytes > options.kittyImageStorageLimitBytes) {
         QTextStream(stderr)
-            << "selected frame count exceeds the default image-storage-limit; "
-               "reduce dimensions or iterations so eviction cannot hide "
-               "snapshot growth\n";
+            << "one frame exceeds the default image-storage-limit\n";
         return 2;
     }
     std::unique_ptr<GhosttyVtAdapter> adapter =
@@ -295,7 +301,8 @@ int main(int argc, char **argv)
     const std::optional<quint64> rssBefore =
         processStatusKiB(QByteArrayLiteral("VmRSS:"));
     for (int iteration = 0; iteration < *warmup; ++iteration) {
-        if (!importFrame(adapter.get(), *commands, &frame, &error)) {
+        if (!importFrame(adapter.get(), *commands, *width, *height, &frame,
+                         &error)) {
             QTextStream(stderr)
                 << "warmup frame " << iteration << ": " << error << '\n';
             return 1;
@@ -309,7 +316,8 @@ int main(int argc, char **argv)
     for (int iteration = 0; iteration < *iterations; ++iteration) {
         QElapsedTimer timer;
         timer.start();
-        if (!importFrame(adapter.get(), *commands, &frame, &error)) {
+        if (!importFrame(adapter.get(), *commands, *width, *height, &frame,
+                         &error)) {
             QTextStream(stderr)
                 << "measured frame " << iteration << ": " << error << '\n';
             return 1;
@@ -325,12 +333,10 @@ int main(int argc, char **argv)
     const TerminalKittyGraphicsSnapshot &graphics = *frame.kittyGraphics;
     const TerminalKittyGraphicsImage &image =
         *graphics.placements.constFirst().image;
-    const quint64 rgbPlaneBytes =
-        static_cast<quint64>(image.straightRgbPlane.sizeInBytes());
-    const quint64 alphaPlaneBytes =
-        static_cast<quint64>(image.alphaPlane.sizeInBytes());
-    const quint64 estimatedRetainedLibghosttyRawBytes =
-        std::min(*totalRawBytes, options.kittyImageStorageLimitBytes);
+    const quint64 packedPlaneBytes =
+        static_cast<quint64>(image.straightRgba.sizeInBytes());
+    const quint64 formerTwoPlaneBytes =
+        image.fullyOpaque ? packedPlaneBytes : packedPlaneBytes * 2ULL;
     const double elapsedSeconds =
         static_cast<double>(timing.totalNanoseconds) / 1'000'000'000.0;
     const double rawMiB = static_cast<double>(commands->rawBytes)
@@ -341,8 +347,9 @@ int main(int argc, char **argv)
     QTextStream output(stdout);
     output.setRealNumberNotation(QTextStream::FixedNotation);
     output.setRealNumberPrecision(2);
-    output << "protocol=kitty-rgb24-mpv-shaped width=" << *width
-           << " height=" << *height << " raw_frame_bytes=" << commands->rawBytes
+    output << "protocol=kitty-" << pixelFormat
+           << "-explicit-replacement width=" << *width << " height=" << *height
+           << " raw_frame_bytes=" << commands->rawBytes
            << " wire_frame_bytes=" << commands->wireBytes
            << " packets_per_frame=" << commands->packets.size()
            << " warmup=" << *warmup << " iterations=" << *iterations
@@ -355,13 +362,9 @@ int main(int argc, char **argv)
            << " raw_mib_per_second=" << rawMiB / elapsedSeconds
            << " wire_mib_per_second=" << wireMiB / elapsedSeconds << '\n';
     output << "snapshot placements=" << graphics.placements.size()
-           << " rgb_plane_bytes=" << rgbPlaneBytes
-           << " alpha_plane_bytes=" << alphaPlaneBytes
-           << " total_plane_bytes=" << rgbPlaneBytes + alphaPlaneBytes
-           << " estimated_libghostty_raw_bytes="
-           << estimatedRetainedLibghosttyRawBytes
-           << " pre_change_unculled_qt_cpu_plane_bytes="
-           << *preChangeUnculledQtBytes
+           << " packed_rgba_bytes=" << packedPlaneBytes
+           << " former_two_plane_bytes=" << formerTwoPlaneBytes
+           << " packed_bytes_saved=" << formerTwoPlaneBytes - packedPlaneBytes
            << " storage_generation=" << graphics.storageGeneration
            << " image_generation=" << image.generation << '\n';
     output << "memory rss_before_kib=";

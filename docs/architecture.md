@@ -1900,13 +1900,13 @@ libghostty medium. `image-storage-limit` defaults to Ghostty's 320,000,000
 bytes and applies live to every screen.
 
 The worker deep-copies borrowed decoded pixels before terminal mutation can
-invalidate the handles. Every asset owns one opaque straight-RGB plane;
-translucent assets also own an opaque replicated-alpha plane. Fully opaque
-RGB, grayscale, and alpha-bearing inputs omit the redundant alpha plane.
-Hardware RHI backends filter the planes separately and premultiply in a custom
-shader, using one scene-wide 1×1 white alpha texture for every opaque asset.
-The software scene graph uploads an opaque RGB plane directly or premultiplies
-a translucent pair on the CPU.
+invalidate the handles. Every asset owns one packed straight-alpha
+`RGBA8888` image, including alpha 255 for opaque RGB and grayscale inputs.
+Hardware RHI backends upload those bytes explicitly to one `RGBA8` texture so
+Qt's normal alpha-image conversion cannot premultiply them first. The custom
+shader linearly filters all four straight channels together, then
+premultiplies the sampled color. The software scene graph uploads an opaque
+image directly or creates a premultiplied copy for translucent input.
 
 Before importing pixels, the adapter gathers borrowed image metadata and
 placement geometry, sorts it in the renderer's existing
@@ -1923,12 +1923,12 @@ Physical placement offsets, source rectangles, and destination sizes are
 projected through the exact libghostty cell-pixel geometry, cropped to the
 visible grid, and hidden during asynchronous frame/layout geometry disagreement
 instead of being stretched. Qt mirrors remain additional to Ghostty's
-configured storage budget, but opaque assets now cost one four-byte CPU plane
-and one full-size hardware texture rather than two of each. Translucent assets
-still use both planes to preserve straight-alpha interpolation. A future item
-opacity applied to the terminal subtree would need to disable opaque overlap
-culling because the material's inherited opacity would make each placement
-individually translucent.
+configured storage budget. Every asset costs one four-byte-per-pixel CPU image
+and one full-size hardware texture; packing alpha halves the former translucent
+CPU and GPU footprint without changing straight-alpha interpolation. A future
+item opacity applied to the terminal subtree would need to disable opaque
+overlap culling because the material's inherited opacity would make each
+placement individually translucent.
 
 The pinned libghostty eviction and external-placement replacement paths remove
 placement map entries without untracking their screen pins. Frontend culling
@@ -2698,10 +2698,12 @@ The default CTest suite has focused layers for each ownership boundary:
   and no skips.
 - `terminal-kitty-graphics` verifies physical placement projection and
   cropping, then reflects both embedded QSBs and compares their exact 68-byte
-  matrix/opacity block and sampler bindings with the CPU write layout.
+  matrix/opacity block and single packed-RGBA sampler binding with the CPU
+  write layout.
   `terminal-pane-kitty-rhi` runs the retained end-to-end pane case through
   XCB/Xvfb and OpenGL RHI, asserts that Qt did not select its software scene
-  graph, samples the rendered pixels, and checks texture reuse and eviction.
+  graph, samples source texels and a varying-alpha interpolation boundary, and
+  checks one-texture upload, reuse, replacement, and eviction.
   The XCB integration case skips under ASan because the instrumented
   executable crosses uninstrumented system XCB/XKB startup code before Qt
   creates a window; the renderer-independent contract tests remain

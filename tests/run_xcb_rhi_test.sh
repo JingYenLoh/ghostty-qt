@@ -10,7 +10,7 @@ fi
 # The executable is instrumented but Qt's XCB/XKB stack is not. On current
 # Linux distributions its device-keymap setup performs a bounded strndup from
 # an exact-sized XCB reply, which AddressSanitizer reports before Qt creates a
-# window. The shader ABI and mpv-shaped protocol paths remain sanitizer-tested;
+# window. The shader ABI and Kitty protocol paths remain sanitizer-tested;
 # exercise this external integration boundary in the dev/release runs.
 if [[ "${GHOSTTY_QT_ASAN_BUILD:-0}" == 1 ]]; then
     printf 'SKIP: XCB OpenGL RHI integration is unavailable under ASan\n'

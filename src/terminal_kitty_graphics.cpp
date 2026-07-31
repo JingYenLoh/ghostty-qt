@@ -8,11 +8,8 @@ terminalKittyGraphicsRenderPlacement(
     const TerminalKittyGraphicsPlacement &placement, const QSizeF &cellSize,
     const QSizeF &terminalCellPixelSize, const QRectF &gridViewport) noexcept
 {
-    if (placement.image == nullptr || placement.image->straightRgbPlane.isNull()
-        || (!placement.image->fullyOpaque
-            && (placement.image->alphaPlane.isNull()
-                || placement.image->straightRgbPlane.size()
-                    != placement.image->alphaPlane.size()))
+    if (placement.image == nullptr || placement.image->straightRgba.isNull()
+        || placement.image->straightRgba.format() != QImage::Format_RGBA8888
         || !std::isfinite(cellSize.width()) || !std::isfinite(cellSize.height())
         || cellSize.width() <= 0.0 || cellSize.height() <= 0.0
         || !std::isfinite(terminalCellPixelSize.width())
@@ -25,7 +22,7 @@ terminalKittyGraphicsRenderPlacement(
         return std::nullopt;
     }
 
-    const QSize imageSize = placement.image->straightRgbPlane.size();
+    const QSize imageSize = placement.image->straightRgba.size();
     const quint64 sourceRight =
         static_cast<quint64>(placement.sourceX) + placement.sourceWidth;
     const quint64 sourceBottom =

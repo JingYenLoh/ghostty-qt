@@ -54,6 +54,9 @@ public:
     [[nodiscard]] quint64 materialAssignmentCount() const noexcept;
     [[nodiscard]] quint64 textureSetEvictionCount() const noexcept;
     [[nodiscard]] qsizetype textureCount() const noexcept;
+    // Logical RGBA8 payload resident in live texture sets. Driver allocation
+    // overhead and alignment are intentionally not estimated.
+    [[nodiscard]] quint64 textureBytes() const noexcept;
 
 private:
     class Impl;

@@ -449,12 +449,12 @@ void GhosttyVtAdapterTest::publishesKittyGraphicsSnapshots()
     QCOMPARE(belowBackground.image->imageId, quint32{1});
     QVERIFY(belowBackground.image->generation > 0);
     QVERIFY(belowBackground.image->fullyOpaque);
-    QCOMPARE(belowBackground.image->straightRgbPlane.size(), QSize(1, 2));
-    QCOMPARE(belowBackground.image->straightRgbPlane.pixelColor(0, 0),
+    QCOMPARE(belowBackground.image->straightRgba.size(), QSize(1, 2));
+    QCOMPARE(belowBackground.image->straightRgba.pixelColor(0, 0),
              QColor(0x10, 0x20, 0x30));
-    QCOMPARE(belowBackground.image->straightRgbPlane.pixelColor(0, 1),
+    QCOMPARE(belowBackground.image->straightRgba.pixelColor(0, 1),
              QColor(0x40, 0x50, 0x60));
-    QVERIFY(belowBackground.image->alphaPlane.isNull());
+    QCOMPARE(belowBackground.image->straightRgba.sizeInBytes(), qsizetype{8});
 
     GhosttyVtAdapter::RenderSnapshot unchanged;
     QCOMPARE(adapter->renderFrame(&unchanged),
@@ -474,8 +474,8 @@ void GhosttyVtAdapterTest::publishesKittyGraphicsSnapshots()
         replaced.update.kittyGraphics->placements.constFirst().image;
     QVERIFY(replacement != nullptr);
     QVERIFY(replacement->generation > firstGeneration);
-    QCOMPARE(replacement->straightRgbPlane.pixelColor(0, 0), QColor(1, 2, 3));
-    QCOMPARE(replacement->straightRgbPlane.pixelColor(0, 1), QColor(4, 5, 6));
+    QCOMPARE(replacement->straightRgba.pixelColor(0, 0), QColor(1, 2, 3));
+    QCOMPARE(replacement->straightRgba.pixelColor(0, 1), QColor(4, 5, 6));
 
     adapter->writeVt(QByteArrayLiteral("\033_Ga=d,d=A\033\\"));
     GhosttyVtAdapter::RenderSnapshot deleted;
@@ -573,9 +573,8 @@ void GhosttyVtAdapterTest::publishesMpvShapedKittyFrames()
     QVERIFY(firstPlacement.image->fullyOpaque);
     const quint32 firstImageId = firstPlacement.image->imageId;
     const quint64 firstGeneration = firstPlacement.image->generation;
-    QCOMPARE(firstPlacement.image->straightRgbPlane.pixelColor(1, 31),
+    QCOMPARE(firstPlacement.image->straightRgba.pixelColor(1, 31),
              QColor(60, 61, 62));
-    QVERIFY(firstPlacement.image->alphaPlane.isNull());
     QCOMPARE(frame.cursorColumn, 2);
     QCOMPARE(frame.cursorRow, 1);
     QVERIFY(ptyWrites.isEmpty());
@@ -614,9 +613,7 @@ void GhosttyVtAdapterTest::publishesMpvShapedKittyFrames()
     QVERIFY(newest->image->imageId != firstImageId);
     QVERIFY(newest->image->generation > firstGeneration);
     QVERIFY(newest->image->fullyOpaque);
-    QCOMPARE(newest->image->straightRgbPlane.pixelColor(1, 31),
-             QColor(77, 78, 79));
-    QVERIFY(newest->image->alphaPlane.isNull());
+    QCOMPARE(newest->image->straightRgba.pixelColor(1, 31), QColor(77, 78, 79));
     QCOMPARE(frame.cursorColumn, 2);
     QCOMPARE(frame.cursorRow, 1);
     QVERIFY(ptyWrites.isEmpty());
@@ -635,9 +632,8 @@ void GhosttyVtAdapterTest::publishesMpvShapedKittyFrames()
         const auto &placement = frame.kittyGraphics->placements.constFirst();
         QVERIFY(placement.image != nullptr);
         QVERIFY(placement.image->fullyOpaque);
-        QVERIFY(placement.image->alphaPlane.isNull());
         QCOMPARE(
-            placement.image->straightRgbPlane.pixelColor(1, 31),
+            placement.image->straightRgba.pixelColor(1, 31),
             QColor((60 + shift) % 251, (61 + shift) % 251, (62 + shift) % 251));
     }
     QVERIFY(ptyWrites.isEmpty());
@@ -683,7 +679,8 @@ void GhosttyVtAdapterTest::cullsOpaqueKittyGraphicsWithoutDeletingHistory()
     QVERIFY(translucent != nullptr);
     QCOMPARE(translucent->imageId, quint32{3});
     QVERIFY(!translucent->fullyOpaque);
-    QVERIFY(!translucent->alphaPlane.isNull());
+    QCOMPARE(translucent->straightRgba.pixelColor(0, 0),
+             QColor(70, 80, 90, 96));
 
     // An RGBA payload whose alpha channel is uniformly opaque takes the
     // single-plane fast path and covers every lower placement at this exact
@@ -696,8 +693,7 @@ void GhosttyVtAdapterTest::cullsOpaqueKittyGraphicsWithoutDeletingHistory()
     QVERIFY(opaqueRgba != nullptr);
     QCOMPARE(opaqueRgba->imageId, quint32{4});
     QVERIFY(opaqueRgba->fullyOpaque);
-    QVERIFY(opaqueRgba->alphaPlane.isNull());
-    QCOMPARE(opaqueRgba->straightRgbPlane.pixelColor(0, 0), QColor(70, 80, 90));
+    QCOMPARE(opaqueRgba->straightRgba.pixelColor(0, 0), QColor(70, 80, 90));
 
     // The cover key is intentionally exact. Equal geometry at a different
     // z-order remains visible, as does an equal-z placement at another cell.
@@ -749,11 +745,11 @@ void GhosttyVtAdapterTest::decodesKittyPngPayloads()
     QVERIFY(asset != nullptr);
     QCOMPARE(asset->imageId, quint32{2});
     QVERIFY(!asset->fullyOpaque);
-    QCOMPARE(asset->straightRgbPlane.size(), QSize(2, 1));
-    QCOMPARE(asset->straightRgbPlane.pixelColor(0, 0), QColor(10, 20, 30));
-    QCOMPARE(asset->straightRgbPlane.pixelColor(1, 0), QColor(50, 60, 70));
-    QCOMPARE(asset->alphaPlane.pixelColor(0, 0), QColor(40, 40, 40));
-    QCOMPARE(asset->alphaPlane.pixelColor(1, 0), Qt::white);
+    QCOMPARE(asset->straightRgba.size(), QSize(2, 1));
+    QCOMPARE(asset->straightRgba.format(), QImage::Format_RGBA8888);
+    QCOMPARE(asset->straightRgba.sizeInBytes(), qsizetype{8});
+    QCOMPARE(asset->straightRgba.pixelColor(0, 0), QColor(10, 20, 30, 40));
+    QCOMPARE(asset->straightRgba.pixelColor(1, 0), QColor(50, 60, 70, 255));
 }
 
 void GhosttyVtAdapterTest::respondsToEnquiryWithConfiguredBytes()

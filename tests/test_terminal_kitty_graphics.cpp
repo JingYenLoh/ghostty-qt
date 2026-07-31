@@ -12,16 +12,14 @@ namespace {
 
 std::shared_ptr<const TerminalKittyGraphicsImage> image(QSize size)
 {
-    QImage rgb(size, QImage::Format_RGBX8888);
-    QImage alpha(size, QImage::Format_RGBX8888);
-    rgb.fill(QColor(30, 60, 90));
-    alpha.fill(Qt::white);
+    QImage rgba(size, QImage::Format_RGBA8888);
+    rgba.fill(QColor(30, 60, 90));
     return std::make_shared<const TerminalKittyGraphicsImage>(
         TerminalKittyGraphicsImage{
             .imageId = 7,
             .generation = 19,
-            .straightRgbPlane = std::move(rgb),
-            .alphaPlane = std::move(alpha),
+            .fullyOpaque = true,
+            .straightRgba = std::move(rgba),
         });
 }
 
@@ -198,11 +196,9 @@ void TerminalKittyGraphicsTest::embeddedShaderMatchesCpuUniformLayout()
         QVERIFY(samplers.isEmpty());
         return;
     }
-    QCOMPARE(samplers.size(), 2);
-    QCOMPARE(samplers.at(0).name, QByteArray("straightRgb"));
+    QCOMPARE(samplers.size(), 1);
+    QCOMPARE(samplers.at(0).name, QByteArray("straightRgba"));
     QCOMPARE(samplers.at(0).binding, 1);
-    QCOMPARE(samplers.at(1).name, QByteArray("straightAlpha"));
-    QCOMPARE(samplers.at(1).binding, 2);
 }
 
 QTEST_MAIN(TerminalKittyGraphicsTest)

@@ -3626,76 +3626,52 @@ public:
             return cached;
         }
 
-        bool fullyOpaque = image.format == GHOSTTY_KITTY_IMAGE_FORMAT_RGB
-            || image.format == GHOSTTY_KITTY_IMAGE_FORMAT_GRAY;
-        if (!fullyOpaque) {
-            const quint64 pixelCount =
-                static_cast<quint64>(image.width) * image.height;
-            const quint64 alphaOffset =
-                image.format == GHOSTTY_KITTY_IMAGE_FORMAT_RGBA ? 3U : 1U;
-            fullyOpaque = true;
-            for (quint64 pixelIndex = 0; pixelIndex < pixelCount;
-                 ++pixelIndex) {
-                if (image.pixels[pixelIndex * image.bytesPerPixel + alphaOffset]
-                    != 255) {
-                    fullyOpaque = false;
+        QImage rgba(static_cast<int>(image.width),
+                    static_cast<int>(image.height), QImage::Format_RGBA8888);
+        if (rgba.isNull()) return {};
+        rgba.setDevicePixelRatio(1.0);
+        bool fullyOpaque = true;
+        for (quint32 row = 0; row < image.height; ++row) {
+            uchar *destination = rgba.scanLine(static_cast<int>(row));
+            const uint8_t *source = image.pixels
+                + static_cast<quint64>(row) * image.width * image.bytesPerPixel;
+            if (image.format == GHOSTTY_KITTY_IMAGE_FORMAT_RGBA) {
+                const size_t rowBytes = static_cast<size_t>(image.width) * 4U;
+                std::memcpy(destination, source, rowBytes);
+                for (quint32 column = 0; column < image.width; ++column) {
+                    fullyOpaque =
+                        fullyOpaque && source[column * 4U + 3U] == 255;
+                }
+                continue;
+            }
+            for (quint32 column = 0; column < image.width; ++column) {
+                const qsizetype offset = static_cast<qsizetype>(column) * 4;
+                switch (image.format) {
+                case GHOSTTY_KITTY_IMAGE_FORMAT_RGB:
+                    destination[offset] = source[column * 3U];
+                    destination[offset + 1] = source[column * 3U + 1U];
+                    destination[offset + 2] = source[column * 3U + 2U];
+                    destination[offset + 3] = 255;
+                    break;
+                case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA: {
+                    const uchar gray = source[column * 2U];
+                    const uchar alpha = source[column * 2U + 1U];
+                    destination[offset] = gray;
+                    destination[offset + 1] = gray;
+                    destination[offset + 2] = gray;
+                    destination[offset + 3] = alpha;
+                    fullyOpaque = fullyOpaque && alpha == 255;
                     break;
                 }
-            }
-        }
-
-        QImage rgb(static_cast<int>(image.width),
-                   static_cast<int>(image.height), QImage::Format_RGBX8888);
-        QImage alpha;
-        if (!fullyOpaque) {
-            alpha =
-                QImage(static_cast<int>(image.width),
-                       static_cast<int>(image.height), QImage::Format_RGBX8888);
-        }
-        if (rgb.isNull() || (!fullyOpaque && alpha.isNull())) {
-            return {};
-        }
-        rgb.setDevicePixelRatio(1.0);
-        if (!fullyOpaque) alpha.setDevicePixelRatio(1.0);
-        const auto component = [&image](quint64 pixelIndex) {
-            const uint8_t *source =
-                image.pixels + pixelIndex * image.bytesPerPixel;
-            std::array<uchar, 4> rgba{};
-            switch (image.format) {
-            case GHOSTTY_KITTY_IMAGE_FORMAT_RGB:
-                rgba = {source[0], source[1], source[2], 255};
-                break;
-            case GHOSTTY_KITTY_IMAGE_FORMAT_RGBA:
-                rgba = {source[0], source[1], source[2], source[3]};
-                break;
-            case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA:
-                rgba = {source[0], source[0], source[0], source[1]};
-                break;
-            case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY:
-                rgba = {source[0], source[0], source[0], 255};
-                break;
-            default: break;
-            }
-            return rgba;
-        };
-        for (quint32 row = 0; row < image.height; ++row) {
-            uchar *rgbLine = rgb.scanLine(static_cast<int>(row));
-            uchar *alphaLine =
-                fullyOpaque ? nullptr : alpha.scanLine(static_cast<int>(row));
-            for (quint32 column = 0; column < image.width; ++column) {
-                const quint64 pixelIndex =
-                    static_cast<quint64>(row) * image.width + column;
-                const std::array<uchar, 4> rgba = component(pixelIndex);
-                const qsizetype offset = static_cast<qsizetype>(column) * 4;
-                rgbLine[offset] = rgba[0];
-                rgbLine[offset + 1] = rgba[1];
-                rgbLine[offset + 2] = rgba[2];
-                rgbLine[offset + 3] = 255;
-                if (alphaLine != nullptr) {
-                    alphaLine[offset] = rgba[3];
-                    alphaLine[offset + 1] = rgba[3];
-                    alphaLine[offset + 2] = rgba[3];
-                    alphaLine[offset + 3] = 255;
+                case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY: {
+                    const uchar gray = source[column];
+                    destination[offset] = gray;
+                    destination[offset + 1] = gray;
+                    destination[offset + 2] = gray;
+                    destination[offset + 3] = 255;
+                    break;
+                }
+                default: return {};
                 }
             }
         }
@@ -3705,8 +3681,7 @@ public:
                 .imageId = image.imageId,
                 .generation = image.generation,
                 .fullyOpaque = fullyOpaque,
-                .straightRgbPlane = std::move(rgb),
-                .alphaPlane = std::move(alpha),
+                .straightRgba = std::move(rgba),
             });
         kittyImageAssets_.insert(image.generation, asset);
         return asset;

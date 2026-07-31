@@ -326,41 +326,33 @@ QBitArray cellMask(int columns, int rows,
 std::shared_ptr<const TerminalKittyGraphicsImage>
 kittyImage(quint64 generation, const QColor &color, int opacity = 255)
 {
-    QImage rgb(QSize(2, 2), QImage::Format_RGBX8888);
-    rgb.fill(color);
+    QImage rgba(QSize(2, 2), QImage::Format_RGBA8888);
+    QColor packed = color;
+    packed.setAlpha(opacity);
+    rgba.fill(packed);
     const bool fullyOpaque = opacity == 255;
-    QImage alpha;
-    if (!fullyOpaque) {
-        alpha = QImage(QSize(2, 2), QImage::Format_RGBX8888);
-        alpha.fill(QColor(opacity, opacity, opacity));
-    }
     return std::make_shared<const TerminalKittyGraphicsImage>(
         TerminalKittyGraphicsImage{
             .imageId = 1,
             .generation = generation,
             .fullyOpaque = fullyOpaque,
-            .straightRgbPlane = std::move(rgb),
-            .alphaPlane = std::move(alpha),
+            .straightRgba = std::move(rgba),
         });
 }
 
 std::shared_ptr<const TerminalKittyGraphicsImage>
 verticalKittyImage(quint64 generation)
 {
-    QImage rgb(QSize(2, 2), QImage::Format_RGBX8888);
-    QImage alpha(QSize(2, 2), QImage::Format_RGBX8888);
+    QImage rgba(QSize(2, 2), QImage::Format_RGBA8888);
     for (int column = 0; column < 2; ++column) {
-        rgb.setPixelColor(column, 0, Qt::red);
-        rgb.setPixelColor(column, 1, Qt::blue);
-        alpha.setPixelColor(column, 0, QColor(128, 128, 128));
-        alpha.setPixelColor(column, 1, Qt::white);
+        rgba.setPixelColor(column, 0, QColor(255, 0, 0, 128));
+        rgba.setPixelColor(column, 1, QColor(0, 0, 255, 255));
     }
     return std::make_shared<const TerminalKittyGraphicsImage>(
         TerminalKittyGraphicsImage{
             .imageId = 1,
             .generation = generation,
-            .straightRgbPlane = std::move(rgb),
-            .alphaPlane = std::move(alpha),
+            .straightRgba = std::move(rgba),
         });
 }
 
@@ -2153,6 +2145,48 @@ void TerminalPaneTest::rendersAndRetainsKittyGraphics()
                                       * renderedCellHeight));
         QVERIFY2(approximatelyEqual(bottomPixel, QColor(0, 0, 255)),
                  qPrintable(bottomPixel.name(QColor::HexArgb)));
+        if (expectRhi) {
+            const QPointF boundaryPosition(
+                layout->gridRect.left() + renderedCellWidth / 2.0,
+                layout->gridRect.top()
+                    + (static_cast<qreal>(row) + 0.5) * renderedCellHeight);
+            const QColor boundaryPixel =
+                itemPixel(window, *pane, initialImage, boundaryPosition);
+            const QPointF boundaryScene = pane->mapToScene(boundaryPosition);
+            const qreal yScale =
+                static_cast<qreal>(initialImage.height()) / window.height();
+            const int sampledY = std::clamp(
+                static_cast<int>(std::floor(boundaryScene.y() * yScale)), 0,
+                initialImage.height() - 1);
+            const qreal sampledItemY =
+                pane->mapFromScene(
+                        QPointF(boundaryScene.x(),
+                                (static_cast<qreal>(sampledY) + 0.5) / yScale))
+                    .y();
+            const qreal destinationTop = layout->gridRect.top()
+                + static_cast<qreal>(row) * renderedCellHeight;
+            const qreal blueWeight = std::clamp(
+                2.0 * (sampledItemY - destinationTop) / renderedCellHeight
+                    - 0.5,
+                0.0, 1.0);
+            QVERIFY2(blueWeight > 0.1 && blueWeight < 0.9,
+                     qPrintable(QString::number(blueWeight)));
+            const qreal interpolatedAlpha =
+                (128.0 * (1.0 - blueWeight) + 255.0 * blueWeight) / 255.0;
+            const QColor expectedBoundary(
+                qRound(255.0 * (1.0 - blueWeight) * interpolatedAlpha), 0,
+                qRound(255.0 * blueWeight * interpolatedAlpha));
+            const QColor premultipliedBeforeFiltering(
+                qRound(128.0 * (1.0 - blueWeight)), 0,
+                qRound(255.0 * blueWeight));
+            // Straight RGBA must be interpolated first and only then
+            // premultiplied. Upload-time premultiplication would skew this
+            // boundary toward opaque blue instead.
+            QVERIFY(!approximatelyEqual(expectedBoundary,
+                                        premultipliedBeforeFiltering));
+            QVERIFY2(approximatelyEqual(boundaryPixel, expectedBoundary),
+                     qPrintable(boundaryPixel.name(QColor::HexArgb)));
+        }
     }
     const TerminalPaneRenderProbeSnapshot initial =
         terminalPaneRenderProbe(pane);
@@ -2166,8 +2200,9 @@ void TerminalPaneTest::rendersAndRetainsKittyGraphics()
                   TerminalKittyGraphicsLayer::BelowText,
                   TerminalKittyGraphicsLayer::AboveText}));
     QCOMPARE(initial.kittyGraphicsTextureCount, qsizetype{1});
+    QCOMPARE(initial.kittyGraphicsTextureBytes, quint64{16});
     const quint64 uploadsPerAsset = initial.kittyGraphicsTextureUploadCount;
-    QVERIFY(uploadsPerAsset == 1 || uploadsPerAsset == 2);
+    QCOMPARE(uploadsPerAsset, quint64{1});
     QCOMPARE(initial.kittyGraphicsNodeCreationCount,
              before.kittyGraphicsNodeCreationCount + 3);
     QCOMPARE(initial.kittyGraphicsNodeDeletionCount,
@@ -2221,6 +2256,7 @@ void TerminalPaneTest::rendersAndRetainsKittyGraphics()
     const TerminalPaneRenderProbeSnapshot moved = paintedProbe();
     QCOMPARE(moved.kittyGraphicsTextureUploadCount, uploadsPerAsset);
     QCOMPARE(moved.kittyGraphicsTextureCount, qsizetype{1});
+    QCOMPARE(moved.kittyGraphicsTextureBytes, quint64{16});
     QCOMPARE(moved.kittyGraphicsDestinations.constFirst().x(),
              renderedCellWidth);
     QCOMPARE(moved.kittyGraphicsNodeCreationCount,
@@ -2240,6 +2276,7 @@ void TerminalPaneTest::rendersAndRetainsKittyGraphics()
     const TerminalPaneRenderProbeSnapshot replaced = paintedProbe();
     QCOMPARE(replaced.kittyGraphicsTextureUploadCount, uploadsPerAsset * 2);
     QCOMPARE(replaced.kittyGraphicsTextureCount, qsizetype{1});
+    QCOMPARE(replaced.kittyGraphicsTextureBytes, quint64{16});
     QCOMPARE(replaced.kittyGraphicsNodeCreationCount,
              moved.kittyGraphicsNodeCreationCount);
     QCOMPARE(replaced.kittyGraphicsNodeDeletionCount,
@@ -2284,6 +2321,7 @@ void TerminalPaneTest::rendersAndRetainsKittyGraphics()
     const TerminalPaneRenderProbeSnapshot hidden = paintedProbe();
     QVERIFY(hidden.kittyGraphicsDestinations.isEmpty());
     QCOMPARE(hidden.kittyGraphicsTextureCount, qsizetype{0});
+    QCOMPARE(hidden.kittyGraphicsTextureBytes, quint64{0});
     QCOMPARE(hidden.kittyGraphicsNodeCreationCount,
              replacedAgain.kittyGraphicsNodeCreationCount);
     QCOMPARE(hidden.kittyGraphicsNodeDeletionCount,

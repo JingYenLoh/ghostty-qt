@@ -41,6 +41,7 @@
 namespace {
 
 constexpr int kittyPlacementCount = 512;
+constexpr quint64 kittyTextureLogicalBytes = 64ULL * 64ULL * 4ULL;
 
 struct GridSize {
     int columns = 0;
@@ -117,6 +118,8 @@ struct ScenarioResult {
     ProbeDelta expectedProbeDelta;
     qsizetype finalKittyTextureSetCount = 0;
     qsizetype expectedFinalKittyTextureSetCount = 0;
+    quint64 finalKittyTextureBytes = 0;
+    quint64 expectedFinalKittyTextureBytes = 0;
     int measuredFrames = 0;
 };
 
@@ -318,6 +321,18 @@ public:
         publishKitty(makeKittySnapshot(
             makeKittyImage(++kittyGeneration_, kittyValidationColor), 0));
         if (!renderUntimed(error, true, kittyValidationColor)) return false;
+
+        // Validate straight-alpha upload and source-over composition outside
+        // the measured scenarios on every available RHI backend. The expected
+        // color is QColor(203, 61, 149, 128) over the pane's black global
+        // background using byte-linear RGBA8 blending.
+        const QColor translucentValidationColor(203, 61, 149);
+        const QColor translucentExpectedColor(102, 31, 75);
+        publishKitty(makeKittySnapshot(
+            makeKittyImage(++kittyGeneration_, translucentValidationColor, 128),
+            1, 1));
+        if (!renderUntimed(error, true, translucentExpectedColor)) return false;
+
         publishKitty(nullptr);
         return renderUntimed(error);
     }
@@ -335,7 +350,7 @@ public:
         bool odd = false;
         return measure(
             QStringLiteral("metadata"), warmupIterations, measuredIterations,
-            {.paintSerial = 1}, 0, {},
+            {.paintSerial = 1}, 0, 0, {},
             [this, &odd] {
                 odd = !odd;
                 TerminalUpdate update;
@@ -360,7 +375,7 @@ public:
             measuredIterations,
             {.paintSerial = 1,
              .solidCellVisits = static_cast<quint64>(grid_.columns)},
-            0, {},
+            0, 0, {},
             [this, &odd] {
                 odd = !odd;
                 TerminalUpdate update;
@@ -387,7 +402,7 @@ public:
             QStringLiteral("cursor-only"), warmupIterations, measuredIterations,
             {.paintSerial = 1,
              .solidCellVisits = static_cast<quint64>(2 * grid_.columns)},
-            0, {},
+            0, 0, {},
             [this] {
                 cursorRow_ = cursorRow_ == 0 ? grid_.rows - 1 : 0;
                 publishCursor();
@@ -406,7 +421,7 @@ public:
             {.paintSerial = 1,
              .solidCellVisits =
                  static_cast<quint64>(grid_.columns * grid_.rows)},
-            0, {},
+            0, 0, {},
             [this, &odd] {
                 odd = !odd;
                 publishFullFrame(odd);
@@ -425,7 +440,7 @@ public:
             measuredIterations,
             {.paintSerial = 1,
              .solidCellVisits = static_cast<quint64>(2 * grid_.columns)},
-            0, {},
+            0, 0, {},
             [this, &row] {
                 row = row == 1 ? 2 : 1;
                 publishSearch(row);
@@ -437,12 +452,32 @@ public:
                                     int measuredIterations,
                                     RenderDocCapture *capture, QString *error)
     {
+        return kittyFirstUploadScenario(QStringLiteral("kitty-first-upload"),
+                                        255, warmupIterations,
+                                        measuredIterations, capture, error);
+    }
+
+    ScenarioResult kittyTranslucentFirstUpload(int warmupIterations,
+                                               int measuredIterations,
+                                               RenderDocCapture *capture,
+                                               QString *error)
+    {
+        return kittyFirstUploadScenario(
+            QStringLiteral("kitty-translucent-first-upload"), 128,
+            warmupIterations, measuredIterations, capture, error);
+    }
+
+    ScenarioResult kittyFirstUploadScenario(const QString &name, int opacity,
+                                            int warmupIterations,
+                                            int measuredIterations,
+                                            RenderDocCapture *capture,
+                                            QString *error)
+    {
         clearSearch();
         quint64 generation = ++kittyGeneration_;
         std::shared_ptr<const TerminalKittyGraphicsSnapshot> nextSnapshot;
         return measure(
-            QStringLiteral("kitty-first-upload"), warmupIterations,
-            measuredIterations,
+            name, warmupIterations, measuredIterations,
             {
                 .paintSerial = 1,
                 .kittyTextureUploads = 1,
@@ -451,12 +486,13 @@ public:
                 .kittyMaterialAssignments = kittyPlacementCount,
                 .kittyTextureSetCount = 1,
             },
-            1,
-            [this, &generation, &nextSnapshot, error] {
+            1, kittyTextureLogicalBytes,
+            [this, &generation, &nextSnapshot, opacity, error] {
                 publishKitty(nullptr);
                 if (!renderUntimed(error)) return false;
                 nextSnapshot = makeKittySnapshot(
-                    makeKittyImage(++generation, QColor(32, 96, 192)), 0);
+                    makeKittyImage(++generation, QColor(32, 96, 192), opacity),
+                    0);
                 return true;
             },
             [this, &nextSnapshot] { publishKitty(nextSnapshot); }, capture,
@@ -468,14 +504,36 @@ public:
                                        RenderDocCapture *capture,
                                        QString *error)
     {
+        return kittyRetainedRedrawScenario(
+            QStringLiteral("kitty-retained-redraw"), 255, warmupIterations,
+            measuredIterations, capture, error);
+    }
+
+    ScenarioResult kittyTranslucentRetainedRedraw(int warmupIterations,
+                                                  int measuredIterations,
+                                                  RenderDocCapture *capture,
+                                                  QString *error)
+    {
+        return kittyRetainedRedrawScenario(
+            QStringLiteral("kitty-translucent-retained-redraw"), 128,
+            warmupIterations, measuredIterations, capture, error);
+    }
+
+    ScenarioResult kittyRetainedRedrawScenario(const QString &name, int opacity,
+                                               int warmupIterations,
+                                               int measuredIterations,
+                                               RenderDocCapture *capture,
+                                               QString *error)
+    {
         clearSearch();
         const auto snapshot = makeKittySnapshot(
-            makeKittyImage(++kittyGeneration_, QColor(48, 144, 208)), 0);
+            makeKittyImage(++kittyGeneration_, QColor(48, 144, 208), opacity),
+            0);
         publishKitty(snapshot);
         if (!renderUntimed(error)) return {};
         return measure(
-            QStringLiteral("kitty-retained-redraw"), warmupIterations,
-            measuredIterations, {.paintSerial = 1}, 1, {},
+            name, warmupIterations, measuredIterations, {.paintSerial = 1}, 1,
+            kittyTextureLogicalBytes, {},
             [this, snapshot] { publishKitty(snapshot); }, capture, error);
     }
 
@@ -497,7 +555,7 @@ public:
                 .paintSerial = 1,
                 .kittyGeometryWrites = kittyPlacementCount,
             },
-            1, {},
+            1, kittyTextureLogicalBytes, {},
             [this, left, right, &moved] {
                 moved = !moved;
                 publishKitty(moved ? right : left);
@@ -509,24 +567,46 @@ public:
                                     int measuredIterations,
                                     RenderDocCapture *capture, QString *error)
     {
+        return kittyReplacementScenario(QStringLiteral("kitty-replacement"),
+                                        255, warmupIterations,
+                                        measuredIterations, capture, error);
+    }
+
+    ScenarioResult kittyTranslucentReplacement(int warmupIterations,
+                                               int measuredIterations,
+                                               RenderDocCapture *capture,
+                                               QString *error)
+    {
+        return kittyReplacementScenario(
+            QStringLiteral("kitty-translucent-replacement"), 128,
+            warmupIterations, measuredIterations, capture, error);
+    }
+
+    ScenarioResult kittyReplacementScenario(const QString &name, int opacity,
+                                            int warmupIterations,
+                                            int measuredIterations,
+                                            RenderDocCapture *capture,
+                                            QString *error)
+    {
         clearSearch();
         const auto first = makeKittySnapshot(
-            makeKittyImage(++kittyGeneration_, QColor(224, 96, 48)), 0);
+            makeKittyImage(++kittyGeneration_, QColor(224, 96, 48), opacity),
+            0);
         const auto second = makeKittySnapshot(
-            makeKittyImage(++kittyGeneration_, QColor(240, 192, 48)), 0);
+            makeKittyImage(++kittyGeneration_, QColor(240, 192, 48), opacity),
+            0);
         publishKitty(first);
         if (!renderUntimed(error)) return {};
         bool replaced = false;
         return measure(
-            QStringLiteral("kitty-replacement"), warmupIterations,
-            measuredIterations,
+            name, warmupIterations, measuredIterations,
             {
                 .paintSerial = 1,
                 .kittyTextureUploads = 1,
                 .kittyMaterialAssignments = kittyPlacementCount,
                 .kittyTextureSetEvictions = 1,
             },
-            1, {},
+            1, kittyTextureLogicalBytes, {},
             [this, first, second, &replaced] {
                 replaced = !replaced;
                 publishKitty(replaced ? second : first);
@@ -548,7 +628,7 @@ public:
                 .kittyTextureSetEvictions = 1,
                 .kittyTextureSetCount = -1,
             },
-            0,
+            0, 0,
             [this, &generation, error] {
                 publishKitty(makeKittySnapshot(
                     makeKittyImage(++generation, QColor(128, 64, 192)), 0));
@@ -730,22 +810,25 @@ private:
     }
 
     std::shared_ptr<const TerminalKittyGraphicsImage>
-    makeKittyImage(quint64 generation, const QColor &color) const
+    makeKittyImage(quint64 generation, const QColor &color,
+                   int opacity = 255) const
     {
-        QImage rgb(QSize(64, 64), QImage::Format_RGBX8888);
-        rgb.fill(color);
+        QImage rgba(QSize(64, 64), QImage::Format_RGBA8888);
+        QColor packed = color;
+        packed.setAlpha(opacity);
+        rgba.fill(packed);
         return std::make_shared<const TerminalKittyGraphicsImage>(
             TerminalKittyGraphicsImage{
                 .imageId = 42,
                 .generation = generation,
-                .fullyOpaque = true,
-                .straightRgbPlane = std::move(rgb),
+                .fullyOpaque = opacity == 255,
+                .straightRgba = std::move(rgba),
             });
     }
 
     std::shared_ptr<const TerminalKittyGraphicsSnapshot> makeKittySnapshot(
         const std::shared_ptr<const TerminalKittyGraphicsImage> &asset,
-        int columnOffset) const
+        int columnOffset, int placementCount = kittyPlacementCount) const
     {
         auto snapshot = std::make_shared<TerminalKittyGraphicsSnapshot>();
         snapshot->storageGeneration = asset->generation;
@@ -756,8 +839,8 @@ private:
             qMax(1, qRound(probe.metrics.cellWidth * dpr)));
         snapshot->cellHeightPixels = static_cast<quint32>(
             qMax(1, qRound(probe.metrics.cellHeight * dpr)));
-        snapshot->placements.reserve(kittyPlacementCount);
-        for (int index = 0; index < kittyPlacementCount; ++index) {
+        snapshot->placements.reserve(placementCount);
+        for (int index = 0; index < placementCount; ++index) {
             const int column =
                 (index % qMax(1, grid_.columns - 1)) + columnOffset;
             const int row = (index / qMax(1, grid_.columns - 1)) % grid_.rows;
@@ -771,9 +854,9 @@ private:
                 .destinationWidthPixels = snapshot->cellWidthPixels,
                 .destinationHeightPixels = snapshot->cellHeightPixels,
                 .sourceWidth =
-                    static_cast<quint32>(asset->straightRgbPlane.width()),
+                    static_cast<quint32>(asset->straightRgba.width()),
                 .sourceHeight =
-                    static_cast<quint32>(asset->straightRgbPlane.height()),
+                    static_cast<quint32>(asset->straightRgba.height()),
             });
         }
         return snapshot;
@@ -922,6 +1005,7 @@ private:
                            int measuredIterations,
                            ProbeDelta expectedProbeDeltaPerFrame,
                            qsizetype expectedFinalKittyTextureSetCount,
+                           quint64 expectedFinalKittyTextureBytes,
                            const std::function<bool()> &setupIteration,
                            const std::function<void()> &prepare,
                            RenderDocCapture *capture, QString *error)
@@ -946,6 +1030,7 @@ private:
         gpuSamples.reserve(frameCount);
         ProbeDelta accumulatedDelta;
         qsizetype finalTextureSetCount = 0;
+        quint64 finalTextureBytes = 0;
         for (int iteration = 0; iteration < frameCount; ++iteration) {
             if (!setup()) return {};
             const TerminalPaneRenderProbeSnapshot before =
@@ -972,6 +1057,7 @@ private:
                 terminalPaneRenderProbe(pane_);
             accumulatedDelta += after - before;
             finalTextureSetCount = after.kittyGraphicsTextureCount;
+            finalTextureBytes = after.kittyGraphicsTextureBytes;
             if (timing.cpuUpdateNanoseconds.has_value()) {
                 cpuUpdateSamples.append(*timing.cpuUpdateNanoseconds);
             }
@@ -1013,6 +1099,8 @@ private:
             .finalKittyTextureSetCount = finalTextureSetCount,
             .expectedFinalKittyTextureSetCount =
                 expectedFinalKittyTextureSetCount,
+            .finalKittyTextureBytes = finalTextureBytes,
+            .expectedFinalKittyTextureBytes = expectedFinalKittyTextureBytes,
             .measuredFrames = frameCount,
         };
     }
@@ -1085,11 +1173,17 @@ const QVector<std::pair<QString, ScenarioFunction>> &scenarioFunctions()
         {QStringLiteral("search-update"), &RendererBenchmark::searchUpdate},
         {QStringLiteral("kitty-first-upload"),
          &RendererBenchmark::kittyFirstUpload},
+        {QStringLiteral("kitty-translucent-first-upload"),
+         &RendererBenchmark::kittyTranslucentFirstUpload},
         {QStringLiteral("kitty-retained-redraw"),
          &RendererBenchmark::kittyRetainedRedraw},
+        {QStringLiteral("kitty-translucent-retained-redraw"),
+         &RendererBenchmark::kittyTranslucentRetainedRedraw},
         {QStringLiteral("kitty-movement"), &RendererBenchmark::kittyMovement},
         {QStringLiteral("kitty-replacement"),
          &RendererBenchmark::kittyReplacement},
+        {QStringLiteral("kitty-translucent-replacement"),
+         &RendererBenchmark::kittyTranslucentReplacement},
         {QStringLiteral("kitty-eviction"), &RendererBenchmark::kittyEviction},
     };
     return functions;
@@ -1148,7 +1242,9 @@ bool printResult(GridSize grid, const ScenarioResult &result,
            << " kitty_texture_set_count_delta="
            << result.probeDelta.kittyTextureSetCount
            << " kitty_texture_set_count_final="
-           << result.finalKittyTextureSetCount << '\n';
+           << result.finalKittyTextureSetCount
+           << " kitty_texture_bytes_final=" << result.finalKittyTextureBytes
+           << '\n';
 
     bool valid = true;
     const auto requireEqual = [&](auto actual, auto expected,
@@ -1187,6 +1283,9 @@ bool printResult(GridSize grid, const ScenarioResult &result,
     requireEqual(result.finalKittyTextureSetCount,
                  result.expectedFinalKittyTextureSetCount,
                  u"final Kitty texture-set count");
+    requireEqual(result.finalKittyTextureBytes,
+                 result.expectedFinalKittyTextureBytes,
+                 u"final Kitty logical texture bytes");
     return valid;
 }
 

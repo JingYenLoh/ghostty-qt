@@ -1385,6 +1385,7 @@ void publishRenderProbe(
     snapshot.kittyGraphicsTextureSetEvictionCount =
         root.kittyGraphics.textureSetEvictionCount();
     snapshot.kittyGraphicsTextureCount = root.kittyGraphics.textureCount();
+    snapshot.kittyGraphicsTextureBytes = root.kittyGraphics.textureBytes();
     snapshot.kittyGraphicsDestinations.clear();
     snapshot.kittyGraphicsSources.clear();
     snapshot.kittyGraphicsLayers.clear();

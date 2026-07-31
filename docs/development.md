@@ -78,6 +78,10 @@ LIBGL_ALWAYS_SOFTWARE=1 \
     --graphics-api opengl \
     --width 1280 --height 720 --warmup 200 --iterations 100
 ./build/release/tests/bench-terminal-kitty-graphics \
+    --pixel-format rgb24 \
+    --width 640 --height 360 --warmup 10 --iterations 100
+./build/release/tests/bench-terminal-kitty-graphics \
+    --pixel-format rgba32 \
     --width 640 --height 360 --warmup 10 --iterations 100
 ```
 
@@ -87,10 +91,12 @@ whole-command-buffer GPU timestamps where supported. Each scenario also reports
 and validates paint and cell-visit counts plus Kitty texture uploads, live
 generation-keyed texture-set cache entries, texture-set evictions,
 placement-node creation/deletion, geometry writes, and node material
-assignments. A texture set owns one GPU texture for an opaque image and two for
-a translucent image; the shared opaque alpha texture is not counted. The Kitty
-cases use 512 placements sharing opaque assets and separately exercise first
-upload, a same-snapshot redraw, movement, same-ID replacement, and eviction.
+assignments. It also reports and validates the live logical RGBA8 texture
+bytes. Every texture set owns one GPU texture. An untimed initialization
+readback validates straight-alpha upload and composition on the selected RHI
+backend. The Kitty cases use 512 placements sharing assets and separately
+exercise opaque and translucent first upload, same-snapshot redraw, and
+same-ID replacement, plus opaque movement and eviction.
 Their churn guards require retained redraws to perform no scene-graph work,
 movement to rewrite geometry only, same-ID replacement to rebind materials
 only, and eviction to delete the placements and texture set. Offscreen
@@ -217,27 +223,27 @@ non-empty capture:
 
 Accepted scenario names are `metadata`, `one-dirty-row`, `cursor-only`,
 `full-invalidation`, `search-update`, `kitty-first-upload`,
-`kitty-retained-redraw`, `kitty-movement`, `kitty-replacement`, and
-`kitty-eviction`. Capture mode records one frame of the selected scenario on
-the 120×40 grid after warmup and intentionally suppresses its instrumented
-timings. The output texture is named
+`kitty-translucent-first-upload`, `kitty-retained-redraw`,
+`kitty-translucent-retained-redraw`, `kitty-movement`,
+`kitty-replacement`, `kitty-translucent-replacement`, and `kitty-eviction`.
+Capture mode records one frame of the selected scenario on the 120×40 grid
+after warmup and intentionally suppresses its instrumented timings. The output
+texture is named
 `ghostty-qt terminal-pane benchmark output`. Pass `opengl` as the first
 argument to select it instead; Vulkan is preferred. Set
 `QT_QPA_PLATFORM=xcb` or `wayland` before the command when automatic platform
 selection is unsuitable.
 
-The Kitty import benchmark separately feeds sustained mpv-shaped RGB24 frames
-through libghostty and the Qt snapshot boundary. It reports
-parse/materialization latency, raw and wire throughput, the exact retained Qt
-plane bytes, and Linux resident-set growth. It also prints the estimated
-libghostty raw history and the theoretical pre-change uncull cost of retaining
-two four-byte Qt planes for every submitted frame. Its one-placement and
-zero-alpha-plane checks guard the opaque replacement cull and single-plane
-path. RSS includes libghostty's image history and allocator behavior, so
-compare it only with identical dimensions, frame counts, storage limits, and
-builds. The benchmark rejects a run whose complete history exceeds the default
-image-storage limit, ensuring libghostty eviction cannot make an unbounded Qt
-snapshot look bounded.
+The Kitty import benchmark separately feeds explicit-ID replacement frames
+through libghostty and the Qt snapshot boundary. `--pixel-format rgb24`
+provides an opaque comparison stream; `rgba32` uses deterministic varying
+alpha. It reports
+parse/materialization latency, raw and wire throughput, the exact retained
+packed Qt bytes, the former two-plane reference cost, and Linux resident-set
+growth. Its one-placement, opacity, and `RGBA8888` checks guard the intended
+replacement and storage paths. RSS includes libghostty and allocator behavior,
+so compare it only with identical dimensions, frame counts, storage limits,
+and builds.
 
 ## C++ formatting
 
@@ -885,9 +891,9 @@ replacement for upstream testing.
 The XCB/OpenGL Kitty integration test uses Xvfb in CI and a live X display
 locally. Sanitizer builds explicitly skip it because Qt reaches the
 distribution's uninstrumented XCB/XKB keymap setup before creating a window;
-shader reflection, placement geometry, mpv-shaped protocol input, and the
-software renderer remain covered by the sanitizer suite. With X or Xvfb
-available, Debug and Release CTest runs still require and verify the real
+shader reflection, placement geometry, explicit-replacement protocol input,
+and the software renderer remain covered by the sanitizer suite. With X or
+Xvfb available, Debug and Release CTest runs still require and verify the real
 OpenGL RHI path.
 
 The clean step is required when another preset has already populated the shared
