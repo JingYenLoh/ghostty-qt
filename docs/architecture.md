@@ -387,10 +387,11 @@ when both settings are enabled the retained state and a visibility observer
 restore maximized after either an action- or compositor-driven fullscreen
 exit. A separate session-start transaction consumes the selected initial
 command and CLI hold state only when the first session successfully initializes
-libghostty-vt. A process-wide coordinator grants immutable positional-program,
+libghostty-vt. A process-wide coordinator grants immutable explicit-program,
 tagged-command, and hold snapshots in FIFO start order, commits a grant before
-child launch, and releases it if terminal initialization fails. Positional CLI
-argv wins over the configured `initial-command`, which in turn replaces
+child launch, and releases it if terminal initialization fails. Direct CLI argv
+introduced by the first exact `-e`, or by the retained `--` spelling, wins over
+the configured `initial-command`, which in turn replaces
 `command` for this one lease. Suppressed startup, window construction or
 presentation failure before terminal initialization, and a deferred root
 closed before exposure therefore retain the current values for the next
@@ -407,8 +408,11 @@ hosts at most one confirmation on the active window, changes no window on
 cancel, re-hosts if that dialog window disappears, and begins every workspace
 shutdown before emitting one irreversible process quit. It bypasses both the
 disabled last-window policy and any delay, including with zero windows. A
-command supplied after `--` matches Ghostty's `-e` lifetime rule by forcing
-immediate last-window exit.
+command supplied after `-e` or `--` matches Ghostty's explicit-command lifetime
+rule by forcing immediate last-window exit. The former consumes every remaining
+argument opaquely and rejects a missing command before Qt starts; the argv then
+crosses the existing Qt local-text boundary, so malformed non-text Unix bytes
+are not lossless.
 
 The strict void `open_config` action emits one process request even when a
 broad binding originated from multiple surfaces. On Linux its edit candidates
@@ -581,7 +585,7 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
 ## Output path
 
 1. `SessionWorker` creates a `GhosttyVtAdapter`, which owns the Ghostty terminal
-   and render-state handles, then starts the selected tagged or positional
+   and render-state handles, then starts the selected tagged or explicit-argv
    command with `forkpty`.
 2. A nonblocking `QSocketNotifier` drains the PTY master and sends bytes to
    the adapter's VT-write operation.
@@ -1318,7 +1322,7 @@ reconsidered even if the terminal has not mutated since the reload.
 
 Every pane receives the applicable current launch policy, while only the
 process's first successfully initialized session receives the one-shot
-`initial-command`, positional CLI program, and hold values. A deferred pane
+`initial-command`, explicit `-e`/`--` CLI program, and hold values. A deferred pane
 destroyed before start or a failed libghostty-vt initialization does not
 consume them; once initialization succeeds, an exec failure does. CLI argv has
 highest execution precedence, then `initial-command`, then the ordinary
@@ -2529,10 +2533,10 @@ pinned action spelling and a separate frontend-support decision. This preserves
 Ghostty's distinction between a known-but-unsupported action, an invalid
 spelling, and a second action without maintaining multiple policy lists. At the
 first line of process startup, before argument transcoding or any Qt object,
-the frontend classifies raw `argv`. The frontend's documented `--` command delimiter stops
+the frontend classifies raw `argv`. The retained `--` command delimiter stops
 detection before its terminal payload. An exact earlier `-e` also suppresses
-delegation to match pinned Ghostty's detector ordering, although `-e` itself
-remains unsupported by the frontend launch parser. Standalone frontend
+delegation to match pinned Ghostty's detector ordering; the frontend launch
+parser then consumes its complete remaining direct argv. Standalone frontend
 `--help`/`--version` remain separate while pinned `+version` is delegated,
 deferred actions and the private
 `+show-config-json` protocol are rejected, and multiple actions fail closed.
@@ -2610,11 +2614,15 @@ The staged relocation test installs into a temporary prefix, moves the prefix,
 runs the moved main executable through its sibling helper, and runs a Qt
 Core-only probe from the moved `bin` directory to verify that it selects the
 moved private database. It also runs `+list-themes` against the moved bundled
-resources. A separate staged-install test verifies the
-configuration-specific desktop entry and direct D-Bus service, their distinct
-fallback/zero-window commands, exact service identity, actual install-prefix
-or configured-absolute executable path, DESTDIR exclusion from embedded paths,
-absence of unresolved placeholders, and the config-on/off helper boundary.
+resources. A separate staged-install test verifies the configuration-specific
+desktop entry and direct D-Bus service, `TryExec`, the New Window action,
+supported terminal-launcher Exec/AppId/Dir mappings, deliberate Title/Hold
+omission, their distinct fallback/zero-window commands, exact service identity,
+actual install-prefix or configured-absolute executable path, DESTDIR exclusion
+from embedded paths, absence of unresolved placeholders, and the config-on/off
+helper boundary. A special-character prefix distinguishes ordinary-string,
+Desktop Entry Exec, and D-Bus Exec escaping; where the reference D-Bus tools
+are available, the test also activates the installed service on a private bus.
 Systemd notification integration, icon, AppStream, and distribution packaging
 remain separate work; per-pane transient systemd cgroups are implemented.
 
@@ -2657,7 +2665,8 @@ for user-defined expressions and actions.
 The default CTest suite has focused layers for each ownership boundary:
 
 - `launch-options` validates defaults, accepted values, invalid CLI input,
-  tagged ordinary/initial command projection, live wait policy, typography,
+  opaque `-e` and retained `--` command boundaries, tagged ordinary/initial
+  command projection, live wait policy, typography,
   appearance overlays and bell features, exact f32 CLI font precedence passed
   into helper finalization, scrollback units, mouse-hide policy, and close
   modes.
@@ -2754,7 +2763,7 @@ The default CTest suite has focused layers for each ownership boundary:
   `TERMINFO`/`COLORTERM` values, byte-exact finalized environment overrides,
   concrete-directory `PWD` precedence, inherited fallback, and parent-`PATH`
   executable lookup, pinned shell-feature setup before finalized env,
-  positional-program forced-mode downgrade, semantic prompt/builtin and
+  explicit-program forced-mode downgrade, semantic prompt/builtin and
   alternate-screen activity transitions, plus byte-exact terminal-control action writes,
   injected cgroup placement before child exec, soft fallback, hard rejection,
   disabled-policy bypass, reset cache
@@ -2942,9 +2951,10 @@ The default CTest suite has focused layers for each ownership boundary:
   covers candidate/selected/terminal-selection precedence, resize-safe masks,
   live colors, overlay state, and the distinction between UI and engine-only
   actions.
-- `application-lifecycle` starts the complete QML application on Qt's offscreen
-  software backend, verifies a short-lived child closes the window cleanly,
-  and fails on QML binding-loop diagnostics.
+- `application-lifecycle` and `application-lifecycle-dash-e` start the complete
+  QML application on Qt's offscreen software backend through both command
+  spellings, verify a short-lived child closes the window cleanly, and fail on
+  QML binding-loop diagnostics.
 - `application-lifetime-controller` covers immediate, delayed, disabled,
   cancellation, idempotent and changed reload, stale-timeout, transient-window,
   and explicit-quit behavior without wall-clock process orchestration.
@@ -2984,8 +2994,10 @@ The default CTest suite has focused layers for each ownership boundary:
   reentrant half-pair destruction and shell-child token scrubbing.
 - `desktop-integration-install` stages an installation under repository-local
   `./tmp` and validates configuration-specific desktop/service metadata,
-  install-time executable paths, bootstrap arguments, and config-helper
-  presence or absence.
+  install-time executable and `TryExec` paths, the New Window action,
+  terminal-launcher argument mappings, bootstrap arguments, special-character
+  serialization, live private-bus activation when D-Bus tools are available,
+  and config-helper presence or absence.
 - `application-close-dialog` opens and accepts the real QML close confirmation
   around a live child, failing on binding loops or shutdown regressions.
 - `ghostty-parity-manifest` checks the pinned revision and upstream-derived

@@ -260,9 +260,9 @@ struct LaunchOptions {
     bool operator==(const LaunchOptions &) const = default;
 };
 
-// Initial-command, positional program, and hold form Ghostty's process-wide
-// one-shot initial-session payload. Every ordinary pane keeps command and the
-// remaining launch policy unchanged.
+// Initial-command, an explicit `-e` or retained `--` program, and hold form
+// Ghostty's process-wide one-shot initial-session payload. Every ordinary pane
+// keeps command and the remaining launch policy unchanged.
 [[nodiscard]] LaunchOptions withoutInitialCommand(LaunchOptions options);
 
 // Explicitly project the broad application/pane configuration onto the

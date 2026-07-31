@@ -39,12 +39,18 @@ ${CMAKE_INSTALL_DATADIR}/dbus-1/services/io.github.JingYenLoh.ghostty_qt.service
 A Debug install appends `.Debug` to the filenames and application identity, so
 it cannot activate a Release process.
 
-The desktop entry requests single-instance startup. The D-Bus service starts a
-resident zero-window host and lets the queued activation create one window.
-Warm and cold activation support ordinary launches, `+new-window`, and
-`+toggle-quick-terminal`. Activation tokens and startup IDs are scoped to the
-requested window and are scrubbed before terminal children inherit their base
-environment.
+The desktop entry names the installed executable through `TryExec`, requests
+single-instance startup, and provides a New Window desktop action. Its
+`X-TerminalArgExec`, `X-TerminalArgAppId`, and `X-TerminalArgDir` fields expose
+the supported `-e`, `--class=`, and `--working-directory=` spellings to desktop
+terminal launchers. Title and hold metadata are deliberately absent until the
+corresponding Ghostty-compatible CLI options exist.
+
+The D-Bus service starts a resident zero-window host and lets the queued
+activation create one window. Warm and cold activation support ordinary
+launches, `+new-window`, and `+toggle-quick-terminal`. Activation tokens and
+startup IDs are scoped to the requested window and are scrubbed before terminal
+children inherit their base environment.
 
 There is not yet a project icon, AppStream metadata, or distribution package.
 

@@ -15,6 +15,22 @@ namespace {
 
 constexpr int kMaximumScrollbackLines = 10'000'000;
 
+std::optional<qsizetype> explicitCommandBoundary(const QStringList &arguments)
+{
+    for (qsizetype index = 1; index < arguments.size(); ++index) {
+        const QStringView argument(arguments.at(index));
+        if (argument == QLatin1StringView("--")) {
+            // The frontend's existing `--` spelling makes everything after it
+            // positional, including a literal executable named `-e`.
+            return std::nullopt;
+        }
+        if (argument == QLatin1StringView("-e")) {
+            return index;
+        }
+    }
+    return std::nullopt;
+}
+
 std::optional<bool> parseGhosttyBoolean(QStringView value)
 {
     if (value == QLatin1StringView("true") || value == QLatin1StringView("1")
@@ -284,6 +300,18 @@ parseLaunchOptions(const QStringList &arguments)
             "The argument list must include the application name."));
     }
 
+    QStringList parserArguments = arguments;
+    QStringList explicitCommand;
+    const std::optional<qsizetype> commandBoundary =
+        explicitCommandBoundary(arguments);
+    if (commandBoundary.has_value()) {
+        if (*commandBoundary + 1 >= arguments.size()) {
+            return std::unexpected(QStringLiteral("Missing command after -e."));
+        }
+        explicitCommand = arguments.sliced(*commandBoundary + 1);
+        parserArguments = arguments.sliced(0, *commandBoundary);
+    }
+
     QCommandLineParser parser;
     parser.setApplicationDescription(
         QStringLiteral("A Qt terminal emulator powered by libghostty."));
@@ -347,8 +375,15 @@ parseLaunchOptions(const QStringList &arguments)
         QStringLiteral("Program and arguments to execute after --."),
         QStringLiteral("[program [arguments...]]"));
 
-    if (!parser.parse(arguments)) {
+    if (!parser.parse(parserArguments)) {
         return std::unexpected(parser.errorText());
+    }
+
+    if (commandBoundary.has_value()
+        && !parser.positionalArguments().isEmpty()) {
+        return std::unexpected(
+            QStringLiteral("Unexpected positional argument before -e: %1")
+                .arg(parser.positionalArguments().constFirst()));
     }
 
     LaunchOptions parsed;
@@ -449,7 +484,8 @@ parseLaunchOptions(const QStringList &arguments)
     parsed.hold = parser.isSet(holdOption);
     parsed.showHelp = parser.isSet(helpOption);
     parsed.showVersion = parser.isSet(versionOption);
-    parsed.program = parser.positionalArguments();
+    parsed.program = commandBoundary.has_value() ? std::move(explicitCommand)
+                                                 : parser.positionalArguments();
     const bool singleInstanceSet = parser.isSet(singleInstanceOption);
     const bool legacySingleInstanceSet =
         parser.isSet(legacySingleInstanceOption);

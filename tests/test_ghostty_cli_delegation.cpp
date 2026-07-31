@@ -1316,6 +1316,8 @@ void GhosttyCliDelegationTest::enforcesBuildConfigurationBoundary()
     QCOMPARE(frontendHelp->exitCode, 0);
     QVERIFY(frontendHelp->standardOutput.contains(
         QByteArrayLiteral("Linux Wayland terminal emulator")));
+    QVERIFY(frontendHelp->standardOutput.contains(
+        QByteArrayLiteral("-e PROGRAM [ARGUMENTS...]")));
 
 #if GHOSTTY_QT_TEST_CONFIG_ENABLED
     for (const GhosttyCliActionCatalogEntry &entry

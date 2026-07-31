@@ -3,10 +3,19 @@ Version=1.0
 Type=Application
 Name=Ghostty Qt
 Comment=A Wayland terminal emulator powered by libghostty
+TryExec=__GHOSTTY_QT_INSTALL_TRY_EXECUTABLE__
 Exec="__GHOSTTY_QT_INSTALL_EXECUTABLE__" --single-instance=true
 Categories=System;TerminalEmulator;
 Keywords=terminal;tty;pty;
 StartupNotify=true
 StartupWMClass=@GHOSTTY_QT_EFFECTIVE_APPLICATION_ID@
 Terminal=false
+Actions=new-window;
+X-TerminalArgExec=-e
+X-TerminalArgAppId=--class=
+X-TerminalArgDir=--working-directory=
 DBusActivatable=true
+
+[Desktop Action new-window]
+Name=New Window
+Exec="__GHOSTTY_QT_INSTALL_EXECUTABLE__" --single-instance=true

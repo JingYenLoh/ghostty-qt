@@ -1080,10 +1080,15 @@ add_test(
     NAME application-lifecycle
     COMMAND $<TARGET_FILE:ghostty-qt> -- /bin/true
 )
+add_test(
+    NAME application-lifecycle-dash-e
+    COMMAND $<TARGET_FILE:ghostty-qt> -e /bin/true
+)
 set(_ghostty_qt_lifecycle_config_home
     "${CMAKE_CURRENT_BINARY_DIR}/application-lifecycle-config")
 file(MAKE_DIRECTORY "${_ghostty_qt_lifecycle_config_home}")
-set_tests_properties(application-lifecycle PROPERTIES
+set_tests_properties(application-lifecycle application-lifecycle-dash-e
+    PROPERTIES
     TIMEOUT 5
     ENVIRONMENT
         "GHOSTTY_QT_ALLOW_NON_WAYLAND=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1;XDG_CONFIG_HOME=${_ghostty_qt_lifecycle_config_home}"

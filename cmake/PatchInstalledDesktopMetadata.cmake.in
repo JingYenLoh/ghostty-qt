@@ -14,10 +14,39 @@ if(NOT IS_ABSOLUTE "${_ghostty_qt_binary_dir}")
 endif()
 cmake_path(NORMAL_PATH _ghostty_qt_binary_dir)
 set(_ghostty_qt_executable "${_ghostty_qt_binary_dir}/ghostty-qt")
-string(REPLACE "\\" "\\\\" _ghostty_qt_executable
-    "${_ghostty_qt_executable}")
-string(REPLACE "\"" "\\\"" _ghostty_qt_executable
-    "${_ghostty_qt_executable}")
+if(_ghostty_qt_executable MATCHES [[=]])
+    message(FATAL_ERROR
+        "The Desktop Entry Exec grammar cannot represent an executable path containing '=': ${_ghostty_qt_executable}")
+endif()
+
+# TryExec is an ordinary Desktop Entry string. Desktop Entry Exec and D-Bus
+# service Exec are both quoted command tokens with a second escaping layer, but
+# only the Desktop Entry form expands percent field codes. Keep all three
+# serializations separate. Bracket arguments make the intended number of
+# emitted backslashes explicit.
+set(_ghostty_qt_try_executable "${_ghostty_qt_executable}")
+string(REPLACE [[\]] [[\\]] _ghostty_qt_try_executable
+    "${_ghostty_qt_try_executable}")
+
+set(_ghostty_qt_dbus_executable "${_ghostty_qt_executable}")
+string(REPLACE [[\]] [[\\\\]] _ghostty_qt_dbus_executable
+    "${_ghostty_qt_dbus_executable}")
+string(ASCII 34 _ghostty_qt_double_quote)
+string(ASCII 36 _ghostty_qt_dollar)
+string(ASCII 96 _ghostty_qt_backtick)
+foreach(_ghostty_qt_quoted_character IN ITEMS
+        "${_ghostty_qt_double_quote}"
+        "${_ghostty_qt_dollar}"
+        "${_ghostty_qt_backtick}")
+    string(CONCAT _ghostty_qt_escaped_character
+        [[\\]] "${_ghostty_qt_quoted_character}")
+    string(REPLACE "${_ghostty_qt_quoted_character}"
+        "${_ghostty_qt_escaped_character}"
+        _ghostty_qt_dbus_executable "${_ghostty_qt_dbus_executable}")
+endforeach()
+set(_ghostty_qt_exec_executable "${_ghostty_qt_dbus_executable}")
+string(REPLACE [[%]] [[%%]] _ghostty_qt_exec_executable
+    "${_ghostty_qt_exec_executable}")
 
 foreach(_ghostty_qt_metadata IN ITEMS
         "applications/@GHOSTTY_QT_EFFECTIVE_APPLICATION_ID@.desktop"
@@ -26,9 +55,16 @@ foreach(_ghostty_qt_metadata IN ITEMS
         "${_ghostty_qt_metadata_root}/${_ghostty_qt_metadata}")
     file(READ "${_ghostty_qt_metadata_path}" _ghostty_qt_contents)
     string(REPLACE "__GHOSTTY_QT_INSTALL_EXECUTABLE__"
-        "${_ghostty_qt_executable}"
+        "${_ghostty_qt_exec_executable}"
         _ghostty_qt_contents "${_ghostty_qt_contents}")
-    if(_ghostty_qt_contents MATCHES "__GHOSTTY_QT_INSTALL_EXECUTABLE__")
+    string(REPLACE "__GHOSTTY_QT_INSTALL_TRY_EXECUTABLE__"
+        "${_ghostty_qt_try_executable}"
+        _ghostty_qt_contents "${_ghostty_qt_contents}")
+    string(REPLACE "__GHOSTTY_QT_INSTALL_DBUS_EXECUTABLE__"
+        "${_ghostty_qt_dbus_executable}"
+        _ghostty_qt_contents "${_ghostty_qt_contents}")
+    if(_ghostty_qt_contents
+        MATCHES "__GHOSTTY_QT_INSTALL_(TRY_|DBUS_)?EXECUTABLE__")
         message(FATAL_ERROR
             "Desktop metadata retained its executable placeholder: ${_ghostty_qt_metadata_path}")
     endif()

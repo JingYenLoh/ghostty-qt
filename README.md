@@ -80,12 +80,15 @@ Run from a Wayland session:
 ./build/dev/ghostty-qt
 ```
 
-To start a specific command, place its already-separated arguments after `--`:
+To start a specific command, use Ghostty's `-e` spelling. Every remaining
+argument belongs to the command:
 
 ```sh
-./build/dev/ghostty-qt --working-directory "$PWD" -- /bin/bash -l
-./build/dev/ghostty-qt --hold -- /bin/sh -c 'printf "done\n"'
+./build/dev/ghostty-qt --working-directory="$PWD" -e /bin/bash -l
+./build/dev/ghostty-qt --hold -e /bin/sh -c 'printf "done\n"'
 ```
+
+The frontend's earlier `-- program ...` spelling remains supported.
 
 For an optimized build, replace `dev` with `release`. Do not build different
 presets concurrently in one checkout because the embedded Ghostty build shares

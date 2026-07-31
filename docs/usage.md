@@ -6,13 +6,18 @@ not a general terminal usage guide.
 
 ## Executable and command line
 
-The executable is `ghostty-qt`. Pass an initial terminal command after `--`:
+The executable is `ghostty-qt`. Ghostty's `-e` command boundary is supported;
+all remaining arguments are passed directly to the initial child:
 
 ```sh
-ghostty-qt --working-directory "$PWD" -- /bin/bash -l
+ghostty-qt --working-directory="$PWD" -e /bin/bash -l
 ```
 
-Unlike Ghostty, `-e` is not a supported terminal-launch option. Ordinary
+The additional `-- program ...` spelling remains available for compatibility
+with earlier ghostty-qt releases. A missing command after `-e` is reported
+immediately with exit status 2 instead of becoming a Ghostty configuration
+diagnostic. Both command spellings currently cross Qt's local-text boundary,
+so arbitrary malformed non-text Unix argument bytes are not lossless. Ordinary
 `--help` and `--version` describe the Qt frontend.
 
 The configuration-enabled build delegates only this pinned subset of Ghostty

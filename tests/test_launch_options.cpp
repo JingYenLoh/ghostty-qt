@@ -289,6 +289,9 @@ private Q_SLOTS:
     void defaults();
     void parsesActivationBootstrapOptions();
     void parsesEveryOptionAndProgramArguments();
+    void parsesGhosttyDashECommand();
+    void preservesDashEAfterDoubleDashAndInInlineValues();
+    void rejectsInvalidDashEUsage();
     void preservesSymlinkSensitiveExplicitWorkingDirectory();
     void rejectsInvalidWorkingDirectory();
     void rejectsFileAsWorkingDirectory();
@@ -675,6 +678,133 @@ void LaunchOptionsTest::parsesEveryOptionAndProgramArguments()
     QCOMPARE(options.program,
              QStringList({QStringLiteral("/bin/sh"), QStringLiteral("-lc"),
                           QStringLiteral("printf hello")}));
+}
+
+void LaunchOptionsTest::parsesGhosttyDashECommand()
+{
+    const auto result = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--font-size=15.5"),
+        QStringLiteral("-e"),
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("--help"),
+        QStringLiteral("--version"),
+        QStringLiteral("--hold"),
+        QStringLiteral("--working-directory=/ignored"),
+        QStringLiteral("--single-instance=true"),
+        QStringLiteral("--initial-window=false"),
+        QStringLiteral("-e"),
+        QStringLiteral("+help"),
+        QStringLiteral("--"),
+        QString{},
+    });
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->typography.pointSize, 15.5);
+    QCOMPARE(result->program,
+             QStringList({QStringLiteral("/bin/sh"), QStringLiteral("--help"),
+                          QStringLiteral("--version"), QStringLiteral("--hold"),
+                          QStringLiteral("--working-directory=/ignored"),
+                          QStringLiteral("--single-instance=true"),
+                          QStringLiteral("--initial-window=false"),
+                          QStringLiteral("-e"), QStringLiteral("+help"),
+                          QStringLiteral("--"), QString{}}));
+    QVERIFY(!result->showHelp);
+    QVERIFY(!result->showVersion);
+    QVERIFY(!result->hold);
+    QCOMPARE(result->workingDirectory, QDir::currentPath());
+    QVERIFY(!result->workingDirectoryExplicit);
+    QCOMPARE(result->singleInstanceMode, SingleInstanceMode::Detect);
+    QVERIFY(!result->singleInstanceModeExplicit);
+    QVERIFY(result->initialWindow);
+    QVERIFY(!result->initialWindowExplicit);
+    QVERIFY(result->hasUnforwardedLaunchPayload());
+    QVERIFY(!shouldUseSingleInstance(*result, QByteArrayView{}));
+}
+
+void LaunchOptionsTest::preservesDashEAfterDoubleDashAndInInlineValues()
+{
+    const auto inlineValue = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--font-family=-e"),
+        QStringLiteral("-e"),
+        QStringLiteral("/bin/true"),
+    });
+    QVERIFY2(inlineValue.has_value(), qPrintable(errorMessage(inlineValue)));
+    QCOMPARE(regularFamilies(*inlineValue), QStringList{QStringLiteral("-e")});
+    QCOMPARE(inlineValue->program, QStringList{QStringLiteral("/bin/true")});
+
+    const auto afterDoubleDash = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--"),
+        QStringLiteral("-e"),
+        QStringLiteral("literal-argument"),
+    });
+    QVERIFY2(afterDoubleDash.has_value(),
+             qPrintable(errorMessage(afterDoubleDash)));
+    QCOMPARE(afterDoubleDash->program,
+             QStringList(
+                 {QStringLiteral("-e"), QStringLiteral("literal-argument")}));
+
+    const auto reservedBoundary = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--font-family"),
+        QStringLiteral("-e"),
+        QStringLiteral("/bin/true"),
+    });
+    QVERIFY(!reservedBoundary.has_value());
+    QVERIFY(reservedBoundary.error().contains(QStringLiteral("font-family")));
+
+    const auto explicitSingleInstance = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--single-instance=true"),
+        QStringLiteral("-e"),
+        QStringLiteral("/bin/true"),
+    });
+    QVERIFY2(explicitSingleInstance.has_value(),
+             qPrintable(errorMessage(explicitSingleInstance)));
+    QCOMPARE(explicitSingleInstance->singleInstanceMode,
+             SingleInstanceMode::Enabled);
+    QVERIFY(explicitSingleInstance->singleInstanceModeExplicit);
+    QVERIFY(
+        !shouldUseSingleInstance(*explicitSingleInstance, QByteArrayView{}));
+}
+
+void LaunchOptionsTest::rejectsInvalidDashEUsage()
+{
+    const auto missing = parseLaunchOptions(
+        {QStringLiteral("ghostty-qt"), QStringLiteral("-e")});
+    QVERIFY(!missing.has_value());
+    QCOMPARE(missing.error(), QStringLiteral("Missing command after -e."));
+
+    const auto emptyExecutable = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("-e"),
+        QString{},
+        QStringLiteral("tail"),
+    });
+    QVERIFY2(emptyExecutable.has_value(),
+             qPrintable(errorMessage(emptyExecutable)));
+    QCOMPARE(emptyExecutable->program,
+             QStringList({QString{}, QStringLiteral("tail")}));
+
+    const auto positionalBeforeBoundary = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("unexpected"),
+        QStringLiteral("-e"),
+        QStringLiteral("/bin/true"),
+    });
+    QVERIFY(!positionalBeforeBoundary.has_value());
+    QCOMPARE(
+        positionalBeforeBoundary.error(),
+        QStringLiteral("Unexpected positional argument before -e: unexpected"));
+
+    for (const QString &nonBoundary :
+         {QStringLiteral("-efoo"), QStringLiteral("-e=foo")}) {
+        const auto result =
+            parseLaunchOptions({QStringLiteral("ghostty-qt"), nonBoundary});
+        QVERIFY(!result.has_value());
+        QVERIFY(result.error() != QStringLiteral("Missing command after -e."));
+    }
 }
 
 void LaunchOptionsTest::preservesSymlinkSensitiveExplicitWorkingDirectory()

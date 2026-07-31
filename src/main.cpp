@@ -47,7 +47,8 @@ namespace {
 void printHelp()
 {
     QTextStream output(stdout);
-    output << "Usage: ghostty-qt [options] [-- program [arguments...]]\n\n"
+    output << "Usage: ghostty-qt [options] [-e program [arguments...]]\n"
+              "       ghostty-qt [options] [-- program [arguments...]]\n\n"
               "Linux Wayland terminal emulator powered by libghostty-vt.\n\n"
               "Options:\n"
               "  -h, --help                    Show this help.\n"
@@ -59,6 +60,8 @@ void printHelp()
               "(default: 10000).\n"
               "      --hold                    Keep the pane after the command "
               "exits.\n"
+              "  -e PROGRAM [ARGUMENTS...]     Run a command; all remaining "
+              "arguments belong to it.\n"
               "      --single-instance MODE      Use false, true, or detect "
               "uniqueness.\n"
               "      --initial-window BOOLEAN    Request an initial window.\n";

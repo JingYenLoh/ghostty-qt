@@ -2227,7 +2227,7 @@ void SessionWorkerTest::appliesPinnedShellIntegrationLaunchOrdering()
         worker.shutdown();
     }
 
-    // A frontend positional program has Ghostty `-e` semantics: a configured
+    // A frontend explicit program has Ghostty `-e` semantics: a configured
     // forced shell becomes detection, so arbitrary programs do not inherit
     // shell-specific launch mutations.
     ScopedEnvironmentVariable zdotdir(QByteArrayLiteral("ZDOTDIR"),
