@@ -18,13 +18,12 @@ class QSGSimpleRectNode;
 class QSGSimpleTextureNode;
 class QSGTexture;
 class TerminalBackdropQsgMaterial;
+class TerminalStraightRgbaTexture;
 
 // Retained, render-thread-only scene-graph node for Ghostty's background-image
-// composition. The two input planes must be opaque RGBX8888 images of equal
-// size: straightRgbPlane stores straight RGB, while alphaPlane replicates the
-// source alpha into RGB. Keeping alpha separate preserves Ghostty's
-// interpolate-straight-then-premultiply ordering through Qt's public texture
-// upload API.
+// composition. Its RGBA8888 image is uploaded explicitly without Qt
+// premultiplication so the shader can preserve Ghostty's
+// interpolate-straight-then-premultiply ordering.
 class TerminalBackdropQsgNode final : public QSGGeometryNode {
 public:
     TerminalBackdropQsgNode();
@@ -32,43 +31,43 @@ public:
 
     // viewport and destination must use the same pane-local logical coordinate
     // space. A changed, non-zero assetSerial is the authority for replacing
-    // the textures; changing either image without changing the serial is
+    // the texture; changing the image without changing the serial is
     // intentionally ignored.
     //
     // Returns true when the node is drawable. Invalid state or a texture
-    // creation failure clears the geometry and textures, making an already
+    // creation failure clears the geometry and texture, making an already
     // attached node safe while its caller falls back to a solid background.
-    [[nodiscard]] bool update(QQuickWindow *window,
-                              const QImage &straightRgbPlane,
-                              const QImage &alphaPlane, quint64 assetSerial,
-                              const QRectF &viewport, const QColor &background,
-                              double imageOpacity, bool repeat,
-                              const QRectF &destination);
+    [[nodiscard]] bool update(QQuickWindow *window, const QImage &straightRgba,
+                              quint64 assetSerial, const QRectF &viewport,
+                              const QColor &background, double imageOpacity,
+                              bool repeat, const QRectF &destination);
 
     void clear();
 
     [[nodiscard]] bool isDrawable() const noexcept;
     [[nodiscard]] quint64 assetSerial() const noexcept;
     [[nodiscard]] quint64 textureGeneration() const noexcept;
+    [[nodiscard]] quint64 textureUploadCount() const noexcept;
+    [[nodiscard]] quint64 textureCount() const noexcept;
+    [[nodiscard]] quint64 textureBytes() const noexcept;
 
 private:
-    [[nodiscard]] bool replaceTextures(QQuickWindow *window,
-                                       const QImage &straightRgbPlane,
-                                       const QImage &alphaPlane,
-                                       quint64 assetSerial);
+    [[nodiscard]] bool replaceTexture(QQuickWindow *window,
+                                      const QImage &straightRgba,
+                                      quint64 assetSerial);
 
     QSGGeometry *geometry_ = nullptr;
     TerminalBackdropQsgMaterial *material_ = nullptr;
-    std::unique_ptr<QSGTexture> straightRgbTexture_;
-    std::unique_ptr<QSGTexture> alphaTexture_;
+    std::unique_ptr<TerminalStraightRgbaTexture> straightRgbaTexture_;
     QQuickWindow *textureWindow_ = nullptr;
     quint64 assetSerial_ = 0;
     quint64 textureGeneration_ = 0;
+    quint64 retiredTextureUploadCount_ = 0;
     QRectF viewport_;
 };
 
 // Retained full-backdrop owner used by TerminalPane. It chooses the exact
-// two-plane material on RHI renderers and contains the source-resolution CPU
+// packed-RGBA material on RHI renderers and contains the source-resolution CPU
 // fallback for Qt's software adaptation. All texture and child-node ownership
 // stays on the scene-graph thread.
 class TerminalBackdropSceneNode final : public QSGNode {

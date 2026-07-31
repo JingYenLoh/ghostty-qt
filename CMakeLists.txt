@@ -790,6 +790,7 @@ add_library(ghostty-qt-terminal-rendering STATIC
     src/terminal_custom_shader_qsg.h
     src/terminal_backdrop.cpp
     src/terminal_backdrop.h
+    src/terminal_backdrop_p.h
     src/terminal_backdrop_qsg.cpp
     src/terminal_backdrop_qsg.h
     src/terminal_kitty_graphics.cpp
@@ -798,6 +799,8 @@ add_library(ghostty-qt-terminal-rendering STATIC
     src/terminal_kitty_graphics_qsg.h
     src/terminal_rect_batch.cpp
     src/terminal_rect_batch.h
+    src/terminal_straight_rgba_texture.cpp
+    src/terminal_straight_rgba_texture_p.h
 )
 target_include_directories(ghostty-qt-terminal-rendering PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"

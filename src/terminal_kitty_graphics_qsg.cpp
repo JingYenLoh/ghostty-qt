@@ -1,4 +1,5 @@
 #include "terminal_kitty_graphics_qsg.h"
+#include "terminal_straight_rgba_texture_p.h"
 
 #include <QByteArray>
 #include <QMatrix4x4>
@@ -9,7 +10,6 @@
 #include <QSGMaterialShader>
 #include <QSGSimpleTextureNode>
 #include <QSGTexture>
-#include <rhi/qrhi.h>
 
 #include <array>
 #include <cstring>
@@ -76,78 +76,6 @@ void configureTexture(QSGTexture &texture)
     texture.setVerticalWrapMode(QSGTexture::ClampToEdge);
 }
 
-// QQuickWindow's ordinary image path may premultiply alpha-bearing QImages
-// before upload. Keep the pixels explicitly straight and submit their bytes to
-// an RGBA8 RHI texture so linear filtering still happens before the shader's
-// premultiplication step.
-class TerminalKittyPackedTexture final {
-public:
-    static std::unique_ptr<TerminalKittyPackedTexture>
-    create(QQuickWindow *window, const QImage &straightRgba)
-    {
-        if (window == nullptr || straightRgba.isNull()
-            || straightRgba.format() != QImage::Format_RGBA8888) {
-            return {};
-        }
-        QRhi *const rhi = window->rhi();
-        if (rhi == nullptr) return {};
-        QRhiTexture *const raw =
-            rhi->newTexture(QRhiTexture::RGBA8, straightRgba.size());
-        if (raw == nullptr) return {};
-        if (!raw->create()) {
-            delete raw;
-            return {};
-        }
-        std::unique_ptr<QSGTexture> wrapper(window->createTextureFromRhiTexture(
-            raw, QQuickWindow::TextureHasAlphaChannel));
-        if (wrapper == nullptr) {
-            delete raw;
-            return {};
-        }
-        configureTexture(*wrapper);
-        return std::unique_ptr<TerminalKittyPackedTexture>(
-            new TerminalKittyPackedTexture(raw, std::move(wrapper),
-                                           straightRgba));
-    }
-
-    [[nodiscard]] QSGTexture *sampledTexture() const noexcept
-    {
-        return wrapper_.get();
-    }
-
-    void commit(QRhiResourceUpdateBatch *resourceUpdates)
-    {
-        if (!uploadPending_ || resourceUpdates == nullptr) return;
-        const QByteArray pixels = QByteArray::fromRawData(
-            reinterpret_cast<const char *>(straightRgba_.constBits()),
-            straightRgba_.sizeInBytes());
-        QRhiTextureSubresourceUploadDescription subresource(pixels);
-        subresource.setDataStride(
-            static_cast<quint32>(straightRgba_.bytesPerLine()));
-        subresource.setSourceSize(straightRgba_.size());
-        resourceUpdates->uploadTexture(
-            raw_,
-            QRhiTextureUploadDescription{
-                QRhiTextureUploadEntry{0, 0, subresource}});
-        uploadPending_ = false;
-    }
-
-private:
-    TerminalKittyPackedTexture(QRhiTexture *raw,
-                               std::unique_ptr<QSGTexture> wrapper,
-                               QImage straightRgba)
-        : raw_(raw)
-        , wrapper_(std::move(wrapper))
-        , straightRgba_(std::move(straightRgba))
-    {}
-
-    // createTextureFromRhiTexture transfers QRhiTexture ownership to wrapper_.
-    QRhiTexture *raw_ = nullptr;
-    std::unique_ptr<QSGTexture> wrapper_;
-    QImage straightRgba_;
-    bool uploadPending_ = true;
-};
-
 class TerminalKittyQsgMaterial;
 
 class TerminalKittyQsgShader final : public QSGMaterialShader {
@@ -192,7 +120,7 @@ public:
 
 class TerminalKittyQsgMaterial final : public QSGMaterial {
 public:
-    explicit TerminalKittyQsgMaterial(TerminalKittyPackedTexture *texture)
+    explicit TerminalKittyQsgMaterial(TerminalStraightRgbaTexture *texture)
         : texture_(texture)
     {
         setFlag(QSGMaterial::Blending);
@@ -222,12 +150,12 @@ public:
                                               : 1;
     }
 
-    [[nodiscard]] TerminalKittyPackedTexture *texture() const noexcept
+    [[nodiscard]] TerminalStraightRgbaTexture *texture() const noexcept
     {
         return texture_;
     }
 
-    bool setTexture(TerminalKittyPackedTexture *texture) noexcept
+    bool setTexture(TerminalStraightRgbaTexture *texture) noexcept
     {
         if (texture_ == texture) return false;
         texture_ = texture;
@@ -235,7 +163,7 @@ public:
     }
 
 private:
-    TerminalKittyPackedTexture *texture_ = nullptr;
+    TerminalStraightRgbaTexture *texture_ = nullptr;
 };
 
 void TerminalKittyQsgShader::updateSampledImage(RenderState &state, int binding,
@@ -244,15 +172,15 @@ void TerminalKittyQsgShader::updateSampledImage(RenderState &state, int binding,
                                                 QSGMaterial *)
 {
     auto *material = static_cast<TerminalKittyQsgMaterial *>(newMaterial);
-    TerminalKittyPackedTexture *const packed =
+    TerminalStraightRgbaTexture *const packed =
         binding == 1 ? material->texture() : nullptr;
     QSGTexture *selected =
         packed != nullptr ? packed->sampledTexture() : nullptr;
     Q_ASSERT(selected != nullptr);
     if (selected == nullptr) return;
     *texture = selected;
-    selected->commitTextureOperations(state.rhi(), state.resourceUpdateBatch());
-    packed->commit(state.resourceUpdateBatch());
+    (void)packed->commitTextureOperations(state.rhi(),
+                                          state.resourceUpdateBatch());
 }
 
 struct PlacementNodeUpdate {
@@ -262,7 +190,7 @@ struct PlacementNodeUpdate {
 
 class TerminalKittyQsgNode final : public QSGGeometryNode {
 public:
-    TerminalKittyQsgNode(TerminalKittyPackedTexture *texture,
+    TerminalKittyQsgNode(TerminalStraightRgbaTexture *texture,
                          const QRectF &destination, const QRectF &source)
         : geometry_(new QSGGeometry(
               QSGGeometry::defaultAttributes_TexturedPoint2D(), 4))
@@ -282,7 +210,7 @@ public:
         setFlag(QSGNode::OwnsMaterial);
     }
 
-    PlacementNodeUpdate update(TerminalKittyPackedTexture *texture,
+    PlacementNodeUpdate update(TerminalStraightRgbaTexture *texture,
                                const QRectF &destination, const QRectF &source)
     {
         PlacementNodeUpdate result;
@@ -312,7 +240,7 @@ private:
 };
 
 struct TextureSet {
-    std::unique_ptr<TerminalKittyPackedTexture> straightRgba;
+    std::unique_ptr<TerminalStraightRgbaTexture> straightRgba;
     std::unique_ptr<QSGTexture> premultiplied;
     quint64 logicalBytes = 0;
 };
@@ -491,7 +419,7 @@ public:
         result->logicalBytes =
             static_cast<quint64>(asset->straightRgba.sizeInBytes());
         if (useCustomMaterial) {
-            result->straightRgba = TerminalKittyPackedTexture::create(
+            result->straightRgba = TerminalStraightRgbaTexture::create(
                 quickWindow, asset->straightRgba);
             if (!result->straightRgba) return nullptr;
             ++textureUploadCount;

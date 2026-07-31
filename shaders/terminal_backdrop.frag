@@ -3,8 +3,7 @@
 layout(location = 0) in vec2 panePosition;
 layout(location = 0) out vec4 fragmentColor;
 
-layout(binding = 1) uniform sampler2D straightRgb;
-layout(binding = 2) uniform sampler2D straightAlpha;
+layout(binding = 1) uniform sampler2D straightRgba;
 
 layout(std140, binding = 0) uniform buf {
     mat4 qt_Matrix;
@@ -32,8 +31,7 @@ void main()
 
     vec4 image = vec4(0.0);
     if (repeating || !outside) {
-        image = vec4(texture(straightRgb, coordinate).rgb,
-                     texture(straightAlpha, coordinate).r);
+        image = texture(straightRgba, coordinate);
         image.rgb *= image.a;
     }
 

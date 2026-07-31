@@ -1,4 +1,5 @@
 #include "terminal_backdrop.h"
+#include "terminal_backdrop_p.h"
 
 #include <QCoreApplication>
 #include <QFile>
@@ -87,48 +88,28 @@ qreal alignedOffset(qreal available,
 }
 
 std::expected<TerminalBackgroundImageAsset, QString>
-extractStraightPlanes(const QImage &source, quint64 serial)
+prepareStraightRgba(QImage source, quint64 serial)
 {
     if (source.isNull()) {
         return std::unexpected(
             QStringLiteral("Decoded background image is empty."));
     }
 
-    QImage rgb = source.convertToFormat(QImage::Format_RGBA8888);
-    QImage alpha(rgb.size(), QImage::Format_RGBX8888);
-    if (rgb.isNull() || alpha.isNull()) {
+    QImage rgba;
+    if (source.format() == QImage::Format_RGBA8888) {
+        source.detach();
+        rgba = std::move(source);
+    } else {
+        rgba = source.convertToFormat(QImage::Format_RGBA8888);
+    }
+    if (rgba.isNull()) {
         return std::unexpected(
-            QStringLiteral("Could not allocate background image planes."));
+            QStringLiteral("Could not allocate background image pixels."));
     }
-    // Reuse the converted straight-alpha storage for the RGB plane. Keeping a
-    // separate source, RGB, and alpha image would otherwise add one full
-    // 32-bit image to peak decode memory. detach() protects callers when the
-    // source already has the requested format and Qt can share its storage.
-    rgb.detach();
-    rgb.setDevicePixelRatio(1.0);
-    alpha.setDevicePixelRatio(1.0);
-
-    for (int y = 0; y < rgb.height(); ++y) {
-        uchar *rgbLine = rgb.scanLine(y);
-        uchar *alphaLine = alpha.scanLine(y);
-        for (int x = 0; x < rgb.width(); ++x) {
-            const qsizetype offset = 4 * static_cast<qsizetype>(x);
-            const uchar value = rgbLine[offset + 3];
-            alphaLine[offset] = value;
-            alphaLine[offset + 1] = value;
-            alphaLine[offset + 2] = value;
-            alphaLine[offset + 3] = 255;
-            rgbLine[offset + 3] = 255;
-        }
-    }
-    if (!rgb.reinterpretAsFormat(QImage::Format_RGBX8888)) {
-        return std::unexpected(
-            QStringLiteral("Could not prepare background image RGB data."));
-    }
+    rgba.setDevicePixelRatio(1.0);
 
     return TerminalBackgroundImageAsset{
-        .straightRgbPlane = std::move(rgb),
-        .alphaPlane = std::move(alpha),
+        .straightRgba = std::move(rgba),
         .serial = serial,
     };
 }
@@ -164,22 +145,23 @@ decodeImageFile(const QString &path)
     }
     QImageReader reader(&file, format);
     reader.setAutoTransform(false);
-    const QImage image = reader.read();
+    QImage image = reader.read();
     if (image.isNull()) {
         return std::unexpected(
             QStringLiteral("Could not decode background image '%1': %2")
                 .arg(path, reader.errorString()));
     }
 
-    auto planes = extractStraightPlanes(
-        image, nextAssetSerial.fetch_add(1, std::memory_order_relaxed));
-    if (!planes) {
+    auto asset = prepareTerminalBackgroundImage(
+        std::move(image),
+        nextAssetSerial.fetch_add(1, std::memory_order_relaxed));
+    if (!asset) {
         return std::unexpected(
             QStringLiteral("Could not prepare background image '%1': %2")
-                .arg(path, std::move(planes.error())));
+                .arg(path, std::move(asset.error())));
     }
     return std::make_shared<const TerminalBackgroundImageAsset>(
-        std::move(*planes));
+        std::move(*asset));
 }
 
 void deliver(std::vector<Waiter> waiters,
@@ -237,6 +219,12 @@ void sweepExpiredDecodedImages()
 
 } // namespace
 
+std::expected<TerminalBackgroundImageAsset, QString>
+prepareTerminalBackgroundImage(QImage source, quint64 serial)
+{
+    return prepareStraightRgba(std::move(source), serial);
+}
+
 QRectF terminalBackgroundImagePlacement(
     const QRectF &viewport, const QSize &sourcePixels, qreal devicePixelRatio,
     TerminalBackgroundImageFit fit,
@@ -282,16 +270,13 @@ QImage terminalCompositedBackgroundImage(
     const QColor &opaqueBackground, quint8 backgroundAlpha,
     double imageOpacity)
 {
-    const QImage &rgb = asset.straightRgbPlane;
-    const QImage &alpha = asset.alphaPlane;
-    if (rgb.isNull() || alpha.isNull() || rgb.size() != alpha.size()
-        || rgb.format() != QImage::Format_RGBX8888
-        || alpha.format() != QImage::Format_RGBX8888
+    const QImage &rgba = asset.straightRgba;
+    if (rgba.isNull() || rgba.format() != QImage::Format_RGBA8888
         || !opaqueBackground.isValid() || !std::isfinite(imageOpacity)) {
         return {};
     }
 
-    QImage result(rgb.size(), QImage::Format_ARGB32_Premultiplied);
+    QImage result(rgba.size(), QImage::Format_ARGB32_Premultiplied);
     result.setDevicePixelRatio(1.0);
     if (result.isNull()) return {};
 
@@ -313,29 +298,28 @@ QImage terminalCompositedBackgroundImage(
             std::lround(std::clamp(value, 0.0, 1.0) * 255.0));
     };
 
-    for (int y = 0; y < rgb.height(); ++y) {
-        const uchar *rgbLine = rgb.constScanLine(y);
-        const uchar *alphaLine = alpha.constScanLine(y);
+    for (int y = 0; y < rgba.height(); ++y) {
+        const uchar *sourceLine = rgba.constScanLine(y);
         auto *destination = reinterpret_cast<QRgb *>(result.scanLine(y));
-        for (int x = 0; x < rgb.width(); ++x) {
+        for (int x = 0; x < rgba.width(); ++x) {
             const qsizetype offset = 4 * static_cast<qsizetype>(x);
-            const double sourceAlpha = alphaLine[offset] / 255.0;
+            const double sourceAlpha = sourceLine[offset + 3] / 255.0;
             const double weightedAlpha = sourceAlpha * multiplier;
             const double backgroundWeight =
                 std::max(0.0, 1.0 - weightedAlpha);
             const double finalAlpha =
                 globalAlpha * (weightedAlpha + backgroundWeight);
-            destination[x] = qRgba(
-                byte(globalAlpha
-                     * (rgbLine[offset] / 255.0 * weightedAlpha
-                        + background[0] * backgroundWeight)),
-                byte(globalAlpha
-                     * (rgbLine[offset + 1] / 255.0 * weightedAlpha
-                        + background[1] * backgroundWeight)),
-                byte(globalAlpha
-                     * (rgbLine[offset + 2] / 255.0 * weightedAlpha
-                        + background[2] * backgroundWeight)),
-                byte(finalAlpha));
+            destination[x] =
+                qRgba(byte(globalAlpha
+                           * (sourceLine[offset] / 255.0 * weightedAlpha
+                              + background[0] * backgroundWeight)),
+                      byte(globalAlpha
+                           * (sourceLine[offset + 1] / 255.0 * weightedAlpha
+                              + background[1] * backgroundWeight)),
+                      byte(globalAlpha
+                           * (sourceLine[offset + 2] / 255.0 * weightedAlpha
+                              + background[2] * backgroundWeight)),
+                      byte(finalAlpha));
         }
     }
     return result;
@@ -345,7 +329,7 @@ QImage terminalCompositedBackgroundImage(
     const QImage &source, const QColor &opaqueBackground,
     quint8 backgroundAlpha, double imageOpacity)
 {
-    auto asset = extractStraightPlanes(source, 0);
+    auto asset = prepareTerminalBackgroundImage(source, 0);
     return asset
         ? terminalCompositedBackgroundImage(
               *asset, opaqueBackground, backgroundAlpha, imageOpacity)

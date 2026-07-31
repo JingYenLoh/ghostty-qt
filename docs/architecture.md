@@ -1859,10 +1859,10 @@ cell backgrounds, selection, search, inverse, and padding extension draw over
 that pass. Matching Ghostty, minimum contrast deliberately evaluates only the
 cell and global configured-background layers and never samples the image.
 
-PNG/JPEG file inspection, decoding, and extraction of opaque straight-RGB and
-alpha planes run on a bounded two-thread pool, outside the GUI, render, and
-session threads. A process-wide weak cache keys those immutable decoded planes
-by finalized path plus file size and modification time. Identical concurrent
+PNG/JPEG file inspection, decoding, and straight-`RGBA8888` preparation run on
+a bounded two-thread pool, outside the GUI, render, and session threads. A
+process-wide weak cache keys those immutable decoded pixels by finalized path
+plus file size and millisecond modification time. Identical concurrent
 requests coalesce, and expired weak entries release unused CPU images. Each
 pane still owns its placement, render-thread textures, and composition state.
 Generation and cancellation guards discard stale completions after reload or
@@ -1874,20 +1874,21 @@ source merely because configuration is reloaded; changing away and back
 creates a new request. A bounded 250 ms process-wide failure throttle prevents
 new panes from stampeding the same failing file identity, while a later new
 pane probes current metadata normally. Option-only reload, terminal OSC 11,
-global opacity, and image-opacity changes reuse the decoded planes.
+global opacity, and image-opacity changes reuse the decoded image.
 
-The normal RHI path uploads those two opaque planes to a pane-owned public-QSG
-material. Linear sampling occurs while RGB and alpha are still straight;
-the fragment material then premultiplies, applies Ghostty's image/background
-opacity equation, and uses explicit modulo coordinates for repetition before
-compositing later cell layers. Separating alpha avoids Qt's ordinary
-alpha-bearing texture upload premultiplying before filtering. Qt's software
-scene-graph backend cannot execute that material, so its fallback composes the
-source-pixel centers on the CPU and presents the premultiplied result through a
-simple texture node. That path is deterministic and useful for headless
-integration coverage, but scaled varying-alpha edges and repeated tile seams
-are source-resolution approximations rather than claims of pixel identity
-with Ghostty's shader.
+The normal RHI path explicitly uploads the packed bytes to one pane-owned
+`RGBA8` texture, bypassing Qt's ordinary alpha-image conversion. Linear
+sampling therefore occurs while RGB and alpha are still straight; the fragment
+material then premultiplies, applies Ghostty's image/background opacity
+equation, and uses explicit modulo coordinates for repetition before
+compositing later cell layers. Each live decoded asset and hardware pane mirror
+uses four logical bytes per source pixel instead of the former two four-byte
+planes. Qt's software scene-graph backend cannot execute that material, so its
+fallback composes the source-pixel centers on the CPU and presents the
+premultiplied result through a simple texture node. That path is deterministic
+and useful for headless integration coverage, but scaled varying-alpha edges
+and repeated tile seams are source-resolution approximations rather than claims
+of pixel identity with Ghostty's shader.
 
 Kitty graphics use libghostty as the sole protocol parser and storage owner.
 Direct RGB/RGBA, zlib, PNG, file, temporary-file, and shared-memory
@@ -2683,18 +2684,20 @@ The default CTest suite has focused layers for each ownership boundary:
   an image multiplier above one, and zero-opacity composition as pure
   GUI-independent helpers. Software-scene-graph integration can verify the
   deterministic fallback and retained pane lifecycle, but it cannot execute
-  the two-plane RHI material. `terminal-backdrop-rhi` covers backend shader
+  the packed-RGBA RHI material. `terminal-backdrop-rhi` covers backend shader
   creation, linear texture sampling, and modulo seam behavior separately;
   final Wayland compositor presentation remains an interactive check.
 - `terminal-backdrop-rhi` verifies that both compiled QSB resources are linked
-  into an independent consumer, then attempts OpenGL-RHI checks for
-  straight-alpha filtering, hard modulo seams, and texture reuse across
-  option-only changes and asset-serial replacement. Those semantic checks skip
+  into an independent consumer, reflects the fragment QSB's single RGBA
+  sampler, then attempts OpenGL and Vulkan RHI checks for orientation,
+  straight-alpha filtering, hard modulo seams, inherited/global opacity, and
+  one-texture reuse across option-only changes and asset-serial replacement.
+  Those semantic checks skip
   explicitly when Qt's offscreen platform selects its software adaptation, as
   it does in the managed headless sandbox; a green offscreen result alone must
   not be mistaken for RHI pixel validation. A separate XCB plus OpenGL-RHI
   llvmpipe run executes the complete material suite, including
-  fractional-DPR seam and relative/global-opacity samples, with seven passes
+  fractional-DPR seam and relative/global-opacity samples, with eight passes
   and no skips.
 - `terminal-kitty-graphics` verifies physical placement projection and
   cropping, then reflects both embedded QSBs and compares their exact 68-byte
@@ -3048,15 +3051,18 @@ be checked interactively in a real Wayland session.
   and the current public scene-graph path does not expose an exact mapping for
   Ghostty's `native`, `linear`, and `linear-corrected` modes. The implemented
   background alpha policy is independent of that color-space choice.
-- Background images use a dedicated two-plane material on RHI backends so
+- Background images use a dedicated packed-RGBA material on RHI backends so
   straight RGB and alpha are filtered before premultiplication and
   repeated through Ghostty's explicit modulo coordinates. The software
   scene-graph fallback cannot run that material: it precomposes source-pixel
   centers and lets a simple texture node scale or repeat the result. Its
   varying-alpha edges and tile seams are therefore deliberate approximations.
-  The normal RHI material is covered through an OpenGL-RHI integration run;
-  final production-GPU and Wayland-compositor presentation remains an
-  interactive validation boundary.
+  The normal RHI material is covered through OpenGL and Vulkan integration
+  attempts; final production-GPU and Wayland-compositor presentation remains
+  an interactive validation boundary. The weak decoded-image cache identity is
+  path, size, and millisecond mtime rather than an opened-file identity, so an
+  adversarial same-size/same-mtime replacement or replacement between metadata
+  inspection and path reopen can temporarily reuse or mis-key an asset.
 - Public `libghostty-vt` cannot preserve configured cursor-blink tri-state
   precedence over DEC mode 12, so that case remains explicitly partial in the
   parity ledger. Palette generation does not depend on the text config dump:

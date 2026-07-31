@@ -1,4 +1,5 @@
 #include "terminal_backdrop_qsg.h"
+#include "terminal_straight_rgba_texture_p.h"
 
 #include <QByteArray>
 #include <QMatrix4x4>
@@ -62,13 +63,10 @@ constexpr qsizetype uniformBufferSize = 112;
     };
 }
 
-[[nodiscard]] bool validPlanePair(const QImage &straightRgbPlane,
-                                  const QImage &alphaPlane) noexcept
+[[nodiscard]] bool validStraightRgba(const QImage &straightRgba) noexcept
 {
-    return !straightRgbPlane.isNull() && !alphaPlane.isNull()
-        && straightRgbPlane.size() == alphaPlane.size()
-        && straightRgbPlane.format() == QImage::Format_RGBX8888
-        && alphaPlane.format() == QImage::Format_RGBX8888;
+    return !straightRgba.isNull()
+        && straightRgba.format() == QImage::Format_RGBA8888;
 }
 
 template <typename Value>
@@ -120,12 +118,11 @@ public:
         return new TerminalBackdropQsgShader;
     }
 
-    [[nodiscard]] bool setTextures(QSGTexture *straightRgb,
-                                   QSGTexture *alpha) noexcept
+    [[nodiscard]] bool
+    setTexture(TerminalStraightRgbaTexture *straightRgba) noexcept
     {
-        if (straightRgb_ == straightRgb && alpha_ == alpha) return false;
-        straightRgb_ = straightRgb;
-        alpha_ = alpha;
+        if (straightRgba_ == straightRgba) return false;
+        straightRgba_ = straightRgba;
         return true;
     }
 
@@ -164,12 +161,10 @@ public:
         return std::exchange(uniformsDirty_, false);
     }
 
-    [[nodiscard]] QSGTexture *straightRgbTexture() const noexcept
+    [[nodiscard]] TerminalStraightRgbaTexture *texture() const noexcept
     {
-        return straightRgb_;
+        return straightRgba_;
     }
-
-    [[nodiscard]] QSGTexture *alphaTexture() const noexcept { return alpha_; }
 
     [[nodiscard]] float imageOpacity() const noexcept { return imageOpacity_; }
 
@@ -186,8 +181,7 @@ public:
     }
 
 private:
-    QSGTexture *straightRgb_ = nullptr;
-    QSGTexture *alpha_ = nullptr;
+    TerminalStraightRgbaTexture *straightRgba_ = nullptr;
     std::array<float, 4> background_{};
     std::array<float, 4> destination_{};
     float imageOpacity_ = 1.0F;
@@ -250,17 +244,16 @@ void TerminalBackdropQsgShader::updateSampledImage(RenderState &state,
 {
     auto *const material =
         static_cast<TerminalBackdropQsgMaterial *>(newMaterial);
-    QSGTexture *selected = nullptr;
-    if (binding == 1) {
-        selected = material->straightRgbTexture();
-    } else if (binding == 2) {
-        selected = material->alphaTexture();
-    }
+    TerminalStraightRgbaTexture *const packed =
+        binding == 1 ? material->texture() : nullptr;
+    QSGTexture *const selected =
+        packed != nullptr ? packed->sampledTexture() : nullptr;
     Q_ASSERT(selected != nullptr);
     if (selected == nullptr) return;
 
     *texture = selected;
-    selected->commitTextureOperations(state.rhi(), state.resourceUpdateBatch());
+    (void)packed->commitTextureOperations(state.rhi(),
+                                          state.resourceUpdateBatch());
 }
 
 } // namespace
@@ -281,26 +274,24 @@ TerminalBackdropQsgNode::TerminalBackdropQsgNode()
 TerminalBackdropQsgNode::~TerminalBackdropQsgNode() = default;
 
 bool TerminalBackdropQsgNode::update(
-    QQuickWindow *window, const QImage &straightRgbPlane,
-    const QImage &alphaPlane, quint64 assetSerial, const QRectF &viewport,
-    const QColor &background, double imageOpacity, bool repeat,
-    const QRectF &destination)
+    QQuickWindow *window, const QImage &straightRgba, quint64 assetSerial,
+    const QRectF &viewport, const QColor &background, double imageOpacity,
+    bool repeat, const QRectF &destination)
 {
     constexpr double floatMaximum =
         static_cast<double>(std::numeric_limits<float>::max());
     if (window == nullptr || assetSerial == 0
-        || !validPlanePair(straightRgbPlane, alphaPlane)
-        || !finiteRect(viewport) || !finiteRect(destination)
-        || !background.isValid() || !std::isfinite(imageOpacity)
-        || imageOpacity < -floatMaximum || imageOpacity > floatMaximum) {
+        || !validStraightRgba(straightRgba) || !finiteRect(viewport)
+        || !finiteRect(destination) || !background.isValid()
+        || !std::isfinite(imageOpacity) || imageOpacity < -floatMaximum
+        || imageOpacity > floatMaximum) {
         clear();
         return false;
     }
 
     if ((textureWindow_ != window || assetSerial_ != assetSerial
-         || !straightRgbTexture_ || !alphaTexture_)
-        && !replaceTextures(window, straightRgbPlane, alphaPlane,
-                            assetSerial)) {
+         || !straightRgbaTexture_)
+        && !replaceTexture(window, straightRgba, assetSerial)) {
         clear();
         return false;
     }
@@ -320,27 +311,28 @@ bool TerminalBackdropQsgNode::update(
 
 void TerminalBackdropQsgNode::clear()
 {
-    const bool hadTextures = straightRgbTexture_ || alphaTexture_;
-    if (material_->setTextures(nullptr, nullptr)) {
+    const bool hadTexture = straightRgbaTexture_ != nullptr;
+    if (material_->setTexture(nullptr)) {
         markDirty(QSGNode::DirtyMaterial);
     }
-    straightRgbTexture_.reset();
-    alphaTexture_.reset();
+    if (straightRgbaTexture_) {
+        retiredTextureUploadCount_ += straightRgbaTexture_->uploadCount();
+    }
+    straightRgbaTexture_.reset();
     textureWindow_ = nullptr;
     assetSerial_ = 0;
     viewport_ = {};
     if (geometry_->vertexCount() != 0) {
         geometry_->setVertexCount(0);
         markDirty(QSGNode::DirtyGeometry);
-    } else if (hadTextures) {
+    } else if (hadTexture) {
         markDirty(QSGNode::DirtyMaterial);
     }
 }
 
 bool TerminalBackdropQsgNode::isDrawable() const noexcept
 {
-    return geometry_->vertexCount() == 4 && straightRgbTexture_
-        && alphaTexture_;
+    return geometry_->vertexCount() == 4 && straightRgbaTexture_;
 }
 
 quint64 TerminalBackdropQsgNode::assetSerial() const noexcept
@@ -353,33 +345,37 @@ quint64 TerminalBackdropQsgNode::textureGeneration() const noexcept
     return textureGeneration_;
 }
 
-bool TerminalBackdropQsgNode::replaceTextures(QQuickWindow *window,
-                                              const QImage &straightRgbPlane,
-                                              const QImage &alphaPlane,
-                                              quint64 assetSerial)
+quint64 TerminalBackdropQsgNode::textureUploadCount() const noexcept
 {
-    std::unique_ptr<QSGTexture> nextStraightRgb(window->createTextureFromImage(
-        straightRgbPlane, QQuickWindow::TextureIsOpaque));
-    std::unique_ptr<QSGTexture> nextAlpha(window->createTextureFromImage(
-        alphaPlane, QQuickWindow::TextureIsOpaque));
-    if (!nextStraightRgb || !nextAlpha) return false;
+    return retiredTextureUploadCount_
+        + (straightRgbaTexture_ ? straightRgbaTexture_->uploadCount() : 0);
+}
 
-    const auto configure = [](QSGTexture &texture) {
-        texture.setFiltering(QSGTexture::Linear);
-        texture.setMipmapFiltering(QSGTexture::None);
-        texture.setHorizontalWrapMode(QSGTexture::ClampToEdge);
-        texture.setVerticalWrapMode(QSGTexture::ClampToEdge);
-    };
-    configure(*nextStraightRgb);
-    configure(*nextAlpha);
+quint64 TerminalBackdropQsgNode::textureCount() const noexcept
+{
+    return straightRgbaTexture_ ? 1 : 0;
+}
 
-    straightRgbTexture_ = std::move(nextStraightRgb);
-    alphaTexture_ = std::move(nextAlpha);
+quint64 TerminalBackdropQsgNode::textureBytes() const noexcept
+{
+    return straightRgbaTexture_ ? straightRgbaTexture_->logicalBytes() : 0;
+}
+
+bool TerminalBackdropQsgNode::replaceTexture(QQuickWindow *window,
+                                             const QImage &straightRgba,
+                                             quint64 assetSerial)
+{
+    auto next = TerminalStraightRgbaTexture::create(window, straightRgba);
+    if (!next) return false;
+
+    if (straightRgbaTexture_) {
+        retiredTextureUploadCount_ += straightRgbaTexture_->uploadCount();
+    }
+    straightRgbaTexture_ = std::move(next);
     textureWindow_ = window;
     assetSerial_ = assetSerial;
     ++textureGeneration_;
-    if (material_->setTextures(straightRgbTexture_.get(),
-                               alphaTexture_.get())) {
+    if (material_->setTexture(straightRgbaTexture_.get())) {
         markDirty(QSGNode::DirtyMaterial);
     }
     return true;
@@ -467,17 +463,15 @@ void TerminalBackdropSceneNode::update(
         sourceRect_ = {};
     };
 
-    if (window == nullptr || asset == nullptr
-        || asset->straightRgbPlane.isNull()
-        || asset->alphaPlane.isNull()) {
+    if (window == nullptr || asset == nullptr || asset->straightRgba.isNull()) {
         failedMaterialKey_.reset();
         useSolidFallback();
         return;
     }
 
     const QRectF target = terminalBackgroundImagePlacement(
-        viewport, asset->straightRgbPlane.size(), devicePixelRatio,
-        options.fit, options.position);
+        viewport, asset->straightRgba.size(), devicePixelRatio, options.fit,
+        options.position);
     if (target.isEmpty()) {
         failedMaterialKey_.reset();
         useSolidFallback();
@@ -491,20 +485,19 @@ void TerminalBackdropSceneNode::update(
         };
         if (failedMaterialKey_ != materialKey) {
             if (hardwareBackdrop_->update(
-                    window, asset->straightRgbPlane, asset->alphaPlane,
-                    asset->serial, viewport, background, options.opacity,
-                    options.repeat, target)) {
+                    window, asset->straightRgba, asset->serial, viewport,
+                    background, options.opacity, options.repeat, target)) {
                 failedMaterialKey_.reset();
                 clearCpuTexture();
                 clearBases(background);
                 imageRect_ = options.repeat
                     ? viewport
                     : target.intersected(viewport);
-                sourceRect_ = mappedSourceRect(
-                    imageRect_, target, asset->straightRgbPlane.size());
+                sourceRect_ = mappedSourceRect(imageRect_, target,
+                                               asset->straightRgba.size());
                 return;
             }
-            // Avoid retrying two failed GPU uploads on every cursor blink.
+            // Avoid retrying a failed GPU upload on every cursor blink.
             // A different image or scene-graph window gets a fresh try.
             failedMaterialKey_ = materialKey;
         }
@@ -562,8 +555,8 @@ void TerminalBackdropSceneNode::update(
 
     if (options.repeat) {
         clearBases(background);
-        const QRectF nextSource = mappedSourceRect(
-            viewport, target, asset->straightRgbPlane.size());
+        const QRectF nextSource =
+            mappedSourceRect(viewport, target, asset->straightRgba.size());
         if (cpuImage_->rect() != viewport) cpuImage_->setRect(viewport);
         if (cpuImage_->sourceRect() != nextSource) {
             cpuImage_->setSourceRect(nextSource);
@@ -581,8 +574,8 @@ void TerminalBackdropSceneNode::update(
         sourceRect_ = {};
         return;
     }
-    const QRectF nextSource = mappedSourceRect(
-        visible, target, asset->straightRgbPlane.size());
+    const QRectF nextSource =
+        mappedSourceRect(visible, target, asset->straightRgba.size());
     if (cpuImage_->rect() != visible) cpuImage_->setRect(visible);
     if (cpuImage_->sourceRect() != nextSource) {
         cpuImage_->setSourceRect(nextSource);

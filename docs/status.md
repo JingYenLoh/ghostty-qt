@@ -80,6 +80,11 @@ for intentional upgrade procedure.
   backends keep terminal output unfiltered and expose a configuration
   diagnostic; final multi-pass output and frame cost still require
   qualification on the target GPU and Wayland compositor.
+- Background-image loading currently keys its weak cache by finalized path,
+  size, and millisecond modification time, then reopens that path for decode.
+  The deferred hardening frontier is to open each source once, derive a Linux
+  file identity with nanosecond timestamps from that handle, decode the same
+  handle, and cover same-size/same-mtime and atomic-replacement races.
 - Saved sessions, a theme editor, systemd readiness notification, a project
   icon, AppStream metadata, and distribution packaging remain future work.
 

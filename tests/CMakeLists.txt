@@ -373,6 +373,7 @@ target_include_directories(test-terminal-backdrop-rhi PRIVATE
 target_link_libraries(test-terminal-backdrop-rhi PRIVATE
     Qt6::Core
     Qt6::Gui
+    Qt6::GuiPrivate
     Qt6::Quick
     Qt6::Test
     ghostty-qt-terminal-rendering
@@ -381,7 +382,17 @@ add_test(NAME terminal-backdrop-rhi COMMAND test-terminal-backdrop-rhi)
 set_tests_properties(terminal-backdrop-rhi PROPERTIES
     TIMEOUT 20
     ENVIRONMENT
-        "LIBGL_ALWAYS_SOFTWARE=1;QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=opengl"
+        "LIBGL_ALWAYS_SOFTWARE=1;QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=opengl;QT_SCALE_FACTOR=1"
+    SKIP_REGULAR_EXPRESSION
+        "SKIP.*platform cannot initialize the requested RHI context"
+)
+add_test(NAME terminal-backdrop-vulkan-rhi COMMAND test-terminal-backdrop-rhi)
+set_tests_properties(terminal-backdrop-vulkan-rhi PROPERTIES
+    TIMEOUT 20
+    ENVIRONMENT
+        "GHOSTTY_QT_BACKDROP_TEST_BACKEND=vulkan;QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=vulkan;QT_SCALE_FACTOR=1"
+    SKIP_REGULAR_EXPRESSION
+        "SKIP.*platform cannot initialize the requested RHI context"
 )
 
 qt_add_executable(test-terminal-rect-batch
@@ -792,6 +803,18 @@ if(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
         Qt6::Core
         Qt6::Gui
         ghostty-qt-vt-adapter
+    )
+
+    qt_add_executable(bench-terminal-backdrop
+        bench_terminal_backdrop.cpp
+    )
+    target_include_directories(bench-terminal-backdrop PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    )
+    target_link_libraries(bench-terminal-backdrop PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        ghostty-qt-terminal-rendering
     )
 endif()
 

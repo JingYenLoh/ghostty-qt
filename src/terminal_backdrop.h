@@ -15,11 +15,9 @@
 #include <utility>
 
 struct TerminalBackgroundImageAsset {
-    // Qt premultiplies alpha-bearing images before uploading them. Keeping
-    // straight RGB and alpha in separate opaque planes lets the scene-graph
-    // shader interpolate first and premultiply afterward, matching Ghostty.
-    QImage straightRgbPlane;
-    QImage alphaPlane;
+    // Straight-alpha pixels are retained so the RHI path can interpolate
+    // before shader premultiplication, matching Ghostty.
+    QImage straightRgba;
     quint64 serial = 0;
 };
 
@@ -93,9 +91,9 @@ private:
         TerminalBackgroundImageCallback);
 };
 
-// File inspection, decoding, and plane extraction are performed off the
+// File inspection, decoding, and RGBA preparation are performed off the
 // GUI/render threads. Identical in-flight loads are coalesced process-wide.
-// A weak, file-fingerprinted cache shares active images without retaining
+// A weak, file-metadata-keyed cache shares active images without retaining
 // unused resources or hiding file changes.
 [[nodiscard]] TerminalBackgroundImageRequestHandle
 requestTerminalBackgroundImage(

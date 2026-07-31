@@ -26,11 +26,6 @@ struct ImageReply {
     bool callbackWasQueued = false;
 };
 
-struct PlaneBytes {
-    QByteArray rgb;
-    QByteArray alpha;
-};
-
 TerminalBackgroundImageRequest imageRequest(const QString &path)
 {
     return {
@@ -74,32 +69,10 @@ QByteArray packedPixels(const QImage &image)
     return result;
 }
 
-PlaneBytes expectedPlaneBytes(const QImage &source)
+QByteArray expectedPackedBytes(const QImage &source)
 {
     const QImage straight = source.convertToFormat(QImage::Format_RGBA8888);
-    PlaneBytes result;
-    const qsizetype pixelCount =
-        static_cast<qsizetype>(straight.width()) * straight.height();
-    result.rgb.reserve(pixelCount * 4);
-    result.alpha.reserve(pixelCount * 4);
-
-    for (int y = 0; y < straight.height(); ++y) {
-        const uchar *line = straight.constScanLine(y);
-        for (int x = 0; x < straight.width(); ++x) {
-            const qsizetype offset = static_cast<qsizetype>(x) * 4;
-            result.rgb.append(static_cast<char>(line[offset]));
-            result.rgb.append(static_cast<char>(line[offset + 1]));
-            result.rgb.append(static_cast<char>(line[offset + 2]));
-            result.rgb.append(static_cast<char>(255));
-
-            const char alpha = static_cast<char>(line[offset + 3]);
-            result.alpha.append(alpha);
-            result.alpha.append(alpha);
-            result.alpha.append(alpha);
-            result.alpha.append(static_cast<char>(255));
-        }
-    }
-    return result;
+    return packedPixels(straight);
 }
 
 QImage patternedImage(QSize size)
@@ -126,8 +99,8 @@ private Q_SLOTS:
     void anchorsEveryPosition_data();
     void anchorsEveryPosition();
     void composesGhosttyOpacityExactly();
-    void decodesPngIntoStraightPlanes();
-    void decodesJpegIntoStraightPlanes();
+    void decodesPngIntoPackedRgba();
+    void decodesJpegIntoPackedRgba();
     void rejectsUnsupportedAndCorruptImages();
     void coalescesIdenticalInflightRequests();
     void cancellationSuppressesCallback();
@@ -240,7 +213,7 @@ void TerminalBackdropTest::composesGhosttyOpacityExactly()
     QCOMPARE(source, original);
 }
 
-void TerminalBackdropTest::decodesPngIntoStraightPlanes()
+void TerminalBackdropTest::decodesPngIntoPackedRgba()
 {
     const auto directory = makeTestDirectory();
     QVERIFY2(directory->isValid(), qPrintable(directory->errorString()));
@@ -264,20 +237,17 @@ void TerminalBackdropTest::decodesPngIntoStraightPlanes()
     QVERIFY2(reply.result->has_value(), qPrintable(replyFailure(reply)));
 
     const auto &asset = *reply.result->value();
-    QCOMPARE(asset.straightRgbPlane.size(), source.size());
-    QCOMPARE(asset.alphaPlane.size(), source.size());
-    QCOMPARE(asset.straightRgbPlane.format(), QImage::Format_RGBX8888);
-    QCOMPARE(asset.alphaPlane.format(), QImage::Format_RGBX8888);
-    QCOMPARE(asset.straightRgbPlane.devicePixelRatio(), 1.0);
-    QCOMPARE(asset.alphaPlane.devicePixelRatio(), 1.0);
+    QCOMPARE(asset.straightRgba.size(), source.size());
+    QCOMPARE(asset.straightRgba.format(), QImage::Format_RGBA8888);
+    QCOMPARE(asset.straightRgba.devicePixelRatio(), 1.0);
+    QCOMPARE(asset.straightRgba.sizeInBytes(),
+             static_cast<qsizetype>(source.width()) * source.height() * 4);
     QVERIFY(asset.serial > 0);
 
-    const PlaneBytes expected = expectedPlaneBytes(source);
-    QCOMPARE(packedPixels(asset.straightRgbPlane), expected.rgb);
-    QCOMPARE(packedPixels(asset.alphaPlane), expected.alpha);
+    QCOMPARE(packedPixels(asset.straightRgba), expectedPackedBytes(source));
 }
 
-void TerminalBackdropTest::decodesJpegIntoStraightPlanes()
+void TerminalBackdropTest::decodesJpegIntoPackedRgba()
 {
     const auto directory = makeTestDirectory();
     QVERIFY2(directory->isValid(), qPrintable(directory->errorString()));
@@ -301,14 +271,12 @@ void TerminalBackdropTest::decodesJpegIntoStraightPlanes()
     QVERIFY2(reply.result->has_value(), qPrintable(replyFailure(reply)));
 
     const auto &asset = *reply.result->value();
-    QCOMPARE(asset.straightRgbPlane.size(), decoded.size());
-    QCOMPARE(asset.alphaPlane.size(), decoded.size());
-    QCOMPARE(asset.straightRgbPlane.format(), QImage::Format_RGBX8888);
-    QCOMPARE(asset.alphaPlane.format(), QImage::Format_RGBX8888);
-
-    const PlaneBytes expected = expectedPlaneBytes(decoded);
-    QCOMPARE(packedPixels(asset.straightRgbPlane), expected.rgb);
-    QCOMPARE(packedPixels(asset.alphaPlane), expected.alpha);
+    QCOMPARE(asset.straightRgba.size(), decoded.size());
+    QCOMPARE(asset.straightRgba.format(), QImage::Format_RGBA8888);
+    QCOMPARE(asset.straightRgba.devicePixelRatio(), 1.0);
+    QCOMPARE(asset.straightRgba.sizeInBytes(),
+             static_cast<qsizetype>(decoded.width()) * decoded.height() * 4);
+    QCOMPARE(packedPixels(asset.straightRgba), expectedPackedBytes(decoded));
 }
 
 void TerminalBackdropTest::rejectsUnsupportedAndCorruptImages()
@@ -512,12 +480,9 @@ void TerminalBackdropTest::fingerprintsReplacementsAndReusesLiveCache()
              qPrintable(replyFailure(replacementReply)));
     auto replacementAsset = replacementReply.result->value();
     QVERIFY(replacementAsset->serial != originalAsset->serial);
-    QCOMPARE(replacementAsset->straightRgbPlane.size(), replacement.size());
-    const PlaneBytes expectedReplacement = expectedPlaneBytes(replacement);
-    QCOMPARE(packedPixels(replacementAsset->straightRgbPlane),
-             expectedReplacement.rgb);
-    QCOMPARE(packedPixels(replacementAsset->alphaPlane),
-             expectedReplacement.alpha);
+    QCOMPARE(replacementAsset->straightRgba.size(), replacement.size());
+    const QByteArray expectedReplacement = expectedPackedBytes(replacement);
+    QCOMPARE(packedPixels(replacementAsset->straightRgba), expectedReplacement);
 
     ImageReply cachedReplacementReply;
     QObject cachedReplacementReceiver;
@@ -547,10 +512,7 @@ void TerminalBackdropTest::fingerprintsReplacementsAndReusesLiveCache()
              qPrintable(replyFailure(redecodedReply)));
     const auto redecodedAsset = redecodedReply.result->value();
     QVERIFY(redecodedAsset->serial != replacementSerial);
-    QCOMPARE(packedPixels(redecodedAsset->straightRgbPlane),
-             expectedReplacement.rgb);
-    QCOMPARE(packedPixels(redecodedAsset->alphaPlane),
-             expectedReplacement.alpha);
+    QCOMPARE(packedPixels(redecodedAsset->straightRgba), expectedReplacement);
 }
 
 void TerminalBackdropTest::deliversCallbacksOnApplicationThread()

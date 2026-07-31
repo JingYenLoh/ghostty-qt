@@ -59,6 +59,7 @@ cmake --build --preset release \
              bench-terminal-custom-shader-compiler \
              bench-terminal-custom-shader-rhi \
              bench-terminal-kitty-graphics \
+             bench-terminal-backdrop \
     -j"$(nproc)"
 ./build/release/tests/bench-terminal-pane-renderer \
     --graphics-api software --warmup 20 --iterations 200
@@ -82,6 +83,9 @@ LIBGL_ALWAYS_SOFTWARE=1 \
     --width 640 --height 360 --warmup 10 --iterations 100
 ./build/release/tests/bench-terminal-kitty-graphics \
     --pixel-format rgba32 \
+    --width 640 --height 360 --warmup 10 --iterations 100
+./build/release/tests/bench-terminal-backdrop \
+    --source-format rgba8888 \
     --width 640 --height 360 --warmup 10 --iterations 100
 ```
 
@@ -244,6 +248,18 @@ growth. Its one-placement, opacity, and `RGBA8888` checks guard the intended
 replacement and storage paths. RSS includes libghostty and allocator behavior,
 so compare it only with identical dimensions, frame counts, storage limits,
 and builds.
+
+The backdrop benchmark measures the shipped post-decode asset preparation and
+CPU/software-fallback composition paths using deterministic varying-alpha
+pixels. Preparation is reported side by side with a frozen copy of the former
+two-plane algorithm; decoded input allocation is outside both timed regions,
+and order alternates to reduce systematic bias. `--source-format rgba8888`
+isolates the packed transfer fast path, while `argb32` includes conversion into
+straight RGBA. Composition is reported separately and this is not an RHI
+draw-time benchmark. Exact logical packed `RGBA8888` asset storage and the
+former two-plane byte cost accompany the timings. Compare results only with
+the same machine, source format, dimensions, Qt build, warmup, and iteration
+count; the byte reduction is exactly four bytes per source pixel.
 
 ## C++ formatting
 
