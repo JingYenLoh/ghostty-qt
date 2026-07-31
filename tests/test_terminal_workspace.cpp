@@ -3861,7 +3861,12 @@ void TerminalWorkspaceTest::idleShellDoesNotPromptInRunningProcessesMode()
                             &TerminalWorkspace::closeConfirmationRequested);
     QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
-    QTest::qWait(350);
+    TerminalPane *pane = workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    TerminalController *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->running(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->activeProcess(), 5000);
 
     workspace.requestWindowClose();
     QCOMPARE(confirmation.count(), 0);
@@ -3879,10 +3884,13 @@ void TerminalWorkspaceTest::submittedCommandPromptsBeforeForegroundPoll()
                             &TerminalWorkspace::closeConfirmationRequested);
     QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
-    QTest::qWait(350);
 
     TerminalPane *pane = workspace.findChild<TerminalPane *>();
     QVERIFY(pane != nullptr);
+    TerminalController *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->running(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->activeProcess(), 5000);
     QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return,
                     Qt::NoModifier, QStringLiteral("\r"));
     QCoreApplication::sendEvent(pane, &enter);
@@ -3896,7 +3904,7 @@ void TerminalWorkspaceTest::submittedCommandPromptsBeforeForegroundPoll()
 
     // An empty command settles back to an idle prompt after the conservative
     // grace interval and no longer needs confirmation.
-    QTest::qWait(500);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->activeProcess(), 5000);
     workspace.requestWindowClose();
     QCOMPARE(confirmation.count(), 1);
     QTRY_COMPARE_WITH_TIMEOUT(quit.count(), 1, 1000);

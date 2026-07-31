@@ -815,6 +815,14 @@ config-parser build remains `ReleaseFast` and is also not
 sanitizer-instrumented; its process boundary is intentional containment, not a
 replacement for upstream testing.
 
+The XCB/OpenGL Kitty integration test uses Xvfb in CI and a live X display
+locally. Sanitizer builds explicitly skip it because Qt reaches the
+distribution's uninstrumented XCB/XKB keymap setup before creating a window;
+shader reflection, placement geometry, mpv-shaped protocol input, and the
+software renderer remain covered by the sanitizer suite. With X or Xvfb
+available, Debug and Release CTest runs still require and verify the real
+OpenGL RHI path.
+
 The clean step is required when another preset has already populated the shared
 `ghostty/zig-out` directory. Ghostty's CMake wrapper does not encode Zig
 optimization flags in that output path, so an existing `ReleaseFast` archive

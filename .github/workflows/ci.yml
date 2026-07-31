@@ -71,6 +71,8 @@ jobs:
             ncurses-bin \
             ninja-build \
             wayland-protocols \
+            xauth \
+            xvfb \
             xz-utils
 
       - name: Install Qt

@@ -354,6 +354,7 @@ target_include_directories(test-terminal-kitty-graphics PRIVATE
 target_link_libraries(test-terminal-kitty-graphics PRIVATE
     Qt6::Core
     Qt6::Gui
+    Qt6::GuiPrivate
     Qt6::Test
     ghostty-qt-terminal-rendering
 )
@@ -701,14 +702,22 @@ set_tests_properties(terminal-pane-render PROPERTIES
     ENVIRONMENT
         "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_SCALE_FACTOR=1"
 )
+set(ghostty_qt_test_asan_build 0)
+if(CMAKE_CXX_FLAGS MATCHES "(^| )-fsanitize=[^ ]*address")
+    set(ghostty_qt_test_asan_build 1)
+endif()
 add_test(
     NAME terminal-pane-kitty-rhi
-    COMMAND test-terminal-pane rendersAndRetainsKittyGraphics
+    COMMAND
+        "${CMAKE_CURRENT_SOURCE_DIR}/run_xcb_rhi_test.sh"
+        "$<TARGET_FILE:test-terminal-pane>"
+        rendersAndRetainsKittyGraphics
 )
 set_tests_properties(terminal-pane-kitty-rhi PROPERTIES
     TIMEOUT 30
+    SKIP_RETURN_CODE 77
     ENVIRONMENT
-        "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};LIBGL_ALWAYS_SOFTWARE=1;QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=opengl;QT_SCALE_FACTOR=1"
+        "GHOSTTY_QT_ASAN_BUILD=${ghostty_qt_test_asan_build};GHOSTTY_QT_EXPECT_RHI=1;GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};LIBGL_ALWAYS_SOFTWARE=1;QT_QPA_PLATFORM=xcb;QT_QUICK_BACKEND=rhi;QSG_RHI_BACKEND=opengl;QT_SCALE_FACTOR=1"
 )
 add_test(
     NAME terminal-pane-retained-solids-rhi

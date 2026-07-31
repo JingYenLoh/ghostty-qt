@@ -28,6 +28,7 @@
 #include <QMouseEvent>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QScopeGuard>
 #include <QSet>
 #include <QSignalSpy>
@@ -2000,6 +2001,12 @@ void TerminalPaneTest::rendersAndRetainsKittyGraphics()
 {
     qRegisterMetaType<TerminalUpdate>();
 
+    const bool expectRhi =
+        qEnvironmentVariableIntValue("GHOSTTY_QT_EXPECT_RHI") != 0;
+    if (expectRhi) {
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+    }
+
     LaunchOptions options;
     options.workingDirectory = QDir::currentPath();
     options.program = {QStringLiteral("/bin/true")};
@@ -2115,6 +2122,11 @@ void TerminalPaneTest::rendersAndRetainsKittyGraphics()
     controller->terminalUpdated(fullUpdate(makeSnapshot(firstAsset), 1));
     const QImage initialImage = window.grabWindow();
     QVERIFY(!initialImage.isNull());
+    if (expectRhi) {
+        const auto graphicsApi = window.rendererInterface()->graphicsApi();
+        QCOMPARE(graphicsApi, QSGRendererInterface::OpenGL);
+        QVERIFY(QSGRendererInterface::isApiRhiBased(graphicsApi));
+    }
     const qreal renderedCellWidth =
         layout->gridRect.width() / layout->session.columns;
     const qreal renderedCellHeight =

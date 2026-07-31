@@ -1,8 +1,12 @@
 #include "terminal_kitty_graphics.h"
+#include "terminal_kitty_graphics_qsg.h"
 
+#include <QFile>
 #include <QTest>
+#include <rhi/qshader.h>
 
 #include <memory>
+#include <ranges>
 
 namespace {
 
@@ -29,6 +33,16 @@ void compareReal(qreal actual, qreal expected)
                             .arg(expected, 0, 'g', 16)));
 }
 
+const QShaderDescription::BlockVariable *
+memberNamed(const QShaderDescription::UniformBlock &block, QByteArrayView name)
+{
+    const auto found =
+        std::ranges::find_if(block.members, [name](const auto &member) {
+            return member.name == name;
+        });
+    return found == block.members.cend() ? nullptr : &*found;
+}
+
 } // namespace
 
 class TerminalKittyGraphicsTest : public QObject {
@@ -38,6 +52,8 @@ private Q_SLOTS:
     void projectsPhysicalGeometryAndCropsSource();
     void clipsAtRightAndBottomEdges();
     void rejectsInvalidGeometry();
+    void embeddedShaderMatchesCpuUniformLayout_data();
+    void embeddedShaderMatchesCpuUniformLayout();
 };
 
 void TerminalKittyGraphicsTest::projectsPhysicalGeometryAndCropsSource()
@@ -123,6 +139,70 @@ void TerminalKittyGraphicsTest::rejectsInvalidGeometry()
     placement.destinationWidthPixels = 10;
     placement.image.reset();
     QVERIFY(!render().has_value());
+}
+
+void TerminalKittyGraphicsTest::embeddedShaderMatchesCpuUniformLayout_data()
+{
+    QTest::addColumn<QString>("resource");
+    QTest::addColumn<int>("stage");
+    QTest::addColumn<bool>("hasImageSamplers");
+
+    QTest::newRow("vertex")
+        << QStringLiteral(":/ghostty-qt/shaders/terminal_kitty.vert.qsb")
+        << static_cast<int>(QShader::VertexStage) << false;
+    QTest::newRow("fragment")
+        << QStringLiteral(":/ghostty-qt/shaders/terminal_kitty.frag.qsb")
+        << static_cast<int>(QShader::FragmentStage) << true;
+}
+
+void TerminalKittyGraphicsTest::embeddedShaderMatchesCpuUniformLayout()
+{
+    QFETCH(QString, resource);
+    QFETCH(int, stage);
+    QFETCH(bool, hasImageSamplers);
+
+    QFile file(resource);
+    QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(file.errorString()));
+    const QShader shader = QShader::fromSerialized(file.readAll());
+    QVERIFY(shader.isValid());
+    QCOMPARE(static_cast<int>(shader.stage()), stage);
+
+    const auto blocks = shader.description().uniformBlocks();
+    QCOMPARE(blocks.size(), 1);
+    const auto &block = blocks.constFirst();
+    QCOMPARE(block.binding, 0);
+    QCOMPARE(
+        block.size,
+        static_cast<int>(TerminalKittyGraphicsShaderLayout::uniformBufferSize));
+    QCOMPARE(block.members.size(), 2);
+
+    const auto *matrix = memberNamed(block, QByteArrayView("qt_Matrix"));
+    QVERIFY(matrix != nullptr);
+    QCOMPARE(matrix->type, QShaderDescription::Mat4);
+    QCOMPARE(matrix->offset,
+             static_cast<int>(TerminalKittyGraphicsShaderLayout::matrixOffset));
+    QCOMPARE(matrix->size,
+             static_cast<int>(TerminalKittyGraphicsShaderLayout::matrixSize));
+    QCOMPARE(matrix->matrixStride, 16);
+
+    const auto *opacity = memberNamed(block, QByteArrayView("qt_Opacity"));
+    QVERIFY(opacity != nullptr);
+    QCOMPARE(opacity->type, QShaderDescription::Float);
+    QCOMPARE(opacity->offset,
+             static_cast<int>(
+                 TerminalKittyGraphicsShaderLayout::inheritedOpacityOffset));
+    QCOMPARE(opacity->size, static_cast<int>(sizeof(float)));
+
+    const auto samplers = shader.description().combinedImageSamplers();
+    if (!hasImageSamplers) {
+        QVERIFY(samplers.isEmpty());
+        return;
+    }
+    QCOMPARE(samplers.size(), 2);
+    QCOMPARE(samplers.at(0).name, QByteArray("straightRgb"));
+    QCOMPARE(samplers.at(0).binding, 1);
+    QCOMPARE(samplers.at(1).name, QByteArray("straightAlpha"));
+    QCOMPARE(samplers.at(1).binding, 2);
 }
 
 QTEST_MAIN(TerminalKittyGraphicsTest)

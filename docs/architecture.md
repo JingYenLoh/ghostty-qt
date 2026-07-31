@@ -2668,6 +2668,16 @@ The default CTest suite has focused layers for each ownership boundary:
   llvmpipe run executes the complete material suite, including
   fractional-DPR seam and relative/global-opacity samples, with seven passes
   and no skips.
+- `terminal-kitty-graphics` verifies physical placement projection and
+  cropping, then reflects both embedded QSBs and compares their exact 68-byte
+  matrix/opacity block and sampler bindings with the CPU write layout.
+  `terminal-pane-kitty-rhi` runs the retained end-to-end pane case through
+  XCB/Xvfb and OpenGL RHI, asserts that Qt did not select its software scene
+  graph, samples the rendered pixels, and checks texture reuse and eviction.
+  The XCB integration case skips under ASan because the instrumented
+  executable crosses uninstrumented system XCB/XKB startup code before Qt
+  creates a window; the renderer-independent contract tests remain
+  instrumented.
 - `terminal-rect-batch` verifies that retained hardware geometry grows without
   shrinking, identical and smaller updates allocate nothing, software
   rectangle nodes are pooled and hidden rather than deleted, and switching
@@ -2688,7 +2698,11 @@ The default CTest suite has focused layers for each ownership boundary:
   primary/alternate-screen reset, mode clearing,
   selection invalidation, history removal, forced full-frame publication, and
   long OSC 8 URI lookup across active, scrollback, alternate-screen, and reset
-  state. Tracked URI anchors are also exercised across unrelated output,
+  state. Its Kitty cases include mpv's direct RGB24 transmit-and-display
+  grammar, the real 4096-character protocol continuation boundary, arbitrary
+  PTY-read fragmentation, implicit image IDs, cursor suppression, repeated
+  frames, and pixel data beyond the chunk boundary. Tracked URI anchors are
+  also exercised across unrelated output,
   reflow, viewport hiding/restoration, screen switches, replacement, reset,
   and scrollback pruning. Logical-line snapshots additionally cover exact UTF-8
   mapping across combining graphemes, wide cells, soft wraps, semantic prompt

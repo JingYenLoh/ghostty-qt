@@ -12,6 +12,7 @@
 #include <linux/input-event-codes.h>
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <optional>
 #include <utility>
@@ -101,6 +102,24 @@ void renderInto(GhosttyVtAdapter *adapter, TerminalFrame *frame)
     QVERIFY(applyTerminalUpdate(*frame, snapshot.update));
 }
 
+void writeFragmented(GhosttyVtAdapter *adapter, const QByteArray &bytes)
+{
+    constexpr std::array<qsizetype, 7> fragmentSizes{
+        1, 2, 5, 17, 97, 509, 31,
+    };
+    qsizetype offset = 0;
+    qsizetype fragment = 0;
+    while (offset < bytes.size()) {
+        const qsizetype size = std::min(
+            fragmentSizes.at(static_cast<std::size_t>(
+                fragment % static_cast<qsizetype>(fragmentSizes.size()))),
+            bytes.size() - offset);
+        adapter->writeVt(bytes.mid(offset, size));
+        offset += size;
+        ++fragment;
+    }
+}
+
 QString frameRowText(const TerminalFrame &frame, int row)
 {
     QString result;
@@ -131,6 +150,7 @@ class GhosttyVtAdapterTest : public QObject {
 private Q_SLOTS:
     void rendersTerminalValuesAndEffects();
     void publishesKittyGraphicsSnapshots();
+    void publishesMpvShapedKittyFrames();
     void decodesKittyPngPayloads();
     void respondsToEnquiryWithConfiguredBytes();
     void reportsConfiguredColorSchemeAndLiveChanges();
@@ -479,6 +499,123 @@ void GhosttyVtAdapterTest::publishesKittyGraphicsSnapshots()
              GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(disabled.update.kittyGraphicsChanged);
     QVERIFY(disabled.update.kittyGraphics->placements.isEmpty());
+}
+
+void GhosttyVtAdapterTest::publishesMpvShapedKittyFrames()
+{
+    QByteArray ptyWrites;
+    GhosttyVtAdapter::Options options;
+    options.geometry = {
+        .columns = 12,
+        .rows = 5,
+        .cellWidthPixels = 10,
+        .cellHeightPixels = 20,
+    };
+    auto adapter = GhosttyVtAdapter::create(
+        options, {.writePty = [&ptyWrites](const QByteArray &data) {
+            ptyWrites += data;
+        }});
+    QVERIFY(adapter != nullptr);
+
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+
+    const auto pixels = [](int shift) {
+        QByteArray result(33 * 32 * 3, Qt::Uninitialized);
+        for (qsizetype index = 0; index < result.size(); ++index) {
+            result[index] = static_cast<char>(
+                (index + static_cast<qsizetype>(shift)) % 251);
+        }
+        return result;
+    };
+    const auto packets = [](const QByteArray &raw) {
+        const QByteArray encoded = raw.toBase64();
+        Q_ASSERT(encoded.size() == 4'224);
+        return std::array{
+            QByteArrayLiteral("\033[2;3H\033_Ga=T,f=24,s=33,v=32,C=1,q=2,m=1;")
+                + encoded.left(4'096) + QByteArrayLiteral("\033\\"),
+            QByteArrayLiteral("\033_Gm=0;") + encoded.mid(4'096)
+                + QByteArrayLiteral("\033\\"),
+        };
+    };
+
+    const auto firstPackets = packets(pixels(0));
+    writeFragmented(adapter.get(), firstPackets.at(0));
+    GhosttyVtAdapter::RenderSnapshot partial;
+    QCOMPARE(adapter->renderFrame(&partial),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(!partial.update.kittyGraphicsChanged);
+    QVERIFY(applyTerminalUpdate(frame, partial.update));
+    QCOMPARE(frame.cursorColumn, 2);
+    QCOMPARE(frame.cursorRow, 1);
+    QVERIFY(ptyWrites.isEmpty());
+
+    writeFragmented(adapter.get(), firstPackets.at(1));
+    GhosttyVtAdapter::RenderSnapshot complete;
+    QCOMPARE(adapter->renderFrame(&complete),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(complete.update.kittyGraphicsChanged);
+    QVERIFY(applyTerminalUpdate(frame, complete.update));
+    QVERIFY(frame.kittyGraphics != nullptr);
+    QVERIFY(!frame.kittyGraphics->containsVirtualPlacements);
+    QCOMPARE(frame.kittyGraphics->placements.size(), 1);
+
+    const auto &firstPlacement = frame.kittyGraphics->placements.constFirst();
+    QCOMPARE(firstPlacement.viewportColumn, 2);
+    QCOMPARE(firstPlacement.viewportRow, 1);
+    QCOMPARE(firstPlacement.destinationWidthPixels, quint32{33});
+    QCOMPARE(firstPlacement.destinationHeightPixels, quint32{32});
+    QCOMPARE(firstPlacement.sourceWidth, quint32{33});
+    QCOMPARE(firstPlacement.sourceHeight, quint32{32});
+    QVERIFY(firstPlacement.image != nullptr);
+    QVERIFY(firstPlacement.image->imageId != 0);
+    const quint32 firstImageId = firstPlacement.image->imageId;
+    const quint64 firstGeneration = firstPlacement.image->generation;
+    QCOMPARE(firstPlacement.image->straightRgbPlane.pixelColor(1, 31),
+             QColor(60, 61, 62));
+    QCOMPARE(firstPlacement.image->alphaPlane.pixelColor(1, 31), Qt::white);
+    QCOMPARE(frame.cursorColumn, 2);
+    QCOMPARE(frame.cursorRow, 1);
+    QVERIFY(ptyWrites.isEmpty());
+
+    GhosttyVtAdapter::RenderSnapshot unchanged;
+    QCOMPARE(adapter->renderFrame(&unchanged),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(!unchanged.update.kittyGraphicsChanged);
+
+    const auto secondPackets = packets(pixels(17));
+    const auto previousSnapshot = frame.kittyGraphics;
+    writeFragmented(adapter.get(), secondPackets.at(0));
+    GhosttyVtAdapter::RenderSnapshot secondPartial;
+    QCOMPARE(adapter->renderFrame(&secondPartial),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(!secondPartial.update.kittyGraphicsChanged);
+    QVERIFY(applyTerminalUpdate(frame, secondPartial.update));
+    QVERIFY(frame.kittyGraphics == previousSnapshot);
+
+    writeFragmented(adapter.get(), secondPackets.at(1));
+    GhosttyVtAdapter::RenderSnapshot secondComplete;
+    QCOMPARE(adapter->renderFrame(&secondComplete),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(secondComplete.update.kittyGraphicsChanged);
+    QVERIFY(applyTerminalUpdate(frame, secondComplete.update));
+    QVERIFY(frame.kittyGraphics != nullptr);
+
+    const auto newest = std::ranges::max_element(
+        frame.kittyGraphics->placements, {}, [](const auto &placement) {
+            return placement.image != nullptr ? placement.image->generation
+                                              : quint64{};
+        });
+    QVERIFY(newest != frame.kittyGraphics->placements.cend());
+    QVERIFY(newest->image != nullptr);
+    QVERIFY(newest->image->imageId != firstImageId);
+    QVERIFY(newest->image->generation > firstGeneration);
+    QCOMPARE(newest->image->straightRgbPlane.pixelColor(1, 31),
+             QColor(77, 78, 79));
+    QCOMPARE(newest->image->alphaPlane.pixelColor(1, 31), Qt::white);
+    QCOMPARE(frame.cursorColumn, 2);
+    QCOMPARE(frame.cursorRow, 1);
+    QVERIFY(ptyWrites.isEmpty());
 }
 
 void GhosttyVtAdapterTest::decodesKittyPngPayloads()

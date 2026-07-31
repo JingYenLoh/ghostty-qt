@@ -53,8 +53,10 @@ for intentional upgrade procedure.
   shaping, and color emoji cannot be reproduced through the current public
   terminal API. Qt owns the final shaping result.
 - Kitty graphics renders ordinary placements, including foreground and
-  background z layers. Unicode virtual placements need expanded viewport data
-  from `libghostty-vt`.
+  background z layers. Direct RGB24 continuation streams used by mpv are
+  covered end to end through OpenGL RHI. Unicode virtual placements used by
+  applications such as yazi still need expanded viewport data from
+  `libghostty-vt`.
 - Search is a cooperative frontend implementation over public terminal
   snapshots. It does not use Ghostty's private `xev`-dependent search thread
   and retains some documented paging and responsiveness differences.

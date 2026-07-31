@@ -29,10 +29,10 @@ static void initializeTerminalKittyShaderResources()
 
 namespace {
 
-constexpr qsizetype matrixOffset = 0;
-constexpr qsizetype matrixSize = 64;
-constexpr qsizetype inheritedOpacityOffset = 64;
-constexpr qsizetype uniformBufferSize = 80;
+using namespace TerminalKittyGraphicsShaderLayout;
+
+static_assert(matrixSize == 64);
+static_assert(uniformBufferSize == 68);
 
 void clearNodeChildren(QSGNode *node)
 {
