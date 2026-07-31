@@ -51,6 +51,26 @@ constexpr qsizetype quadByteSize =
     verticesPerQuad * static_cast<qsizetype>(sizeof(Vertex));
 constexpr qsizetype vertexBufferByteSize = quadByteSize * 2;
 
+class DebugMarkerScope final {
+public:
+    DebugMarkerScope(QRhiCommandBuffer *commandBuffer, const QByteArray &label,
+                     bool enabled)
+        : commandBuffer_(enabled ? commandBuffer : nullptr)
+    {
+        if (commandBuffer_ != nullptr) commandBuffer_->debugMarkBegin(label);
+    }
+
+    ~DebugMarkerScope()
+    {
+        if (commandBuffer_ != nullptr) commandBuffer_->debugMarkEnd();
+    }
+
+    Q_DISABLE_COPY_MOVE(DebugMarkerScope)
+
+private:
+    QRhiCommandBuffer *commandBuffer_;
+};
+
 const QShader &terminalCustomShaderVertexShader()
 {
     static const QShader shader = [] {
@@ -98,6 +118,7 @@ public:
         std::shared_ptr<TerminalCustomShaderPipelineTelemetry> telemetry)
         : window_(window)
         , telemetry_(std::move(telemetry))
+        , debugMarkersEnabled_(terminalCustomShaderDebugMarkersEnabled(window))
     {
         setFlag(QSGNode::UsePreprocess);
     }
@@ -179,17 +200,17 @@ public:
 
         const qsizetype finalIndex = programs_.size() - 1;
         for (qsizetype index = 0; index < finalIndex; ++index) {
+            const PassResources &resources =
+                passResources_.at(static_cast<std::size_t>(index));
+            const DebugMarkerScope marker(cb, resources.debugMarkerLabel,
+                                          debugMarkersEnabled_);
             const int targetIndex =
                 static_cast<int>(index % static_cast<qsizetype>(targetCount));
             QRhiTextureRenderTarget *const target =
                 pingTargets_.at(static_cast<std::size_t>(targetIndex)).get();
             cb->beginPass(target, Qt::transparent, {1.0F, 0},
                           index == 0 ? resourceUpdates : nullptr);
-            recordDraw(cb,
-                       passResources_.at(static_cast<std::size_t>(index))
-                           .pipeline.get(),
-                       passResources_.at(static_cast<std::size_t>(index))
-                           .bindings.get(),
+            recordDraw(cb, resources.pipeline.get(), resources.bindings.get(),
                        index, index == 0 ? 0 : quadByteSize, targetSize);
             cb->endPass();
         }
@@ -236,6 +257,8 @@ public:
         if (pipeline == nullptr) return;
 
         QRhiCommandBuffer *const cb = commandBuffer();
+        const DebugMarkerScope marker(cb, resources.debugMarkerLabel,
+                                      debugMarkersEnabled_);
         cb->setGraphicsPipeline(pipeline);
         cb->setViewport(QRhiViewport(0.0F, 0.0F,
                                      static_cast<float>(targetSize.width()),
@@ -297,6 +320,7 @@ private:
         std::unique_ptr<QRhiShaderResourceBindings> bindings;
         std::unique_ptr<QRhiGraphicsPipeline> pipeline;
         std::unique_ptr<QRhiGraphicsPipeline> stencilPipeline;
+        QByteArray debugMarkerLabel;
     };
 
     void resetPassResources()
@@ -386,7 +410,18 @@ private:
         for (int index = 0; index < count; ++index) {
             std::unique_ptr<QRhiTexture> texture(rhi_->newTexture(
                 QRhiTexture::RGBA8, size, 1, QRhiTexture::RenderTarget));
-            if (texture == nullptr || !texture->create()) {
+            if (texture == nullptr) {
+                setTelemetryDiagnostic(
+                    telemetry_,
+                    QStringLiteral("custom-shader: unable to allocate retained "
+                                   "RGBA8 render target %1")
+                        .arg(index + 1));
+                resetTargets();
+                return false;
+            }
+            texture->setName(QByteArrayLiteral("ghostty-qt custom shader ping ")
+                             + QByteArray::number(index));
+            if (!texture->create()) {
                 setTelemetryDiagnostic(
                     telemetry_,
                     QStringLiteral("custom-shader: unable to allocate retained "
@@ -411,6 +446,10 @@ private:
             if (pingRenderPass_ == nullptr) {
                 pingRenderPass_.reset(
                     target->newCompatibleRenderPassDescriptor());
+                if (pingRenderPass_ != nullptr) {
+                    pingRenderPass_->setName(QByteArrayLiteral(
+                        "ghostty-qt custom shader ping render pass"));
+                }
             }
             if (pingRenderPass_ == nullptr) {
                 setTelemetryDiagnostic(
@@ -421,6 +460,9 @@ private:
                 return false;
             }
             target->setRenderPassDescriptor(pingRenderPass_.get());
+            target->setName(
+                QByteArrayLiteral("ghostty-qt custom shader target ")
+                + QByteArray::number(index));
             if (!target->create()) {
                 setTelemetryDiagnostic(
                     telemetry_,
@@ -430,11 +472,6 @@ private:
                 resetTargets();
                 return false;
             }
-            texture->setName(QByteArrayLiteral("ghostty-qt custom shader ping ")
-                             + QByteArray::number(index));
-            target->setName(
-                QByteArrayLiteral("ghostty-qt custom shader target ")
-                + QByteArray::number(index));
             pingTextures_.push_back(std::move(texture));
             pingTargets_.push_back(std::move(target));
             {
@@ -464,7 +501,7 @@ private:
             vertexBuffer_.reset(
                 rhi_->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer,
                                 static_cast<quint32>(vertexBufferByteSize)));
-            if (vertexBuffer_ == nullptr || !vertexBuffer_->create()) {
+            if (vertexBuffer_ == nullptr) {
                 vertexBuffer_.reset();
                 setTelemetryDiagnostic(
                     telemetry_,
@@ -474,6 +511,14 @@ private:
             }
             vertexBuffer_->setName(
                 QByteArrayLiteral("ghostty-qt custom shader vertices"));
+            if (!vertexBuffer_->create()) {
+                vertexBuffer_.reset();
+                setTelemetryDiagnostic(
+                    telemetry_,
+                    QStringLiteral("custom-shader: unable to create retained "
+                                   "vertex buffer"));
+                return false;
+            }
             vertexDataDirty_ = true;
         }
 
@@ -501,7 +546,7 @@ private:
                 // address even while its native allocation is recreated.
                 uniformBuffer_->setSize(static_cast<quint32>(requestedSize));
             }
-            if (uniformBuffer_ == nullptr || !uniformBuffer_->create()) {
+            if (uniformBuffer_ == nullptr) {
                 setTelemetryDiagnostic(
                     telemetry_,
                     QStringLiteral("custom-shader: unable to create retained "
@@ -510,6 +555,13 @@ private:
             }
             uniformBuffer_->setName(
                 QByteArrayLiteral("ghostty-qt custom shader uniforms"));
+            if (!uniformBuffer_->create()) {
+                setTelemetryDiagnostic(
+                    telemetry_,
+                    QStringLiteral("custom-shader: unable to create retained "
+                                   "uniform buffer"));
+                return false;
+            }
             uniformStride_ = stride;
             uniformBufferSize_ = requestedSize;
             uniformBytes_ = QByteArray(requestedSize, '\0');
@@ -521,7 +573,7 @@ private:
                 QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::None,
                 QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge,
                 QRhiSampler::ClampToEdge));
-            if (sampler_ == nullptr || !sampler_->create()) {
+            if (sampler_ == nullptr) {
                 sampler_.reset();
                 setTelemetryDiagnostic(
                     telemetry_,
@@ -531,6 +583,14 @@ private:
             }
             sampler_->setName(
                 QByteArrayLiteral("ghostty-qt custom shader sampler"));
+            if (!sampler_->create()) {
+                sampler_.reset();
+                setTelemetryDiagnostic(
+                    telemetry_,
+                    QStringLiteral("custom-shader: unable to create retained "
+                                   "texture sampler"));
+                return false;
+            }
             programsChanged_ = true;
         }
         return true;
@@ -602,13 +662,13 @@ private:
             pipeline->setFlags(flags);
         }
 
-        if (!pipeline->create()) return {};
         pipeline->setName(
             QByteArrayLiteral("ghostty-qt custom shader pass ")
             + QByteArray::number(stageIndex)
             + (final ? QByteArrayLiteral(" final")
                      : QByteArrayLiteral(" intermediate"))
             + (stencil ? QByteArrayLiteral(" stencil") : QByteArray{}));
+        if (!pipeline->create()) return {};
         {
             QMutexLocker locker(&telemetry_->mutex);
             ++telemetry_->snapshot.pipelineCreateCount;
@@ -668,6 +728,12 @@ private:
         for (qsizetype index = 0; index < programs_.size(); ++index) {
             PassResources &resources =
                 passResources_[static_cast<std::size_t>(index)];
+            const bool final = index == programs_.size() - 1;
+            resources.debugMarkerLabel = terminalCustomShaderDebugMarkerLabel(
+                TerminalCustomShaderRenderPath::Retained, index,
+                programs_.size(),
+                final ? TerminalCustomShaderPassRole::Final
+                      : TerminalCustomShaderPassRole::Intermediate);
             resources.bindings.reset(rhi_->newShaderResourceBindings());
             if (resources.bindings == nullptr) {
                 setTelemetryDiagnostic(
@@ -690,6 +756,9 @@ private:
                     1, QRhiShaderResourceBinding::FragmentStage,
                     inputs.at(index), sampler_.get()),
             });
+            resources.bindings->setName(
+                QByteArrayLiteral("ghostty-qt custom shader bindings ")
+                + QByteArray::number(index));
             if (!resources.bindings->create()) {
                 setTelemetryDiagnostic(
                     telemetry_,
@@ -699,11 +768,7 @@ private:
                 passResources_.clear();
                 return false;
             }
-            resources.bindings->setName(
-                QByteArrayLiteral("ghostty-qt custom shader bindings ")
-                + QByteArray::number(index));
 
-            const bool final = index == programs_.size() - 1;
             QRhiRenderPassDescriptor *const descriptor = final
                 ? finalTarget->renderPassDescriptor()
                 : pingRenderPass_.get();
@@ -840,6 +905,7 @@ private:
 
     QPointer<QQuickWindow> window_;
     std::shared_ptr<TerminalCustomShaderPipelineTelemetry> telemetry_;
+    const bool debugMarkersEnabled_;
     QSGTexture *source_ = nullptr;
     QRectF viewport_;
     QVector<std::shared_ptr<const TerminalCustomShaderProgram>> programs_;

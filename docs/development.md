@@ -74,10 +74,10 @@ The custom-shader RHI benchmark compares the retained and legacy pipelines at
 zero, one, two, four, and eight full-screen passes on either OpenGL or Vulkan.
 It runs both source-dirty and effect-only workloads. Distinct noncommutative
 affine color transforms validate pass order with one untimed texture readback
-per scenario. Source paint counters verify that effect-only animation does not
-repaint the terminal source. Retained telemetry also verifies draw counts and
-the absence of target, pipeline, or resource-binding creation in the measured
-steady state.
+per recreated measurement round. Source paint counters verify that effect-only
+animation does not repaint the terminal source. Retained telemetry also
+verifies draw counts and the absence of target, pipeline, or resource-binding
+creation in the measured steady state.
 
 The benchmark renders through `QQuickRenderControl` into a persistent QRhi
 texture, so measured frames do not perform a readback. It reports:
@@ -92,10 +92,15 @@ Offscreen `endFrame()` serializes each frame, which makes its GPU timestamp
 unambiguous but does not model pipelined on-screen throughput. QRhi exposes no
 portable per-pass timestamp, so use `gpu_median_delta_us`, which subtracts the
 pooled zero-pass samples for the same workload, to estimate shader work. Treat
-small or negative deltas as measurement noise. The baseline is measured early,
-so longer runs can still experience clock or thermal drift. If any measured
-frame lacks a valid timestamp, that scenario reports GPU timing as unavailable
-while retaining its CPU results.
+small or negative deltas as measurement noise. When at least two iterations are
+requested, each workload/pass pair is measured in two recreated rounds with
+legacy-retained and retained-legacy ordering. Warmup and measured samples are
+split across the rounds without increasing their totals. This balances local
+order bias exactly for even iteration counts; for odd counts the first round
+receives the extra sample, as reported by `measured_frames_per_round`. Longer
+runs can still experience clock or thermal drift between different pass counts
+and workloads. If any measured frame lacks a valid timestamp, that scenario
+reports GPU timing as unavailable while retaining its CPU results.
 
 GPU clock ramp can bias the first scenarios. The default 200 warm-up frames
 are intentional; raise that count when otherwise-identical zero-pass results
@@ -120,6 +125,39 @@ graphical Wayland or X11 session.
 Set `GHOSTTY_QT_CUSTOM_SHADER_PIPELINE=legacy` when reproducing an application
 issue specifically against the old nested implementation. The benchmark
 constructs both implementations directly and does not consult this variable.
+
+### RenderDoc custom-shader captures
+
+Install RenderDoc so that both `renderdoccmd` and `qrenderdoc` are available,
+then capture a warmed, untimed benchmark frame with:
+
+```sh
+./scripts/capture-custom-shader-renderdoc.sh \
+    vulkan retained effect-only 8
+```
+
+The four arguments select the graphics API, renderer, workload, and pass count.
+They default to the values above. Captures are written below `tmp/renderdoc/`,
+which is ignored by Git. Use `opengl`, `legacy`, `source-dirty`, or one of
+`0`, `1`, `2`, `4`, and `8` to select another case.
+
+The benchmark renders offscreen and has no swapchain present with which
+RenderDoc could delimit a frame. Its capture mode therefore resolves the API
+injected by `renderdoccmd`, explicitly starts and ends one frame after warmup,
+and exits without reporting timings. Capture mode explicitly disables Qt
+timestamps and enables debug markers. The retained path emits a scoped group
+for every intermediate and final pass; the legacy material API has no safe
+post-draw hook, so it emits a message at each layer instead. Marker support is
+backend-dependent; Vulkan is the preferred capture backend. The benchmark's
+offscreen target and retained-pipeline resources have stable `ghostty-qt`
+names; Qt owns the legacy path's nested layer resources.
+
+Inspect the named offscreen output texture rather than looking for a presented
+backbuffer or capture thumbnail. Use a Release build and the host GPU; setting
+`LIBGL_ALWAYS_SOFTWARE=1` would profile Mesa's software renderer. If Vulkan
+capture fails, check the layer with `renderdoccmd vulkanlayer --explain`. If
+OpenGL injection fails under native Wayland EGL, retry the launcher with
+`QT_QPA_PLATFORM=xcb`.
 
 The current cases measure Kitty graphics' empty-image fast path. Image-specific
 benchmarks should distinguish first texture upload, retained redraw,

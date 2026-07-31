@@ -101,6 +101,19 @@ add_test(NAME terminal-custom-shader-compiler
     COMMAND test-terminal-custom-shader-compiler)
 set_tests_properties(terminal-custom-shader-compiler PROPERTIES TIMEOUT 30)
 
+qt_add_executable(test-renderdoc-capture
+    test_renderdoc_capture.cpp
+    renderdoc_capture.cpp
+    renderdoc_capture.h
+)
+target_link_libraries(test-renderdoc-capture PRIVATE
+    Qt6::Core
+    Qt6::Test
+    ${CMAKE_DL_LIBS}
+)
+add_test(NAME renderdoc-capture COMMAND test-renderdoc-capture)
+set_tests_properties(renderdoc-capture PROPERTIES TIMEOUT 10)
+
 qt_add_executable(test-terminal-custom-shader-qsg
     test_terminal_custom_shader_qsg.cpp
 )
@@ -722,6 +735,8 @@ if(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
 
     qt_add_executable(bench-terminal-custom-shader-rhi
         bench_terminal_custom_shader_rhi.cpp
+        renderdoc_capture.cpp
+        renderdoc_capture.h
     )
     target_include_directories(
         bench-terminal-custom-shader-rhi PRIVATE
@@ -734,6 +749,7 @@ if(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
         Qt6::Qml
         Qt6::Quick
         ghostty-qt-terminal-rendering
+        ${CMAKE_DL_LIBS}
     )
 
     qt_add_executable(bench-terminal-pane-renderer

@@ -22,8 +22,31 @@ class QShader;
 class TerminalCustomShaderEffect;
 class TerminalCustomShaderPipelineEffect;
 class TerminalCustomShaderQsgMaterial;
+class QQuickWindow;
 struct QSGMaterialType;
 struct TerminalCustomShaderStage;
+
+enum class TerminalCustomShaderRenderPath {
+    Legacy,
+    Retained,
+};
+
+enum class TerminalCustomShaderPassRole {
+    Layer,
+    Intermediate,
+    Final,
+};
+
+// Stable pass labels shared by the legacy material renderer and retained QRhi
+// renderer. A non-positive passCount is used when the legacy nested-layer path
+// cannot observe the complete chain.
+[[nodiscard]] QByteArray
+terminalCustomShaderDebugMarkerLabel(TerminalCustomShaderRenderPath path,
+                                     qsizetype stageIndex, qsizetype passCount,
+                                     TerminalCustomShaderPassRole role);
+
+[[nodiscard]] bool
+terminalCustomShaderDebugMarkersEnabled(QQuickWindow *window);
 
 struct alignas(16) TerminalCustomShaderVec4 {
     float x = 0.0F;
@@ -209,9 +232,9 @@ public:
     ~TerminalCustomShaderQsgNode() override;
 
     [[nodiscard]] bool
-    update(QSGTexture *source, const QRectF &viewport,
+    update(QQuickWindow *window, QSGTexture *source, const QRectF &viewport,
            std::shared_ptr<const TerminalCustomShaderProgram> program,
-           TerminalCustomShaderUniformSnapshot uniforms);
+           TerminalCustomShaderUniformSnapshot uniforms, int stageIndex);
     void clear();
 
     [[nodiscard]] bool isDrawable() const noexcept;

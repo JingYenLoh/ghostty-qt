@@ -1,3 +1,4 @@
+#include "renderdoc_capture.h"
 #include "terminal_custom_shader_compiler.h"
 #include "terminal_custom_shader_pipeline.h"
 #include "terminal_custom_shader_qsg.h"
@@ -22,6 +23,7 @@
 #include <QSGRendererInterface>
 #include <QSGSimpleRectNode>
 #include <QScopeGuard>
+#include <QStringList>
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <rhi/qrhi.h>
@@ -47,6 +49,7 @@ namespace {
 
 constexpr int maximumPassCount = 8;
 constexpr std::array<int, 5> passCounts{0, 1, 2, 4, 8};
+constexpr int maximumMeasurementRounds = 2;
 
 enum class Renderer {
     Legacy,
@@ -682,6 +685,20 @@ private:
     BenchmarkSourceItem *source_ = nullptr;
 };
 
+struct CaptureSelection {
+    Renderer renderer = Renderer::Retained;
+    Workload workload = Workload::EffectOnly;
+    int passCount = maximumPassCount;
+
+    [[nodiscard]] QString name() const
+    {
+        return QStringLiteral("%1:%2:%3")
+            .arg(rendererName(renderer))
+            .arg(workloadName(workload))
+            .arg(passCount);
+    }
+};
+
 struct ScenarioResult {
     Renderer renderer = Renderer::Legacy;
     Workload workload = Workload::SourceDirty;
@@ -696,6 +713,25 @@ struct ScenarioResult {
     quint64 sourcePaintDelta = 0;
     std::optional<TerminalCustomShaderPipelineSnapshot> before;
     std::optional<TerminalCustomShaderPipelineSnapshot> after;
+};
+
+struct ScenarioAccumulator {
+    Renderer renderer = Renderer::Legacy;
+    Workload workload = Workload::SourceDirty;
+    int passCount = 0;
+    QVector<qint64> cpuRecordSamples;
+    QVector<qint64> cpuCompletionSamples;
+    QVector<qint64> cpuTotalSamples;
+    QVector<qint64> gpuSamples;
+    quint64 sourcePaintDelta = 0;
+    int validationReadbackCount = 0;
+    std::uint64_t renderedFrameCount = 0;
+    std::uint64_t recordedDrawCount = 0;
+    std::uint64_t targetCreateCount = 0;
+    std::uint64_t targetDestroyCount = 0;
+    std::uint64_t pipelineCreateCount = 0;
+    std::uint64_t sourceBindingUpdateCount = 0;
+    std::optional<TerminalCustomShaderPipelineSnapshot> latestSnapshot;
 };
 
 struct WorkloadBaseline {
@@ -723,9 +759,64 @@ std::optional<int> positiveInteger(const QString &text)
     return value;
 }
 
+std::optional<CaptureSelection> parseCaptureSelection(const QString &text,
+                                                      QString *error)
+{
+    const QStringList parts = text.trimmed().split(u':');
+    if (parts.size() != 3) {
+        *error = QStringLiteral(
+            "renderdoc-capture must be renderer:workload:passes");
+        return std::nullopt;
+    }
+
+    CaptureSelection selection;
+    if (parts.at(0) == QStringLiteral("legacy")) {
+        selection.renderer = Renderer::Legacy;
+    } else if (parts.at(0) == QStringLiteral("retained")) {
+        selection.renderer = Renderer::Retained;
+    } else {
+        *error =
+            QStringLiteral("RenderDoc renderer must be legacy or retained");
+        return std::nullopt;
+    }
+
+    if (parts.at(1) == QStringLiteral("source-dirty")) {
+        selection.workload = Workload::SourceDirty;
+    } else if (parts.at(1) == QStringLiteral("effect-only")) {
+        selection.workload = Workload::EffectOnly;
+    } else {
+        *error = QStringLiteral(
+            "RenderDoc workload must be source-dirty or effect-only");
+        return std::nullopt;
+    }
+
+    const std::optional<int> selectedPassCount =
+        nonNegativeInteger(parts.at(2));
+    if (!selectedPassCount.has_value()
+        || std::ranges::find(passCounts, *selectedPassCount)
+            == passCounts.cend()) {
+        *error =
+            QStringLiteral("RenderDoc pass count must be 0, 1, 2, 4, or 8");
+        return std::nullopt;
+    }
+    selection.passCount = *selectedPassCount;
+    return selection;
+}
+
 std::uint64_t counterDelta(std::uint64_t after, std::uint64_t before)
 {
     return after >= before ? after - before : 0;
+}
+
+constexpr std::size_t rendererIndex(Renderer renderer)
+{
+    return renderer == Renderer::Legacy ? 0U : 1U;
+}
+
+int framesInRound(int totalFrames, int round, int roundCount)
+{
+    return totalFrames / roundCount
+        + (round < totalFrames % roundCount ? 1 : 0);
 }
 
 const ScenarioResult *findResult(const QVector<ScenarioResult> &results,
@@ -813,10 +904,23 @@ int main(int argc, char **argv)
         QStringLiteral("graphics-api"),
         QStringLiteral("Graphics API: opengl or vulkan."),
         QStringLiteral("api"), QStringLiteral("opengl"));
+    const QCommandLineOption renderDocCaptureOption(
+        QStringLiteral("renderdoc-capture"),
+        QStringLiteral(
+            "Capture one untimed offscreen frame through an already-injected "
+            "RenderDoc API. Syntax: renderer:workload:passes; for example, "
+            "retained:effect-only:8."),
+        QStringLiteral("scenario"));
+    const QCommandLineOption renderDocCapturePathOption(
+        QStringLiteral("renderdoc-capture-path"),
+        QStringLiteral("UTF-8 RenderDoc capture filename template."),
+        QStringLiteral("path"));
     parser.addOptions({warmupOption, iterationsOption, widthOption,
-                       heightOption, graphicsApiOption});
+                       heightOption, graphicsApiOption, renderDocCaptureOption,
+                       renderDocCapturePathOption});
     parser.process(application);
 
+    QString error;
     const std::optional<int> warmup =
         nonNegativeInteger(parser.value(warmupOption));
     const std::optional<int> iterations =
@@ -829,6 +933,20 @@ int main(int argc, char **argv)
         QTextStream(stderr)
             << "warmup must be non-negative; iterations, width, and height "
                "must be positive integers\n";
+        return 2;
+    }
+
+    std::optional<CaptureSelection> captureSelection;
+    if (parser.isSet(renderDocCaptureOption)) {
+        captureSelection =
+            parseCaptureSelection(parser.value(renderDocCaptureOption), &error);
+        if (!captureSelection.has_value()) {
+            QTextStream(stderr) << error << '\n';
+            return 2;
+        }
+    } else if (parser.isSet(renderDocCapturePathOption)) {
+        QTextStream(stderr)
+            << "renderdoc-capture-path requires renderdoc-capture\n";
         return 2;
     }
 
@@ -852,6 +970,23 @@ int main(int argc, char **argv)
     }
     QQuickWindow::setGraphicsApi(graphicsApi);
 
+    std::unique_ptr<RenderDocCapture> renderDocCapture;
+    if (captureSelection.has_value()) {
+        renderDocCapture = std::make_unique<RenderDocCapture>();
+        if (!renderDocCapture->isAvailable()) {
+            QTextStream(stderr) << "unable to initialize RenderDoc capture: "
+                                << renderDocCapture->errorString() << '\n';
+            return 4;
+        }
+        if (parser.isSet(renderDocCapturePathOption)
+            && !renderDocCapture->setCapturePathTemplate(
+                parser.value(renderDocCapturePathOption).toUtf8())) {
+            QTextStream(stderr) << "unable to configure RenderDoc capture: "
+                                << renderDocCapture->errorString() << '\n';
+            return 4;
+        }
+    }
+
     qmlRegisterType<BenchmarkSourceItem>("GhosttyShaderBench", 1, 0,
                                          "BenchmarkSource");
     qmlRegisterType<TerminalCustomShaderEffect>("GhosttyShaderBench", 1, 0,
@@ -865,7 +1000,6 @@ int main(int argc, char **argv)
         return 1;
     }
     TerminalCustomShaderOptions options;
-    QString error;
     const QDir shaderDirectory(shaderRoot.path());
     if (!writeBenchmarkShaders(shaderDirectory, &options, &error)) {
         QTextStream(stderr) << error << '\n';
@@ -891,8 +1025,23 @@ int main(int argc, char **argv)
     std::unique_ptr<QVulkanInstance> vulkanInstance;
     if (graphicsApi == QSGRendererInterface::Vulkan) {
         vulkanInstance = std::make_unique<QVulkanInstance>();
-        vulkanInstance->setExtensions(
-            QQuickGraphicsConfiguration::preferredInstanceExtensions());
+        QByteArrayList extensions =
+            QQuickGraphicsConfiguration::preferredInstanceExtensions();
+        if (captureSelection.has_value()) {
+            const QByteArray debugUtilsExtension(
+                VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            if (vulkanInstance->supportedExtensions().contains(
+                    debugUtilsExtension)) {
+                if (!extensions.contains(debugUtilsExtension)) {
+                    extensions.append(debugUtilsExtension);
+                }
+            } else {
+                QTextStream(stderr)
+                    << "warning: Vulkan does not expose " << debugUtilsExtension
+                    << "; RenderDoc labels will be unavailable\n";
+            }
+        }
+        vulkanInstance->setExtensions(extensions);
         if (!vulkanInstance->create()) {
             QTextStream(stderr) << "unable to create Vulkan instance (VkResult "
                                 << vulkanInstance->errorCode() << ")\n";
@@ -906,7 +1055,8 @@ int main(int argc, char **argv)
     window.setGeometry(0, 0, logicalSize.width(), logicalSize.height());
     window.contentItem()->setSize(logicalSize);
     QQuickGraphicsConfiguration graphicsConfiguration;
-    graphicsConfiguration.setTimestamps(true);
+    graphicsConfiguration.setTimestamps(!captureSelection.has_value());
+    graphicsConfiguration.setDebugMarkers(captureSelection.has_value());
     window.setGraphicsConfiguration(graphicsConfiguration);
 #if GHOSTTY_QT_BENCH_HAS_VULKAN
     if (vulkanInstance != nullptr) {
@@ -934,6 +1084,13 @@ int main(int argc, char **argv)
         renderControl.invalidate();
         return 1;
     }
+    if (captureSelection.has_value()
+        && !rhi->isFeatureSupported(QRhi::DebugMarkers)) {
+        QTextStream(stderr)
+            << "warning: " << rhi->backendName()
+            << " does not support QRhi debug markers; the capture will not "
+               "contain custom pass labels\n";
+    }
     const qreal dpr = window.devicePixelRatio();
     const QSize physicalSize(qMax(1, qRound(logicalSize.width() * dpr)),
                              qMax(1, qRound(logicalSize.height() * dpr)));
@@ -941,6 +1098,8 @@ int main(int argc, char **argv)
     std::unique_ptr<QRhiTexture> colorBuffer(rhi->newTexture(
         QRhiTexture::RGBA8, physicalSize, 1,
         QRhiTexture::RenderTarget | QRhiTexture::UsedAsTransferSource));
+    colorBuffer->setName(
+        QByteArrayLiteral("ghostty-qt custom-shader benchmark output"));
     if (!colorBuffer->create()) {
         QTextStream(stderr) << "unable to create offscreen color buffer\n";
         renderControl.invalidate();
@@ -949,6 +1108,8 @@ int main(int argc, char **argv)
     }
     std::unique_ptr<QRhiRenderBuffer> depthStencil(
         rhi->newRenderBuffer(QRhiRenderBuffer::DepthStencil, physicalSize, 1));
+    depthStencil->setName(
+        QByteArrayLiteral("ghostty-qt custom-shader benchmark depth-stencil"));
     if (!depthStencil->create()) {
         QTextStream(stderr)
             << "unable to create offscreen depth-stencil buffer\n";
@@ -963,7 +1124,11 @@ int main(int argc, char **argv)
         rhi->newTextureRenderTarget(targetDescription));
     std::unique_ptr<QRhiRenderPassDescriptor> renderPassDescriptor(
         renderTarget->newCompatibleRenderPassDescriptor());
+    renderPassDescriptor->setName(
+        QByteArrayLiteral("ghostty-qt custom-shader benchmark render pass"));
     renderTarget->setRenderPassDescriptor(renderPassDescriptor.get());
+    renderTarget->setName(
+        QByteArrayLiteral("ghostty-qt custom-shader benchmark target"));
     if (!renderTarget->create()) {
         QTextStream(stderr) << "unable to create offscreen render target\n";
         renderControl.invalidate();
@@ -989,146 +1154,312 @@ int main(int argc, char **argv)
         });
 
     QQmlEngine engine;
+    if (captureSelection.has_value()) {
+        const CaptureSelection selection = *captureSelection;
+        BenchmarkUniformProvider provider(physicalSize);
+        Scenario scenario;
+        if (!scenario.initialize(&engine, &window, &provider, compiled.stages,
+                                 selection.renderer, selection.passCount,
+                                 logicalSize, physicalSize, &error)) {
+            QTextStream(stderr) << "RenderDoc scenario " << selection.name()
+                                << " could not initialize: " << error << '\n';
+            return 1;
+        }
+
+        quint64 captureFrame = 0;
+        if (!scenario.render(&renderControl, rhi, colorBuffer.get(),
+                             selection.workload, ++captureFrame, nullptr, true,
+                             &error)) {
+            QTextStream(stderr) << "RenderDoc scenario " << selection.name()
+                                << " setup failed: " << error << '\n';
+            return 1;
+        }
+        for (int iteration = 0; iteration < *warmup; ++iteration) {
+            if (!scenario.render(&renderControl, rhi, colorBuffer.get(),
+                                 selection.workload, ++captureFrame, nullptr,
+                                 false, &error)) {
+                QTextStream(stderr) << "RenderDoc scenario " << selection.name()
+                                    << " warmup failed: " << error << '\n';
+                return 1;
+            }
+        }
+
+        RenderDocCaptureScope captureScope(*renderDocCapture);
+        if (!captureScope.started()) {
+            QTextStream(stderr) << "unable to start RenderDoc capture: "
+                                << renderDocCapture->errorString() << '\n';
+            return 4;
+        }
+        if (!scenario.render(&renderControl, rhi, colorBuffer.get(),
+                             selection.workload, ++captureFrame, nullptr, false,
+                             &error)) {
+            QTextStream(stderr) << "RenderDoc scenario " << selection.name()
+                                << " capture frame failed: " << error << '\n';
+            return 1;
+        }
+        if (!captureScope.finish()) {
+            QTextStream(stderr) << "unable to finish RenderDoc capture: "
+                                << renderDocCapture->errorString() << '\n';
+            return 4;
+        }
+
+        const QString capturePath = !parser.isSet(renderDocCapturePathOption)
+            ? QStringLiteral("configured-by-renderdoc")
+            : parser.value(renderDocCapturePathOption);
+        QTextStream(stdout)
+            << "renderdoc_capture=" << selection.name()
+            << " renderdoc_api=" << renderDocCapture->apiVersion()
+            << " graphics_api=" << requestedGraphicsApi
+            << " rhi_backend=" << rhi->backendName() << " debug_markers="
+            << (rhi->isFeatureSupported(QRhi::DebugMarkers) ? "supported"
+                                                            : "unavailable")
+            << " warmup=" << *warmup << " path_template=" << capturePath
+            << '\n';
+        return 0;
+    }
+
     QVector<ScenarioResult> results;
     results.reserve(static_cast<qsizetype>(passCounts.size()) * 2 * 2);
     quint64 frame = 0;
+    const int measurementRoundCount =
+        std::min(maximumMeasurementRounds, *iterations);
     for (const Workload workload :
          {Workload::SourceDirty, Workload::EffectOnly}) {
         for (const int passCount : passCounts) {
-            for (const Renderer renderer :
-                 {Renderer::Legacy, Renderer::Retained}) {
-                BenchmarkUniformProvider provider(physicalSize);
-                Scenario scenario;
-                if (!scenario.initialize(&engine, &window, &provider,
-                                         compiled.stages, renderer, passCount,
-                                         logicalSize, physicalSize, &error)) {
-                    QTextStream(stderr)
-                        << "renderer=" << rendererName(renderer)
-                        << " workload=" << workloadName(workload)
-                        << " passes=" << passCount << ": " << error << '\n';
-                    return 1;
-                }
-
-                if (!scenario.render(&renderControl, rhi, colorBuffer.get(),
-                                     workload, ++frame, nullptr, true,
-                                     &error)) {
-                    QTextStream(stderr)
-                        << "renderer=" << rendererName(renderer)
-                        << " workload=" << workloadName(workload)
-                        << " passes=" << passCount << ": " << error << '\n';
-                    return 1;
-                }
-                for (int iteration = 0; iteration < *warmup; ++iteration) {
-                    if (!scenario.render(&renderControl, rhi, colorBuffer.get(),
-                                         workload, ++frame, nullptr, false,
-                                         &error)) {
-                        QTextStream(stderr)
-                            << "renderer=" << rendererName(renderer)
-                            << " workload=" << workloadName(workload)
-                            << " passes=" << passCount << " warmup: " << error
-                            << '\n';
-                        return 1;
-                    }
-                }
-
-                const std::optional<TerminalCustomShaderPipelineSnapshot>
-                    before = scenario.pipelineSnapshot();
-                const quint64 paintCountBefore = scenario.sourcePaintCount();
-                QVector<qint64> cpuRecordSamples;
-                QVector<qint64> cpuCompletionSamples;
-                QVector<qint64> cpuTotalSamples;
-                QVector<qint64> gpuSamples;
-                cpuRecordSamples.reserve(*iterations);
-                cpuCompletionSamples.reserve(*iterations);
-                cpuTotalSamples.reserve(*iterations);
-                gpuSamples.reserve(*iterations);
-                for (int iteration = 0; iteration < *iterations; ++iteration) {
-                    FrameTiming timing;
-                    if (!scenario.render(&renderControl, rhi, colorBuffer.get(),
-                                         workload, ++frame, &timing, false,
-                                         &error)) {
-                        QTextStream(stderr)
-                            << "renderer=" << rendererName(renderer)
-                            << " workload=" << workloadName(workload)
-                            << " passes=" << passCount
-                            << " iteration=" << iteration << ": " << error
-                            << '\n';
-                        return 1;
-                    }
-                    cpuRecordSamples.append(timing.cpuRecordNanoseconds);
-                    cpuCompletionSamples.append(
-                        timing.cpuCompletionNanoseconds);
-                    cpuTotalSamples.append(timing.cpuRecordNanoseconds
-                                           + timing.cpuCompletionNanoseconds);
-                    if (timing.gpuNanoseconds.has_value()) {
-                        gpuSamples.append(*timing.gpuNanoseconds);
-                    }
-                }
-                const quint64 sourcePaintDelta =
-                    scenario.sourcePaintCount() - paintCountBefore;
-                const std::optional<TerminalCustomShaderPipelineSnapshot>
-                    after = scenario.pipelineSnapshot();
-                if ((workload == Workload::SourceDirty
-                     && sourcePaintDelta != static_cast<quint64>(*iterations))
-                    || (workload == Workload::EffectOnly
-                        && sourcePaintDelta != 0)) {
-                    QTextStream(stderr)
-                        << "renderer=" << rendererName(renderer)
-                        << " workload=" << workloadName(workload)
-                        << " passes=" << passCount
-                        << ": source paint delta was " << sourcePaintDelta
-                        << ", expected "
-                        << (workload == Workload::SourceDirty ? *iterations : 0)
-                        << '\n';
-                    return 1;
-                }
-                if (before.has_value() && after.has_value()) {
-                    const std::uint64_t expectedFrames =
-                        static_cast<std::uint64_t>(*iterations);
-                    const std::uint64_t expectedDraws =
-                        expectedFrames * static_cast<std::uint64_t>(passCount);
-                    if (counterDelta(after->frameCount, before->frameCount)
-                            != expectedFrames
-                        || counterDelta(after->drawCount, before->drawCount)
-                            != expectedDraws
-                        || after->targetCreateCount != before->targetCreateCount
-                        || after->targetDestroyCount
-                            != before->targetDestroyCount
-                        || after->pipelineCreateCount
-                            != before->pipelineCreateCount
-                        || after->sourceBindingUpdateCount
-                            != before->sourceBindingUpdateCount
-                        || after->resourceGeneration
-                            != before->resourceGeneration) {
-                        QTextStream(stderr)
-                            << "renderer=" << rendererName(renderer)
-                            << " workload=" << workloadName(workload)
-                            << " passes=" << passCount
-                            << ": retained steady-state telemetry changed "
-                               "unexpectedly\n";
-                        return 1;
-                    }
-                }
-                results.append({
-                    .renderer = renderer,
+            std::array<ScenarioAccumulator, 2> accumulators{{
+                {
+                    .renderer = Renderer::Legacy,
                     .workload = workload,
                     .passCount = passCount,
-                    .cpuRecordTiming = summarize(std::move(cpuRecordSamples)),
+                },
+                {
+                    .renderer = Renderer::Retained,
+                    .workload = workload,
+                    .passCount = passCount,
+                },
+            }};
+            for (ScenarioAccumulator &accumulator : accumulators) {
+                accumulator.cpuRecordSamples.reserve(*iterations);
+                accumulator.cpuCompletionSamples.reserve(*iterations);
+                accumulator.cpuTotalSamples.reserve(*iterations);
+                accumulator.gpuSamples.reserve(*iterations);
+            }
+
+            // Measure each comparable pair in AB/BA order. Recreating both
+            // scenes in the second round makes scene construction symmetric,
+            // while the setup render and distributed warmup stay unmeasured.
+            for (int round = 0; round < measurementRoundCount; ++round) {
+                const std::array<Renderer, 2> rendererOrder = round % 2 == 0
+                    ? std::array{Renderer::Legacy, Renderer::Retained}
+                    : std::array{Renderer::Retained, Renderer::Legacy};
+                const int measuredFrameCount =
+                    framesInRound(*iterations, round, measurementRoundCount);
+                const int warmupFrameCount =
+                    framesInRound(*warmup, round, measurementRoundCount);
+                for (const Renderer renderer : rendererOrder) {
+                    ScenarioAccumulator &accumulator =
+                        accumulators.at(rendererIndex(renderer));
+                    BenchmarkUniformProvider provider(physicalSize);
+                    Scenario scenario;
+                    if (!scenario.initialize(&engine, &window, &provider,
+                                             compiled.stages, renderer,
+                                             passCount, logicalSize,
+                                             physicalSize, &error)) {
+                        QTextStream(stderr)
+                            << "renderer=" << rendererName(renderer)
+                            << " workload=" << workloadName(workload)
+                            << " passes=" << passCount << " round=" << round
+                            << ": " << error << '\n';
+                        return 1;
+                    }
+
+                    if (!scenario.render(&renderControl, rhi, colorBuffer.get(),
+                                         workload, ++frame, nullptr, true,
+                                         &error)) {
+                        QTextStream(stderr)
+                            << "renderer=" << rendererName(renderer)
+                            << " workload=" << workloadName(workload)
+                            << " passes=" << passCount << " round=" << round
+                            << " setup: " << error << '\n';
+                        return 1;
+                    }
+                    ++accumulator.validationReadbackCount;
+                    for (int iteration = 0; iteration < warmupFrameCount;
+                         ++iteration) {
+                        if (!scenario.render(&renderControl, rhi,
+                                             colorBuffer.get(), workload,
+                                             ++frame, nullptr, false, &error)) {
+                            QTextStream(stderr)
+                                << "renderer=" << rendererName(renderer)
+                                << " workload=" << workloadName(workload)
+                                << " passes=" << passCount << " round=" << round
+                                << " warmup: " << error << '\n';
+                            return 1;
+                        }
+                    }
+
+                    const std::optional<TerminalCustomShaderPipelineSnapshot>
+                        before = scenario.pipelineSnapshot();
+                    const quint64 paintCountBefore =
+                        scenario.sourcePaintCount();
+                    for (int iteration = 0; iteration < measuredFrameCount;
+                         ++iteration) {
+                        FrameTiming timing;
+                        if (!scenario.render(&renderControl, rhi,
+                                             colorBuffer.get(), workload,
+                                             ++frame, &timing, false, &error)) {
+                            QTextStream(stderr)
+                                << "renderer=" << rendererName(renderer)
+                                << " workload=" << workloadName(workload)
+                                << " passes=" << passCount << " round=" << round
+                                << " iteration=" << iteration << ": " << error
+                                << '\n';
+                            return 1;
+                        }
+                        accumulator.cpuRecordSamples.append(
+                            timing.cpuRecordNanoseconds);
+                        accumulator.cpuCompletionSamples.append(
+                            timing.cpuCompletionNanoseconds);
+                        accumulator.cpuTotalSamples.append(
+                            timing.cpuRecordNanoseconds
+                            + timing.cpuCompletionNanoseconds);
+                        if (timing.gpuNanoseconds.has_value()) {
+                            accumulator.gpuSamples.append(
+                                *timing.gpuNanoseconds);
+                        }
+                    }
+                    const quint64 sourcePaintDelta =
+                        scenario.sourcePaintCount() - paintCountBefore;
+                    const std::optional<TerminalCustomShaderPipelineSnapshot>
+                        after = scenario.pipelineSnapshot();
+                    const quint64 expectedSourcePaints =
+                        workload == Workload::SourceDirty
+                        ? static_cast<quint64>(measuredFrameCount)
+                        : 0;
+                    if (sourcePaintDelta != expectedSourcePaints) {
+                        QTextStream(stderr)
+                            << "renderer=" << rendererName(renderer)
+                            << " workload=" << workloadName(workload)
+                            << " passes=" << passCount << " round=" << round
+                            << ": source paint delta was " << sourcePaintDelta
+                            << ", expected " << expectedSourcePaints << '\n';
+                        return 1;
+                    }
+                    accumulator.sourcePaintDelta += sourcePaintDelta;
+
+                    if (before.has_value() != after.has_value()) {
+                        QTextStream(stderr)
+                            << "renderer=" << rendererName(renderer)
+                            << " workload=" << workloadName(workload)
+                            << " passes=" << passCount << " round=" << round
+                            << ": retained telemetry disappeared\n";
+                        return 1;
+                    }
+                    if (before.has_value()) {
+                        const std::uint64_t expectedFrames =
+                            static_cast<std::uint64_t>(measuredFrameCount);
+                        const std::uint64_t expectedDraws = expectedFrames
+                            * static_cast<std::uint64_t>(passCount);
+                        if (counterDelta(after->frameCount, before->frameCount)
+                                != expectedFrames
+                            || counterDelta(after->drawCount, before->drawCount)
+                                != expectedDraws
+                            || after->targetCreateCount
+                                != before->targetCreateCount
+                            || after->targetDestroyCount
+                                != before->targetDestroyCount
+                            || after->pipelineCreateCount
+                                != before->pipelineCreateCount
+                            || after->sourceBindingUpdateCount
+                                != before->sourceBindingUpdateCount
+                            || after->resourceGeneration
+                                != before->resourceGeneration) {
+                            QTextStream(stderr)
+                                << "renderer=" << rendererName(renderer)
+                                << " workload=" << workloadName(workload)
+                                << " passes=" << passCount << " round=" << round
+                                << ": retained steady-state telemetry changed "
+                                   "unexpectedly\n";
+                            return 1;
+                        }
+                        accumulator.renderedFrameCount +=
+                            counterDelta(after->frameCount, before->frameCount);
+                        accumulator.recordedDrawCount +=
+                            counterDelta(after->drawCount, before->drawCount);
+                        accumulator.targetCreateCount +=
+                            counterDelta(after->targetCreateCount,
+                                         before->targetCreateCount);
+                        accumulator.targetDestroyCount +=
+                            counterDelta(after->targetDestroyCount,
+                                         before->targetDestroyCount);
+                        accumulator.pipelineCreateCount +=
+                            counterDelta(after->pipelineCreateCount,
+                                         before->pipelineCreateCount);
+                        accumulator.sourceBindingUpdateCount +=
+                            counterDelta(after->sourceBindingUpdateCount,
+                                         before->sourceBindingUpdateCount);
+                        accumulator.latestSnapshot = after;
+                    }
+                }
+            }
+
+            for (ScenarioAccumulator &accumulator : accumulators) {
+                if (accumulator.cpuTotalSamples.size() != *iterations
+                    || accumulator.validationReadbackCount
+                        != measurementRoundCount) {
+                    QTextStream(stderr)
+                        << "renderer=" << rendererName(accumulator.renderer)
+                        << " workload=" << workloadName(workload)
+                        << " passes=" << passCount
+                        << ": measurement accounting mismatch\n";
+                    return 1;
+                }
+
+                std::optional<TerminalCustomShaderPipelineSnapshot> before;
+                std::optional<TerminalCustomShaderPipelineSnapshot> after;
+                if (accumulator.latestSnapshot.has_value()) {
+                    before = accumulator.latestSnapshot;
+                    after = accumulator.latestSnapshot;
+                    before->frameCount = 0;
+                    before->drawCount = 0;
+                    before->targetCreateCount = 0;
+                    before->targetDestroyCount = 0;
+                    before->pipelineCreateCount = 0;
+                    before->sourceBindingUpdateCount = 0;
+                    after->frameCount = accumulator.renderedFrameCount;
+                    after->drawCount = accumulator.recordedDrawCount;
+                    after->targetCreateCount = accumulator.targetCreateCount;
+                    after->targetDestroyCount = accumulator.targetDestroyCount;
+                    after->pipelineCreateCount =
+                        accumulator.pipelineCreateCount;
+                    after->sourceBindingUpdateCount =
+                        accumulator.sourceBindingUpdateCount;
+                }
+
+                const bool hasCompleteGpuTiming =
+                    accumulator.gpuSamples.size() == *iterations;
+                results.append({
+                    .renderer = accumulator.renderer,
+                    .workload = workload,
+                    .passCount = passCount,
+                    .cpuRecordTiming =
+                        summarize(std::move(accumulator.cpuRecordSamples)),
                     .cpuCompletionTiming =
-                        summarize(std::move(cpuCompletionSamples)),
-                    .cpuTotalTiming = summarize(cpuTotalSamples),
-                    .gpuTiming = gpuSamples.size() == *iterations
-                        ? std::optional<Summary>(summarize(gpuSamples))
+                        summarize(std::move(accumulator.cpuCompletionSamples)),
+                    .cpuTotalTiming = summarize(accumulator.cpuTotalSamples),
+                    .gpuTiming = hasCompleteGpuTiming
+                        ? std::optional<Summary>(
+                              summarize(accumulator.gpuSamples))
                         : std::nullopt,
-                    .validGpuSampleCount = static_cast<int>(gpuSamples.size()),
+                    .validGpuSampleCount =
+                        static_cast<int>(accumulator.gpuSamples.size()),
                     .baselineCpuTotalSamples = passCount == 0
-                        ? std::move(cpuTotalSamples)
+                        ? std::move(accumulator.cpuTotalSamples)
                         : QVector<qint64>{},
-                    .baselineGpuSamples =
-                        passCount == 0 && gpuSamples.size() == *iterations
-                        ? std::move(gpuSamples)
+                    .baselineGpuSamples = passCount == 0 && hasCompleteGpuTiming
+                        ? std::move(accumulator.gpuSamples)
                         : QVector<qint64>{},
-                    .sourcePaintDelta = sourcePaintDelta,
+                    .sourcePaintDelta = accumulator.sourcePaintDelta,
                     .before = before,
                     .after = after,
                 });
@@ -1158,8 +1489,19 @@ int main(int argc, char **argv)
            << " viewport=" << logicalSize.width() << 'x' << logicalSize.height()
            << " framebuffer=" << physicalSize.width() << 'x'
            << physicalSize.height() << " dpr=" << dpr << " warmup=" << *warmup
-           << " iterations=" << *iterations << " completion=offscreen-end-frame"
-           << " validation_readbacks_per_scenario=1"
+           << " iterations=" << *iterations
+           << " measurement_rounds=" << measurementRoundCount
+           << " renderer_order="
+           << (measurementRoundCount == 2 ? "legacy-retained/"
+                                            "retained-legacy"
+                                          : "legacy-retained")
+           << " measured_frames_per_round="
+           << framesInRound(*iterations, 0, measurementRoundCount);
+    if (measurementRoundCount == 2) {
+        output << '/' << framesInRound(*iterations, 1, measurementRoundCount);
+    }
+    output << " completion=offscreen-end-frame"
+           << " validation_readbacks_per_scenario=" << measurementRoundCount
            << " gpu_scope=whole-command-buffer"
            << " gpu_delta_baseline=pooled-workload-pass0"
            << " transforms=ordered-affine\n";
@@ -1321,7 +1663,7 @@ int main(int argc, char **argv)
                    << " resource_generation=na";
         }
         output << " measured_frames=" << *iterations
-               << " validation_readbacks=1\n";
+               << " validation_readbacks=" << measurementRoundCount << '\n';
     }
     return 0;
 }

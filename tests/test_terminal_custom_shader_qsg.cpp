@@ -74,6 +74,7 @@ private Q_SLOTS:
     void effectTracksActiveInputsAndProviderStage();
     void destroyedInputsDeactivateEffectSafely();
     void nodeRejectsIncompleteRenderState();
+    void debugMarkerLabelsAreStable();
     void pipelineTargetCountIsBounded();
     void pipelineEffectTracksStagesAndProviderAttachment();
     void pipelineTelemetryStartsEmptyAndReportsInvalidStages();
@@ -227,11 +228,30 @@ void TerminalCustomShaderQsgTest::nodeRejectsIncompleteRenderState()
     const auto uniforms =
         std::make_shared<const TerminalCustomShaderUniforms>();
 
-    QVERIFY(
-        !node.update(nullptr, QRectF(0.0, 0.0, 80.0, 24.0), program, uniforms));
+    QVERIFY(!node.update(nullptr, nullptr, QRectF(0.0, 0.0, 80.0, 24.0),
+                         program, uniforms, 0));
     QVERIFY(!node.isDrawable());
     node.clear();
     QVERIFY(!node.isDrawable());
+}
+
+void TerminalCustomShaderQsgTest::debugMarkerLabelsAreStable()
+{
+    QCOMPARE(
+        terminalCustomShaderDebugMarkerLabel(
+            TerminalCustomShaderRenderPath::Legacy, 1, 0,
+            TerminalCustomShaderPassRole::Layer),
+        QByteArrayLiteral("ghostty-qt/custom-shader/legacy stage 2 layer"));
+    QCOMPARE(terminalCustomShaderDebugMarkerLabel(
+                 TerminalCustomShaderRenderPath::Retained, 0, 3,
+                 TerminalCustomShaderPassRole::Intermediate),
+             QByteArrayLiteral(
+                 "ghostty-qt/custom-shader/retained stage 1/3 intermediate"));
+    QCOMPARE(
+        terminalCustomShaderDebugMarkerLabel(
+            TerminalCustomShaderRenderPath::Retained, 2, 3,
+            TerminalCustomShaderPassRole::Final),
+        QByteArrayLiteral("ghostty-qt/custom-shader/retained stage 3/3 final"));
 }
 
 void TerminalCustomShaderQsgTest::pipelineTargetCountIsBounded()

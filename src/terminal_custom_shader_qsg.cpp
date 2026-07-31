@@ -7,14 +7,19 @@
 #include <QMatrix4x4>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QQuickGraphicsConfiguration>
+#include <QQuickWindow>
 #include <QResource>
 #include <QSGGeometry>
 #include <QSGMaterial>
 #include <QSGMaterialShader>
+#include <QSGRendererInterface>
 #include <QSGTexture>
 #include <QSGTextureProvider>
+#include <rhi/qrhi.h>
 #include <rhi/qshader.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -28,6 +33,48 @@ static void initializeTerminalCustomShaderResources()
         return true;
     }();
     Q_UNUSED(initialized);
+}
+
+QByteArray
+terminalCustomShaderDebugMarkerLabel(TerminalCustomShaderRenderPath path,
+                                     qsizetype stageIndex, qsizetype passCount,
+                                     TerminalCustomShaderPassRole role)
+{
+    QByteArray label = QByteArrayLiteral("ghostty-qt/custom-shader/");
+    label += path == TerminalCustomShaderRenderPath::Retained
+        ? QByteArrayLiteral("retained")
+        : QByteArrayLiteral("legacy");
+    label += QByteArrayLiteral(" stage ");
+    label += QByteArray::number(std::max<qsizetype>(0, stageIndex) + 1);
+    if (passCount > 0) {
+        label += '/';
+        label += QByteArray::number(passCount);
+    }
+    switch (role) {
+    case TerminalCustomShaderPassRole::Layer:
+        label += QByteArrayLiteral(" layer");
+        break;
+    case TerminalCustomShaderPassRole::Intermediate:
+        label += QByteArrayLiteral(" intermediate");
+        break;
+    case TerminalCustomShaderPassRole::Final:
+        label += QByteArrayLiteral(" final");
+        break;
+    }
+    return label;
+}
+
+bool terminalCustomShaderDebugMarkersEnabled(QQuickWindow *window)
+{
+    static const bool profileEnvironmentEnabled = [] {
+        bool valid = false;
+        const int value =
+            qEnvironmentVariableIntValue("QSG_RHI_PROFILE", &valid);
+        return valid && value != 0;
+    }();
+    return window != nullptr
+        && (profileEnvironmentEnabled
+            || window->graphicsConfiguration().isDebugMarkersEnabled());
 }
 
 namespace {
@@ -96,6 +143,29 @@ void writeUniform(QByteArray &buffer, std::size_t offset, const Value &value)
                 sizeof(Value));
 }
 
+[[nodiscard]] QRhiCommandBuffer *currentCommandBuffer(QQuickWindow *window,
+                                                      QRhi *rhi)
+{
+    if (window == nullptr || rhi == nullptr) return nullptr;
+    const QSGRendererInterface *const renderer = window->rendererInterface();
+    if (renderer == nullptr) return nullptr;
+
+    auto *commandBuffer =
+        static_cast<QRhiCommandBuffer *>(renderer->getResource(
+            window, QSGRendererInterface::RhiRedirectCommandBuffer));
+    if (commandBuffer == nullptr) {
+        auto *const swapChain =
+            static_cast<QRhiSwapChain *>(renderer->getResource(
+                window, QSGRendererInterface::RhiSwapchainResource));
+        if (swapChain != nullptr) {
+            commandBuffer = swapChain->currentFrameCommandBuffer();
+        }
+    }
+    return commandBuffer != nullptr && commandBuffer->rhi() == rhi
+        ? commandBuffer
+        : nullptr;
+}
+
 class TerminalCustomShaderQsgShader final : public QSGMaterialShader {
 public:
     explicit TerminalCustomShaderQsgShader(const QShader &fragmentShader)
@@ -120,12 +190,18 @@ public:
 class TerminalCustomShaderQsgMaterial final : public QSGMaterial {
 public:
     TerminalCustomShaderQsgMaterial(
-        QSGTexture *source,
+        QQuickWindow *window, QSGTexture *source,
         std::shared_ptr<const TerminalCustomShaderProgram> program,
-        TerminalCustomShaderUniformSnapshot uniforms)
-        : source_(source)
+        TerminalCustomShaderUniformSnapshot uniforms, int stageIndex)
+        : window_(window)
+        , source_(source)
         , program_(std::move(program))
         , uniforms_(std::move(uniforms))
+        , debugMarkerLabel_(terminalCustomShaderDebugMarkerLabel(
+              TerminalCustomShaderRenderPath::Legacy, stageIndex, 0,
+              TerminalCustomShaderPassRole::Layer))
+        , stageIndex_(stageIndex)
+        , debugMarkersEnabled_(terminalCustomShaderDebugMarkersEnabled(window))
     {
         setFlag(QSGMaterial::Blending);
     }
@@ -156,10 +232,24 @@ public:
         return 0;
     }
 
-    [[nodiscard]] bool setState(QSGTexture *source,
-                                TerminalCustomShaderUniformSnapshot uniforms)
+    [[nodiscard]] bool setState(QQuickWindow *window, QSGTexture *source,
+                                TerminalCustomShaderUniformSnapshot uniforms,
+                                int stageIndex)
     {
         bool changed = false;
+        if (window_ != window) {
+            window_ = window;
+            debugMarkersEnabled_ =
+                terminalCustomShaderDebugMarkersEnabled(window);
+            changed = true;
+        }
+        if (stageIndex_ != stageIndex) {
+            stageIndex_ = stageIndex;
+            debugMarkerLabel_ = terminalCustomShaderDebugMarkerLabel(
+                TerminalCustomShaderRenderPath::Legacy, stageIndex_, 0,
+                TerminalCustomShaderPassRole::Layer);
+            changed = true;
+        }
         if (source_ != source) {
             source_ = source;
             changed = true;
@@ -170,6 +260,19 @@ public:
             changed = true;
         }
         return changed;
+    }
+
+    void insertDebugMarker(QRhi *rhi) const
+    {
+        // QSGMaterialShader does not expose a post-draw callback, so an exact
+        // begin/end group would remain open across renderer-owned commands.
+        // The material preparation callback still emits one message for the
+        // legacy layer pass without disturbing Qt's command grouping.
+        if (!debugMarkersEnabled_) return;
+        if (QRhiCommandBuffer *const commandBuffer =
+                currentCommandBuffer(window_, rhi)) {
+            commandBuffer->debugMarkMsg(debugMarkerLabel_);
+        }
     }
 
     [[nodiscard]] QSGTexture *source() const noexcept { return source_; }
@@ -192,9 +295,13 @@ public:
     }
 
 private:
+    QQuickWindow *window_ = nullptr;
     QSGTexture *source_ = nullptr;
     std::shared_ptr<const TerminalCustomShaderProgram> program_;
     TerminalCustomShaderUniformSnapshot uniforms_;
+    QByteArray debugMarkerLabel_;
+    int stageIndex_ = 0;
+    bool debugMarkersEnabled_ = false;
     mutable bool uniformsDirty_ = true;
 };
 
@@ -229,6 +336,7 @@ bool TerminalCustomShaderQsgShader::updateUniformData(RenderState &state,
 
     auto *const material =
         static_cast<TerminalCustomShaderQsgMaterial *>(newMaterial);
+    material->insertDebugMarker(state.rhi());
     const bool uniformsDirty = material->takeUniformsDirty();
     if (oldMaterial != newMaterial || uniformsDirty
         || state.dirtyStates().testFlag(
@@ -335,9 +443,9 @@ TerminalCustomShaderQsgNode::TerminalCustomShaderQsgNode()
 TerminalCustomShaderQsgNode::~TerminalCustomShaderQsgNode() = default;
 
 bool TerminalCustomShaderQsgNode::update(
-    QSGTexture *source, const QRectF &viewport,
+    QQuickWindow *window, QSGTexture *source, const QRectF &viewport,
     std::shared_ptr<const TerminalCustomShaderProgram> program,
-    TerminalCustomShaderUniformSnapshot uniforms)
+    TerminalCustomShaderUniformSnapshot uniforms, int stageIndex)
 {
     if (source == nullptr || source->isAtlasTexture()
         || (source->textureSize().isEmpty()
@@ -350,11 +458,13 @@ bool TerminalCustomShaderQsgNode::update(
 
     if (material_ == nullptr || material_->program() != program) {
         auto *const next = new TerminalCustomShaderQsgMaterial(
-            source, std::move(program), std::move(uniforms));
+            window, source, std::move(program), std::move(uniforms),
+            stageIndex);
         setMaterial(next);
         material_ = next;
         markDirty(QSGNode::DirtyMaterial);
-    } else if (material_->setState(source, std::move(uniforms))) {
+    } else if (material_->setState(window, source, std::move(uniforms),
+                                   stageIndex)) {
         markDirty(QSGNode::DirtyMaterial);
     }
 
@@ -374,7 +484,7 @@ bool TerminalCustomShaderQsgNode::update(
 void TerminalCustomShaderQsgNode::clear()
 {
     if (material_ != nullptr
-        && material_->setState(nullptr, material_->uniforms())) {
+        && material_->setState(nullptr, nullptr, material_->uniforms(), 0)) {
         markDirty(QSGNode::DirtyMaterial);
     }
     viewport_ = {};
@@ -586,7 +696,8 @@ TerminalCustomShaderEffect::updatePaintNode(QSGNode *oldNode,
     }
 
     if (node == nullptr) node = new TerminalCustomShaderQsgNode;
-    if (!node->update(texture, boundingRect(), program_, std::move(uniforms))) {
+    if (!node->update(window(), texture, boundingRect(), program_,
+                      std::move(uniforms), stageIndex_)) {
         delete node;
         return nullptr;
     }
