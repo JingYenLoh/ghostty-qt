@@ -608,7 +608,7 @@
     },
     "image-storage-limit": {
       "status": "supported",
-      "note": "The exact finalized u32 byte limit defaults to 320,000,000, initializes both libghostty screens, and applies live without recreating the pane or PTY. Zero disables and clears image storage. Ordinary Kitty placements use owned generation-stamped snapshots and retained Qt textures across all three z layers; Unicode virtual placements remain partial because public libghostty-vt does not expose their expanded viewport fragments. Renderer CPU/GPU mirrors are additional to the configured Ghostty storage budget."
+      "note": "The exact finalized u32 byte limit defaults to 320,000,000, initializes both libghostty screens, and applies live without recreating the pane or PTY. Zero disables and clears image storage. Ordinary Kitty placements use owned generation-stamped snapshots and retained Qt textures across all three z layers. A reverse render-order pass omits an older placement only after a successfully imported fully opaque placement at the same z and exact physical destination covers it, preserving libghostty state so later deletion can reveal the predecessor. Opaque assets retain one RGB plane and share a 1x1 white-alpha texture; translucent assets retain separate straight-RGB and alpha planes. Unicode virtual placements remain partial because public libghostty-vt does not expose their expanded viewport fragments. Renderer CPU/GPU mirrors remain additional to the configured Ghostty storage budget, and REQUIRES_UPSTREAM.md records the pinned library's tracked-pin leak during image eviction and external-placement replacement."
     },
     "keybind": {
       "status": "partial",

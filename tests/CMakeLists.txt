@@ -776,6 +776,18 @@ if(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
         ghostty-qt-render-test-support
     )
     add_dependencies(bench-terminal-pane-renderer ghostty-qt-terminfo)
+
+    qt_add_executable(bench-terminal-kitty-graphics
+        bench_terminal_kitty_graphics.cpp
+    )
+    target_include_directories(bench-terminal-kitty-graphics PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    )
+    target_link_libraries(bench-terminal-kitty-graphics PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        ghostty-qt-vt-adapter
+    )
 endif()
 
 qt_add_executable(test-terminal-workspace

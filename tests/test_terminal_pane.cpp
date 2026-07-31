@@ -327,13 +327,18 @@ std::shared_ptr<const TerminalKittyGraphicsImage>
 kittyImage(quint64 generation, const QColor &color, int opacity = 255)
 {
     QImage rgb(QSize(2, 2), QImage::Format_RGBX8888);
-    QImage alpha(QSize(2, 2), QImage::Format_RGBX8888);
     rgb.fill(color);
-    alpha.fill(QColor(opacity, opacity, opacity));
+    const bool fullyOpaque = opacity == 255;
+    QImage alpha;
+    if (!fullyOpaque) {
+        alpha = QImage(QSize(2, 2), QImage::Format_RGBX8888);
+        alpha.fill(QColor(opacity, opacity, opacity));
+    }
     return std::make_shared<const TerminalKittyGraphicsImage>(
         TerminalKittyGraphicsImage{
             .imageId = 1,
             .generation = generation,
+            .fullyOpaque = fullyOpaque,
             .straightRgbPlane = std::move(rgb),
             .alphaPlane = std::move(alpha),
         });
@@ -2191,14 +2196,31 @@ void TerminalPaneTest::rendersAndRetainsKittyGraphics()
     QCOMPARE(replaced.kittyGraphicsTextureUploadCount, uploadsPerAsset * 2);
     QCOMPARE(replaced.kittyGraphicsTextureCount, qsizetype{1});
 
-    controller->terminalUpdated(graphicsUpdate(makeSnapshot(nullptr), 5));
+    const auto secondReplacement = kittyImage(12, Qt::yellow);
+    controller->terminalUpdated(
+        graphicsUpdate(makeSnapshot(secondReplacement, 1), 5));
+    const QImage replacedAgainImage = window.grabWindow();
+    QVERIFY(!replacedAgainImage.isNull());
+    const TerminalPaneRenderProbeSnapshot replacedAgain =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(replacedAgain.kittyGraphicsTextureUploadCount,
+             replaced.kittyGraphicsTextureUploadCount + 1);
+    QCOMPARE(replacedAgain.kittyGraphicsTextureCount, qsizetype{1});
+    const QColor opaquePixel =
+        itemPixel(window, *pane, replacedAgainImage,
+                  QPointF(layout->gridRect.left() + 1.5 * renderedCellWidth,
+                          layout->gridRect.top() + 2.5 * renderedCellHeight));
+    QVERIFY2(approximatelyEqual(opaquePixel, Qt::yellow),
+             qPrintable(opaquePixel.name(QColor::HexArgb)));
+
+    controller->terminalUpdated(graphicsUpdate(makeSnapshot(nullptr), 6));
     const TerminalPaneRenderProbeSnapshot deleted = paintedProbe();
     QVERIFY(deleted.kittyGraphicsDestinations.isEmpty());
     QCOMPARE(deleted.kittyGraphicsTextureCount, qsizetype{0});
 
-    auto staleGeometry = makeSnapshot(replacement);
+    auto staleGeometry = makeSnapshot(secondReplacement);
     ++staleGeometry->cellWidthPixels;
-    controller->terminalUpdated(graphicsUpdate(staleGeometry, 6));
+    controller->terminalUpdated(graphicsUpdate(staleGeometry, 7));
     const TerminalPaneRenderProbeSnapshot hidden = paintedProbe();
     QVERIFY(hidden.kittyGraphicsDestinations.isEmpty());
     QCOMPARE(hidden.kittyGraphicsTextureCount, qsizetype{0});

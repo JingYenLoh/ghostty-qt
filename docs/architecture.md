@@ -1894,18 +1894,41 @@ ceiling with Kitty's 400 MiB decoded-image maximum, and enables every
 libghostty medium. `image-storage-limit` defaults to Ghostty's 320,000,000
 bytes and applies live to every screen.
 
-The worker deep-copies borrowed decoded pixels into an opaque straight-RGB
-plane and an opaque replicated-alpha plane before terminal mutation can
-invalidate the handles. Hardware RHI backends filter those planes separately
-and premultiply in a custom shader; the software scene graph premultiplies on
-the CPU before creating a simple texture node. Physical placement offsets,
-source rectangles, and destination sizes are projected through the exact
-libghostty cell-pixel geometry, cropped to the visible grid, and hidden during
-asynchronous frame/layout geometry disagreement instead of being stretched.
-Qt renderer mirrors are additional to Ghostty's configured storage budget;
-the two CPU planes and, on hardware, two textures can substantially amplify
-memory use for large images. A future packed straight-alpha texture path should
-reduce that amplification without weakening interpolation correctness.
+The worker deep-copies borrowed decoded pixels before terminal mutation can
+invalidate the handles. Every asset owns one opaque straight-RGB plane;
+translucent assets also own an opaque replicated-alpha plane. Fully opaque
+RGB, grayscale, and alpha-bearing inputs omit the redundant alpha plane.
+Hardware RHI backends filter the planes separately and premultiply in a custom
+shader, using one scene-wide 1×1 white alpha texture for every opaque asset.
+The software scene graph uploads an opaque RGB plane directly or premultiplies
+a translucent pair on the CPU.
+
+Before importing pixels, the adapter gathers borrowed image metadata and
+placement geometry, sorts it in the renderer's existing
+`(z, image ID, placement ID)` order, and walks backwards. A successfully
+materialized fully opaque placement suppresses a lower placement only when
+both have the same z value and exact physical destination. This conservative
+render-only cull is what keeps mpv's repeated implicit RGB24 frames to one Qt
+CPU asset and one retained texture set. The older protocol images and
+placements remain in libghostty, so deleting the covering frame still reveals
+its predecessor. Transparent, partially overlapping, differently positioned,
+and differently layered placements remain independent.
+
+Physical placement offsets, source rectangles, and destination sizes are
+projected through the exact libghostty cell-pixel geometry, cropped to the
+visible grid, and hidden during asynchronous frame/layout geometry disagreement
+instead of being stretched. Qt mirrors remain additional to Ghostty's
+configured storage budget, but opaque assets now cost one four-byte CPU plane
+and one full-size hardware texture rather than two of each. Translucent assets
+still use both planes to preserve straight-alpha interpolation. A future item
+opacity applied to the terminal subtree would need to disable opaque overlap
+culling because the material's inherited opacity would make each placement
+individually translucent.
+
+The pinned libghostty eviction and external-placement replacement paths remove
+placement map entries without untracking their screen pins. Frontend culling
+cannot repair that library-owned lifetime without changing protocol semantics;
+the required upstream correction is recorded in `REQUIRES_UPSTREAM.md`.
 
 Ordinary placements are supported. Unicode virtual placements remain partial:
 their definitions are detectable and their U+10EEEE placeholders are kept

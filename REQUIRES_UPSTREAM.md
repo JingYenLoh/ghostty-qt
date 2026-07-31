@@ -534,6 +534,66 @@ commit:
 6. Promote `clear_screen` in `docs/ghostty-parity.json` only after the public
    adapter and PTY-ordering tests pass.
 
+## Kitty placement-pin lifetime during eviction and replacement
+
+**Status:** ghostty-qt bounds its own mirrors of fully occluded opaque video
+frames; libghostty leaves the screen pin owned by each placement tracked until
+terminal teardown when image-budget eviction or external-placement replacement
+removes the placement without deinitializing it.
+
+Every ordinary Kitty placement tracks a `PageList.Pin`, and
+`ImageStorage.Placement.deinit(screen)` is the operation that untracks it.
+The pinned implementation's image-budget eviction removes matching placement
+map entries with `removeByPtr()` without first calling that deinitializer.
+Likewise, `addPlacement()` assigns a new value over an existing external
+`(image_id, placement_id)` entry without deinitializing the placement it
+replaces.
+
+This matters for sustained video. mpv 0.41 sends RGB24 transmit-and-display
+frames without image or placement IDs. libghostty assigns a new image and
+internal placement to every frame, retains their decoded bytes up to
+`image-storage-limit`, and then evicts the oldest used images and placement
+entries. The byte budget remains bounded, but each evicted frame leaves one
+tracked screen pin behind. Long sessions can therefore grow both pin storage
+and the work of operations that walk tracked pins.
+
+ghostty-qt's snapshot bridge safely avoids copying fully hidden opaque frames
+into Qt CPU images and textures, but it must not send synthetic delete commands
+or edit libghostty-owned placement state: doing so would change protocol
+semantics, and a later application delete is allowed to reveal a lower
+placement in renderer order. This lifetime bug was verified at the pinned
+official revision
+`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3` and again at local official
+`origin/main` revision `6ad1fe7d8cbda36c77b337a96c9bea8a77883699` on
+2026-07-31.
+
+### Required upstream correction
+
+Official Ghostty should deinitialize every placement before eviction removes
+its map entry and before insertion replaces an existing external placement.
+The internal call chain must make the owning screen available wherever this
+cleanup occurs; changing a private function signature is sufficient, and no
+new public C API is required.
+
+Eviction tests should repeatedly exceed a small image budget with used
+placements and verify that the tracked-pin count returns to the number of live
+placements. Replacement tests should repeatedly reuse one non-zero placement
+ID and make the same assertion. Both paths should then scroll, resize, clear,
+and delete content to exercise tracked-pin traversal before terminal teardown.
+
+### ghostty-qt follow-up after the upstream fix lands
+
+Once the correction is present in an official, publicly reachable commit:
+
+1. Update `GHOSTTY_REVISION` and the official submodule gitlink together.
+2. Add a sustained mpv-shaped adapter test whose raw data crosses a deliberately
+   small image-storage limit while its Qt snapshot stays bounded.
+3. Confirm that deleting the covering frame still reveals the highest retained
+   predecessor in renderer order and that tracked-pin count remains bounded
+   throughout the session.
+4. Remove this entry only after the upstream lifetime regression tests and the
+   frontend integration case both pass.
+
 ## Expanded Kitty Unicode placement rendering
 
 **Status:** ordinary Kitty placements are implemented; Unicode virtual

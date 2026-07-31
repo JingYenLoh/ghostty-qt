@@ -54,9 +54,11 @@ for intentional upgrade procedure.
   terminal API. Qt owns the final shaping result.
 - Kitty graphics renders ordinary placements, including foreground and
   background z layers. Direct RGB24 continuation streams used by mpv are
-  covered end to end through OpenGL RHI. Unicode virtual placements used by
-  applications such as yazi still need expanded viewport data from
-  `libghostty-vt`.
+  covered end to end through OpenGL RHI; exact opaque overlap culling and a
+  shared white-alpha texture keep their Qt-side steady-state mirrors to the
+  visible frame. Unicode virtual placements used by applications such as yazi
+  still need expanded viewport data from `libghostty-vt`. Upstream must also
+  fix the tracked screen-pin lifetime of budget-evicted placements.
 - Search is a cooperative frontend implementation over public terminal
   snapshots. It does not use Ghostty's private `xev`-dependent search thread
   and retains some documented paging and responsiveness differences.

@@ -53,6 +53,7 @@ cmake --build --preset release \
     --target bench-terminal-pane-renderer \
              bench-terminal-custom-shader-compiler \
              bench-terminal-custom-shader-rhi \
+             bench-terminal-kitty-graphics \
     -j"$(nproc)"
 ./build/release/tests/bench-terminal-pane-renderer \
     --warmup 20 --iterations 200
@@ -62,6 +63,8 @@ LIBGL_ALWAYS_SOFTWARE=1 \
     ./build/release/tests/bench-terminal-custom-shader-rhi \
     --graphics-api opengl \
     --width 1280 --height 720 --warmup 200 --iterations 100
+./build/release/tests/bench-terminal-kitty-graphics \
+    --width 640 --height 360 --warmup 10 --iterations 100
 ```
 
 The custom-shader compiler benchmark reports one-, two-, four-, and eight-pass cold
@@ -169,8 +172,19 @@ OpenGL injection fails under native Wayland EGL, retry the launcher with
 `QT_QPA_PLATFORM=xcb`.
 
 The current cases measure Kitty graphics' empty-image fast path. Image-specific
-benchmarks should distinguish first texture upload, retained redraw,
-placement-only movement, same-ID replacement, and eviction.
+GPU benchmarks should distinguish first texture upload, retained redraw,
+placement-only movement, same-ID replacement, and eviction. The Kitty import
+benchmark separately feeds sustained mpv-shaped RGB24 frames through
+libghostty and the Qt snapshot boundary. It reports parse/materialization
+latency, raw and wire throughput, the exact retained Qt plane bytes, and Linux
+resident-set growth. It also prints the estimated libghostty raw history and
+the theoretical pre-change uncull cost of retaining two four-byte Qt planes
+for every submitted frame. Its one-placement and zero-alpha-plane checks guard
+the opaque replacement cull and single-plane path. RSS includes libghostty's
+image history and allocator behavior, so compare it only with identical
+dimensions, frame counts, storage limits, and builds. The benchmark rejects a
+run whose complete history exceeds the default image-storage limit, ensuring
+libghostty eviction cannot make an unbounded Qt snapshot look bounded.
 
 ## C++ formatting
 

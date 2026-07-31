@@ -79,8 +79,11 @@ advanced text/graphics support, and distribution:
 - Color emoji and exact Ghostty font shaping still require explicit renderer
   policy beyond VT parsing. Ordinary Kitty graphics placements now use
   libghostty's public decoded-image and placement APIs with Qt RHI/software
-  paths; Unicode virtual placements remain blocked on expanded public viewport
-  fragments. Search uses the cooperative public-grid foundation. OSC 8 and the
+  paths. Opaque overlap culling bounds Qt's mirrors of mpv-style frame churn,
+  while libghostty retains orphaned tracked pins during storage eviction as an
+  upstream lifetime risk; Unicode virtual placements remain blocked on expanded
+  public viewport fragments. Search uses the cooperative public-grid
+  foundation. OSC 8 and the
   built-in `link-url` matcher now share tracked hover, copy, and open behavior,
   stable live-output handling, coalesced pointer queries, and mutation-safe
   activation. The `true`/`false`/`osc8` preview policy is implemented as a

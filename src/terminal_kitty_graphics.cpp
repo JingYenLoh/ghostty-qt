@@ -9,9 +9,10 @@ terminalKittyGraphicsRenderPlacement(
     const QSizeF &terminalCellPixelSize, const QRectF &gridViewport) noexcept
 {
     if (placement.image == nullptr || placement.image->straightRgbPlane.isNull()
-        || placement.image->alphaPlane.isNull()
-        || placement.image->straightRgbPlane.size()
-            != placement.image->alphaPlane.size()
+        || (!placement.image->fullyOpaque
+            && (placement.image->alphaPlane.isNull()
+                || placement.image->straightRgbPlane.size()
+                    != placement.image->alphaPlane.size()))
         || !std::isfinite(cellSize.width()) || !std::isfinite(cellSize.height())
         || cellSize.width() <= 0.0 || cellSize.height() <= 0.0
         || !std::isfinite(terminalCellPixelSize.width())

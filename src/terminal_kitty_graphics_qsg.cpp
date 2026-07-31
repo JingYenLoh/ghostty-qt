@@ -45,15 +45,20 @@ void clearNodeChildren(QSGNode *node)
 
 bool validImage(const TerminalKittyGraphicsImage &image)
 {
-    return image.generation != 0 && !image.straightRgbPlane.isNull()
-        && image.straightRgbPlane.size() == image.alphaPlane.size()
-        && image.straightRgbPlane.format() == QImage::Format_RGBX8888
-        && image.alphaPlane.format() == QImage::Format_RGBX8888;
+    if (image.generation == 0 || image.straightRgbPlane.isNull()
+        || image.straightRgbPlane.format() != QImage::Format_RGBX8888) {
+        return false;
+    }
+    return image.fullyOpaque ? image.alphaPlane.isNull()
+                             : !image.alphaPlane.isNull()
+            && image.straightRgbPlane.size() == image.alphaPlane.size()
+            && image.alphaPlane.format() == QImage::Format_RGBX8888;
 }
 
 QImage premultipliedImage(const TerminalKittyGraphicsImage &asset)
 {
     if (!validImage(asset)) return {};
+    if (asset.fullyOpaque) return asset.straightRgbPlane;
     QImage result(asset.straightRgbPlane.size(),
                   QImage::Format_RGBA8888_Premultiplied);
     if (result.isNull()) return {};
@@ -207,6 +212,7 @@ public:
 struct TextureSet {
     std::unique_ptr<QSGTexture> straightRgb;
     std::unique_ptr<QSGTexture> alpha;
+    QSGTexture *sampledAlpha = nullptr;
     std::unique_ptr<QSGTexture> premultiplied;
 };
 
@@ -243,12 +249,28 @@ public:
         if (useCustomMaterial) {
             result->straightRgb.reset(quickWindow->createTextureFromImage(
                 asset->straightRgbPlane, QQuickWindow::TextureIsOpaque));
-            result->alpha.reset(quickWindow->createTextureFromImage(
-                asset->alphaPlane, QQuickWindow::TextureIsOpaque));
-            if (!result->straightRgb || !result->alpha) return nullptr;
+            if (asset->fullyOpaque) {
+                if (opaqueAlpha == nullptr) {
+                    QImage white(1, 1, QImage::Format_RGBX8888);
+                    white.fill(Qt::white);
+                    opaqueAlpha.reset(quickWindow->createTextureFromImage(
+                        white, QQuickWindow::TextureIsOpaque));
+                    if (opaqueAlpha == nullptr) return nullptr;
+                    configureTexture(*opaqueAlpha);
+                    ++textureUploadCount;
+                }
+                result->sampledAlpha = opaqueAlpha.get();
+            } else {
+                result->alpha.reset(quickWindow->createTextureFromImage(
+                    asset->alphaPlane, QQuickWindow::TextureIsOpaque));
+                if (result->alpha == nullptr) return nullptr;
+                configureTexture(*result->alpha);
+                result->sampledAlpha = result->alpha.get();
+                ++textureUploadCount;
+            }
+            if (!result->straightRgb) return nullptr;
             configureTexture(*result->straightRgb);
-            configureTexture(*result->alpha);
-            textureUploadCount += 2;
+            ++textureUploadCount;
         } else {
             const QImage image = premultipliedImage(*asset);
             if (image.isNull()) return nullptr;
@@ -270,6 +292,7 @@ public:
         clearNodeChildren(belowText);
         clearNodeChildren(aboveText);
         textures.clear();
+        opaqueAlpha.reset();
         rendered.clear();
         snapshot.reset();
         window = nullptr;
@@ -289,6 +312,7 @@ public:
     QRectF gridViewport;
     bool custom = false;
     std::map<quint64, std::unique_ptr<TextureSet>> textures;
+    std::unique_ptr<QSGTexture> opaqueAlpha;
     QVector<TerminalKittyGraphicsRenderPlacement> rendered;
     quint64 textureUploadCount = 0;
 };
@@ -319,6 +343,7 @@ void TerminalKittyGraphicsScene::update(
     clearNodeChildren(impl_->aboveText);
     if (impl_->window != window || impl_->custom != useCustomMaterial) {
         impl_->textures.clear();
+        impl_->opaqueAlpha.reset();
     }
     impl_->window = window;
     impl_->belowBackground = belowBackground;
@@ -358,7 +383,7 @@ void TerminalKittyGraphicsScene::update(
                 renderPlacement->layer, belowBackground, belowText, aboveText);
             if (useCustomMaterial) {
                 parent->appendChildNode(new TerminalKittyQsgNode(
-                    textures->straightRgb.get(), textures->alpha.get(),
+                    textures->straightRgb.get(), textures->sampledAlpha,
                     renderPlacement->destination, renderPlacement->source));
             } else {
                 auto *node = new QSGSimpleTextureNode;

@@ -18,12 +18,17 @@ enum class TerminalKittyGraphicsLayer : quint8 {
 
 // Immutable, worker-owned copy of one libghostty Kitty image. libghostty lends
 // its pixel pointer only until the next terminal mutation, so no borrowed
-// storage may cross the session-thread boundary. The two opaque planes retain
-// straight RGB and alpha separately so Qt's texture upload cannot premultiply
-// before linear filtering.
+// storage may cross the session-thread boundary. Translucent images retain
+// straight RGB and alpha in separate opaque planes so Qt's texture upload
+// cannot premultiply before linear filtering. Fully opaque images need only
+// the RGB plane.
 struct TerminalKittyGraphicsImage {
     quint32 imageId = 0;
     quint64 generation = 0;
+    // Opaque images omit alphaPlane. Hardware rendering samples one
+    // scene-wide white alpha texture and software rendering can upload the
+    // straight RGB plane directly.
+    bool fullyOpaque = false;
     QImage straightRgbPlane;
     QImage alphaPlane;
 };

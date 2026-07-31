@@ -20,7 +20,9 @@
 #include <linux/input-event-codes.h>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string_view>
+#include <tuple>
 #include <unistd.h>
 #include <utility>
 
@@ -136,6 +138,65 @@ TerminalKittyGraphicsLayer kittyLayer(qint32 z) noexcept
         return TerminalKittyGraphicsLayer::BelowText;
     }
     return TerminalKittyGraphicsLayer::AboveText;
+}
+
+struct KittyImageView final {
+    quint32 imageId = 0;
+    quint32 width = 0;
+    quint32 height = 0;
+    GhosttyKittyImageFormat format = GHOSTTY_KITTY_IMAGE_FORMAT_RGBA;
+    const uint8_t *pixels = nullptr;
+    size_t dataLength = 0;
+    quint64 generation = 0;
+    quint64 bytesPerPixel = 0;
+};
+
+std::optional<KittyImageView> queryKittyImage(GhosttyKittyGraphicsImage image,
+                                              quint32 expectedImageId)
+{
+    KittyImageView result;
+    GhosttyKittyImageCompression compression =
+        GHOSTTY_KITTY_IMAGE_COMPRESSION_NONE;
+    constexpr std::array keys{
+        GHOSTTY_KITTY_IMAGE_DATA_ID,
+        GHOSTTY_KITTY_IMAGE_DATA_WIDTH,
+        GHOSTTY_KITTY_IMAGE_DATA_HEIGHT,
+        GHOSTTY_KITTY_IMAGE_DATA_FORMAT,
+        GHOSTTY_KITTY_IMAGE_DATA_COMPRESSION,
+        GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR,
+        GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN,
+        GHOSTTY_KITTY_IMAGE_DATA_GENERATION,
+    };
+    std::array<void *, keys.size()> values{
+        &result.imageId, &result.width,  &result.height,     &result.format,
+        &compression,    &result.pixels, &result.dataLength, &result.generation,
+    };
+    if (ghostty_kitty_graphics_image_get_multi(image, keys.size(), keys.data(),
+                                               values.data(), nullptr)
+            != GHOSTTY_SUCCESS
+        || result.imageId != expectedImageId || result.generation == 0
+        || result.width == 0 || result.height == 0
+        || result.width > static_cast<quint32>(INT_MAX)
+        || result.height > static_cast<quint32>(INT_MAX)
+        || compression != GHOSTTY_KITTY_IMAGE_COMPRESSION_NONE) {
+        return std::nullopt;
+    }
+
+    switch (result.format) {
+    case GHOSTTY_KITTY_IMAGE_FORMAT_RGB: result.bytesPerPixel = 3; break;
+    case GHOSTTY_KITTY_IMAGE_FORMAT_RGBA: result.bytesPerPixel = 4; break;
+    case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA: result.bytesPerPixel = 2; break;
+    case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY: result.bytesPerPixel = 1; break;
+    default: return std::nullopt;
+    }
+    const quint64 pixelCount =
+        static_cast<quint64>(result.width) * result.height;
+    if (pixelCount > std::numeric_limits<quint64>::max() / result.bytesPerPixel
+        || pixelCount * result.bytesPerPixel != result.dataLength
+        || (result.dataLength != 0 && result.pixels == nullptr)) {
+        return std::nullopt;
+    }
+    return result;
 }
 
 bool minimumContrastExemptGlyph(uint32_t codepoint)
@@ -3557,76 +3618,50 @@ public:
     }
 
     std::shared_ptr<const TerminalKittyGraphicsImage>
-    kittyImageAsset(GhosttyKittyGraphicsImage image, quint32 expectedImageId)
+    kittyImageAsset(const KittyImageView &image)
     {
-        quint32 imageId = 0;
-        quint32 width = 0;
-        quint32 height = 0;
-        GhosttyKittyImageFormat format = GHOSTTY_KITTY_IMAGE_FORMAT_RGBA;
-        GhosttyKittyImageCompression compression =
-            GHOSTTY_KITTY_IMAGE_COMPRESSION_NONE;
-        const uint8_t *pixels = nullptr;
-        size_t dataLength = 0;
-        quint64 generation = 0;
-        constexpr std::array keys{
-            GHOSTTY_KITTY_IMAGE_DATA_ID,
-            GHOSTTY_KITTY_IMAGE_DATA_WIDTH,
-            GHOSTTY_KITTY_IMAGE_DATA_HEIGHT,
-            GHOSTTY_KITTY_IMAGE_DATA_FORMAT,
-            GHOSTTY_KITTY_IMAGE_DATA_COMPRESSION,
-            GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR,
-            GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN,
-            GHOSTTY_KITTY_IMAGE_DATA_GENERATION,
-        };
-        std::array<void *, keys.size()> values{
-            &imageId,     &width,  &height,     &format,
-            &compression, &pixels, &dataLength, &generation,
-        };
-        if (ghostty_kitty_graphics_image_get_multi(
-                image, keys.size(), keys.data(), values.data(), nullptr)
-                != GHOSTTY_SUCCESS
-            || imageId != expectedImageId || generation == 0 || width == 0
-            || height == 0 || width > static_cast<quint32>(INT_MAX)
-            || height > static_cast<quint32>(INT_MAX)
-            || compression != GHOSTTY_KITTY_IMAGE_COMPRESSION_NONE) {
-            return {};
-        }
-        if (const auto cached = kittyImageAssets_.value(generation).lock();
-            cached != nullptr && cached->imageId == imageId) {
+        if (const auto cached =
+                kittyImageAssets_.value(image.generation).lock();
+            cached != nullptr && cached->imageId == image.imageId) {
             return cached;
         }
 
-        quint64 bytesPerPixel = 0;
-        switch (format) {
-        case GHOSTTY_KITTY_IMAGE_FORMAT_RGB: bytesPerPixel = 3; break;
-        case GHOSTTY_KITTY_IMAGE_FORMAT_RGBA: bytesPerPixel = 4; break;
-        case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA: bytesPerPixel = 2; break;
-        case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY: bytesPerPixel = 1; break;
-        default: return {};
-        }
-        const quint64 pixelCount =
-            static_cast<quint64>(width) * static_cast<quint64>(height);
-        if (pixelCount > std::numeric_limits<quint64>::max() / bytesPerPixel
-            || pixelCount * bytesPerPixel != dataLength
-            || (dataLength != 0 && pixels == nullptr)) {
-            return {};
+        bool fullyOpaque = image.format == GHOSTTY_KITTY_IMAGE_FORMAT_RGB
+            || image.format == GHOSTTY_KITTY_IMAGE_FORMAT_GRAY;
+        if (!fullyOpaque) {
+            const quint64 pixelCount =
+                static_cast<quint64>(image.width) * image.height;
+            const quint64 alphaOffset =
+                image.format == GHOSTTY_KITTY_IMAGE_FORMAT_RGBA ? 3U : 1U;
+            fullyOpaque = true;
+            for (quint64 pixelIndex = 0; pixelIndex < pixelCount;
+                 ++pixelIndex) {
+                if (image.pixels[pixelIndex * image.bytesPerPixel + alphaOffset]
+                    != 255) {
+                    fullyOpaque = false;
+                    break;
+                }
+            }
         }
 
-        QImage rgb(static_cast<int>(width), static_cast<int>(height),
-                   QImage::Format_RGBX8888);
-        QImage alpha(static_cast<int>(width), static_cast<int>(height),
-                     QImage::Format_RGBX8888);
-        if (rgb.isNull() || alpha.isNull()) {
+        QImage rgb(static_cast<int>(image.width),
+                   static_cast<int>(image.height), QImage::Format_RGBX8888);
+        QImage alpha;
+        if (!fullyOpaque) {
+            alpha =
+                QImage(static_cast<int>(image.width),
+                       static_cast<int>(image.height), QImage::Format_RGBX8888);
+        }
+        if (rgb.isNull() || (!fullyOpaque && alpha.isNull())) {
             return {};
         }
         rgb.setDevicePixelRatio(1.0);
-        alpha.setDevicePixelRatio(1.0);
-        const auto component = [format, pixels,
-                                bytesPerPixel](quint64 pixelIndex) {
+        if (!fullyOpaque) alpha.setDevicePixelRatio(1.0);
+        const auto component = [&image](quint64 pixelIndex) {
             const uint8_t *source =
-                pixels + pixelIndex * static_cast<quint64>(bytesPerPixel);
+                image.pixels + pixelIndex * image.bytesPerPixel;
             std::array<uchar, 4> rgba{};
-            switch (format) {
+            switch (image.format) {
             case GHOSTTY_KITTY_IMAGE_FORMAT_RGB:
                 rgba = {source[0], source[1], source[2], 255};
                 break;
@@ -3643,33 +3678,37 @@ public:
             }
             return rgba;
         };
-        for (quint32 row = 0; row < height; ++row) {
+        for (quint32 row = 0; row < image.height; ++row) {
             uchar *rgbLine = rgb.scanLine(static_cast<int>(row));
-            uchar *alphaLine = alpha.scanLine(static_cast<int>(row));
-            for (quint32 column = 0; column < width; ++column) {
+            uchar *alphaLine =
+                fullyOpaque ? nullptr : alpha.scanLine(static_cast<int>(row));
+            for (quint32 column = 0; column < image.width; ++column) {
                 const quint64 pixelIndex =
-                    static_cast<quint64>(row) * width + column;
+                    static_cast<quint64>(row) * image.width + column;
                 const std::array<uchar, 4> rgba = component(pixelIndex);
                 const qsizetype offset = static_cast<qsizetype>(column) * 4;
                 rgbLine[offset] = rgba[0];
                 rgbLine[offset + 1] = rgba[1];
                 rgbLine[offset + 2] = rgba[2];
                 rgbLine[offset + 3] = 255;
-                alphaLine[offset] = rgba[3];
-                alphaLine[offset + 1] = rgba[3];
-                alphaLine[offset + 2] = rgba[3];
-                alphaLine[offset + 3] = 255;
+                if (alphaLine != nullptr) {
+                    alphaLine[offset] = rgba[3];
+                    alphaLine[offset + 1] = rgba[3];
+                    alphaLine[offset + 2] = rgba[3];
+                    alphaLine[offset + 3] = 255;
+                }
             }
         }
 
         auto asset = std::make_shared<const TerminalKittyGraphicsImage>(
             TerminalKittyGraphicsImage{
-                .imageId = imageId,
-                .generation = generation,
+                .imageId = image.imageId,
+                .generation = image.generation,
+                .fullyOpaque = fullyOpaque,
                 .straightRgbPlane = std::move(rgb),
                 .alphaPlane = std::move(alpha),
             });
-        kittyImageAssets_.insert(generation, asset);
+        kittyImageAssets_.insert(image.generation, asset);
         return asset;
     }
 
@@ -3700,6 +3739,24 @@ public:
             return std::nullopt;
         }
 
+        struct PlacementCandidate final {
+            KittyImageView image;
+            quint32 placementId = 0;
+            qint32 z = 0;
+            TerminalKittyGraphicsLayer layer =
+                TerminalKittyGraphicsLayer::AboveText;
+            qint32 viewportColumn = 0;
+            qint32 viewportRow = 0;
+            quint32 xOffsetPixels = 0;
+            quint32 yOffsetPixels = 0;
+            quint32 destinationWidthPixels = 0;
+            quint32 destinationHeightPixels = 0;
+            quint32 sourceX = 0;
+            quint32 sourceY = 0;
+            quint32 sourceWidth = 0;
+            quint32 sourceHeight = 0;
+        };
+        QVector<PlacementCandidate> candidates;
         while (ghostty_kitty_graphics_placement_next(kittyPlacementIterator_)) {
             quint32 imageId = 0;
             quint32 placementId = 0;
@@ -3744,14 +3801,13 @@ public:
                 || renderInfo.source_height == 0) {
                 continue;
             }
-
-            std::shared_ptr<const TerminalKittyGraphicsImage> asset =
-                kittyImageAsset(image, imageId);
-            if (asset == nullptr) {
+            const auto imageView = queryKittyImage(image, imageId);
+            if (!imageView.has_value()) {
                 continue;
             }
-            result->placements.append({
-                .image = std::move(asset),
+
+            candidates.append({
+                .image = *imageView,
                 .placementId = placementId,
                 .z = z,
                 .layer = kittyLayer(z),
@@ -3767,20 +3823,71 @@ public:
                 .sourceHeight = renderInfo.source_height,
             });
         }
-        std::ranges::sort(result->placements,
-                          [](const TerminalKittyGraphicsPlacement &left,
-                             const TerminalKittyGraphicsPlacement &right) {
+        std::ranges::sort(candidates,
+                          [](const PlacementCandidate &left,
+                             const PlacementCandidate &right) {
                               if (left.z != right.z) return left.z < right.z;
-                              const quint32 leftImage = left.image != nullptr
-                                  ? left.image->imageId
-                                  : 0;
-                              const quint32 rightImage = right.image != nullptr
-                                  ? right.image->imageId
-                                  : 0;
-                              if (leftImage != rightImage)
-                                  return leftImage < rightImage;
+                              if (left.image.imageId != right.image.imageId) {
+                                  return left.image.imageId
+                                      < right.image.imageId;
+                              }
                               return left.placementId < right.placementId;
                           });
+
+        // Preserve libghostty as the protocol-storage owner, including older
+        // placements that can reappear after a Kitty delete, but avoid
+        // mirroring pixels that cannot affect this rendered snapshot. The
+        // deliberately exact key is conservative: it only recognizes a
+        // higher, successfully materialized opaque placement at the same
+        // renderer depth and physical destination.
+        using OpaqueCoverKey =
+            std::tuple<qint32, TerminalKittyGraphicsLayer, qint32, qint32,
+                       quint32, quint32, quint32, quint32>;
+        std::set<OpaqueCoverKey> opaqueCovers;
+        result->placements.reserve(candidates.size());
+        for (auto iterator = candidates.crbegin();
+             iterator != candidates.crend(); ++iterator) {
+            const OpaqueCoverKey coverKey{
+                iterator->z,
+                iterator->layer,
+                iterator->viewportColumn,
+                iterator->viewportRow,
+                iterator->xOffsetPixels,
+                iterator->yOffsetPixels,
+                iterator->destinationWidthPixels,
+                iterator->destinationHeightPixels,
+            };
+            if (opaqueCovers.contains(coverKey)) {
+                continue;
+            }
+
+            std::shared_ptr<const TerminalKittyGraphicsImage> asset =
+                kittyImageAsset(iterator->image);
+            if (asset == nullptr) {
+                continue;
+            }
+            const bool fullyOpaque = asset->fullyOpaque;
+            result->placements.append({
+                .image = std::move(asset),
+                .placementId = iterator->placementId,
+                .z = iterator->z,
+                .layer = iterator->layer,
+                .viewportColumn = iterator->viewportColumn,
+                .viewportRow = iterator->viewportRow,
+                .xOffsetPixels = iterator->xOffsetPixels,
+                .yOffsetPixels = iterator->yOffsetPixels,
+                .destinationWidthPixels = iterator->destinationWidthPixels,
+                .destinationHeightPixels = iterator->destinationHeightPixels,
+                .sourceX = iterator->sourceX,
+                .sourceY = iterator->sourceY,
+                .sourceWidth = iterator->sourceWidth,
+                .sourceHeight = iterator->sourceHeight,
+            });
+            if (fullyOpaque) {
+                opaqueCovers.insert(coverKey);
+            }
+        }
+        std::ranges::reverse(result->placements);
         kittyImageAssets_.removeIf(
             [](auto iterator) { return iterator.value().expired(); });
         return std::shared_ptr<const TerminalKittyGraphicsSnapshot>(
