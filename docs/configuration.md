@@ -136,7 +136,10 @@ effect only for later processes, windows, tabs, or splits.
 
 `reload_config` explicitly requests both domains. Each publishes
 independently. A malformed or unreadable update retains the last valid snapshot
-for that domain, and a missing file restores its defaults.
+for that domain and opens source-labelled Retry/Ignore diagnostics in every
+window; a missing file restores its defaults. Successful post-startup
+generations enqueue the window-local reload toast when `app-notifications`
+enables `config-reload`.
 
 The detailed parser/helper boundary and per-setting ownership rules are in
 [Architecture](architecture.md).

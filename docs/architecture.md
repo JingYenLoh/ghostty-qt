@@ -737,13 +737,18 @@ frames cannot sample stale content.
 The final pass honors the scene graph's transform, inherited opacity, scissor,
 and stencil state and uses premultiplied-alpha composition. Its render-pass
 format is tracked because an ancestor layer can replace the active target.
-Programs, pipelines, resource bindings, vertex data, uniform scratch storage,
-and ping textures remain retained across ordinary frames. A runtime RHI
-allocation or pipeline failure is published as a configuration diagnostic and
-queues that pane back to direct unfiltered rendering rather than mutating the
-layer tree during frame delivery or leaving its hidden source blank. A newer
-successful shader reload or scene-graph reinitialization allows one fresh
-retained attempt.
+Per-stage programs and pipelines, vertex data, the dynamic uniform buffer, and
+ping textures remain retained across ordinary frames. Stages sharing the same
+immutable snapshot reuse one aligned uniform slot; the final pass remains
+separate for Qt's matrix and opacity. Layout-compatible shader-resource
+bindings are shared by unique input texture: one source plus at most two ping
+textures. A source texture identity change updates its binding in place without
+rebuilding compatible pipelines or targets. A runtime RHI allocation or
+pipeline failure is published as a configuration diagnostic and queues that
+pane back to direct unfiltered rendering rather than mutating the layer tree
+during frame delivery or leaving its hidden source blank. A newer successful
+shader reload or scene-graph reinitialization allows one fresh retained
+attempt.
 
 For controlled A/B diagnosis,
 `GHOSTTY_QT_CUSTOM_SHADER_PIPELINE=legacy` restores the former nested
@@ -2650,9 +2655,9 @@ The default CTest suite has focused layers for each ownership boundary:
   an image multiplier above one, and zero-opacity composition as pure
   GUI-independent helpers. Software-scene-graph integration can verify the
   deterministic fallback and retained pane lifecycle, but it cannot execute
-  the two-plane RHI material. The next target covers backend shader creation,
-  linear texture sampling, and modulo seam behavior separately; final Wayland
-  compositor presentation remains an interactive check.
+  the two-plane RHI material. `terminal-backdrop-rhi` covers backend shader
+  creation, linear texture sampling, and modulo seam behavior separately;
+  final Wayland compositor presentation remains an interactive check.
 - `terminal-backdrop-rhi` verifies that both compiled QSB resources are linked
   into an independent consumer, then attempts OpenGL-RHI checks for
   straight-alpha filtering, hard modulo seams, and texture reuse across
@@ -3022,6 +3027,8 @@ be checked interactively in a real Wayland session.
   default `link-url` matcher, link previews, and the incremental search foundation are
   implemented. Search remains partial because the library artifact omits the
   upstream `xev`-dependent thread, mutation restarts its scan, inactive-screen
-  results are not retained independently, and the overlay is not draggable.
+  results are not retained independently, and flat public rows cannot preserve
+  every upstream page-boundary and blank-cell mapping detail. The pane-local
+  overlay itself is draggable and retains its snapped corner.
   Custom `link` parsing remains unavailable in the pinned parser, and OSC
   grouping stays URI-based until the public C API exposes hyperlink identity.

@@ -352,8 +352,8 @@ built-in terminfo payload, and maps a child signal to `128 + signal`.
 `+ssh-cache` operates on Ghostty's standard
 `${XDG_STATE_HOME}/ghostty/ssh_cache`; tests must isolate `XDG_STATE_HOME`,
 `HOME`, and `TMPDIR` beneath repository-local `./tmp`. Explicit action support
-does not imply the separately tracked shell-script injection that wraps an
-ordinary `ssh` command automatically.
+is also used by the staged Bash, Elvish, Fish, Nushell, and Zsh integrations:
+their ordinary `ssh` wrappers route through the same `ghostty-qt +ssh` action.
 
 `+edit-config` continues through the pinned helper into `/bin/sh -c` using the
 first non-empty `VISUAL` or `EDITOR` value and a shell-escaped standard config

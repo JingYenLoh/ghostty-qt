@@ -1403,8 +1403,8 @@
           "note": "Pinned Ghostty implements redo only on macOS; the Linux GTK application explicitly leaves it unimplemented."
         },
         "reload_config": {
-          "status": "partial",
-          "note": "The process-scoped exact void action requests one debounced asynchronous reload even with zero windows. A successful snapshot updates process keybindings, lifetime, every live workspace, and the defaults consumed by future windows; failure retains the last valid state. Frontend notifications remain absent."
+          "status": "supported",
+          "note": "The process-scoped exact void action requests one debounced asynchronous reload of both configuration domains even with zero windows. A successful post-startup snapshot updates process keybindings, lifetime, every live workspace, and the defaults consumed by future windows, then publishes the configured window-local success toast. A hard failure retains the last valid state and presents source-labelled process diagnostics with retry and window-local ignore behavior."
         },
         "reset": {
           "status": "supported",
@@ -1489,7 +1489,7 @@
         },
         "start_search": {
           "status": "partial",
-          "note": "Opens and focuses a pane-local top-right Qt overlay, retaining and selecting its prior text without starting work for an empty needle. The overlay is not draggable and the upstream xev-dependent search thread is unavailable in libghostty-vt."
+          "note": "Opens and focuses a pane-local Qt overlay, retaining and selecting its prior text without starting work for an empty needle. A non-focusing grip drags within the pane and snaps independently to the nearest corner for each pane. Status remains partial because the upstream xev-dependent search thread is unavailable in libghostty-vt."
         },
         "text": {
           "status": "supported",

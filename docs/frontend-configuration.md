@@ -109,7 +109,10 @@ A missing frontend file is a successful load of built-in frontend defaults.
 Deleting an existing file therefore restores those defaults. Syntax and I/O
 failures retain the last successful frontend snapshot and are retried
 periodically; at initial startup, where no last-good snapshot exists, built-in
-and explicit command-line values remain active.
+and explicit command-line values remain active. Hard failures open
+source-labelled Retry/Ignore diagnostics in every window. Successful
+post-startup generations enqueue the window-local reload toast when the shared
+`app-notifications` setting enables `config-reload`.
 
 The pinned private JSON schema-v1 export carries the upstream
 `gtk-single-instance` value for source fidelity, but the Qt launch-option

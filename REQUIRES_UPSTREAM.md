@@ -407,11 +407,13 @@ Once the API is present in an official, publicly reachable Ghostty commit:
    consumed key-event behavior.
 6. Add adapter tests for OSC 133 prompts, continuations, clamping, and active
    screen return.
-7. Promote `jump_to_prompt` in `docs/ghostty-parity.json` with a note that
-   automatic shell-script injection is still not implemented.
+7. Promote `jump_to_prompt` in `docs/ghostty-parity.json`; automatic
+   shell-script injection is already provided by the pinned helper.
 
-Shell-script injection, command notifications, and prompt-aware close
-detection are separate parity stages and are not implied by prompt navigation.
+Command notifications remain a separate parity stage. Shell-script injection
+and public-semantic prompt-aware close detection are already implemented; the
+remaining exact private-state gaps are recorded separately in the parity
+ledger.
 
 ## Semantic prompt cursor click movement
 
