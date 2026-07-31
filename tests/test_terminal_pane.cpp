@@ -2202,35 +2202,50 @@ void TerminalPaneTest::rendersAndRetainsKittyGraphics()
     QCOMPARE(retained.kittyGraphicsTextureSetEvictionCount,
              initial.kittyGraphicsTextureSetEvictionCount);
 
-    controller->terminalUpdated(graphicsUpdate(makeSnapshot(firstAsset, 1), 3));
+    controller->terminalUpdated(graphicsUpdate(makeSnapshot(firstAsset), 3));
+    const TerminalPaneRenderProbeSnapshot equivalent = paintedProbe();
+    QCOMPARE(equivalent.kittyGraphicsDestinations,
+             initial.kittyGraphicsDestinations);
+    QCOMPARE(equivalent.kittyGraphicsNodeCreationCount,
+             retained.kittyGraphicsNodeCreationCount);
+    QCOMPARE(equivalent.kittyGraphicsNodeDeletionCount,
+             retained.kittyGraphicsNodeDeletionCount);
+    QCOMPARE(equivalent.kittyGraphicsGeometryWriteCount,
+             retained.kittyGraphicsGeometryWriteCount);
+    QCOMPARE(equivalent.kittyGraphicsMaterialAssignmentCount,
+             retained.kittyGraphicsMaterialAssignmentCount);
+    QCOMPARE(equivalent.kittyGraphicsTextureSetEvictionCount,
+             retained.kittyGraphicsTextureSetEvictionCount);
+
+    controller->terminalUpdated(graphicsUpdate(makeSnapshot(firstAsset, 1), 4));
     const TerminalPaneRenderProbeSnapshot moved = paintedProbe();
     QCOMPARE(moved.kittyGraphicsTextureUploadCount, uploadsPerAsset);
     QCOMPARE(moved.kittyGraphicsTextureCount, qsizetype{1});
     QCOMPARE(moved.kittyGraphicsDestinations.constFirst().x(),
              renderedCellWidth);
     QCOMPARE(moved.kittyGraphicsNodeCreationCount,
-             initial.kittyGraphicsNodeCreationCount + 3);
+             equivalent.kittyGraphicsNodeCreationCount);
     QCOMPARE(moved.kittyGraphicsNodeDeletionCount,
-             initial.kittyGraphicsNodeDeletionCount + 3);
+             equivalent.kittyGraphicsNodeDeletionCount);
     QCOMPARE(moved.kittyGraphicsGeometryWriteCount,
-             initial.kittyGraphicsGeometryWriteCount + 3);
+             equivalent.kittyGraphicsGeometryWriteCount + 3);
     QCOMPARE(moved.kittyGraphicsMaterialAssignmentCount,
-             initial.kittyGraphicsMaterialAssignmentCount + 3);
+             equivalent.kittyGraphicsMaterialAssignmentCount);
     QCOMPARE(moved.kittyGraphicsTextureSetEvictionCount,
-             initial.kittyGraphicsTextureSetEvictionCount);
+             equivalent.kittyGraphicsTextureSetEvictionCount);
 
     const auto replacement = kittyImage(11, Qt::green);
     controller->terminalUpdated(
-        graphicsUpdate(makeSnapshot(replacement, 1), 4));
+        graphicsUpdate(makeSnapshot(replacement, 1), 5));
     const TerminalPaneRenderProbeSnapshot replaced = paintedProbe();
     QCOMPARE(replaced.kittyGraphicsTextureUploadCount, uploadsPerAsset * 2);
     QCOMPARE(replaced.kittyGraphicsTextureCount, qsizetype{1});
     QCOMPARE(replaced.kittyGraphicsNodeCreationCount,
-             moved.kittyGraphicsNodeCreationCount + 3);
+             moved.kittyGraphicsNodeCreationCount);
     QCOMPARE(replaced.kittyGraphicsNodeDeletionCount,
-             moved.kittyGraphicsNodeDeletionCount + 3);
+             moved.kittyGraphicsNodeDeletionCount);
     QCOMPARE(replaced.kittyGraphicsGeometryWriteCount,
-             moved.kittyGraphicsGeometryWriteCount + 3);
+             moved.kittyGraphicsGeometryWriteCount);
     QCOMPARE(replaced.kittyGraphicsMaterialAssignmentCount,
              moved.kittyGraphicsMaterialAssignmentCount + 3);
     QCOMPARE(replaced.kittyGraphicsTextureSetEvictionCount,
@@ -2238,7 +2253,7 @@ void TerminalPaneTest::rendersAndRetainsKittyGraphics()
 
     const auto secondReplacement = kittyImage(12, Qt::yellow);
     controller->terminalUpdated(
-        graphicsUpdate(makeSnapshot(secondReplacement, 1), 5));
+        graphicsUpdate(makeSnapshot(secondReplacement, 1), 6));
     const QImage replacedAgainImage = window.grabWindow();
     QVERIFY(!replacedAgainImage.isNull());
     const TerminalPaneRenderProbeSnapshot replacedAgain =
@@ -2247,11 +2262,11 @@ void TerminalPaneTest::rendersAndRetainsKittyGraphics()
              replaced.kittyGraphicsTextureUploadCount + 1);
     QCOMPARE(replacedAgain.kittyGraphicsTextureCount, qsizetype{1});
     QCOMPARE(replacedAgain.kittyGraphicsNodeCreationCount,
-             replaced.kittyGraphicsNodeCreationCount + 3);
+             replaced.kittyGraphicsNodeCreationCount);
     QCOMPARE(replacedAgain.kittyGraphicsNodeDeletionCount,
-             replaced.kittyGraphicsNodeDeletionCount + 3);
+             replaced.kittyGraphicsNodeDeletionCount);
     QCOMPARE(replacedAgain.kittyGraphicsGeometryWriteCount,
-             replaced.kittyGraphicsGeometryWriteCount + 3);
+             replaced.kittyGraphicsGeometryWriteCount);
     QCOMPARE(replacedAgain.kittyGraphicsMaterialAssignmentCount,
              replaced.kittyGraphicsMaterialAssignmentCount + 3);
     QCOMPARE(replacedAgain.kittyGraphicsTextureSetEvictionCount,
@@ -2263,37 +2278,242 @@ void TerminalPaneTest::rendersAndRetainsKittyGraphics()
     QVERIFY2(approximatelyEqual(opaquePixel, Qt::yellow),
              qPrintable(opaquePixel.name(QColor::HexArgb)));
 
-    controller->terminalUpdated(graphicsUpdate(makeSnapshot(nullptr), 6));
-    const TerminalPaneRenderProbeSnapshot deleted = paintedProbe();
-    QVERIFY(deleted.kittyGraphicsDestinations.isEmpty());
-    QCOMPARE(deleted.kittyGraphicsTextureCount, qsizetype{0});
-    QCOMPARE(deleted.kittyGraphicsNodeCreationCount,
-             replacedAgain.kittyGraphicsNodeCreationCount);
-    QCOMPARE(deleted.kittyGraphicsNodeDeletionCount,
-             replacedAgain.kittyGraphicsNodeDeletionCount + 3);
-    QCOMPARE(deleted.kittyGraphicsGeometryWriteCount,
-             replacedAgain.kittyGraphicsGeometryWriteCount);
-    QCOMPARE(deleted.kittyGraphicsMaterialAssignmentCount,
-             replacedAgain.kittyGraphicsMaterialAssignmentCount);
-    QCOMPARE(deleted.kittyGraphicsTextureSetEvictionCount,
-             replacedAgain.kittyGraphicsTextureSetEvictionCount + 1);
-
-    auto staleGeometry = makeSnapshot(secondReplacement);
+    auto staleGeometry = makeSnapshot(secondReplacement, 1);
     ++staleGeometry->cellWidthPixels;
     controller->terminalUpdated(graphicsUpdate(staleGeometry, 7));
     const TerminalPaneRenderProbeSnapshot hidden = paintedProbe();
     QVERIFY(hidden.kittyGraphicsDestinations.isEmpty());
     QCOMPARE(hidden.kittyGraphicsTextureCount, qsizetype{0});
     QCOMPARE(hidden.kittyGraphicsNodeCreationCount,
-             deleted.kittyGraphicsNodeCreationCount);
+             replacedAgain.kittyGraphicsNodeCreationCount);
     QCOMPARE(hidden.kittyGraphicsNodeDeletionCount,
-             deleted.kittyGraphicsNodeDeletionCount);
+             replacedAgain.kittyGraphicsNodeDeletionCount + 3);
     QCOMPARE(hidden.kittyGraphicsGeometryWriteCount,
-             deleted.kittyGraphicsGeometryWriteCount);
+             replacedAgain.kittyGraphicsGeometryWriteCount);
     QCOMPARE(hidden.kittyGraphicsMaterialAssignmentCount,
-             deleted.kittyGraphicsMaterialAssignmentCount);
+             replacedAgain.kittyGraphicsMaterialAssignmentCount);
     QCOMPARE(hidden.kittyGraphicsTextureSetEvictionCount,
+             replacedAgain.kittyGraphicsTextureSetEvictionCount + 1);
+
+    controller->terminalUpdated(
+        graphicsUpdate(makeSnapshot(secondReplacement, 1), 8));
+    const TerminalPaneRenderProbeSnapshot restored = paintedProbe();
+    QCOMPARE(restored.kittyGraphicsDestinations.size(), 3);
+    QCOMPARE(restored.kittyGraphicsTextureUploadCount,
+             hidden.kittyGraphicsTextureUploadCount + 1);
+    QCOMPARE(restored.kittyGraphicsTextureCount, qsizetype{1});
+    QCOMPARE(restored.kittyGraphicsNodeCreationCount,
+             hidden.kittyGraphicsNodeCreationCount + 3);
+    QCOMPARE(restored.kittyGraphicsNodeDeletionCount,
+             hidden.kittyGraphicsNodeDeletionCount);
+    QCOMPARE(restored.kittyGraphicsGeometryWriteCount,
+             hidden.kittyGraphicsGeometryWriteCount + 3);
+    QCOMPARE(restored.kittyGraphicsMaterialAssignmentCount,
+             hidden.kittyGraphicsMaterialAssignmentCount + 3);
+    QCOMPARE(restored.kittyGraphicsTextureSetEvictionCount,
+             hidden.kittyGraphicsTextureSetEvictionCount);
+
+    controller->terminalUpdated(graphicsUpdate(makeSnapshot(nullptr), 9));
+    const TerminalPaneRenderProbeSnapshot deleted = paintedProbe();
+    QVERIFY(deleted.kittyGraphicsDestinations.isEmpty());
+    QCOMPARE(deleted.kittyGraphicsTextureCount, qsizetype{0});
+    QCOMPARE(deleted.kittyGraphicsNodeCreationCount,
+             restored.kittyGraphicsNodeCreationCount);
+    QCOMPARE(deleted.kittyGraphicsNodeDeletionCount,
+             restored.kittyGraphicsNodeDeletionCount + 3);
+    QCOMPARE(deleted.kittyGraphicsGeometryWriteCount,
+             restored.kittyGraphicsGeometryWriteCount);
+    QCOMPARE(deleted.kittyGraphicsMaterialAssignmentCount,
+             restored.kittyGraphicsMaterialAssignmentCount);
+    QCOMPARE(deleted.kittyGraphicsTextureSetEvictionCount,
+             restored.kittyGraphicsTextureSetEvictionCount + 1);
+
+    const auto makeOverlappingSnapshot =
+        [&layout](
+            const std::shared_ptr<const TerminalKittyGraphicsImage> &first,
+            const std::shared_ptr<const TerminalKittyGraphicsImage> &second) {
+            auto snapshot = std::make_shared<TerminalKittyGraphicsSnapshot>();
+            snapshot->storageGeneration =
+                std::max(first->generation, second->generation);
+            snapshot->cellWidthPixels =
+                static_cast<quint32>(layout->session.cellWidthPixels);
+            snapshot->cellHeightPixels =
+                static_cast<quint32>(layout->session.cellHeightPixels);
+            for (const auto &asset : std::array{first, second}) {
+                snapshot->placements.append({
+                    .image = asset,
+                    .placementId = 0,
+                    .z = 1,
+                    .layer = TerminalKittyGraphicsLayer::AboveText,
+                    .viewportColumn = 1,
+                    .viewportRow = 0,
+                    .destinationWidthPixels =
+                        static_cast<quint32>(layout->session.cellWidthPixels),
+                    .destinationHeightPixels =
+                        static_cast<quint32>(layout->session.cellHeightPixels),
+                    .sourceWidth = 2,
+                    .sourceHeight = 2,
+                });
+            }
+            return snapshot;
+        };
+    const auto red = kittyImage(20, Qt::red);
+    const auto blue = kittyImage(21, Qt::blue);
+    controller->terminalUpdated(
+        graphicsUpdate(makeOverlappingSnapshot(red, blue), 10));
+    const QImage overlappingImage = window.grabWindow();
+    QVERIFY(!overlappingImage.isNull());
+    const TerminalPaneRenderProbeSnapshot overlapping =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(overlapping.kittyGraphicsTextureUploadCount,
+             deleted.kittyGraphicsTextureUploadCount + 2);
+    QCOMPARE(overlapping.kittyGraphicsTextureCount, qsizetype{2});
+    QCOMPARE(overlapping.kittyGraphicsNodeCreationCount,
+             deleted.kittyGraphicsNodeCreationCount + 2);
+    QCOMPARE(overlapping.kittyGraphicsNodeDeletionCount,
+             deleted.kittyGraphicsNodeDeletionCount);
+    QCOMPARE(overlapping.kittyGraphicsGeometryWriteCount,
+             deleted.kittyGraphicsGeometryWriteCount + 2);
+    QCOMPARE(overlapping.kittyGraphicsMaterialAssignmentCount,
+             deleted.kittyGraphicsMaterialAssignmentCount + 2);
+    QCOMPARE(overlapping.kittyGraphicsTextureSetEvictionCount,
              deleted.kittyGraphicsTextureSetEvictionCount);
+    const QPointF overlapPoint(
+        layout->gridRect.left() + 1.5 * renderedCellWidth,
+        layout->gridRect.top() + 0.5 * renderedCellHeight);
+    const QColor bluePixel =
+        itemPixel(window, *pane, overlappingImage, overlapPoint);
+    QVERIFY2(approximatelyEqual(bluePixel, Qt::blue),
+             qPrintable(bluePixel.name(QColor::HexArgb)));
+
+    controller->terminalUpdated(
+        graphicsUpdate(makeOverlappingSnapshot(blue, red), 11));
+    const QImage reorderedImage = window.grabWindow();
+    QVERIFY(!reorderedImage.isNull());
+    const TerminalPaneRenderProbeSnapshot reordered =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(reordered.kittyGraphicsTextureUploadCount,
+             overlapping.kittyGraphicsTextureUploadCount);
+    QCOMPARE(reordered.kittyGraphicsTextureCount, qsizetype{2});
+    QCOMPARE(reordered.kittyGraphicsNodeCreationCount,
+             overlapping.kittyGraphicsNodeCreationCount);
+    QCOMPARE(reordered.kittyGraphicsNodeDeletionCount,
+             overlapping.kittyGraphicsNodeDeletionCount);
+    QCOMPARE(reordered.kittyGraphicsGeometryWriteCount,
+             overlapping.kittyGraphicsGeometryWriteCount);
+    QCOMPARE(reordered.kittyGraphicsMaterialAssignmentCount,
+             overlapping.kittyGraphicsMaterialAssignmentCount);
+    QCOMPARE(reordered.kittyGraphicsTextureSetEvictionCount,
+             overlapping.kittyGraphicsTextureSetEvictionCount);
+    const QColor redPixel =
+        itemPixel(window, *pane, reorderedImage, overlapPoint);
+    QVERIFY2(approximatelyEqual(redPixel, Qt::red),
+             qPrintable(redPixel.name(QColor::HexArgb)));
+
+    controller->terminalUpdated(graphicsUpdate(makeSnapshot(nullptr), 12));
+    const TerminalPaneRenderProbeSnapshot overlapDeleted = paintedProbe();
+    QCOMPARE(overlapDeleted.kittyGraphicsNodeDeletionCount,
+             reordered.kittyGraphicsNodeDeletionCount + 2);
+    QCOMPARE(overlapDeleted.kittyGraphicsTextureSetEvictionCount,
+             reordered.kittyGraphicsTextureSetEvictionCount + 2);
+
+    const auto makeImplicitSnapshot =
+        [&layout](
+            const std::shared_ptr<const TerminalKittyGraphicsImage> &asset,
+            const QVector<int> &columns, TerminalKittyGraphicsLayer layer) {
+            auto snapshot = std::make_shared<TerminalKittyGraphicsSnapshot>();
+            snapshot->storageGeneration = asset->generation;
+            snapshot->cellWidthPixels =
+                static_cast<quint32>(layout->session.cellWidthPixels);
+            snapshot->cellHeightPixels =
+                static_cast<quint32>(layout->session.cellHeightPixels);
+            for (const int column : columns) {
+                snapshot->placements.append({
+                    .image = asset,
+                    .placementId = 0,
+                    .z =
+                        layer == TerminalKittyGraphicsLayer::AboveText ? 1 : -1,
+                    .layer = layer,
+                    .viewportColumn = column,
+                    .viewportRow = 1,
+                    .destinationWidthPixels =
+                        static_cast<quint32>(layout->session.cellWidthPixels),
+                    .destinationHeightPixels =
+                        static_cast<quint32>(layout->session.cellHeightPixels),
+                    .sourceWidth = 2,
+                    .sourceHeight = 2,
+                });
+            }
+            return snapshot;
+        };
+    controller->terminalUpdated(graphicsUpdate(
+        makeImplicitSnapshot(red, {1, 2, 3},
+                             TerminalKittyGraphicsLayer::AboveText),
+        13));
+    const TerminalPaneRenderProbeSnapshot implicit = paintedProbe();
+    QCOMPARE(implicit.kittyGraphicsTextureUploadCount,
+             overlapDeleted.kittyGraphicsTextureUploadCount + 1);
+    QCOMPARE(implicit.kittyGraphicsTextureCount, qsizetype{1});
+    QCOMPARE(implicit.kittyGraphicsNodeCreationCount,
+             overlapDeleted.kittyGraphicsNodeCreationCount + 3);
+    QCOMPARE(implicit.kittyGraphicsNodeDeletionCount,
+             overlapDeleted.kittyGraphicsNodeDeletionCount);
+
+    controller->terminalUpdated(
+        graphicsUpdate(makeImplicitSnapshot(
+                           red, {2, 3}, TerminalKittyGraphicsLayer::AboveText),
+                       14));
+    const TerminalPaneRenderProbeSnapshot implicitReduced = paintedProbe();
+    QCOMPARE(implicitReduced.kittyGraphicsNodeCreationCount,
+             implicit.kittyGraphicsNodeCreationCount);
+    QCOMPARE(implicitReduced.kittyGraphicsNodeDeletionCount,
+             implicit.kittyGraphicsNodeDeletionCount + 1);
+    QCOMPARE(implicitReduced.kittyGraphicsGeometryWriteCount,
+             implicit.kittyGraphicsGeometryWriteCount);
+    QCOMPARE(implicitReduced.kittyGraphicsMaterialAssignmentCount,
+             implicit.kittyGraphicsMaterialAssignmentCount);
+    QCOMPARE(implicitReduced.kittyGraphicsTextureSetEvictionCount,
+             implicit.kittyGraphicsTextureSetEvictionCount);
+
+    controller->terminalUpdated(
+        graphicsUpdate(makeImplicitSnapshot(
+                           red, {3, 4}, TerminalKittyGraphicsLayer::AboveText),
+                       15));
+    const TerminalPaneRenderProbeSnapshot implicitMoved = paintedProbe();
+    QCOMPARE(implicitMoved.kittyGraphicsNodeCreationCount,
+             implicitReduced.kittyGraphicsNodeCreationCount);
+    QCOMPARE(implicitMoved.kittyGraphicsNodeDeletionCount,
+             implicitReduced.kittyGraphicsNodeDeletionCount);
+    QCOMPARE(implicitMoved.kittyGraphicsGeometryWriteCount,
+             implicitReduced.kittyGraphicsGeometryWriteCount + 1);
+    QCOMPARE(implicitMoved.kittyGraphicsMaterialAssignmentCount,
+             implicitReduced.kittyGraphicsMaterialAssignmentCount);
+
+    controller->terminalUpdated(
+        graphicsUpdate(makeImplicitSnapshot(
+                           red, {3, 4}, TerminalKittyGraphicsLayer::BelowText),
+                       16));
+    const TerminalPaneRenderProbeSnapshot changedLayer = paintedProbe();
+    QCOMPARE(changedLayer.kittyGraphicsTextureUploadCount,
+             implicitMoved.kittyGraphicsTextureUploadCount);
+    QCOMPARE(changedLayer.kittyGraphicsTextureCount, qsizetype{1});
+    QCOMPARE(changedLayer.kittyGraphicsNodeCreationCount,
+             implicitMoved.kittyGraphicsNodeCreationCount + 2);
+    QCOMPARE(changedLayer.kittyGraphicsNodeDeletionCount,
+             implicitMoved.kittyGraphicsNodeDeletionCount + 2);
+    QCOMPARE(changedLayer.kittyGraphicsGeometryWriteCount,
+             implicitMoved.kittyGraphicsGeometryWriteCount + 2);
+    QCOMPARE(changedLayer.kittyGraphicsMaterialAssignmentCount,
+             implicitMoved.kittyGraphicsMaterialAssignmentCount + 2);
+    QCOMPARE(changedLayer.kittyGraphicsTextureSetEvictionCount,
+             implicitMoved.kittyGraphicsTextureSetEvictionCount);
+
+    controller->terminalUpdated(graphicsUpdate(makeSnapshot(nullptr), 17));
+    const TerminalPaneRenderProbeSnapshot finalDeleted = paintedProbe();
+    QCOMPARE(finalDeleted.kittyGraphicsNodeDeletionCount,
+             changedLayer.kittyGraphicsNodeDeletionCount + 2);
+    QCOMPARE(finalDeleted.kittyGraphicsTextureSetEvictionCount,
+             changedLayer.kittyGraphicsTextureSetEvictionCount + 1);
 
     window.close();
     delete pane;

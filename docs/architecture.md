@@ -609,10 +609,15 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    The image insertion points are ordered below cell backgrounds, between cell
    backgrounds and terminal foreground content, and above terminal foreground
    content but below input-method and pane overlays. Ordinary Kitty placements
-   populate those points from the retained value snapshot. Textures are keyed
-   by libghostty's process-unique image generation, so metadata updates,
-   scrolling, and placement-only mutations rebuild at most geometry; replacing
-   an image ID uploads the new generation and deletion evicts it.
+   populate those points from the retained value snapshot. The render thread
+   reconciles nodes in duplicate-safe `(image ID, placement ID, layer)` buckets
+   and preserves snapshot order within each layer. Generation is deliberately
+   excluded from placement identity: scrolling and layout changes mutate
+   geometry in place, while replacing the pixels behind an image ID rebinds
+   the retained material. Textures remain keyed by libghostty's process-unique
+   image generation and are evicted only after retained nodes have been rebound
+   or removed. Moving between layers or changing the scene-graph context
+   recreates the affected node.
    Main terminal text is retained in one public `QSGTextNode` per visible row;
    accepted row epochs rebuild only changed rows, while font, geometry,
    appearance, palette, search, and frame-shape changes rebuild the complete

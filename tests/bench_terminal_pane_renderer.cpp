@@ -495,10 +495,7 @@ public:
             measuredIterations,
             {
                 .paintSerial = 1,
-                .kittyNodeCreations = kittyPlacementCount,
-                .kittyNodeDeletions = kittyPlacementCount,
                 .kittyGeometryWrites = kittyPlacementCount,
-                .kittyMaterialAssignments = kittyPlacementCount,
             },
             1, {},
             [this, left, right, &moved] {
@@ -526,9 +523,6 @@ public:
             {
                 .paintSerial = 1,
                 .kittyTextureUploads = 1,
-                .kittyNodeCreations = kittyPlacementCount,
-                .kittyNodeDeletions = kittyPlacementCount,
-                .kittyGeometryWrites = kittyPlacementCount,
                 .kittyMaterialAssignments = kittyPlacementCount,
                 .kittyTextureSetEvictions = 1,
             },

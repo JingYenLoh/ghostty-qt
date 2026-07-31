@@ -22,9 +22,10 @@ inline constexpr qsizetype uniformBufferSize =
     inheritedOpacityOffset + sizeof(float);
 } // namespace TerminalKittyGraphicsShaderLayout
 
-// Render-thread-only retained Kitty scene. Placement geometry may be rebuilt
-// after scrolling or layout changes while textures remain cached by
-// libghostty's globally unique image generation.
+// Render-thread-only retained Kitty scene. Duplicate-safe placement identities
+// retain their nodes across scrolling, layout changes, and same-ID image
+// replacement. Textures remain cached by libghostty's globally unique image
+// generation.
 class TerminalKittyGraphicsScene final {
 public:
     TerminalKittyGraphicsScene();

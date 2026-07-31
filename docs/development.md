@@ -91,10 +91,12 @@ assignments. A texture set owns one GPU texture for an opaque image and two for
 a translucent image; the shared opaque alpha texture is not counted. The Kitty
 cases use 512 placements sharing opaque assets and separately exercise first
 upload, a same-snapshot redraw, movement, same-ID replacement, and eviction.
-Their node-churn counters establish the baseline for placement-node retention
-work. Offscreen `endFrame()` waits for completion, so it is suitable for
-comparing renderer work but does not model pipelined on-screen throughput.
-Software mode reports CPU update and end-to-end total timing.
+Their churn guards require retained redraws to perform no scene-graph work,
+movement to rewrite geometry only, same-ID replacement to rebind materials
+only, and eviction to delete the placements and texture set. Offscreen
+`endFrame()` waits for completion, so it is suitable for comparing renderer
+work but does not model pipelined on-screen throughput. Software mode reports
+CPU update and end-to-end total timing.
 
 The custom-shader compiler benchmark reports one-, two-, four-, and eight-pass
 cold `QShaderBaker` latency and content-addressed QSB cache-hit latency. Its
