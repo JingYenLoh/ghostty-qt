@@ -23,6 +23,7 @@ Item {
     readonly property var terminal: snapshot.terminal || ({})
     readonly property var keyboard: snapshot.keyboard || ({})
     readonly property var renderer: snapshot.renderer || ({})
+    readonly property var cell: snapshot.cell || ({})
 
     objectName: "terminalInspectorHost"
     width: 0
@@ -83,6 +84,12 @@ Item {
         return display(value, emptyText)
     }
 
+    function cellDisplay(value, emptyText) {
+        if (cell.available !== true)
+            return "\u2014"
+        return display(value, emptyText)
+    }
+
     function refresh() {
         if (inspectorModel !== null)
             inspectorModel.refresh()
@@ -91,6 +98,15 @@ Item {
     function closeInspector() {
         if (inspectorModel !== null)
             inspectorModel.close()
+    }
+
+    function toggleCellPick() {
+        if (inspectorModel === null)
+            return
+        if (cell.picking)
+            inspectorModel.cancelCellPick()
+        else
+            inspectorModel.beginCellPick()
     }
 
     component InspectorRow: RowLayout {
@@ -203,6 +219,22 @@ Item {
                 }
 
                 ToolButton {
+                    objectName: "terminalInspectorPickCell"
+                    text: "\u2316"
+                    highlighted: host.cell.picking === true
+                    focusPolicy: Qt.NoFocus
+                    Accessible.name: host.cell.picking
+                                     ? qsTr("Cancel cell picking")
+                                     : qsTr("Pick terminal cell")
+                    ToolTip.visible: hovered
+                    ToolTip.text: Accessible.name
+                    onClicked: {
+                        inspectorTabs.currentIndex = 1
+                        host.toggleCellPick()
+                    }
+                }
+
+                ToolButton {
                     objectName: "terminalInspectorRefresh"
                     text: "\u21bb"
                     focusPolicy: Qt.NoFocus
@@ -235,6 +267,7 @@ Item {
                 Layout.fillWidth: true
 
                 TabButton { text: qsTr("Surface") }
+                TabButton { text: qsTr("Cell") }
                 TabButton { text: qsTr("Terminal") }
                 TabButton { text: qsTr("Keyboard") }
                 TabButton { text: qsTr("Renderer") }
@@ -302,6 +335,132 @@ Item {
                         name: qsTr("Working directory")
                         value: host.display(host.surface.currentDirectory)
                         monospace: true
+                    }
+                }
+
+                InspectorPage {
+                    SectionHeading { text: qsTr("Cell picker") }
+                    InspectorRow {
+                        name: qsTr("Status")
+                        value: host.display(host.cell.status)
+                    }
+                    InspectorRow {
+                        name: qsTr("Viewport position")
+                        value: host.position(host.cell.viewportColumn,
+                                             host.cell.viewportRow)
+                    }
+                    InspectorRow {
+                        name: qsTr("Content revision")
+                        value: host.display(host.cell.contentRevision)
+                    }
+                    InspectorRow {
+                        name: qsTr("Active screen")
+                        value: host.display(host.cell.activeScreen)
+                    }
+
+                    Button {
+                        text: host.cell.picking ? qsTr("Cancel picking")
+                                                : qsTr("Pick cell")
+                        icon.name: host.cell.picking ? "dialog-cancel"
+                                                    : "crosshairs"
+                        onClicked: host.toggleCellPick()
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: host.cell.picking
+                              ? qsTr("Click a cell in the terminal. Right-click or press Escape to cancel.")
+                              : qsTr("Cell queries are one-shot and use the exact displayed viewport revision.")
+                        wrapMode: Text.WordWrap
+                        opacity: 0.68
+                    }
+
+                    SectionHeading { text: qsTr("Content") }
+                    InspectorRow {
+                        name: qsTr("Text")
+                        value: host.cell.available
+                               ? (host.cell.hasText
+                                  ? "\u201c" + host.cell.text + "\u201d"
+                                  : qsTr("Empty"))
+                               : "\u2014"
+                        monospace: true
+                    }
+                    InspectorRow {
+                        name: qsTr("Codepoints")
+                        value: host.cellDisplay(host.cell.codepoints,
+                                                qsTr("None"))
+                        monospace: true
+                    }
+                    InspectorRow {
+                        name: qsTr("Content kind")
+                        value: host.cellDisplay(host.cell.contentKind)
+                    }
+                    InspectorRow {
+                        name: qsTr("Width role")
+                        value: host.cellDisplay(host.cell.widthRole)
+                    }
+                    InspectorRow {
+                        name: qsTr("Semantic content")
+                        value: host.cellDisplay(host.cell.semantic)
+                    }
+                    InspectorRow {
+                        name: qsTr("Protected")
+                        value: host.cellDisplay(host.cell.protectedCell)
+                    }
+                    InspectorRow {
+                        name: qsTr("Hyperlink")
+                        value: host.cellDisplay(host.cell.hyperlinkUri,
+                                                qsTr("None"))
+                        monospace: true
+                    }
+                    InspectorRow {
+                        name: qsTr("Content background")
+                        value: host.cellDisplay(host.cell.contentBackground)
+                        monospace: true
+                    }
+
+                    SectionHeading { text: qsTr("Raw style") }
+                    InspectorRow {
+                        name: qsTr("Style ID")
+                        value: host.cellDisplay(host.cell.styleId)
+                    }
+                    InspectorRow {
+                        name: qsTr("Attributes")
+                        value: host.cellDisplay(host.cell.styleAttributes,
+                                                qsTr("None"))
+                    }
+                    InspectorRow {
+                        name: qsTr("Foreground source")
+                        value: host.cellDisplay(host.cell.styleForeground)
+                        monospace: true
+                    }
+                    InspectorRow {
+                        name: qsTr("Background source")
+                        value: host.cellDisplay(host.cell.styleBackground)
+                        monospace: true
+                    }
+                    InspectorRow {
+                        name: qsTr("Underline")
+                        value: host.cellDisplay(host.cell.underline)
+                    }
+                    InspectorRow {
+                        name: qsTr("Underline color source")
+                        value: host.cellDisplay(host.cell.styleUnderlineColor)
+                        monospace: true
+                    }
+
+                    SectionHeading { text: qsTr("Row") }
+                    InspectorRow {
+                        name: qsTr("Soft wrapped")
+                        value: host.cellDisplay(host.cell.rowWrapped)
+                    }
+                    InspectorRow {
+                        name: qsTr("Wrap continuation")
+                        value: host.cellDisplay(host.cell.rowWrapContinuation)
+                    }
+                    InspectorRow {
+                        name: qsTr("Semantic prompt")
+                        value: host.cellDisplay(host.cell.rowSemantic)
                     }
                 }
 
@@ -690,7 +849,12 @@ Item {
         Shortcut {
             sequences: [StandardKey.Cancel]
             enabled: inspectorWindow.visible
-            onActivated: host.closeInspector()
+            onActivated: {
+                if (host.cell.picking)
+                    host.toggleCellPick()
+                else
+                    host.closeInspector()
+            }
         }
     }
 

@@ -86,6 +86,108 @@ QString terminalStatusName(TerminalInspectorStatus status, bool requestPending)
     return QStringLiteral("Unavailable");
 }
 
+QString cellStatusName(TerminalInspectorCellStatus status)
+{
+    switch (status) {
+    case TerminalInspectorCellStatus::Unavailable:
+        return QStringLiteral("Unavailable");
+    case TerminalInspectorCellStatus::Ready: return QStringLiteral("Ready");
+    case TerminalInspectorCellStatus::Stale:
+        return QStringLiteral("Stale — pick again");
+    case TerminalInspectorCellStatus::OutOfBounds:
+        return QStringLiteral("Outside current viewport");
+    case TerminalInspectorCellStatus::Failed: return QStringLiteral("Failed");
+    }
+    return QStringLiteral("Unavailable");
+}
+
+QString cellContentName(TerminalInspectorCellContentKind kind)
+{
+    switch (kind) {
+    case TerminalInspectorCellContentKind::Codepoint:
+        return QStringLiteral("Codepoint");
+    case TerminalInspectorCellContentKind::Grapheme:
+        return QStringLiteral("Grapheme cluster");
+    case TerminalInspectorCellContentKind::BackgroundPalette:
+        return QStringLiteral("Palette background only");
+    case TerminalInspectorCellContentKind::BackgroundRgb:
+        return QStringLiteral("RGB background only");
+    }
+    return QStringLiteral("Unknown");
+}
+
+QString cellWidthName(TerminalInspectorCellWidthRole role)
+{
+    switch (role) {
+    case TerminalInspectorCellWidthRole::Narrow:
+        return QStringLiteral("Narrow");
+    case TerminalInspectorCellWidthRole::Wide: return QStringLiteral("Wide");
+    case TerminalInspectorCellWidthRole::SpacerTail:
+        return QStringLiteral("Wide spacer tail");
+    case TerminalInspectorCellWidthRole::SpacerHead:
+        return QStringLiteral("Wrap spacer head");
+    }
+    return QStringLiteral("Unknown");
+}
+
+QString cellSemanticName(TerminalInspectorCellSemantic semantic)
+{
+    switch (semantic) {
+    case TerminalInspectorCellSemantic::Output: return QStringLiteral("Output");
+    case TerminalInspectorCellSemantic::Input: return QStringLiteral("Input");
+    case TerminalInspectorCellSemantic::Prompt: return QStringLiteral("Prompt");
+    }
+    return QStringLiteral("Unknown");
+}
+
+QString rowSemanticName(TerminalInspectorRowSemantic semantic)
+{
+    switch (semantic) {
+    case TerminalInspectorRowSemantic::None: return QStringLiteral("None");
+    case TerminalInspectorRowSemantic::Prompt: return QStringLiteral("Prompt");
+    case TerminalInspectorRowSemantic::PromptContinuation:
+        return QStringLiteral("Prompt continuation");
+    }
+    return QStringLiteral("Unknown");
+}
+
+QString underlineName(TerminalInspectorUnderlineStyle underline)
+{
+    switch (underline) {
+    case TerminalInspectorUnderlineStyle::None: return QStringLiteral("None");
+    case TerminalInspectorUnderlineStyle::Single:
+        return QStringLiteral("Single");
+    case TerminalInspectorUnderlineStyle::Double:
+        return QStringLiteral("Double");
+    case TerminalInspectorUnderlineStyle::Curly: return QStringLiteral("Curly");
+    case TerminalInspectorUnderlineStyle::Dotted:
+        return QStringLiteral("Dotted");
+    case TerminalInspectorUnderlineStyle::Dashed:
+        return QStringLiteral("Dashed");
+    }
+    return QStringLiteral("Unknown");
+}
+
+QString styleColorName(const TerminalInspectorStyleColor &color,
+                       QStringView noneName = u"Default")
+{
+    switch (color.kind) {
+    case TerminalInspectorStyleColorKind::None: return noneName.toString();
+    case TerminalInspectorStyleColorKind::Palette:
+        return QStringLiteral("Palette %1").arg(color.paletteIndex);
+    case TerminalInspectorStyleColorKind::Rgb:
+        return optionalColorName(color.rgb);
+    }
+    return QStringLiteral("Unknown");
+}
+
+QString diagnosticByteString(const QByteArray &bytes)
+{
+    const QString decoded = QString::fromUtf8(bytes);
+    if (decoded.toUtf8() == bytes) return decoded;
+    return QStringLiteral("hex: %1").arg(QString::fromLatin1(bytes.toHex(' ')));
+}
+
 } // namespace
 
 TerminalInspectorModel::TerminalInspectorModel(TerminalPane *pane)
@@ -102,12 +204,52 @@ TerminalInspectorModel::TerminalInspectorModel(TerminalPane *pane)
                 &TerminalController::terminalInspectorSnapshotReady, this,
                 [this](quint64 requestId,
                        const TerminalInspectorSnapshot &snapshot) {
-                    if (requestId == 0
+                    if (!active_ || requestId == 0
                         || requestId != pendingTerminalRequestId_) {
                         return;
                     }
                     pendingTerminalRequestId_ = 0;
                     terminalSnapshot_ = snapshot;
+                    rebuildSnapshot();
+                });
+        connect(pane->controller_,
+                &TerminalController::terminalInspectorCellReady, this,
+                [this](quint64 requestId,
+                       const TerminalInspectorCellSnapshot &snapshot) {
+                    if (!active_ || requestId == 0
+                        || requestId != pendingCellRequestId_) {
+                        return;
+                    }
+                    pendingCellRequestId_ = 0;
+                    cellSnapshot_ = snapshot;
+                    cellHasResult_ = true;
+                    rebuildSnapshot();
+                });
+        connect(pane, &TerminalPane::inspectorCellPickingChanged, this,
+                &TerminalInspectorModel::rebuildSnapshot);
+        connect(pane, &TerminalPane::inspectorCellPicked, this,
+                [this](int viewportColumn, int viewportRow,
+                       quint64 contentRevision) {
+                    if (!active_) return;
+                    TerminalPane *const targetPane = pane_.data();
+                    if (targetPane == nullptr
+                        || targetPane->controller_ == nullptr) {
+                        return;
+                    }
+                    cellSnapshot_ = {};
+                    cellSnapshot_.contentRevision = contentRevision;
+                    cellSnapshot_.viewportColumn = viewportColumn;
+                    cellSnapshot_.viewportRow = viewportRow;
+                    cellHasResult_ = false;
+                    const QPointer<TerminalInspectorModel> guard(this);
+                    const quint64 requestId =
+                        targetPane->controller_->requestTerminalInspectorCell(
+                            contentRevision, viewportColumn, viewportRow);
+                    if (guard == nullptr || !guard->active_) return;
+                    pendingCellRequestId_ = requestId;
+                    if (pendingCellRequestId_ == 0) {
+                        cellHasResult_ = true;
+                    }
                     rebuildSnapshot();
                 });
     }
@@ -117,21 +259,39 @@ TerminalInspectorModel::TerminalInspectorModel(TerminalPane *pane)
 
 void TerminalInspectorModel::refresh()
 {
+    if (!active_) return;
     rebuildSnapshot();
     if (pendingTerminalRequestId_ != 0) return;
 
     TerminalPane *const pane = pane_.data();
     if (pane == nullptr || pane->controller_ == nullptr) return;
-    pendingTerminalRequestId_ =
+    const QPointer<TerminalInspectorModel> guard(this);
+    const quint64 requestId =
         pane->controller_->requestTerminalInspectorSnapshot();
+    if (guard == nullptr || !guard->active_) return;
+    pendingTerminalRequestId_ = requestId;
     if (pendingTerminalRequestId_ != 0
         && terminalSnapshot_.status == TerminalInspectorStatus::Unavailable) {
         rebuildSnapshot();
     }
 }
 
+void TerminalInspectorModel::beginCellPick()
+{
+    if (!active_) return;
+    pendingCellRequestId_ = 0;
+    if (pane_ != nullptr) pane_->setInspectorCellPicking(true);
+}
+
+void TerminalInspectorModel::cancelCellPick()
+{
+    if (!active_) return;
+    if (pane_ != nullptr) pane_->setInspectorCellPicking(false);
+}
+
 void TerminalInspectorModel::rebuildSnapshot()
 {
+    if (!active_) return;
     TerminalPane *const pane = pane_.data();
     if (pane == nullptr) return;
 
@@ -415,12 +575,100 @@ void TerminalInspectorModel::rebuildSnapshot()
         }
     }
 
+    const bool cellPicking = pane->inspectorCellPicking();
+    QString cellStatus;
+    if (cellPicking) {
+        cellStatus = QStringLiteral("Pick a cell in the terminal");
+    } else if (pendingCellRequestId_ != 0) {
+        cellStatus = QStringLiteral("Requesting");
+    } else if (!cellHasResult_) {
+        cellStatus = QStringLiteral("Not selected");
+    } else {
+        cellStatus = cellStatusName(cellSnapshot_.status);
+    }
+    QVariantMap cell{
+        {QStringLiteral("status"), cellStatus},
+        {QStringLiteral("picking"), cellPicking},
+        {QStringLiteral("requestPending"), pendingCellRequestId_ != 0},
+        {QStringLiteral("available"),
+         cellHasResult_
+             && cellSnapshot_.status == TerminalInspectorCellStatus::Ready},
+    };
+    if (cellSnapshot_.viewportColumn >= 0 && cellSnapshot_.viewportRow >= 0) {
+        cell.insert(QStringLiteral("viewportColumn"),
+                    cellSnapshot_.viewportColumn);
+        cell.insert(QStringLiteral("viewportRow"), cellSnapshot_.viewportRow);
+        cell.insert(QStringLiteral("contentRevision"),
+                    QVariant::fromValue(cellSnapshot_.contentRevision));
+    }
+    if (cellHasResult_
+        && cellSnapshot_.status == TerminalInspectorCellStatus::Ready) {
+        const TerminalInspectorCellSnapshot &raw = cellSnapshot_;
+        cell.insert(QStringLiteral("activeScreen"),
+                    raw.activeScreen == TerminalInspectorScreen::Alternate
+                        ? QStringLiteral("Alternate")
+                        : QStringLiteral("Primary"));
+        cell.insert(QStringLiteral("text"), raw.text);
+        QStringList codepoints;
+        codepoints.reserve(raw.codepoints.size());
+        for (const quint32 codepoint : raw.codepoints) {
+            const int width = codepoint <= 0xffffU ? 4 : 6;
+            codepoints.append(QStringLiteral("U+%1")
+                                  .arg(codepoint, width, 16, QLatin1Char('0'))
+                                  .toUpper());
+        }
+        cell.insert(QStringLiteral("codepoints"), codepoints);
+        cell.insert(QStringLiteral("contentKind"),
+                    cellContentName(raw.contentKind));
+        cell.insert(QStringLiteral("widthRole"), cellWidthName(raw.widthRole));
+        cell.insert(QStringLiteral("hasText"), raw.hasText);
+        cell.insert(QStringLiteral("hasStyling"), raw.hasStyling);
+        cell.insert(QStringLiteral("styleId"), raw.styleId);
+        cell.insert(QStringLiteral("hasHyperlink"), raw.hasHyperlink);
+        cell.insert(QStringLiteral("protectedCell"), raw.protectedCell);
+        cell.insert(QStringLiteral("semantic"), cellSemanticName(raw.semantic));
+        cell.insert(QStringLiteral("hyperlinkUri"),
+                    diagnosticByteString(raw.hyperlinkUri));
+        cell.insert(QStringLiteral("contentBackground"),
+                    styleColorName(raw.contentBackground, u"None"));
+        cell.insert(QStringLiteral("styleForeground"),
+                    styleColorName(raw.style.foreground));
+        cell.insert(QStringLiteral("styleBackground"),
+                    styleColorName(raw.style.background));
+        cell.insert(QStringLiteral("styleUnderlineColor"),
+                    styleColorName(raw.style.underlineColor));
+        cell.insert(QStringLiteral("underline"),
+                    underlineName(raw.style.underline));
+        QStringList attributes;
+        if (raw.style.bold) attributes.append(QStringLiteral("Bold"));
+        if (raw.style.italic) attributes.append(QStringLiteral("Italic"));
+        if (raw.style.faint) attributes.append(QStringLiteral("Faint"));
+        if (raw.style.blink) attributes.append(QStringLiteral("Blink"));
+        if (raw.style.inverse) attributes.append(QStringLiteral("Inverse"));
+        if (raw.style.invisible) {
+            attributes.append(QStringLiteral("Invisible"));
+        }
+        if (raw.style.strikethrough) {
+            attributes.append(QStringLiteral("Strikethrough"));
+        }
+        if (raw.style.overline) {
+            attributes.append(QStringLiteral("Overline"));
+        }
+        cell.insert(QStringLiteral("styleAttributes"), attributes);
+        cell.insert(QStringLiteral("rowWrapped"), raw.rowWrapped);
+        cell.insert(QStringLiteral("rowWrapContinuation"),
+                    raw.rowWrapContinuation);
+        cell.insert(QStringLiteral("rowSemantic"),
+                    rowSemanticName(raw.rowSemantic));
+    }
+
     QVariantMap next{
         {QStringLiteral("title"), pane->title()},
         {QStringLiteral("surface"), surface},
         {QStringLiteral("terminal"), terminal},
         {QStringLiteral("keyboard"), keyboard},
         {QStringLiteral("renderer"), renderer},
+        {QStringLiteral("cell"), cell},
     };
     if (next == snapshot_) return;
     snapshot_ = std::move(next);
@@ -429,11 +677,15 @@ void TerminalInspectorModel::rebuildSnapshot()
 
 void TerminalInspectorModel::close()
 {
-    if (pane_ != nullptr) pane_->closeInspector();
+    if (active_ && pane_ != nullptr) pane_->closeInspector();
 }
 
 void TerminalInspectorModel::deactivate()
 {
+    if (!active_) return;
+    active_ = false;
     refreshTimer_->stop();
     pendingTerminalRequestId_ = 0;
+    pendingCellRequestId_ = 0;
+    if (pane_ != nullptr) pane_->setInspectorCellPicking(false);
 }

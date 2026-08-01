@@ -2869,6 +2869,12 @@ void TerminalPane::drainDeferredKeyEvents()
 
 void TerminalPane::keyPressEvent(QKeyEvent *event)
 {
+    if (inspectorCellPicking_ && event->key() == Qt::Key_Escape) {
+        consumedKeys_.insert(keyEventIdentity(event));
+        setInspectorCellPicking(false);
+        event->accept();
+        return;
+    }
     const int consumedModifiers =
         static_cast<int>(consumedModifiersForText(*event));
     const quint64 pointerActivityEpoch =
@@ -4041,6 +4047,43 @@ QVariant TerminalPane::inputMethodQuery(Qt::InputMethodQuery query) const
 void TerminalPane::mousePressEvent(QMouseEvent *event)
 {
     revealMouseAfterActivity();
+    if (inspectorCellPicking_
+        || inspectorCellPickConsumedButton_ != Qt::NoButton) {
+        if (inspectorCellPickConsumedButton_ == Qt::NoButton) {
+            inspectorCellPickConsumedButton_ = event->button();
+        }
+        if (inspectorCellPicking_ && event->button() == Qt::RightButton) {
+            setInspectorCellPicking(false);
+        } else if (inspectorCellPicking_ && event->button() == Qt::LeftButton) {
+            const std::optional<TerminalViewportLayout> layout =
+                currentViewportLayout();
+            const std::optional<QPoint> cell =
+                layout ? layout->strictCellAt(event->position()) : std::nullopt;
+            quint64 contentRevision = 0;
+            bool frameAvailable = false;
+            if (cell.has_value()) {
+                QMutexLocker locker(&renderMutex_);
+                frameAvailable = hasFrame_ && cell->x() >= 0
+                    && cell->x() < frame_.columns && cell->y() >= 0
+                    && cell->y() < frame_.rows;
+                if (frameAvailable) {
+                    contentRevision = frame_.contentRevision;
+                }
+            }
+            if (frameAvailable) {
+                const QPointer<TerminalPane> guard(this);
+                setInspectorCellPicking(false);
+                if (guard == nullptr) {
+                    event->accept();
+                    return;
+                }
+                Q_EMIT inspectorCellPicked(cell->x(), cell->y(),
+                                           contentRevision);
+            }
+        }
+        event->accept();
+        return;
+    }
     const QPointer<TerminalPane> bellGuard(this);
     setBellRinging(false);
     if (bellGuard == nullptr) {
@@ -4198,10 +4241,30 @@ void TerminalPane::setMouseHiddenWhileTyping(bool hidden)
     syncPointerCursor();
 }
 
+void TerminalPane::setInspectorCellPicking(bool picking)
+{
+    if (inspectorCellPicking_ == picking) return;
+    const QPointer<TerminalPane> guard(this);
+    inspectorCellPicking_ = picking;
+    if (picking) {
+        revealMouseAfterActivity();
+        if (guard == nullptr) return;
+        cancelPendingHyperlinkActivation();
+        if (guard == nullptr) return;
+        cancelHyperlinkPress();
+        if (guard == nullptr) return;
+    }
+    syncPointerCursor();
+    if (guard == nullptr) return;
+    Q_EMIT inspectorCellPickingChanged();
+}
+
 void TerminalPane::syncPointerCursor()
 {
     if (mouseHiddenWhileTyping_) {
         setCursor(Qt::BlankCursor);
+    } else if (inspectorCellPicking_) {
+        setCursor(Qt::CrossCursor);
     } else if (hyperlinkLeaseActive_ && !hoveredHyperlinkUri_.isEmpty()) {
         setCursor(Qt::PointingHandCursor);
     } else if (isRectangleSelectionState(hoverModifiers_)
@@ -4270,6 +4333,12 @@ bool TerminalPane::handlePointerMotion(const QPointF &position)
 
 void TerminalPane::mouseMoveEvent(QMouseEvent *event)
 {
+    if (inspectorCellPicking_
+        || inspectorCellPickConsumedButton_ != Qt::NoButton) {
+        (void)revealMouseForPointerPosition(event->position());
+        event->accept();
+        return;
+    }
     if (!handlePointerMotion(event->position())) {
         event->accept();
         return;
@@ -4317,6 +4386,13 @@ void TerminalPane::mouseMoveEvent(QMouseEvent *event)
 void TerminalPane::mouseReleaseEvent(QMouseEvent *event)
 {
     revealMouseAfterActivity();
+    if (inspectorCellPickConsumedButton_ != Qt::NoButton) {
+        if (event->button() == inspectorCellPickConsumedButton_) {
+            inspectorCellPickConsumedButton_ = Qt::NoButton;
+        }
+        event->accept();
+        return;
+    }
     if (hyperlinkPressArmed_
         && (event->position() - hyperlinkPressPosition_).manhattanLength()
             >= QGuiApplication::styleHints()->startDragDistance()) {
@@ -4366,6 +4442,8 @@ void TerminalPane::mouseUngrabEvent()
 {
     QQuickItem::mouseUngrabEvent();
 
+    inspectorCellPickConsumedButton_ = Qt::NoButton;
+
     const QPointer<TerminalPane> guard(this);
     if (std::exchange(selecting_, false)) {
         // Qt revoked the implicit grab without delivering a release. Reset
@@ -4379,6 +4457,11 @@ void TerminalPane::mouseUngrabEvent()
 
 void TerminalPane::hoverMoveEvent(QHoverEvent *event)
 {
+    if (inspectorCellPicking_) {
+        (void)revealMouseForPointerPosition(event->position());
+        event->accept();
+        return;
+    }
     if (!handlePointerMotion(event->position())) {
         event->accept();
         return;
@@ -4416,6 +4499,11 @@ void TerminalPane::hoverLeaveEvent(QHoverEvent *event)
 void TerminalPane::wheelEvent(QWheelEvent *event)
 {
     revealMouseAfterActivity();
+    if (inspectorCellPicking_
+        || inspectorCellPickConsumedButton_ != Qt::NoButton) {
+        event->accept();
+        return;
+    }
     QPoint pixelDelta = event->pixelDelta();
     const QPoint angleDelta = event->angleDelta();
     const bool precision = !pixelDelta.isNull();

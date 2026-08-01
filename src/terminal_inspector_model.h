@@ -24,6 +24,8 @@ public:
     [[nodiscard]] QVariantMap snapshot() const { return snapshot_; }
 
     Q_INVOKABLE void refresh();
+    Q_INVOKABLE void beginCellPick();
+    Q_INVOKABLE void cancelCellPick();
     Q_INVOKABLE void close();
     void deactivate();
 
@@ -38,4 +40,8 @@ private:
     QTimer *refreshTimer_ = nullptr;
     TerminalInspectorSnapshot terminalSnapshot_;
     quint64 pendingTerminalRequestId_ = 0;
+    TerminalInspectorCellSnapshot cellSnapshot_;
+    quint64 pendingCellRequestId_ = 0;
+    bool cellHasResult_ = false;
+    bool active_ = true;
 };

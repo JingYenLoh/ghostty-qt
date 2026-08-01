@@ -240,6 +240,7 @@ private Q_SLOTS:
     void reportsTerminalInitializationSeparatelyFromChildExec();
     void reportsTerminalInitializationFailure();
     void publishesCorrelatedInspectorSnapshots();
+    void publishesCorrelatedInspectorCells();
     void initializesGeometryBeforeSpawningChild();
     void resizesPtyWithPaddingExcludedPixels();
     void injectsInitialInputAtomicallyInOrder();
@@ -443,6 +444,70 @@ void SessionWorkerTest::publishesCorrelatedInspectorSnapshots()
         snapshots.constLast().at(1).value<TerminalInspectorSnapshot>();
     QCOMPARE(reset.status, TerminalInspectorStatus::Ready);
     QVERIFY(reset.contentRevision > ready.contentRevision);
+    worker.shutdown();
+}
+
+void SessionWorkerTest::publishesCorrelatedInspectorCells()
+{
+    qRegisterMetaType<TerminalInspectorCellSnapshot>();
+
+    SessionWorker worker;
+    QSignalSpy cells(&worker, &SessionWorker::terminalInspectorCellReady);
+    worker.inspectTerminalCell(0, 0, 2, 1);
+    QCOMPARE(cells.count(), 0);
+
+    worker.inspectTerminalCell(1, 0, 2, 1);
+    QCOMPARE(cells.count(), 1);
+    QCOMPARE(cells.constLast().at(0).toULongLong(), quint64{1});
+    const TerminalInspectorCellSnapshot unavailable =
+        cells.constLast().at(1).value<TerminalInspectorCellSnapshot>();
+    QCOMPARE(unavailable.status, TerminalInspectorCellStatus::Unavailable);
+    QCOMPARE(unavailable.viewportColumn, 2);
+    QCOMPARE(unavailable.viewportRow, 1);
+
+    TerminalSessionLaunchOptions options;
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+
+    worker.inspectTerminalCell(2, std::numeric_limits<quint64>::max(), 0, 0);
+    QCOMPARE(cells.count(), 2);
+    QCOMPARE(cells.constLast().at(0).toULongLong(), quint64{2});
+    const TerminalInspectorCellSnapshot stale =
+        cells.constLast().at(1).value<TerminalInspectorCellSnapshot>();
+    QCOMPARE(stale.status, TerminalInspectorCellStatus::Stale);
+    QVERIFY(stale.contentRevision > 0);
+
+    worker.inspectTerminalCell(3, stale.contentRevision, 0, 0);
+    QCOMPARE(cells.count(), 3);
+    QCOMPARE(cells.constLast().at(0).toULongLong(), quint64{3});
+    const TerminalInspectorCellSnapshot ready =
+        cells.constLast().at(1).value<TerminalInspectorCellSnapshot>();
+    QCOMPARE(ready.status, TerminalInspectorCellStatus::Ready);
+    QCOMPARE(ready.contentRevision, stale.contentRevision);
+    QCOMPARE(ready.viewportColumn, 0);
+    QCOMPARE(ready.viewportRow, 0);
+
+    worker.inspectTerminalCell(4, ready.contentRevision,
+                               std::numeric_limits<int>::max(), 0);
+    QCOMPARE(cells.count(), 4);
+    const TerminalInspectorCellSnapshot outside =
+        cells.constLast().at(1).value<TerminalInspectorCellSnapshot>();
+    QCOMPARE(outside.status, TerminalInspectorCellStatus::OutOfBounds);
+
+    worker.resetTerminal();
+    worker.inspectTerminalCell(5, ready.contentRevision, 0, 0);
+    QCOMPARE(cells.count(), 5);
+    const TerminalInspectorCellSnapshot resetStale =
+        cells.constLast().at(1).value<TerminalInspectorCellSnapshot>();
+    QCOMPARE(resetStale.status, TerminalInspectorCellStatus::Stale);
+    QVERIFY(resetStale.contentRevision > ready.contentRevision);
+
+    worker.inspectTerminalCell(6, resetStale.contentRevision, 0, 0);
+    QCOMPARE(cells.count(), 6);
+    const TerminalInspectorCellSnapshot resetReady =
+        cells.constLast().at(1).value<TerminalInspectorCellSnapshot>();
+    QCOMPARE(resetReady.status, TerminalInspectorCellStatus::Ready);
     worker.shutdown();
 }
 

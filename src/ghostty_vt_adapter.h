@@ -389,6 +389,8 @@ public:
     // Copy public terminal state into an owned diagnostic value. This is
     // intentionally request-driven rather than part of every render update.
     [[nodiscard]] TerminalInspectorSnapshot inspectorSnapshot() const;
+    [[nodiscard]] TerminalInspectorCellSnapshot
+    inspectorCellSnapshot(int viewportColumn, int viewportRow) const;
 
     // Mirror Ghostty's cursor-at-prompt policy using the public C surface:
     // alternate screens are always Away; a semantic prompt/continuation row

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QColor>
 #include <QMetaType>
 #include <QString>
@@ -73,7 +74,126 @@ struct TerminalInspectorSnapshot {
                            const TerminalInspectorSnapshot &) = default;
 };
 
+enum class TerminalInspectorCellStatus : quint8 {
+    Unavailable,
+    Ready,
+    Stale,
+    OutOfBounds,
+    Failed,
+};
+
+enum class TerminalInspectorCellContentKind : quint8 {
+    Codepoint,
+    Grapheme,
+    BackgroundPalette,
+    BackgroundRgb,
+};
+
+enum class TerminalInspectorCellWidthRole : quint8 {
+    Narrow,
+    Wide,
+    SpacerTail,
+    SpacerHead,
+};
+
+enum class TerminalInspectorCellSemantic : quint8 {
+    Output,
+    Input,
+    Prompt,
+};
+
+enum class TerminalInspectorRowSemantic : quint8 {
+    None,
+    Prompt,
+    PromptContinuation,
+};
+
+enum class TerminalInspectorStyleColorKind : quint8 {
+    None,
+    Palette,
+    Rgb,
+};
+
+enum class TerminalInspectorUnderlineStyle : quint8 {
+    None,
+    Single,
+    Double,
+    Curly,
+    Dotted,
+    Dashed,
+};
+
+struct TerminalInspectorStyleColor {
+    TerminalInspectorStyleColorKind kind =
+        TerminalInspectorStyleColorKind::None;
+    int paletteIndex = -1;
+    QColor rgb;
+
+    friend bool operator==(const TerminalInspectorStyleColor &,
+                           const TerminalInspectorStyleColor &) = default;
+};
+
+struct TerminalInspectorCellStyle {
+    TerminalInspectorStyleColor foreground;
+    TerminalInspectorStyleColor background;
+    TerminalInspectorStyleColor underlineColor;
+    bool bold = false;
+    bool italic = false;
+    bool faint = false;
+    bool blink = false;
+    bool inverse = false;
+    bool invisible = false;
+    bool strikethrough = false;
+    bool overline = false;
+    TerminalInspectorUnderlineStyle underline =
+        TerminalInspectorUnderlineStyle::None;
+
+    friend bool operator==(const TerminalInspectorCellStyle &,
+                           const TerminalInspectorCellStyle &) = default;
+};
+
+// A one-shot, owned copy of public libghostty-vt data for one viewport cell.
+// The worker rejects a request when the GUI frame revision that supplied its
+// coordinate is no longer current, rather than silently inspecting a new cell
+// that has moved under the same viewport coordinate.
+struct TerminalInspectorCellSnapshot {
+    TerminalInspectorCellStatus status =
+        TerminalInspectorCellStatus::Unavailable;
+    quint64 contentRevision = 0;
+    int viewportColumn = -1;
+    int viewportRow = -1;
+    TerminalInspectorScreen activeScreen = TerminalInspectorScreen::Primary;
+
+    QString text;
+    QVector<quint32> codepoints;
+    TerminalInspectorCellContentKind contentKind =
+        TerminalInspectorCellContentKind::Codepoint;
+    TerminalInspectorCellWidthRole widthRole =
+        TerminalInspectorCellWidthRole::Narrow;
+    bool hasText = false;
+    bool hasStyling = false;
+    quint16 styleId = 0;
+    bool hasHyperlink = false;
+    bool protectedCell = false;
+    TerminalInspectorCellSemantic semantic =
+        TerminalInspectorCellSemantic::Output;
+    QByteArray hyperlinkUri;
+
+    // Set only for the background-only content tag variants.
+    TerminalInspectorStyleColor contentBackground;
+    TerminalInspectorCellStyle style;
+
+    bool rowWrapped = false;
+    bool rowWrapContinuation = false;
+    TerminalInspectorRowSemantic rowSemantic =
+        TerminalInspectorRowSemantic::None;
+
+    friend bool operator==(const TerminalInspectorCellSnapshot &,
+                           const TerminalInspectorCellSnapshot &) = default;
+};
+
 Q_DECLARE_METATYPE(TerminalInspectorScreen)
 Q_DECLARE_METATYPE(TerminalInspectorStatus)
 Q_DECLARE_METATYPE(TerminalInspectorModeState)
 Q_DECLARE_METATYPE(TerminalInspectorSnapshot)
+Q_DECLARE_METATYPE(TerminalInspectorCellSnapshot)

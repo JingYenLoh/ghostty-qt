@@ -3587,6 +3587,29 @@ void SessionWorker::inspectTerminal(quint64 requestId)
     Q_EMIT terminalInspectorSnapshotReady(requestId, snapshot);
 }
 
+void SessionWorker::inspectTerminalCell(quint64 requestId,
+                                        quint64 contentRevision,
+                                        int viewportColumn, int viewportRow)
+{
+    if (requestId == 0) return;
+
+    TerminalInspectorCellSnapshot snapshot;
+    snapshot.contentRevision = terminalContentRevision_;
+    snapshot.viewportColumn = viewportColumn;
+    snapshot.viewportRow = viewportRow;
+    if (vt_ != nullptr && contentRevision != terminalContentRevision_) {
+        snapshot.status = TerminalInspectorCellStatus::Stale;
+    } else if (vt_ != nullptr) {
+        snapshot = vt_->inspectorCellSnapshot(viewportColumn, viewportRow);
+        // Grid-reference reads can restore a compressed page without changing
+        // Ghostty's activity token. Ensure the ordinary bounded compression
+        // policy gets another chance to reclaim it.
+        scheduleRestoredPageCompression();
+        snapshot.contentRevision = terminalContentRevision_;
+    }
+    Q_EMIT terminalInspectorCellReady(requestId, snapshot);
+}
+
 void SessionWorker::scheduleFrame()
 {
     if (frameTimer_ != nullptr && !frameTimer_->isActive()) {

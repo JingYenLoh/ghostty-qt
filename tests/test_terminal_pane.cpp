@@ -4,6 +4,7 @@
 #include "terminal_controller.h"
 #include "terminal_drop.h"
 #include "terminal_geometry.h"
+#include "terminal_inspector_model.h"
 #include "terminal_pane.h"
 #include "terminal_pane_render_probe_p.h"
 #include "terminal_types.h"
@@ -453,6 +454,7 @@ private Q_SLOTS:
     void normalizesHorizontalWheelInputIndependently();
     void switchesTabsFromPrecisionHorizontalScroll();
     void forwardsTypedSelectionPointerMetadataOnce();
+    void isolatesInspectorCellPickGestures();
     void cancelsSelectionWhenMouseGrabIsRevoked();
     void togglesMouseReportingPolicyAcrossGesturesAndReloads();
     void appliesMouseShiftCaptureAcrossPointerRoutes();
@@ -4842,6 +4844,135 @@ void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
     QCOMPARE(pane->cursor().shape(), Qt::IBeamCursor);
 
     delete pane;
+}
+
+void TerminalPaneTest::isolatesInspectorCellPickGestures()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("stty -echo; printf '\033[?1003hcell-pick-ready'; "
+                       "exec cat >/dev/null"),
+    };
+    options.hold = true;
+    options.mouseReporting = true;
+    options.horizontalTabScroll = true;
+    useSystemFixedFont(options);
+
+    TerminalPane pane(options);
+    pane.setSize(QSizeF(320.0, 160.0));
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy updates(controller, &TerminalController::terminalUpdated);
+    QSignalSpy mouse(controller, &TerminalController::mouseRequested);
+    QSignalSpy wheel(controller, &TerminalController::wheelRequested);
+    QSignalSpy selectionBegin(controller,
+                              &TerminalController::beginSelectionRequested);
+    QSignalSpy selectionUpdate(controller,
+                               &TerminalController::updateSelectionRequested);
+    QSignalSpy selectionEnd(controller,
+                            &TerminalController::endSelectionRequested);
+    QSignalSpy rightClicks(controller,
+                           &TerminalController::rightClickRequested);
+    QSignalSpy hyperlinkPreparations(
+        controller,
+        &TerminalController::hyperlinkActivationPreparationRequested);
+    QSignalSpy cellRequests(
+        controller, &TerminalController::terminalInspectorCellRequested);
+    QSignalSpy picked(&pane, &TerminalPane::inspectorCellPicked);
+    QSignalSpy tabChanges(&pane, &TerminalPane::requestTabChange);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("cell-pick-ready")), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->terminalMouseTracking(), 1000);
+    QVERIFY(
+        pane.controlInspector(WorkspaceFrontendActions::InspectorMode::Show));
+    TerminalInspectorModel *const model = pane.inspectorModel();
+    QVERIFY(model != nullptr);
+
+    const TerminalCellMetrics metrics =
+        terminalCellMetrics(options.typography, 1.0);
+    const QPointF firstCell(metrics.cellWidth * 0.5, metrics.cellHeight * 0.5);
+    const QPointF secondCell(metrics.cellWidth * 1.5, metrics.cellHeight * 0.5);
+    const auto sendMouse = [&pane](QEvent::Type type, const QPointF &position,
+                                   Qt::MouseButton button,
+                                   Qt::MouseButtons buttons) {
+        QMouseEvent event(type, position, position, position, button, buttons,
+                          Qt::NoModifier);
+        QCoreApplication::sendEvent(&pane, &event);
+        QVERIFY(event.isAccepted());
+    };
+
+    model->beginCellPick();
+    QVERIFY(pane.inspectorCellPicking());
+    QCOMPARE(pane.cursor().shape(), Qt::CrossCursor);
+    sendMouse(QEvent::MouseButtonPress, firstCell, Qt::LeftButton,
+              Qt::LeftButton);
+    QVERIFY(!pane.inspectorCellPicking());
+    QCOMPARE(picked.count(), 1);
+    QCOMPARE(cellRequests.count(), 1);
+    QCOMPARE(picked.constFirst().at(0).toInt(), 0);
+    QCOMPARE(picked.constFirst().at(1).toInt(), 0);
+    // A chorded button and wheel event before the picked button is released
+    // remain part of the consumed gesture rather than leaking unmatched input.
+    sendMouse(QEvent::MouseButtonPress, firstCell, Qt::RightButton,
+              Qt::LeftButton | Qt::RightButton);
+    sendMouse(QEvent::MouseButtonRelease, firstCell, Qt::RightButton,
+              Qt::LeftButton);
+    QVERIFY(sendWheelEvent(pane, QPoint(-120, 120), QPoint{}));
+    sendMouse(QEvent::MouseMove, secondCell, Qt::NoButton, Qt::LeftButton);
+    sendMouse(QEvent::MouseButtonRelease, secondCell, Qt::LeftButton,
+              Qt::NoButton);
+    QCOMPARE(mouse.count(), 0);
+    QCOMPARE(wheel.count(), 0);
+    QCOMPARE(tabChanges.count(), 0);
+    QCOMPARE(selectionBegin.count(), 0);
+    QCOMPARE(selectionUpdate.count(), 0);
+    QCOMPARE(selectionEnd.count(), 0);
+    QCOMPARE(rightClicks.count(), 0);
+    QCOMPARE(hyperlinkPreparations.count(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(model->snapshot()
+                                  .value(QStringLiteral("cell"))
+                                  .toMap()
+                                  .value(QStringLiteral("status"))
+                                  .toString(),
+                              QStringLiteral("Ready"), 1000);
+
+    // Once the complete picked gesture is consumed, normal DEC mouse routing
+    // resumes on the very next gesture.
+    sendMouse(QEvent::MouseButtonPress, firstCell, Qt::LeftButton,
+              Qt::LeftButton);
+    sendMouse(QEvent::MouseMove, secondCell, Qt::NoButton, Qt::LeftButton);
+    sendMouse(QEvent::MouseButtonRelease, secondCell, Qt::LeftButton,
+              Qt::NoButton);
+    QCOMPARE(mouse.count(), 3);
+
+    const qsizetype mouseBeforeCancel = mouse.count();
+    model->beginCellPick();
+    QVERIFY(sendWheelEvent(pane, QPoint{}, QPoint(0, 120)));
+    QVERIFY(pane.inspectorCellPicking());
+    QCOMPARE(wheel.count(), 0);
+    sendMouse(QEvent::MouseButtonPress, firstCell, Qt::RightButton,
+              Qt::RightButton);
+    sendMouse(QEvent::MouseButtonRelease, firstCell, Qt::RightButton,
+              Qt::NoButton);
+    QVERIFY(!pane.inspectorCellPicking());
+    QCOMPARE(mouse.count(), mouseBeforeCancel);
+    QCOMPARE(rightClicks.count(), 0);
+
+    model->beginCellPick();
+    QSignalSpy keys(controller, &TerminalController::keyRequested);
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &escape);
+    QVERIFY(escape.isAccepted());
+    QVERIFY(!pane.inspectorCellPicking());
+    QCOMPARE(keys.count(), 0);
+    QKeyEvent escapeRelease(QEvent::KeyRelease, Qt::Key_Escape, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &escapeRelease);
+    QVERIFY(escapeRelease.isAccepted());
+    QCOMPARE(keys.count(), 0);
 }
 
 void TerminalPaneTest::cancelsSelectionWhenMouseGrabIsRevoked()

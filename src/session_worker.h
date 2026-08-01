@@ -128,6 +128,8 @@ public Q_SLOTS:
     void commitHyperlinkActivation(quint64 requestId, int column, int row);
     void cancelHyperlinkActivation(quint64 requestId);
     void inspectTerminal(quint64 requestId);
+    void inspectTerminalCell(quint64 requestId, quint64 contentRevision,
+                             int viewportColumn, int viewportRow);
     void shutdown();
 
 Q_SIGNALS:
@@ -173,6 +175,9 @@ Q_SIGNALS:
     void
     terminalInspectorSnapshotReady(quint64 requestId,
                                    const TerminalInspectorSnapshot &snapshot);
+    void
+    terminalInspectorCellReady(quint64 requestId,
+                               const TerminalInspectorCellSnapshot &snapshot);
     void sessionExited(int exitCode, int signalNumber, bool hold,
                        bool waitForKey, quint64 runtimeMilliseconds,
                        bool abnormal);

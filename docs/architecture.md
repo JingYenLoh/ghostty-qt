@@ -705,8 +705,16 @@ state, and all 41 public ANSI/DEC modes into one owned value. The controller
 discards superseded IDs, and the model accepts only its pending ID. Closing the
 inspector destroys the timer immediately, so hidden panes make no requests.
 This public snapshot deliberately does not expose inactive-screen, PageList,
-parser, or cell internals; explicit cell queries remain a separate on-demand
-concern because history coordinates may traverse and restore compressed pages.
+or parser internals. Cell inspection is a separate, one-shot path: the user
+arms a pane-local crosshair and a strict grid hit supplies a viewport coordinate
+and rendered content revision. `SessionWorker` rejects a stale revision rather
+than inspecting whatever moved under that coordinate, then copies public cell,
+grapheme, raw style, hyperlink URI, and row metadata before its untracked
+`GhosttyGridRef` expires. The complete picked press/move/release gesture is
+consumed ahead of selection, hyperlink, context-menu, and DEC mouse routes.
+Inactive-screen and page-allocation data remain unavailable through the public
+API, while arbitrary history coordinates stay out of the periodic path because
+they may traverse and restore compressed pages.
 
 The finalized `scroll-to-bottom.output` flag is evaluated at the frame
 boundary, before the visible value update is copied. When output scrolling is

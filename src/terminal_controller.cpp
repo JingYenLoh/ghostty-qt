@@ -163,6 +163,8 @@ void TerminalController::connectWorkerRequestRelays()
         &SessionWorker::cancelHyperlinkActivation);
     relayWorkerRequest(&TerminalController::terminalInspectorSnapshotRequested,
                        &SessionWorker::inspectTerminal);
+    relayWorkerRequest(&TerminalController::terminalInspectorCellRequested,
+                       &SessionWorker::inspectTerminalCell);
     relayWorkerRequest(&TerminalController::runtimeOptionsRequested,
                        &SessionWorker::applyRuntimeOptions);
     relayWorkerRequest(&TerminalController::readOnlyRequested,
@@ -194,7 +196,7 @@ TerminalController::TerminalController(
         QVector<QPoint>, TerminalSessionRuntimeOptions,
         TerminalClipboardDestination, TerminalClipboardWriteRequest,
         TerminalActionResult, TerminalWriteFileAction,
-        TerminalInspectorSnapshot>();
+        TerminalInspectorSnapshot, TerminalInspectorCellSnapshot>();
 
     if (initialSessionCoordinator_ != nullptr) {
         launchOptions_.program.clear();
@@ -353,6 +355,18 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
             }
             activeTerminalInspectorRequestId_ = 0;
             Q_EMIT terminalInspectorSnapshotReady(requestId, snapshot);
+        },
+        Qt::QueuedConnection);
+    connect(
+        worker, &SessionWorker::terminalInspectorCellReady, this,
+        [this](quint64 requestId,
+               const TerminalInspectorCellSnapshot &snapshot) {
+            if (requestId == 0
+                || requestId != activeTerminalInspectorCellRequestId_) {
+                return;
+            }
+            activeTerminalInspectorCellRequestId_ = 0;
+            Q_EMIT terminalInspectorCellReady(requestId, snapshot);
         },
         Qt::QueuedConnection);
     connect(
@@ -699,6 +713,7 @@ void TerminalController::beginShutdown()
 {
     pendingRightClickRequestIds_.clear();
     activeTerminalInspectorRequestId_ = 0;
+    activeTerminalInspectorCellRequestId_ = 0;
     if (sessionStartState_ != SessionStartState::Started) {
         sessionStartState_ = SessionStartState::Cancelled;
         pendingWorkerRequests_.clear();
@@ -1156,4 +1171,25 @@ quint64 TerminalController::requestTerminalInspectorSnapshot()
     const QPointer<TerminalController> guard(this);
     Q_EMIT terminalInspectorSnapshotRequested(requestId);
     return guard != nullptr ? requestId : 0;
+}
+
+quint64 TerminalController::requestTerminalInspectorCell(
+    quint64 contentRevision, int viewportColumn, int viewportRow)
+{
+    if (sessionStartState_ != SessionStartState::Started || closing_) {
+        return 0;
+    }
+
+    do {
+        ++nextTerminalInspectorCellRequestId_;
+    } while (nextTerminalInspectorCellRequestId_ == 0);
+    const quint64 requestId = nextTerminalInspectorCellRequestId_;
+    activeTerminalInspectorCellRequestId_ = requestId;
+    const QPointer<TerminalController> guard(this);
+    Q_EMIT terminalInspectorCellRequested(requestId, contentRevision,
+                                          viewportColumn, viewportRow);
+    return guard != nullptr
+            && activeTerminalInspectorCellRequestId_ == requestId
+        ? requestId
+        : 0;
 }

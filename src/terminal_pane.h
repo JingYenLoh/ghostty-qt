@@ -116,6 +116,8 @@ class TerminalPane final : public QQuickItem,
                    inspectorModelChanged)
     Q_PROPERTY(bool inspectorVisible READ inspectorVisible NOTIFY
                    inspectorModelChanged)
+    Q_PROPERTY(bool inspectorCellPicking READ inspectorCellPicking NOTIFY
+                   inspectorCellPickingChanged)
 
 public:
     explicit TerminalPane(
@@ -173,6 +175,7 @@ public:
         return inspectorModel_.data();
     }
     bool inspectorVisible() const { return inspectorModel_ != nullptr; }
+    bool inspectorCellPicking() const { return inspectorCellPicking_; }
     bool controlInspector(WorkspaceFrontendActions::InspectorMode mode);
     LaunchOptions splitLaunchOptions(const LaunchOptions &base) const;
     LaunchOptions tabLaunchOptions(const LaunchOptions &base) const;
@@ -259,6 +262,9 @@ Q_SIGNALS:
     void scrollbarChanged();
     void bellChanged();
     void inspectorModelChanged();
+    void inspectorCellPickingChanged();
+    void inspectorCellPicked(int viewportColumn, int viewportRow,
+                             quint64 contentRevision);
     void bellRang(TerminalPane *pane);
     void customShaderDiagnosticChanged(const QString &diagnostic);
     void requestNewTab();
@@ -427,6 +433,7 @@ private:
                                  quint64 pointerActivityEpoch);
     void revealMouseAfterActivity();
     void setMouseHiddenWhileTyping(bool hidden);
+    void setInspectorCellPicking(bool picking);
     void syncPointerCursor();
     [[nodiscard]] bool revealMouseForPointerPosition(const QPointF &position);
     [[nodiscard]] bool handlePointerMotion(const QPointF &position);
@@ -585,6 +592,8 @@ private:
         std::make_shared<TerminalBellPlayer>();
     bool bellRinging_ = false;
     QPointer<TerminalInspectorModel> inspectorModel_;
+    bool inspectorCellPicking_ = false;
+    Qt::MouseButton inspectorCellPickConsumedButton_ = Qt::NoButton;
     // Set for normal wait-after-command and abnormal quick exits. CLI --hold
     // remains an indefinite frontend hold and never enters key dismissal.
     bool waitingForExitKey_ = false;

@@ -163,6 +163,7 @@ private Q_SLOTS:
     void preservesAuthoritativeCellCodepointsForShaping();
     void preservesTerminalAppearanceOverrides();
     void snapshotsAuthoritativeInspectorState();
+    void snapshotsInspectorCellsFromViewport();
     void queriesSemanticPromptStateFromPublicTerminalData();
     void queriesKeyboardActionMode();
     void marksMinimumContrastExemptGlyphs();
@@ -2319,6 +2320,155 @@ void GhosttyVtAdapterTest::snapshotsAuthoritativeInspectorState()
     QCOMPARE(top.scrollTotal, bottom.scrollTotal);
     QCOMPARE(top.scrollLength, bottom.scrollLength);
     QCOMPARE(top.scrollOffset, quint64{0});
+}
+
+void GhosttyVtAdapterTest::snapshotsInspectorCellsFromViewport()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry = {
+        .columns = 8,
+        .rows = 2,
+        .cellWidthPixels = 8,
+        .cellHeightPixels = 16,
+    };
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    adapter->writeVt(
+        QByteArrayLiteral("A") + QStringLiteral("界").toUtf8()
+        + QByteArrayLiteral(
+            "\033]133;B\007"
+            "\033[1\"q"
+            "\033[1;2;3;4:3;5;7;8;9;53;38;5;1;48;2;2;3;4;58;2;5;6;7m"
+            "\033]8;;https://example.test/cell\033\\"
+            "S"
+            "\033]8;;\033\\"));
+
+    const TerminalInspectorCellSnapshot normal =
+        adapter->inspectorCellSnapshot(0, 0);
+    QCOMPARE(normal.status, TerminalInspectorCellStatus::Ready);
+    QCOMPARE(normal.viewportColumn, 0);
+    QCOMPARE(normal.viewportRow, 0);
+    QCOMPARE(normal.activeScreen, TerminalInspectorScreen::Primary);
+    QCOMPARE(normal.text, QStringLiteral("A"));
+    QCOMPARE(normal.codepoints, QVector<quint32>{0x41});
+    QCOMPARE(normal.contentKind, TerminalInspectorCellContentKind::Codepoint);
+    QCOMPARE(normal.widthRole, TerminalInspectorCellWidthRole::Narrow);
+    QVERIFY(normal.hasText);
+    QVERIFY(!normal.hasStyling);
+    QVERIFY(!normal.hasHyperlink);
+    QVERIFY(!normal.protectedCell);
+    QCOMPARE(normal.semantic, TerminalInspectorCellSemantic::Output);
+
+    const TerminalInspectorCellSnapshot wide =
+        adapter->inspectorCellSnapshot(1, 0);
+    QCOMPARE(wide.status, TerminalInspectorCellStatus::Ready);
+    QCOMPARE(wide.text, QStringLiteral("界"));
+    QCOMPARE(wide.codepoints, QVector<quint32>{0x754c});
+    QCOMPARE(wide.widthRole, TerminalInspectorCellWidthRole::Wide);
+    QVERIFY(wide.hasText);
+
+    const TerminalInspectorCellSnapshot spacer =
+        adapter->inspectorCellSnapshot(2, 0);
+    QCOMPARE(spacer.status, TerminalInspectorCellStatus::Ready);
+    QVERIFY(spacer.text.isEmpty());
+    QVERIFY(spacer.codepoints.isEmpty());
+    QCOMPARE(spacer.widthRole, TerminalInspectorCellWidthRole::SpacerTail);
+    QVERIFY(!spacer.hasText);
+
+    const TerminalInspectorCellSnapshot styled =
+        adapter->inspectorCellSnapshot(3, 0);
+    QCOMPARE(styled.status, TerminalInspectorCellStatus::Ready);
+    QCOMPARE(styled.text, QStringLiteral("S"));
+    QCOMPARE(styled.codepoints, QVector<quint32>{0x53});
+    QVERIFY(styled.hasStyling);
+    QVERIFY(styled.styleId != 0);
+    QVERIFY(styled.hasHyperlink);
+    QCOMPARE(styled.hyperlinkUri,
+             QByteArrayLiteral("https://example.test/cell"));
+    QVERIFY(styled.protectedCell);
+    QCOMPARE(styled.semantic, TerminalInspectorCellSemantic::Input);
+    QCOMPARE(styled.style.foreground.kind,
+             TerminalInspectorStyleColorKind::Palette);
+    QCOMPARE(styled.style.foreground.paletteIndex, 1);
+    QCOMPARE(styled.style.background.kind,
+             TerminalInspectorStyleColorKind::Rgb);
+    QCOMPARE(styled.style.background.rgb, QColor::fromRgb(2, 3, 4));
+    QCOMPARE(styled.style.underlineColor.kind,
+             TerminalInspectorStyleColorKind::Rgb);
+    QCOMPARE(styled.style.underlineColor.rgb, QColor::fromRgb(5, 6, 7));
+    QVERIFY(styled.style.bold);
+    QVERIFY(styled.style.faint);
+    QVERIFY(styled.style.italic);
+    QVERIFY(styled.style.blink);
+    QVERIFY(styled.style.inverse);
+    QVERIFY(styled.style.invisible);
+    QVERIFY(styled.style.strikethrough);
+    QVERIFY(styled.style.overline);
+    QCOMPARE(styled.style.underline, TerminalInspectorUnderlineStyle::Curly);
+
+    const TerminalInspectorCellSnapshot empty =
+        adapter->inspectorCellSnapshot(7, 0);
+    QCOMPARE(empty.status, TerminalInspectorCellStatus::Ready);
+    QVERIFY(empty.text.isEmpty());
+    QVERIFY(empty.codepoints.isEmpty());
+    QVERIFY(!empty.hasText);
+    QCOMPARE(empty.widthRole, TerminalInspectorCellWidthRole::Narrow);
+
+    GhosttyVtAdapter::Options wrappedOptions;
+    wrappedOptions.geometry = {
+        .columns = 4,
+        .rows = 2,
+        .cellWidthPixels = 8,
+        .cellHeightPixels = 16,
+    };
+    auto wrappedAdapter = GhosttyVtAdapter::create(wrappedOptions);
+    QVERIFY(wrappedAdapter != nullptr);
+    wrappedAdapter->writeVt(QStringLiteral("e\u0301abcZ").toUtf8());
+    const TerminalInspectorCellSnapshot grapheme =
+        wrappedAdapter->inspectorCellSnapshot(0, 0);
+    QCOMPARE(grapheme.status, TerminalInspectorCellStatus::Ready);
+    QCOMPARE(grapheme.text, QStringLiteral("e\u0301"));
+    QCOMPARE(grapheme.codepoints, QVector<quint32>({0x65, 0x301}));
+    QCOMPARE(grapheme.contentKind, TerminalInspectorCellContentKind::Grapheme);
+    QVERIFY(grapheme.rowWrapped);
+    QVERIFY(!grapheme.rowWrapContinuation);
+    const TerminalInspectorCellSnapshot continuation =
+        wrappedAdapter->inspectorCellSnapshot(0, 1);
+    QCOMPARE(continuation.status, TerminalInspectorCellStatus::Ready);
+    QCOMPARE(continuation.text, QStringLiteral("Z"));
+    QVERIFY(!continuation.rowWrapped);
+    QVERIFY(continuation.rowWrapContinuation);
+
+    const std::array<QPoint, 5> outside{
+        QPoint(-1, 0),
+        QPoint(0, -1),
+        QPoint(options.geometry.columns, 0),
+        QPoint(0, options.geometry.rows),
+        QPoint(std::numeric_limits<int>::max(), 0),
+    };
+    for (const QPoint &point : outside) {
+        const TerminalInspectorCellSnapshot result =
+            adapter->inspectorCellSnapshot(point.x(), point.y());
+        QCOMPARE(result.status, TerminalInspectorCellStatus::OutOfBounds);
+        QCOMPARE(result.viewportColumn, point.x());
+        QCOMPARE(result.viewportRow, point.y());
+    }
+
+    // The query range comes from live terminal data. DECCOLM can resize the
+    // VT independently of the embedder geometry cached for the next frame.
+    adapter->writeVt(QByteArrayLiteral("\033[?40h\033[?3h\033[1;101HX"));
+    const TerminalInspectorCellSnapshot deccolm =
+        adapter->inspectorCellSnapshot(100, 0);
+    QCOMPARE(deccolm.status, TerminalInspectorCellStatus::Ready);
+    QCOMPARE(deccolm.text, QStringLiteral("X"));
+
+    // Every field is owned; later mutations cannot alter the saved result.
+    adapter->reset();
+    QCOMPARE(styled.text, QStringLiteral("S"));
+    QCOMPARE(styled.hyperlinkUri,
+             QByteArrayLiteral("https://example.test/cell"));
+    QCOMPARE(styled.style.background.rgb, QColor::fromRgb(2, 3, 4));
 }
 
 void GhosttyVtAdapterTest::queriesKeyboardActionMode()

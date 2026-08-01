@@ -19,6 +19,7 @@
 #include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QPointer>
 #include <QQmlComponent>
 #include <QQmlEngine>
@@ -4453,6 +4454,8 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
     QSignalSpy inspectorRequests(
         firstController,
         &TerminalController::terminalInspectorSnapshotRequested);
+    QSignalSpy cellRequests(
+        firstController, &TerminalController::terminalInspectorCellRequested);
     QVERIFY(!firstPane->inspectorVisible());
 
     quint64 reentrantRequestId = std::numeric_limits<quint64>::max();
@@ -4477,7 +4480,8 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
              firstPane->title());
     for (const QString &section :
          {QStringLiteral("surface"), QStringLiteral("terminal"),
-          QStringLiteral("keyboard"), QStringLiteral("renderer")}) {
+          QStringLiteral("keyboard"), QStringLiteral("renderer"),
+          QStringLiteral("cell")}) {
         QVERIFY(firstSnapshot.value(section).canConvert<QVariantMap>());
     }
     const QVariantMap surface =
@@ -4517,14 +4521,83 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
     QVERIFY(
         authoritativeRenderer.contains(QStringLiteral("kittyStorageLimit")));
 
+    const auto inspectorRevisionsSynchronized = [firstModel] {
+        const QVariantMap terminal =
+            firstModel->snapshot().value(QStringLiteral("terminal")).toMap();
+        const quint64 rendered =
+            terminal.value(QStringLiteral("contentRevision")).toULongLong();
+        return rendered > 0
+            && rendered
+            == terminal.value(QStringLiteral("workerContentRevision"))
+                   .toULongLong();
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(inspectorRevisionsSynchronized(), 1000);
+    const quint64 initialRenderedRevision =
+        firstModel->snapshot()
+            .value(QStringLiteral("terminal"))
+            .toMap()
+            .value(QStringLiteral("contentRevision"))
+            .toULongLong();
+    QVERIFY(initialRenderedRevision > 0);
+    const auto pickCell = [&](int column) {
+        const QVariantMap currentSurface =
+            firstModel->snapshot().value(QStringLiteral("surface")).toMap();
+        const qreal x = currentSurface.value(QStringLiteral("gridX")).toReal()
+            + (static_cast<qreal>(column) + 0.5)
+                * currentSurface.value(QStringLiteral("cellWidth")).toReal();
+        const qreal y = currentSurface.value(QStringLiteral("gridY")).toReal()
+            + 0.5 * currentSurface.value(QStringLiteral("cellHeight")).toReal();
+        const QPointF position(x, y);
+        firstModel->beginCellPick();
+        QVERIFY(firstPane->inspectorCellPicking());
+        QMouseEvent press(QEvent::MouseButtonPress, position, position,
+                          position, Qt::LeftButton, Qt::LeftButton,
+                          Qt::NoModifier);
+        QCoreApplication::sendEvent(firstPane, &press);
+        QVERIFY(press.isAccepted());
+        QMouseEvent release(QEvent::MouseButtonRelease, position, position,
+                            position, Qt::LeftButton, Qt::NoButton,
+                            Qt::NoModifier);
+        QCoreApplication::sendEvent(firstPane, &release);
+        QVERIFY(release.isAccepted());
+    };
+    pickCell(0);
+    pickCell(1);
+    QCOMPARE(cellRequests.count(), 2);
+    QTRY_COMPARE_WITH_TIMEOUT(firstModel->snapshot()
+                                  .value(QStringLiteral("cell"))
+                                  .toMap()
+                                  .value(QStringLiteral("status"))
+                                  .toString(),
+                              QStringLiteral("Ready"), 1000);
+    const QVariantMap pickedCell =
+        firstModel->snapshot().value(QStringLiteral("cell")).toMap();
+    const quint64 pickedRevision = cellRequests.constLast().at(1).toULongLong();
+    QVERIFY(pickedRevision >= initialRenderedRevision);
+    QCOMPARE(pickedCell.value(QStringLiteral("viewportColumn")).toInt(), 1);
+    QCOMPARE(pickedCell.value(QStringLiteral("viewportRow")).toInt(), 0);
+    QCOMPARE(pickedCell.value(QStringLiteral("contentRevision")).toULongLong(),
+             pickedRevision);
+    QVERIFY(pickedCell.value(QStringLiteral("available")).toBool());
+
     // Show and hide are idempotent; toggle changes the current state.
     QVERIFY(workspace.controlInspector(
         firstId, WorkspaceFrontendActions::InspectorMode::Show));
     QCOMPARE(firstPane->inspectorModel(), firstModel);
+    firstModel->beginCellPick();
+    QVERIFY(firstPane->inspectorCellPicking());
     QPointer<TerminalInspectorModel> hiddenModel(firstModel);
     QVERIFY(workspace.controlInspector(
         firstId, WorkspaceFrontendActions::InspectorMode::Toggle));
     QVERIFY(!firstPane->inspectorVisible());
+    QVERIFY(!firstPane->inspectorCellPicking());
+    const int requestsBeforeInactiveCalls = inspectorRequests.count();
+    const int cellRequestsBeforeInactiveCalls = cellRequests.count();
+    hiddenModel->refresh();
+    hiddenModel->beginCellPick();
+    QCOMPARE(inspectorRequests.count(), requestsBeforeInactiveCalls);
+    QCOMPARE(cellRequests.count(), cellRequestsBeforeInactiveCalls);
+    QVERIFY(!firstPane->inspectorCellPicking());
     QTRY_VERIFY_WITH_TIMEOUT(hiddenModel.isNull(), 1000);
     const int requestsAfterHide = inspectorRequests.count();
     QTest::qWait(350);
@@ -4555,6 +4628,13 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
     QVERIFY(firstPane->inspectorVisible());
     QVERIFY(secondPane->inspectorVisible());
     QVERIFY(firstPane->inspectorModel() != secondPane->inspectorModel());
+    QCOMPARE(firstPane->inspectorModel()
+                 ->snapshot()
+                 .value(QStringLiteral("cell"))
+                 .toMap()
+                 .value(QStringLiteral("status"))
+                 .toString(),
+             QStringLiteral("Not selected"));
 
     // Closing an inspector through its model changes only that pane.
     secondPane->inspectorModel()->close();
@@ -4623,6 +4703,13 @@ void TerminalWorkspaceTest::inspectorQmlWindowTracksPaneLifetime()
     QVERIFY(
         host->findChild<QQuickItem *>(QStringLiteral("terminalInspectorTabs"))
         != nullptr);
+
+    pane->inspectorModel()->beginCellPick();
+    QVERIFY(pane->inspectorCellPicking());
+    QTest::keyClick(inspectorWindow, Qt::Key_Escape);
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->inspectorCellPicking(), 1000);
+    QVERIFY(pane->inspectorVisible());
+    QVERIFY(inspectorWindow->isVisible());
 
     // A native close updates the pane-owned model instead of leaving a hidden
     // window that toggle would misinterpret as open.

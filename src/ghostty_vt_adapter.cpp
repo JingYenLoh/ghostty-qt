@@ -519,6 +519,44 @@ QColor toQColor(GhosttyColorRgb color)
     return QColor::fromRgb(color.r, color.g, color.b);
 }
 
+std::optional<TerminalInspectorStyleColor>
+inspectorStyleColor(GhosttyStyleColor color)
+{
+    TerminalInspectorStyleColor result;
+    switch (color.tag) {
+    case GHOSTTY_STYLE_COLOR_NONE: return result;
+    case GHOSTTY_STYLE_COLOR_PALETTE:
+        result.kind = TerminalInspectorStyleColorKind::Palette;
+        result.paletteIndex = color.value.palette;
+        return result;
+    case GHOSTTY_STYLE_COLOR_RGB:
+        result.kind = TerminalInspectorStyleColorKind::Rgb;
+        result.rgb = toQColor(color.value.rgb);
+        return result;
+    default: return std::nullopt;
+    }
+}
+
+std::optional<TerminalInspectorUnderlineStyle>
+inspectorUnderlineStyle(int underline)
+{
+    switch (underline) {
+    case GHOSTTY_SGR_UNDERLINE_NONE:
+        return TerminalInspectorUnderlineStyle::None;
+    case GHOSTTY_SGR_UNDERLINE_SINGLE:
+        return TerminalInspectorUnderlineStyle::Single;
+    case GHOSTTY_SGR_UNDERLINE_DOUBLE:
+        return TerminalInspectorUnderlineStyle::Double;
+    case GHOSTTY_SGR_UNDERLINE_CURLY:
+        return TerminalInspectorUnderlineStyle::Curly;
+    case GHOSTTY_SGR_UNDERLINE_DOTTED:
+        return TerminalInspectorUnderlineStyle::Dotted;
+    case GHOSTTY_SGR_UNDERLINE_DASHED:
+        return TerminalInspectorUnderlineStyle::Dashed;
+    default: return std::nullopt;
+    }
+}
+
 GhosttyColorRgb toGhosttyColor(const QColor &color)
 {
     const QColor rgb = color.toRgb();
@@ -2141,6 +2179,252 @@ public:
         return snapshot;
     }
 
+    TerminalInspectorCellSnapshot inspectorCellSnapshot(int viewportColumn,
+                                                        int viewportRow) const
+    {
+        TerminalInspectorCellSnapshot snapshot;
+        snapshot.viewportColumn = viewportColumn;
+        snapshot.viewportRow = viewportRow;
+        if (terminal_ == nullptr) return snapshot;
+        snapshot.status = TerminalInspectorCellStatus::Failed;
+
+        uint16_t columns = 0;
+        uint16_t rows = 0;
+        GhosttyTerminalScreen screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+        constexpr std::array terminalFields{
+            GHOSTTY_TERMINAL_DATA_COLS,
+            GHOSTTY_TERMINAL_DATA_ROWS,
+            GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN,
+        };
+        std::array<void *, terminalFields.size()> terminalValues{
+            &columns,
+            &rows,
+            &screen,
+        };
+        if (ghostty_terminal_get_multi(terminal_, terminalFields.size(),
+                                       terminalFields.data(),
+                                       terminalValues.data(), nullptr)
+                != GHOSTTY_SUCCESS
+            || (screen != GHOSTTY_TERMINAL_SCREEN_PRIMARY
+                && screen != GHOSTTY_TERMINAL_SCREEN_ALTERNATE)) {
+            return snapshot;
+        }
+        snapshot.activeScreen = screen == GHOSTTY_TERMINAL_SCREEN_ALTERNATE
+            ? TerminalInspectorScreen::Alternate
+            : TerminalInspectorScreen::Primary;
+        if (viewportColumn < 0 || viewportRow < 0
+            || viewportColumn >= static_cast<int>(columns)
+            || viewportRow >= static_cast<int>(rows)) {
+            snapshot.status = TerminalInspectorCellStatus::OutOfBounds;
+            return snapshot;
+        }
+
+        GhosttyPoint point{};
+        point.tag = GHOSTTY_POINT_TAG_VIEWPORT;
+        point.value.coordinate.x = static_cast<uint16_t>(viewportColumn);
+        point.value.coordinate.y = static_cast<uint32_t>(viewportRow);
+        GhosttyGridRef reference{};
+        reference.size = sizeof(reference);
+        const GhosttyResult referenceResult =
+            ghostty_terminal_grid_ref(terminal_, point, &reference);
+        if (referenceResult != GHOSTTY_SUCCESS) {
+            if (referenceResult == GHOSTTY_INVALID_VALUE) {
+                snapshot.status = TerminalInspectorCellStatus::OutOfBounds;
+            }
+            return snapshot;
+        }
+
+        GhosttyCell cell = 0;
+        GhosttyRow row = 0;
+        if (ghostty_grid_ref_cell(&reference, &cell) != GHOSTTY_SUCCESS
+            || ghostty_grid_ref_row(&reference, &row) != GHOSTTY_SUCCESS) {
+            return snapshot;
+        }
+
+        uint32_t codepoint = 0;
+        GhosttyCellContentTag contentTag = GHOSTTY_CELL_CONTENT_CODEPOINT;
+        GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
+        GhosttyCellSemanticContent semantic = GHOSTTY_CELL_SEMANTIC_OUTPUT;
+        constexpr std::array cellFields{
+            GHOSTTY_CELL_DATA_CODEPOINT,
+            GHOSTTY_CELL_DATA_CONTENT_TAG,
+            GHOSTTY_CELL_DATA_WIDE,
+            GHOSTTY_CELL_DATA_HAS_TEXT,
+            GHOSTTY_CELL_DATA_HAS_STYLING,
+            GHOSTTY_CELL_DATA_STYLE_ID,
+            GHOSTTY_CELL_DATA_HAS_HYPERLINK,
+            GHOSTTY_CELL_DATA_PROTECTED,
+            GHOSTTY_CELL_DATA_SEMANTIC_CONTENT,
+        };
+        std::array<void *, cellFields.size()> cellValues{
+            &codepoint,
+            &contentTag,
+            &wide,
+            &snapshot.hasText,
+            &snapshot.hasStyling,
+            &snapshot.styleId,
+            &snapshot.hasHyperlink,
+            &snapshot.protectedCell,
+            &semantic,
+        };
+        if (ghostty_cell_get_multi(cell, cellFields.size(), cellFields.data(),
+                                   cellValues.data(), nullptr)
+            != GHOSTTY_SUCCESS) {
+            return snapshot;
+        }
+
+        switch (contentTag) {
+        case GHOSTTY_CELL_CONTENT_CODEPOINT:
+            snapshot.contentKind = TerminalInspectorCellContentKind::Codepoint;
+            break;
+        case GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME:
+            snapshot.contentKind = TerminalInspectorCellContentKind::Grapheme;
+            break;
+        case GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE: {
+            snapshot.contentKind =
+                TerminalInspectorCellContentKind::BackgroundPalette;
+            GhosttyColorPaletteIndex paletteIndex = 0;
+            if (ghostty_cell_get(cell, GHOSTTY_CELL_DATA_COLOR_PALETTE,
+                                 &paletteIndex)
+                != GHOSTTY_SUCCESS) {
+                return snapshot;
+            }
+            snapshot.contentBackground.kind =
+                TerminalInspectorStyleColorKind::Palette;
+            snapshot.contentBackground.paletteIndex = paletteIndex;
+            break;
+        }
+        case GHOSTTY_CELL_CONTENT_BG_COLOR_RGB: {
+            snapshot.contentKind =
+                TerminalInspectorCellContentKind::BackgroundRgb;
+            GhosttyColorRgb rgb{};
+            if (ghostty_cell_get(cell, GHOSTTY_CELL_DATA_COLOR_RGB, &rgb)
+                != GHOSTTY_SUCCESS) {
+                return snapshot;
+            }
+            snapshot.contentBackground.kind =
+                TerminalInspectorStyleColorKind::Rgb;
+            snapshot.contentBackground.rgb = toQColor(rgb);
+            break;
+        }
+        default: return snapshot;
+        }
+
+        switch (wide) {
+        case GHOSTTY_CELL_WIDE_NARROW:
+            snapshot.widthRole = TerminalInspectorCellWidthRole::Narrow;
+            break;
+        case GHOSTTY_CELL_WIDE_WIDE:
+            snapshot.widthRole = TerminalInspectorCellWidthRole::Wide;
+            break;
+        case GHOSTTY_CELL_WIDE_SPACER_TAIL:
+            snapshot.widthRole = TerminalInspectorCellWidthRole::SpacerTail;
+            break;
+        case GHOSTTY_CELL_WIDE_SPACER_HEAD:
+            snapshot.widthRole = TerminalInspectorCellWidthRole::SpacerHead;
+            break;
+        default: return snapshot;
+        }
+
+        switch (semantic) {
+        case GHOSTTY_CELL_SEMANTIC_OUTPUT:
+            snapshot.semantic = TerminalInspectorCellSemantic::Output;
+            break;
+        case GHOSTTY_CELL_SEMANTIC_INPUT:
+            snapshot.semantic = TerminalInspectorCellSemantic::Input;
+            break;
+        case GHOSTTY_CELL_SEMANTIC_PROMPT:
+            snapshot.semantic = TerminalInspectorCellSemantic::Prompt;
+            break;
+        default: return snapshot;
+        }
+
+        const std::optional<QByteArray> grapheme = graphemeUtf8(reference);
+        if (!grapheme.has_value()) return snapshot;
+        snapshot.text = QString::fromUtf8(*grapheme);
+        const QList<uint> codepoints = snapshot.text.toUcs4();
+        snapshot.codepoints.reserve(codepoints.size());
+        for (const uint value : codepoints) {
+            snapshot.codepoints.append(value);
+        }
+        if ((snapshot.codepoints.isEmpty() && codepoint != 0)
+            || (!snapshot.codepoints.isEmpty()
+                && snapshot.codepoints.constFirst() != codepoint)) {
+            return snapshot;
+        }
+
+        GhosttyStyle rawStyle{};
+        rawStyle.size = sizeof(rawStyle);
+        if (ghostty_grid_ref_style(&reference, &rawStyle) != GHOSTTY_SUCCESS) {
+            return snapshot;
+        }
+        const std::optional<TerminalInspectorStyleColor> foreground =
+            inspectorStyleColor(rawStyle.fg_color);
+        const std::optional<TerminalInspectorStyleColor> background =
+            inspectorStyleColor(rawStyle.bg_color);
+        const std::optional<TerminalInspectorStyleColor> underlineColor =
+            inspectorStyleColor(rawStyle.underline_color);
+        const std::optional<TerminalInspectorUnderlineStyle> underline =
+            inspectorUnderlineStyle(rawStyle.underline);
+        if (!foreground.has_value() || !background.has_value()
+            || !underlineColor.has_value() || !underline.has_value()) {
+            return snapshot;
+        }
+        snapshot.style = {
+            .foreground = *foreground,
+            .background = *background,
+            .underlineColor = *underlineColor,
+            .bold = rawStyle.bold,
+            .italic = rawStyle.italic,
+            .faint = rawStyle.faint,
+            .blink = rawStyle.blink,
+            .inverse = rawStyle.inverse,
+            .invisible = rawStyle.invisible,
+            .strikethrough = rawStyle.strikethrough,
+            .overline = rawStyle.overline,
+            .underline = *underline,
+        };
+
+        if (snapshot.hasHyperlink) {
+            const std::optional<QByteArray> uri = hyperlinkUri(reference);
+            if (!uri.has_value()) return snapshot;
+            snapshot.hyperlinkUri = *uri;
+        }
+
+        GhosttyRowSemanticPrompt rowSemantic = GHOSTTY_ROW_SEMANTIC_NONE;
+        constexpr std::array rowFields{
+            GHOSTTY_ROW_DATA_WRAP,
+            GHOSTTY_ROW_DATA_WRAP_CONTINUATION,
+            GHOSTTY_ROW_DATA_SEMANTIC_PROMPT,
+        };
+        std::array<void *, rowFields.size()> rowValues{
+            &snapshot.rowWrapped,
+            &snapshot.rowWrapContinuation,
+            &rowSemantic,
+        };
+        if (ghostty_row_get_multi(row, rowFields.size(), rowFields.data(),
+                                  rowValues.data(), nullptr)
+            != GHOSTTY_SUCCESS) {
+            return snapshot;
+        }
+        switch (rowSemantic) {
+        case GHOSTTY_ROW_SEMANTIC_NONE:
+            snapshot.rowSemantic = TerminalInspectorRowSemantic::None;
+            break;
+        case GHOSTTY_ROW_SEMANTIC_PROMPT:
+            snapshot.rowSemantic = TerminalInspectorRowSemantic::Prompt;
+            break;
+        case GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION:
+            snapshot.rowSemantic =
+                TerminalInspectorRowSemantic::PromptContinuation;
+            break;
+        default: return snapshot;
+        }
+
+        snapshot.status = TerminalInspectorCellStatus::Ready;
+        return snapshot;
+    }
+
     GhosttyVtAdapter::SemanticPromptState semanticPromptState() const
     {
         GhosttyTerminalScreen screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
@@ -2223,6 +2507,7 @@ public:
         }
         if ((result != GHOSTTY_OUT_OF_SPACE && result != GHOSTTY_SUCCESS)
             || required == 0
+            || required > static_cast<size_t>(maximumLogicalLineBytes)
             || required
                 > static_cast<size_t>(std::numeric_limits<qsizetype>::max())) {
             return std::nullopt;
@@ -5308,6 +5593,13 @@ bool GhosttyVtAdapter::installTextRange(const TrackedTextRange &range)
 TerminalInspectorSnapshot GhosttyVtAdapter::inspectorSnapshot() const
 {
     return impl_->inspectorSnapshot();
+}
+
+TerminalInspectorCellSnapshot
+GhosttyVtAdapter::inspectorCellSnapshot(int viewportColumn,
+                                        int viewportRow) const
+{
+    return impl_->inspectorCellSnapshot(viewportColumn, viewportRow);
 }
 
 std::optional<GhosttyVtAdapter::TextRangeMatch>

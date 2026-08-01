@@ -200,6 +200,11 @@ public:
     // Request an owned public-VT snapshot. Zero means the session cannot
     // currently accept a request; at most one request may be in flight.
     [[nodiscard]] quint64 requestTerminalInspectorSnapshot();
+    // Cell picks are user actions, so a new request supersedes an older one
+    // instead of waiting behind the periodic whole-terminal snapshot lane.
+    [[nodiscard]] quint64 requestTerminalInspectorCell(quint64 contentRevision,
+                                                       int viewportColumn,
+                                                       int viewportRow);
 
 Q_SIGNALS:
     void terminalUpdated(const TerminalUpdate &update);
@@ -230,6 +235,9 @@ Q_SIGNALS:
     void
     terminalInspectorSnapshotReady(quint64 requestId,
                                    const TerminalInspectorSnapshot &snapshot);
+    void
+    terminalInspectorCellReady(quint64 requestId,
+                               const TerminalInspectorCellSnapshot &snapshot);
     void unsafePasteConfirmationRequested(quint64 requestId,
                                           const QString &text);
     void terminalClipboardWriteRequested(
@@ -298,6 +306,9 @@ Q_SIGNALS:
                                             int row);
     void hyperlinkActivationCancellationRequested(quint64 requestId);
     void terminalInspectorSnapshotRequested(quint64 requestId);
+    void terminalInspectorCellRequested(quint64 requestId,
+                                        quint64 contentRevision,
+                                        int viewportColumn, int viewportRow);
     void runtimeOptionsRequested(const TerminalSessionRuntimeOptions &options);
     void readOnlyRequested(bool readOnly);
     void shutdownRequested();
@@ -376,4 +387,6 @@ private:
     bool searchExpected_ = false;
     quint64 nextTerminalInspectorRequestId_ = 0;
     quint64 activeTerminalInspectorRequestId_ = 0;
+    quint64 nextTerminalInspectorCellRequestId_ = 0;
+    quint64 activeTerminalInspectorCellRequestId_ = 0;
 };
