@@ -335,8 +335,8 @@ public:
     parseApplicationAction(QStringView serializedAction);
 
     // Parse frontend-owned surface actions into payload-safe request types.
-    // This grammar boundary deliberately includes Inspector and Crash even
-    // while they remain blocked from executable configured-action chains.
+    // This grammar boundary deliberately includes Crash even while it remains
+    // blocked from executable configured-action chains.
     [[nodiscard]] static std::optional<WorkspaceFrontendActionRequest>
     parseFrontendAction(QStringView serializedAction,
                         WorkspaceActionContext context = {});

@@ -130,6 +130,11 @@ ApplicationWindow {
     }
 
     Component {
+        id: terminalInspectorFactory
+        TerminalInspector {}
+    }
+
+    Component {
         id: wideTabButtonFactory
         TabButton {
             objectName: "windowTabButton"
@@ -291,6 +296,7 @@ ApplicationWindow {
         resizeOverlayComponent: terminalResizeOverlayFactory
         scrollbarComponent: terminalScrollBarFactory
         bellBorderComponent: terminalBellBorderFactory
+        inspectorComponent: terminalInspectorFactory
         customShaderStageComponent: terminalCustomShaderStageFactory
         onWindowAttentionRequested: window.alert(0)
     }

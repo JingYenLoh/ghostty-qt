@@ -1778,6 +1778,32 @@ bool TerminalPane::hasActiveProcess() const
     return controller_->activeProcess();
 }
 
+bool TerminalPane::controlInspector(
+    WorkspaceFrontendActions::InspectorMode mode)
+{
+    const bool show = mode == WorkspaceFrontendActions::InspectorMode::Show
+        || (mode == WorkspaceFrontendActions::InspectorMode::Toggle
+            && inspectorModel_ == nullptr);
+    if (show) {
+        if (inspectorModel_ != nullptr) return true;
+        inspectorModel_ = new TerminalInspectorModel(this);
+        Q_EMIT inspectorModelChanged();
+        return true;
+    }
+
+    if (inspectorModel_ == nullptr) return true;
+    TerminalInspectorModel *const closing = inspectorModel_.data();
+    inspectorModel_.clear();
+    Q_EMIT inspectorModelChanged();
+    closing->deleteLater();
+    return true;
+}
+
+void TerminalPane::closeInspector()
+{
+    (void)controlInspector(WorkspaceFrontendActions::InspectorMode::Hide);
+}
+
 bool TerminalPane::isReadOnly() const
 {
     return controller_->readOnly();

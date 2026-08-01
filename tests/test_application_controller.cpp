@@ -637,6 +637,22 @@ void ApplicationControllerTest::routesWindowUiActionsAndNotificationPolicy()
     QCOMPARE(ui->modal(), WindowUiController::Modal::TabOverview);
     ui->closeModal();
 
+    QVERIFY(!firstPane->inspectorVisible());
+    QVERIFY(initial->workspace->executeActiveConfiguredAction(
+        QStringLiteral("inspector:show")));
+    QVERIFY(firstPane->inspectorVisible());
+    TerminalInspectorModel *const firstInspector = firstPane->inspectorModel();
+    QVERIFY(firstInspector != nullptr);
+    QVERIFY(initial->workspace->executeActiveConfiguredAction(
+        QStringLiteral("inspector:show")));
+    QCOMPARE(firstPane->inspectorModel(), firstInspector);
+    QVERIFY(initial->workspace->executeActiveConfiguredAction(
+        QStringLiteral("inspector:toggle")));
+    QVERIFY(!firstPane->inspectorVisible());
+    QVERIFY(initial->workspace->executeActiveConfiguredAction(
+        QStringLiteral("inspector:hide")));
+    QVERIFY(!firstPane->inspectorVisible());
+
     // Frontend requests retain a stable originating PaneId. A stale identity
     // must not open a window modal after its pane has disappeared.
     Q_EMIT initial->workspace->frontendActionRequested({
@@ -644,6 +660,14 @@ void ApplicationControllerTest::routesWindowUiActionsAndNotificationPolicy()
         .context = {.paneId = PaneId(std::numeric_limits<quint64>::max())},
     });
     QCOMPARE(ui->modal(), WindowUiController::Modal::None);
+    Q_EMIT initial->workspace->frontendActionRequested({
+        .action =
+            WorkspaceFrontendActions::Inspector{
+                .mode = WorkspaceFrontendActions::InspectorMode::Show,
+            },
+        .context = {.paneId = PaneId(std::numeric_limits<quint64>::max())},
+    });
+    QVERIFY(!firstPane->inspectorVisible());
 
     const TabId firstTab = initial->workspace->tabModel()->idAt(0);
     QVERIFY(firstTab.isValid());

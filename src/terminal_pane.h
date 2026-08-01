@@ -14,6 +14,7 @@
 #include "terminal_custom_shader_pipeline.h"
 #include "terminal_custom_shader_qsg.h"
 #include "terminal_geometry.h"
+#include "terminal_inspector_model.h"
 #include "terminal_types.h"
 #include "window_navigation_action.h"
 #include "workspace_action.h"
@@ -111,6 +112,10 @@ class TerminalPane final : public QQuickItem,
     Q_PROPERTY(qreal scrollbarSize READ scrollbarSize NOTIFY scrollbarChanged)
     Q_PROPERTY(bool bellRinging READ bellRinging NOTIFY bellChanged)
     Q_PROPERTY(bool bellBorderVisible READ bellBorderVisible NOTIFY bellChanged)
+    Q_PROPERTY(TerminalInspectorModel *inspectorModel READ inspectorModel NOTIFY
+                   inspectorModelChanged)
+    Q_PROPERTY(bool inspectorVisible READ inspectorVisible NOTIFY
+                   inspectorModelChanged)
 
 public:
     explicit TerminalPane(
@@ -163,6 +168,12 @@ public:
     {
         return bellRinging_ && options_.bellFeatures.border;
     }
+    TerminalInspectorModel *inspectorModel() const
+    {
+        return inspectorModel_.data();
+    }
+    bool inspectorVisible() const { return inspectorModel_ != nullptr; }
+    bool controlInspector(WorkspaceFrontendActions::InspectorMode mode);
     LaunchOptions splitLaunchOptions(const LaunchOptions &base) const;
     LaunchOptions tabLaunchOptions(const LaunchOptions &base) const;
     LaunchOptions windowLaunchOptions(const LaunchOptions &base) const;
@@ -221,6 +232,7 @@ public:
     Q_INVOKABLE void navigateSearch(int direction);
     Q_INVOKABLE void scrollbarMoveTo(qreal position);
     Q_INVOKABLE void dismissAbnormalExit();
+    Q_INVOKABLE void closeInspector();
     // Process-wide `all:`/`global:` dispatch reuses the same exact pane action
     // implementation as a focused local binding.
     bool executeConfiguredAction(QStringView action);
@@ -246,6 +258,7 @@ Q_SIGNALS:
     void resizeOverlayRectChanged();
     void scrollbarChanged();
     void bellChanged();
+    void inspectorModelChanged();
     void bellRang(TerminalPane *pane);
     void customShaderDiagnosticChanged(const QString &diagnostic);
     void requestNewTab();
@@ -294,6 +307,7 @@ protected:
     void focusOutEvent(QFocusEvent *event) override;
 
 private:
+    friend class TerminalInspectorModel;
     friend class GhosttyApplicationKeybindings;
     friend class TerminalPaneRenderItem;
     friend class TerminalWorkspace;
@@ -570,6 +584,7 @@ private:
     std::shared_ptr<TerminalBellPlayer> bellPlayer_ =
         std::make_shared<TerminalBellPlayer>();
     bool bellRinging_ = false;
+    QPointer<TerminalInspectorModel> inspectorModel_;
     // Set for normal wait-after-command and abnormal quick exits. CLI --hold
     // remains an indefinite frontend hold and never enters key dismissal.
     bool waitingForExitKey_ = false;

@@ -86,6 +86,8 @@ class TerminalWorkspace : public QQuickItem {
     Q_PROPERTY(
         bool tabBarAtBottom READ tabBarAtBottom NOTIFY tabsLocationChanged)
     Q_PROPERTY(bool wideTabs READ wideTabs NOTIFY wideTabsChanged)
+    Q_PROPERTY(QQmlComponent *inspectorComponent READ inspectorComponent WRITE
+                   setInspectorComponent NOTIFY inspectorComponentChanged)
     Q_PROPERTY(
         QQmlComponent *searchOverlayComponent READ searchOverlayComponent WRITE
             setSearchOverlayComponent NOTIFY searchOverlayComponentChanged)
@@ -184,6 +186,11 @@ public:
         return windowCloseState_ == WindowCloseState::Publishing
             || windowCloseState_ == WindowCloseState::Published;
     }
+    QQmlComponent *inspectorComponent() const
+    {
+        return inspector_.component.data();
+    }
+    void setInspectorComponent(QQmlComponent *component);
     QQmlComponent *searchOverlayComponent() const
     {
         return searchOverlay_.component.data();
@@ -230,6 +237,9 @@ public:
     bool executeSurfaceActionOnAllPanes(const GhosttyConfiguredAction &action);
     [[nodiscard]] bool containsPane(PaneId paneId) const;
     [[nodiscard]] bool focusPaneForFrontend(PaneId paneId);
+    [[nodiscard]] bool
+    controlInspector(PaneId paneId,
+                     WorkspaceFrontendActions::InspectorMode mode);
     // Samples committed GUI-thread state and exposes stable identities rather
     // than pane pointers to process-owned consumers such as the palette.
     [[nodiscard]] QVector<WorkspaceSurfaceSnapshot> surfaceSnapshot() const;
@@ -297,6 +307,7 @@ Q_SIGNALS:
     void windowCloseApproved();
     void applicationQuitApproved();
     void applicationQuitCancelled();
+    void inspectorComponentChanged();
     void searchOverlayComponentChanged();
     void keyStateOverlayComponentChanged();
     void abnormalExitOverlayComponentChanged();
@@ -568,6 +579,7 @@ private:
     bool titlePromptAdvanceScheduled_ = false;
     bool broadActionFanout_ = false;
     bool topologyMutation_ = false;
+    PaneOverlaySlot inspector_;
     PaneOverlaySlot searchOverlay_;
     PaneOverlaySlot keyStateOverlay_;
     PaneOverlaySlot abnormalExitOverlay_;

@@ -949,12 +949,28 @@ void GhosttyActionCatalogTest::parsesFrontendActionsExactly()
         QCOMPARE(inspector->mode, testCase.mode);
         QCOMPARE(request->context, source);
 
-        // libghostty-vt does not expose Ghostty's inspector state, so retain
-        // typed diagnostics without claiming the action is executable.
-        QVERIFY(!GhosttyActionCatalog::parseConfiguredAction(serialized));
-        QVERIFY(!GhosttyActionCatalog::isImplemented(serialized));
+        const std::optional<GhosttyConfiguredAction> configured =
+            GhosttyActionCatalog::parseConfiguredAction(serialized, source);
+        QVERIFY(configured.has_value());
+        QCOMPARE(std::get<WorkspaceFrontendActionRequest>(*configured),
+                 *request);
+        QCOMPARE(GhosttyActionCatalog::inputEffect(*configured),
+                 GhosttyActionInputEffect::None);
+        QVERIFY(!GhosttyActionCatalog::shouldCoalesceBroadClose(*configured));
+        QVERIFY(GhosttyActionCatalog::isImplemented(serialized));
         QCOMPARE(GhosttyActionCatalog::scope(serialized),
                  GhosttyActionScope::Surface);
+
+        const GhosttyCompiledActionChain compiled =
+            GhosttyActionCatalog::compileActionChain({serialized});
+        QVERIFY(!compiled.applicationOnly);
+        QCOMPARE(compiled.entries.size(), 1);
+        const WorkspaceFrontendActionRequest *const compiledRequest =
+            compiled.entries.constFirst()
+                .getIf<WorkspaceFrontendActionRequest>();
+        QVERIFY(compiledRequest != nullptr);
+        QCOMPARE(compiledRequest->action, request->action);
+        QCOMPARE(compiledRequest->context, WorkspaceActionContext{});
     }
 
     const struct {

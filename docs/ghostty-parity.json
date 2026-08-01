@@ -1334,7 +1334,9 @@
           "note": "The exact app-scoped no-op suppresses press/repeat encoding even on unconsumed bindings, deliberately leaves the corresponding release unsuppressed, wins in the root pre-pass before active named tables, and preserves Ghostty's bare catch-all invalid-sequence drop. All/global executes once and retains the same special release behavior."
         },
         "inspector": {
-          "scope": "qt_mapping"
+          "status": "partial",
+          "scope": "qt_mapping",
+          "note": "Accepts the exact toggle/show/hide grammar as an executable, pane-scoped frontend action and preserves the originating stable pane identity. A separate Qt-native window reports live surface geometry, font, pointer, process, cursor, viewport, mouse, keybinding, renderer, shader, Kitty-image, color, and palette state without an additional dependency. It does not yet provide Ghostty's retained keyboard and parsed terminal-I/O event streams or its inactive-screen, page-allocation, and cell internals, which are not exposed by the public libghostty-vt API."
         },
         "jump_to_prompt": {
           "status": "blocked_upstream",

@@ -1103,6 +1103,8 @@ qt_add_executable(ghostty-qt
     src/terminal_pane_renderer.h
     src/terminal_session_options.h
     src/terminal_initial_input.h
+    src/terminal_inspector_model.cpp
+    src/terminal_inspector_model.h
     src/terminal_typography.h
     src/terminal_types.h
     src/terminal_write_file_action.h
@@ -1128,6 +1130,7 @@ qt_add_qml_module(ghostty-qt
         qml/SearchOverlay.qml
         qml/TabOverview.qml
         qml/TerminalScrollBar.qml
+        qml/TerminalInspector.qml
         qml/TerminalShaderStage.qml
         qml/AppToast.qml
 )

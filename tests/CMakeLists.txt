@@ -554,6 +554,8 @@ add_test(NAME linux-cgroup COMMAND test-linux-cgroup)
 set_tests_properties(linux-cgroup PROPERTIES TIMEOUT 15)
 
 ghostty_qt_add_internal_library(ghostty-qt-render-test-support
+    ../src/terminal_inspector_model.cpp
+    ../src/terminal_inspector_model.h
     ../src/terminal_pane.cpp
     ../src/terminal_pane.h
     ../src/terminal_pane_renderer.cpp

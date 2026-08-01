@@ -38,6 +38,7 @@ constexpr QRgb darkChromeBackgroundRgb = 0xff3b4252U;
 constexpr QRgb darkChromeForegroundRgb = 0xffeceff4U;
 constexpr QRgb lightChromeBackgroundRgb = 0xffeceff4U;
 constexpr QRgb lightChromeForegroundRgb = 0xff2e3440U;
+constexpr auto kInspectorProperty = "_ghosttyQtInspector";
 constexpr auto kSearchOverlayProperty = "_ghosttyQtSearchOverlay";
 constexpr auto kKeyStateOverlayProperty = "_ghosttyQtKeyStateOverlay";
 constexpr auto kAbnormalExitOverlayProperty = "_ghosttyQtAbnormalExitOverlay";
@@ -449,6 +450,13 @@ TerminalWorkspace::TerminalWorkspace(QQuickItem *parent)
 
 TerminalWorkspace::~TerminalWorkspace() = default;
 
+void TerminalWorkspace::setInspectorComponent(QQmlComponent *component)
+{
+    setPaneOverlayComponent(inspector_, component, kInspectorProperty,
+                            "terminal inspector host",
+                            &TerminalWorkspace::inspectorComponentChanged);
+}
+
 void TerminalWorkspace::setSearchOverlayComponent(QQmlComponent *component)
 {
     setPaneOverlayComponent(searchOverlay_, component, kSearchOverlayProperty,
@@ -596,6 +604,11 @@ bool TerminalWorkspace::attachPaneOverlays(TerminalPane *pane)
 {
     const QPointer<TerminalWorkspace> guard(this);
     const QPointer<TerminalPane> paneGuard(pane);
+    if (!attachPaneOverlay(inspector_.component, paneGuard, kInspectorProperty,
+                           "terminal inspector host")
+        || guard == nullptr) {
+        return false;
+    }
     if (!attachPaneOverlay(searchOverlay_.component, paneGuard,
                            kSearchOverlayProperty, "terminal search overlay")
         || guard == nullptr) {
@@ -989,6 +1002,14 @@ bool TerminalWorkspace::executeSurfaceActionOnAllPanes(
 bool TerminalWorkspace::containsPane(PaneId paneId) const
 {
     return paneForId(paneId) != nullptr;
+}
+
+bool TerminalWorkspace::controlInspector(
+    PaneId paneId, WorkspaceFrontendActions::InspectorMode mode)
+{
+    if (windowCloseState_ != WindowCloseState::Open) return false;
+    TerminalPane *const pane = paneForId(paneId);
+    return pane != nullptr && pane->controlInspector(mode);
 }
 
 QVector<WorkspaceSurfaceSnapshot> TerminalWorkspace::surfaceSnapshot() const

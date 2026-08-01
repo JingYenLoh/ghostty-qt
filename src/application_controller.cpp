@@ -1720,7 +1720,10 @@ bool ApplicationController::dispatchFrontendAction(
                 inputMethod->show();
                 return true;
             },
-            [](const FrontendAction::Inspector &) { return false; },
+            [workspace, paneId = request.context.paneId](
+                const FrontendAction::Inspector &inspector) {
+                return workspace->controlInspector(paneId, inspector.mode);
+            },
             [](const FrontendAction::Crash &) { return false; },
         },
         request.action);

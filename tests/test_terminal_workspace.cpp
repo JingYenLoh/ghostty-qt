@@ -451,6 +451,8 @@ private Q_SLOTS:
     void readOnlyStateIsPaneLocalAndBroadFanoutIsStable();
     void abnormalExitOverlayPresentsHeldFailureAndCloses();
     void overlayComponentsShareOneLifecycle();
+    void inspectorIsPaneLocalAndUsesStableTargets();
+    void inspectorQmlWindowTracksPaneLifetime();
     void keyStateOverlayPresentsAndRetainsPerPaneDragPosition();
     void searchOverlaySnapsAndRetainsPerPaneCorner();
     void pendingPaneReloadsDuringOverlayCompletion();
@@ -4254,6 +4256,12 @@ void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
     };
     const std::array cases{
         OverlayCase{
+            "inspector",
+            &TerminalWorkspace::setInspectorComponent,
+            &TerminalWorkspace::inspectorComponent,
+            &TerminalWorkspace::inspectorComponentChanged,
+        },
+        OverlayCase{
             "search",
             &TerminalWorkspace::setSearchOverlayComponent,
             &TerminalWorkspace::searchOverlayComponent,
@@ -4419,6 +4427,166 @@ void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
                     == nullptr);
         }
     }
+}
+
+void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(800.0, 480.0));
+    QVERIFY(workspace.initialize(options));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+
+    const TabId tabId = workspace.tabModel()->idAt(0);
+    const PaneId firstId = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *const firstPane = workspace.findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+    QVERIFY(!firstPane->inspectorVisible());
+
+    QVERIFY(workspace.controlInspector(
+        firstId, WorkspaceFrontendActions::InspectorMode::Show));
+    QVERIFY(firstPane->inspectorVisible());
+    TerminalInspectorModel *const firstModel = firstPane->inspectorModel();
+    QVERIFY(firstModel != nullptr);
+    firstModel->refresh();
+    const QVariantMap firstSnapshot = firstModel->snapshot();
+    QCOMPARE(firstSnapshot.value(QStringLiteral("title")).toString(),
+             firstPane->title());
+    for (const QString &section :
+         {QStringLiteral("surface"), QStringLiteral("terminal"),
+          QStringLiteral("keyboard"), QStringLiteral("renderer")}) {
+        QVERIFY(firstSnapshot.value(section).canConvert<QVariantMap>());
+    }
+    const QVariantMap surface =
+        firstSnapshot.value(QStringLiteral("surface")).toMap();
+    QCOMPARE(surface.value(QStringLiteral("width")).toDouble(),
+             firstPane->width());
+    QCOMPARE(surface.value(QStringLiteral("height")).toDouble(),
+             firstPane->height());
+
+    // Show and hide are idempotent; toggle changes the current state.
+    QVERIFY(workspace.controlInspector(
+        firstId, WorkspaceFrontendActions::InspectorMode::Show));
+    QCOMPARE(firstPane->inspectorModel(), firstModel);
+    QVERIFY(workspace.controlInspector(
+        firstId, WorkspaceFrontendActions::InspectorMode::Toggle));
+    QVERIFY(!firstPane->inspectorVisible());
+    QVERIFY(workspace.controlInspector(
+        firstId, WorkspaceFrontendActions::InspectorMode::Hide));
+    QVERIFY(!firstPane->inspectorVisible());
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, firstId, 0},
+    }));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.findChildren<TerminalPane *>().size(),
+                              2, 1000);
+    const PaneId secondId = workspace.tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(secondId.isValid());
+    QVERIFY(secondId != firstId);
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *const pane : workspace.findChildren<TerminalPane *>()) {
+        if (pane != firstPane) secondPane = pane;
+    }
+    QVERIFY(secondPane != nullptr);
+
+    QVERIFY(workspace.controlInspector(
+        firstId, WorkspaceFrontendActions::InspectorMode::Show));
+    QVERIFY(workspace.controlInspector(
+        secondId, WorkspaceFrontendActions::InspectorMode::Show));
+    QVERIFY(firstPane->inspectorVisible());
+    QVERIFY(secondPane->inspectorVisible());
+    QVERIFY(firstPane->inspectorModel() != secondPane->inspectorModel());
+
+    // Closing an inspector through its model changes only that pane.
+    secondPane->inspectorModel()->close();
+    QVERIFY(!secondPane->inspectorVisible());
+    QVERIFY(firstPane->inspectorVisible());
+
+    QPointer<TerminalPane> firstGuard(firstPane);
+    QPointer<TerminalInspectorModel> firstModelGuard(
+        firstPane->inspectorModel());
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ClosePane,
+        {tabId, firstId, 0},
+    }));
+    QTRY_VERIFY_WITH_TIMEOUT(firstGuard.isNull(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(firstModelGuard.isNull(), 1000);
+    QVERIFY(!workspace.controlInspector(
+        firstId, WorkspaceFrontendActions::InspectorMode::Show));
+    QVERIFY(!workspace.controlInspector(
+        PaneId(std::numeric_limits<quint64>::max()),
+        WorkspaceFrontendActions::InspectorMode::Show));
+}
+
+void TerminalWorkspaceTest::inspectorQmlWindowTracksPaneLifetime()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQmlEngine engine;
+    const QString inspectorPath = QFINDTESTDATA("../qml/TerminalInspector.qml");
+    QVERIFY(!inspectorPath.isEmpty());
+    QQmlComponent inspectorComponent(&engine,
+                                     QUrl::fromLocalFile(inspectorPath));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        inspectorComponent.isReady() || inspectorComponent.isError(), 1000);
+    QVERIFY2(inspectorComponent.isReady(),
+             qPrintable(inspectorComponent.errorString()));
+
+    QQuickWindow terminalWindow;
+    terminalWindow.resize(900, 600);
+    auto workspace = std::make_unique<TerminalWorkspace>();
+    workspace->setParentItem(terminalWindow.contentItem());
+    workspace->setSize(terminalWindow.size());
+    workspace->setInspectorComponent(&inspectorComponent);
+    terminalWindow.show();
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+
+    const PaneId paneId = workspace->tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *const pane = workspace->findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    QQuickItem *const host = pane->findChild<QQuickItem *>(
+        QStringLiteral("terminalInspectorHost"), Qt::FindDirectChildrenOnly);
+    QVERIFY(host != nullptr);
+    QQuickWindow *const inspectorWindow = host->findChild<QQuickWindow *>(
+        QStringLiteral("terminalInspectorWindow"));
+    QVERIFY(inspectorWindow != nullptr);
+    QVERIFY(!inspectorWindow->isVisible());
+
+    QVERIFY(workspace->controlInspector(
+        paneId, WorkspaceFrontendActions::InspectorMode::Show));
+    QTRY_VERIFY_WITH_TIMEOUT(inspectorWindow->isVisible(), 1000);
+    QCOMPARE(inspectorWindow->transientParent(), &terminalWindow);
+    QVERIFY(
+        host->findChild<QQuickItem *>(QStringLiteral("terminalInspectorTabs"))
+        != nullptr);
+
+    // A native close updates the pane-owned model instead of leaving a hidden
+    // window that toggle would misinterpret as open.
+    inspectorWindow->close();
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->inspectorVisible(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!inspectorWindow->isVisible(), 1000);
+    QVERIFY(workspace->controlInspector(
+        paneId, WorkspaceFrontendActions::InspectorMode::Toggle));
+    QTRY_VERIFY_WITH_TIMEOUT(inspectorWindow->isVisible(), 1000);
+
+    QPointer<QQuickItem> hostGuard(host);
+    QPointer<QQuickWindow> inspectorGuard(inspectorWindow);
+    workspace.reset();
+    QTRY_VERIFY_WITH_TIMEOUT(hostGuard.isNull(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(inspectorGuard.isNull(), 1000);
+    terminalWindow.close();
 }
 
 void TerminalWorkspaceTest::

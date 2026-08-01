@@ -445,8 +445,10 @@ void GhosttyConfigProcessLoaderTest::diagnosesOnlyNonDefaultUnsupportedActions()
         configured.value(QStringLiteral("keybindings")).toObject();
     QJsonArray root = current.value(QStringLiteral("root")).toArray();
     root.append(binding({unicodeTrigger('x', GhosttyKeybindCtrl)},
-                        {QStringLiteral("inspector:toggle")}));
+                        {QStringLiteral("crash:main")}));
     root.append(binding({unicodeTrigger('y', GhosttyKeybindCtrl)},
+                        {QStringLiteral("crash:main")}));
+    root.append(binding({unicodeTrigger('z', GhosttyKeybindCtrl)},
                         {QStringLiteral("inspector:toggle")}));
     current.insert(QStringLiteral("root"), root);
     configured.insert(QStringLiteral("keybindings"), current);
@@ -456,10 +458,14 @@ void GhosttyConfigProcessLoaderTest::diagnosesOnlyNonDefaultUnsupportedActions()
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     const auto warnings = std::ranges::count_if(
         result->diagnostics, [](const GhosttyConfigDiagnostic &diagnostic) {
-            return diagnostic.message.contains(
-                QStringLiteral("inspector:toggle"));
+            return diagnostic.message.contains(QStringLiteral("crash:main"));
         });
     QCOMPARE(warnings, 1);
+    QVERIFY(std::ranges::none_of(result->diagnostics,
+                                 [](const GhosttyConfigDiagnostic &diagnostic) {
+                                     return diagnostic.message.contains(
+                                         QStringLiteral("inspector:toggle"));
+                                 }));
 
     // A flag-only change at the default location is also a user-visible
     // semantic change and should expose the unsupported current action.
@@ -469,7 +475,7 @@ void GhosttyConfigProcessLoaderTest::diagnosesOnlyNonDefaultUnsupportedActions()
     QJsonObject changed = root.at(0).toObject();
     changed.insert(QStringLiteral("flags"), flags(false));
     changed.insert(QStringLiteral("actions"),
-                   QJsonArray{QStringLiteral("inspector:toggle")});
+                   QJsonArray{QStringLiteral("crash:main")});
     root.replace(0, changed);
     current.insert(QStringLiteral("root"), root);
     configured.insert(QStringLiteral("keybindings"), current);
@@ -480,7 +486,7 @@ void GhosttyConfigProcessLoaderTest::diagnosesOnlyNonDefaultUnsupportedActions()
         std::ranges::count_if(result->diagnostics,
                               [](const GhosttyConfigDiagnostic &diagnostic) {
                                   return diagnostic.message.contains(
-                                      QStringLiteral("inspector:toggle"));
+                                      QStringLiteral("crash:main"));
                               }),
         1);
 }

@@ -772,7 +772,8 @@ bool isExecutableFrontendAction(
         || std::holds_alternative<FrontendAction::ToggleTabOverview>(
                request.action)
         || std::holds_alternative<FrontendAction::ShowOnScreenKeyboard>(
-               request.action);
+               request.action)
+        || std::holds_alternative<FrontendAction::Inspector>(request.action);
 }
 
 std::optional<ApplicationAction>
