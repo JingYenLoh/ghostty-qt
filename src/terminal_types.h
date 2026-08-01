@@ -376,6 +376,11 @@ struct TerminalClipboardWriteRequest {
 struct TerminalKeyInput {
     int key = 0;
     int modifiers = 0;
+    // Modifiers used by the active keyboard layout to produce `text`.
+    // libghostty removes these when deciding whether printable input is
+    // modified, while retaining the complete physical modifier state for
+    // Kitty report-all mode.
+    int consumedModifiers = 0;
     QString text;
     // Qt Wayland/X11 expose XKB keycodes here (Linux evdev code + 8).
     quint32 nativeScanCode = 0;

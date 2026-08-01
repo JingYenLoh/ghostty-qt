@@ -480,6 +480,7 @@ private Q_SLOTS:
     void clipsDecorationAndCursorSprites();
     void routesEmergencyTabShortcuts();
     void compiledProgramAvailabilityControlsEmergencyShortcuts();
+    void forwardsConsumedShiftForLayoutText();
     void remapsSidedModifiersAcrossBindingsAndTerminalInput();
     void routesConfiguredBindingsAndDisablesEmergencyFallback();
     void routesBroadConfiguredActionEffects();
@@ -8072,6 +8073,67 @@ void TerminalPaneTest::compiledProgramAvailabilityControlsEmergencyShortcuts()
     QCoreApplication::sendEvent(&fallback, &fallbackShortcut);
     QCOMPARE(fallbackNewTab.count(), 1);
     QCOMPARE(fallbackForwarded.count(), 0);
+}
+
+void TerminalPaneTest::forwardsConsumedShiftForLayoutText()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::structured({});
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    auto *const controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+
+    constexpr quint32 semicolonScanCode = KEY_SEMICOLON + 8U;
+    QKeyEvent colonPress(QEvent::KeyPress, Qt::Key_Colon, Qt::ShiftModifier,
+                         semicolonScanCode, 0, 0, QStringLiteral(":"));
+    QCoreApplication::sendEvent(&pane, &colonPress);
+    QCOMPARE(forwarded.count(), 1);
+    TerminalKeyInput input =
+        qvariant_cast<TerminalKeyInput>(forwarded.constLast().constFirst());
+    QCOMPARE(input.text, QStringLiteral(":"));
+    QCOMPARE(input.unshiftedCodepoint, uint32_t{';'});
+    QVERIFY(input.modifiers & Qt::ShiftModifier);
+    QVERIFY(input.consumedModifiers & Qt::ShiftModifier);
+
+    QKeyEvent colonRelease(QEvent::KeyRelease, Qt::Key_Colon, Qt::ShiftModifier,
+                           semicolonScanCode, 0, 0, QStringLiteral(":"));
+    QCoreApplication::sendEvent(&pane, &colonRelease);
+    QCOMPARE(forwarded.count(), 2);
+    input = qvariant_cast<TerminalKeyInput>(forwarded.constLast().constFirst());
+    QVERIFY(!input.pressed);
+    QVERIFY(input.consumedModifiers & Qt::ShiftModifier);
+
+    // Qt platform backends may expose either the produced punctuation key or
+    // its level-zero key while retaining the same text and physical scan code.
+    QKeyEvent semicolonPress(QEvent::KeyPress, Qt::Key_Semicolon,
+                             Qt::ShiftModifier, semicolonScanCode, 0, 0,
+                             QStringLiteral(":"));
+    QCoreApplication::sendEvent(&pane, &semicolonPress);
+    QCOMPARE(forwarded.count(), 3);
+    input = qvariant_cast<TerminalKeyInput>(forwarded.constLast().constFirst());
+    QCOMPARE(input.unshiftedCodepoint, uint32_t{';'});
+    QVERIFY(input.consumedModifiers & Qt::ShiftModifier);
+
+    // Shift remains effective when it does not transform printable text, and
+    // for non-text navigation keys.
+    QKeyEvent spacePress(QEvent::KeyPress, Qt::Key_Space, Qt::ShiftModifier,
+                         QStringLiteral(" "));
+    QCoreApplication::sendEvent(&pane, &spacePress);
+    QCOMPARE(forwarded.count(), 4);
+    input = qvariant_cast<TerminalKeyInput>(forwarded.constLast().constFirst());
+    QCOMPARE(input.consumedModifiers, 0);
+
+    QKeyEvent leftPress(QEvent::KeyPress, Qt::Key_Left, Qt::ShiftModifier);
+    QCoreApplication::sendEvent(&pane, &leftPress);
+    QCOMPARE(forwarded.count(), 5);
+    input = qvariant_cast<TerminalKeyInput>(forwarded.constLast().constFirst());
+    QCOMPARE(input.consumedModifiers, 0);
 }
 
 void TerminalPaneTest::remapsSidedModifiersAcrossBindingsAndTerminalInput()

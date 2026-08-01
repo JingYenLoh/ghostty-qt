@@ -165,6 +165,7 @@ private Q_SLOTS:
     void queriesKeyboardActionMode();
     void marksMinimumContrastExemptGlyphs();
     void encodesUsingTerminalModes();
+    void encodesConsumedShiftTextInKittyMode();
     void encodesAlternateScreenWheelRows();
     void preparesPasteUsingExactSafetyPolicy();
     void clearsSelectionWithoutCancellingGesture();
@@ -2294,6 +2295,58 @@ void GhosttyVtAdapterTest::encodesUsingTerminalModes()
 
     adapter->writeVt(QByteArrayLiteral("\033[?1002l"));
     QVERIFY(!adapter->mouseTracking());
+}
+
+void GhosttyVtAdapterTest::encodesConsumedShiftTextInKittyMode()
+{
+    auto adapter = GhosttyVtAdapter::create({});
+    QVERIFY(adapter != nullptr);
+
+    // Model the transition used by Neovim without depending on Neovim: flags
+    // 1 and 2 enable disambiguation and key-event reporting respectively.
+    adapter->writeVt(QByteArrayLiteral("\033[>3u"));
+
+    TerminalKeyInput colon;
+    colon.key = Qt::Key_Colon;
+    colon.modifiers = Qt::ShiftModifier;
+    colon.consumedModifiers = Qt::ShiftModifier;
+    colon.text = QStringLiteral(":");
+    colon.nativeScanCode = KEY_SEMICOLON + 8U;
+    colon.unshiftedCodepoint = ';';
+
+    TerminalKeyInput q;
+    q.key = Qt::Key_Q;
+    q.text = QStringLiteral("q");
+    q.nativeScanCode = KEY_Q + 8U;
+    q.unshiftedCodepoint = 'q';
+
+    TerminalKeyInput enter;
+    enter.key = Qt::Key_Return;
+    enter.text = QStringLiteral("\r");
+    enter.nativeScanCode = KEY_ENTER + 8U;
+
+    QByteArray command;
+    command += adapter->encodeKey(colon).bytes;
+    command += adapter->encodeKey(q).bytes;
+    command += adapter->encodeKey(enter).bytes;
+    QCOMPARE(command, QByteArrayLiteral(":q\r"));
+
+    // Ctrl keeps this on the CSI path; that path reports the complete physical
+    // modifier state even though Shift was consumed to produce the text.
+    colon.modifiers = Qt::ControlModifier | Qt::ShiftModifier;
+    QCOMPARE(adapter->encodeKey(colon).bytes, QByteArrayLiteral("\033[59;6u"));
+    colon.modifiers = Qt::ShiftModifier;
+
+    // This is the former frontend behavior. Keeping the contrast explicit
+    // guards the test against passing because Kitty mode was not activated.
+    colon.consumedModifiers = Qt::NoModifier;
+    QCOMPARE(adapter->encodeKey(colon).bytes, QByteArrayLiteral("\033[59;2u"));
+
+    // Report-all mode deliberately retains the complete physical modifier
+    // state even when Shift was consumed to produce the printable text.
+    adapter->writeVt(QByteArrayLiteral("\033[>9u"));
+    colon.consumedModifiers = Qt::ShiftModifier;
+    QCOMPARE(adapter->encodeKey(colon).bytes, QByteArrayLiteral("\033[59;2u"));
 }
 
 void GhosttyVtAdapterTest::encodesAlternateScreenWheelRows()

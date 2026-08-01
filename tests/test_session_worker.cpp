@@ -273,6 +273,7 @@ private Q_SLOTS:
     void releasesHeldModifiersBeforeFocusOut();
     void appliesLiveEnquiryResponse();
     void stagesAndResolvesSequenceBytes();
+    void sendsConsumedShiftTextLiterallyInKittyMode();
     void stagesSequenceKeysUsingModesAtStageTime();
     void gatesKeyboardAndImeWithLiveKamPolicy();
     void appliesReloadedAppearanceToExistingTerminal();
@@ -4125,6 +4126,66 @@ void SessionWorkerTest::stagesAndResolvesSequenceBytes()
     const QString finalContents = frameText(accumulatedFrame(updateSpy));
     QVERIFY2(finalContents.contains(
                  QStringLiteral("sequence-bytes:79616263")),
+             qPrintable(finalContents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::sendsConsumedShiftTextLiterallyInKittyMode()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral(
+            "stty raw -echo; "
+            "printf '\\033[>3ukitty-quit-ready'; "
+            "payload=$(dd bs=1 count=3 2>/dev/null); "
+            "stty sane; "
+            "printf '\\r\\nkitty-quit-bytes:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "printf '\\r\\n'")};
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("kitty-quit-ready")), 5000);
+
+    TerminalKeyInput colon;
+    colon.key = Qt::Key_Colon;
+    colon.modifiers = Qt::ShiftModifier;
+    colon.consumedModifiers = Qt::ShiftModifier;
+    colon.text = QStringLiteral(":");
+    colon.nativeScanCode = KEY_SEMICOLON + 8U;
+    colon.unshiftedCodepoint = ';';
+    worker.sendKey(colon);
+
+    TerminalKeyInput q;
+    q.key = Qt::Key_Q;
+    q.text = QStringLiteral("q");
+    q.nativeScanCode = KEY_Q + 8U;
+    q.unshiftedCodepoint = 'q';
+    worker.sendKey(q);
+
+    TerminalKeyInput enter;
+    enter.key = Qt::Key_Return;
+    enter.text = QStringLiteral("\r");
+    enter.nativeScanCode = KEY_ENTER + 8U;
+    worker.sendKey(enter);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    const QString finalContents = frameText(accumulatedFrame(updateSpy));
+    QVERIFY2(finalContents.contains(QStringLiteral("kitty-quit-bytes:3a710d")),
              qPrintable(finalContents));
     worker.shutdown();
 }

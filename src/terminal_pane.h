@@ -374,10 +374,12 @@ private:
     void drainDeferredKeyEvents();
     KeyHandling handleShortcut(QKeyEvent *event,
                                const QPointer<TerminalPane> &guard,
-                               quint64 pointerActivityEpoch);
+                               quint64 pointerActivityEpoch,
+                               int consumedModifiers);
     KeyHandling handleConfiguredShortcut(QKeyEvent *event,
                                          const QPointer<TerminalPane> &guard,
-                                         quint64 pointerActivityEpoch);
+                                         quint64 pointerActivityEpoch,
+                                         int consumedModifiers);
     [[nodiscard]] bool resolveActiveSequence(
         TerminalSequenceResolution resolution,
         std::optional<TerminalKeyInput> current = std::nullopt);

@@ -1453,7 +1453,8 @@ public:
 
         ghostty_key_event_set_key(keyEvent_, key);
         ghostty_key_event_set_mods(keyEvent_, mapQtModifiers(input.modifiers));
-        ghostty_key_event_set_consumed_mods(keyEvent_, 0);
+        ghostty_key_event_set_consumed_mods(
+            keyEvent_, mapQtModifiers(input.consumedModifiers));
         ghostty_key_event_set_composing(keyEvent_, input.composing);
         ghostty_key_event_set_unshifted_codepoint(keyEvent_,
                                                   input.unshiftedCodepoint);

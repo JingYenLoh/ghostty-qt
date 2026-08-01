@@ -270,6 +270,46 @@ uint32_t unshiftedCodepoint(int key)
     }
 }
 
+std::optional<char32_t> singlePrintableCodepoint(QStringView text)
+{
+    char32_t codepoint = 0;
+    if (text.size() == 1 && !text.front().isSurrogate()) {
+        codepoint = text.front().unicode();
+    } else if (text.size() == 2 && text.front().isHighSurrogate()
+               && text.back().isLowSurrogate()) {
+        codepoint = QChar::surrogateToUcs4(text.front(), text.back());
+    } else {
+        return std::nullopt;
+    }
+
+    if (codepoint < 0x20U || codepoint == 0x7fU) {
+        return std::nullopt;
+    }
+    return codepoint;
+}
+
+Qt::KeyboardModifiers consumedModifiersForText(const QKeyEvent &event)
+{
+    const Qt::KeyboardModifiers modifiers =
+        normalizedModifiers(event.modifiers());
+    if (!modifiers.testFlag(Qt::ShiftModifier)) {
+        return Qt::NoModifier;
+    }
+
+    const uint32_t unshifted = unshiftedCodepoint(event.key());
+    const std::optional<char32_t> produced =
+        singlePrintableCodepoint(event.text());
+    if (unshifted == 0 || !produced.has_value()
+        || static_cast<uint32_t>(*produced) == unshifted) {
+        return Qt::NoModifier;
+    }
+
+    // QKeyEvent has no public equivalent of GDK's consumed-modifier mask.
+    // Infer only the layout transformation we can prove from its text and
+    // level-zero key value. Other held modifiers remain effective.
+    return Qt::ShiftModifier;
+}
+
 quint64 keyEventIdentity(const QKeyEvent *event)
 {
     const quint64 physical = static_cast<quint64>(event->nativeScanCode());
@@ -307,11 +347,13 @@ std::optional<qint64> fractionalPageDelta(float fraction, int pageRows)
     return static_cast<qint64>(truncated);
 }
 
-TerminalKeyInput terminalKeyInput(const QKeyEvent *event, bool pressed = true)
+TerminalKeyInput terminalKeyInput(const QKeyEvent *event, bool pressed = true,
+                                  int consumedModifiers = 0)
 {
     return {
         .key = event->key(),
         .modifiers = static_cast<int>(event->modifiers()),
+        .consumedModifiers = consumedModifiers,
         .text = event->text(),
         .nativeScanCode = event->nativeScanCode(),
         .pressed = pressed,
@@ -2800,6 +2842,8 @@ void TerminalPane::drainDeferredKeyEvents()
 
 void TerminalPane::keyPressEvent(QKeyEvent *event)
 {
+    const int consumedModifiers =
+        static_cast<int>(consumedModifiersForText(*event));
     const quint64 pointerActivityEpoch =
         replayingDeferredPointerActivityEpoch_.value_or(pointerActivityEpoch_);
     // The original interaction clears the alert before it may be deferred.
@@ -2825,8 +2869,8 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
     const KeyEventSnapshot remappedSnapshot =
         modifierRemaps_.remapEvent(KeyEventSnapshot::capture(*event));
     QKeyEvent remappedEvent = remappedSnapshot.replay();
-    const KeyHandling handling =
-        handleShortcut(&remappedEvent, guard, pointerActivityEpoch);
+    const KeyHandling handling = handleShortcut(
+        &remappedEvent, guard, pointerActivityEpoch, consumedModifiers);
     // Lifecycle actions are owner-deferred, but an embedding application may
     // still attach a destructive direct observer to another pane signal.
     // Never resume ordinary key handling through a deleted QObject.
@@ -2853,7 +2897,8 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
         return;
     }
 
-    const TerminalKeyInput input = terminalKeyInput(&remappedEvent);
+    const TerminalKeyInput input =
+        terminalKeyInput(&remappedEvent, true, consumedModifiers);
     hideMouseForTerminalKey(input, pointerActivityEpoch);
     if (guard == nullptr) {
         event->accept();
@@ -2865,6 +2910,8 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
 
 void TerminalPane::keyReleaseEvent(QKeyEvent *event)
 {
+    const int consumedModifiers =
+        static_cast<int>(consumedModifiersForText(*event));
     if (deferKeyEventIfNeeded(*event)) {
         event->accept();
         return;
@@ -2888,17 +2935,18 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
         event->accept();
         return;
     }
-    controller_->sendKey(terminalKeyInput(&remappedEvent, false));
+    controller_->sendKey(
+        terminalKeyInput(&remappedEvent, false, consumedModifiers));
     event->accept();
 }
 
-TerminalPane::KeyHandling
-TerminalPane::handleShortcut(QKeyEvent *event,
-                             const QPointer<TerminalPane> &guard,
-                             quint64 pointerActivityEpoch)
+TerminalPane::KeyHandling TerminalPane::handleShortcut(
+    QKeyEvent *event, const QPointer<TerminalPane> &guard,
+    quint64 pointerActivityEpoch, int consumedModifiers)
 {
     if (keybinds_.program().isAvailable()) {
-        return handleConfiguredShortcut(event, guard, pointerActivityEpoch);
+        return handleConfiguredShortcut(event, guard, pointerActivityEpoch,
+                                        consumedModifiers);
     }
 
     const Qt::KeyboardModifiers modifiers =
@@ -3032,10 +3080,9 @@ bool TerminalPane::resolveExecutingSequence(
         std::move(current));
 }
 
-TerminalPane::KeyHandling
-TerminalPane::handleConfiguredShortcut(QKeyEvent *event,
-                                       const QPointer<TerminalPane> &guard,
-                                       quint64 pointerActivityEpoch)
+TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
+    QKeyEvent *event, const QPointer<TerminalPane> &guard,
+    quint64 pointerActivityEpoch, int consumedModifiers)
 {
     const GhosttyKeybindEvent bindingEvent{
         .qtKey = event->key(),
@@ -3044,7 +3091,8 @@ TerminalPane::handleConfiguredShortcut(QKeyEvent *event,
         .nativeScanCode = event->nativeScanCode(),
         .unshiftedCodepoint = unshiftedCodepoint(event->key()),
     };
-    const TerminalKeyInput currentInput = terminalKeyInput(event);
+    const TerminalKeyInput currentInput =
+        terminalKeyInput(event, true, consumedModifiers);
     const bool sequenceWasActive = keybinds_.sequenceActive();
     const GhosttyKeybindStep step = keybinds_.advance(bindingEvent);
 
