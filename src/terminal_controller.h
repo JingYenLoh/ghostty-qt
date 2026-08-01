@@ -2,6 +2,7 @@
 
 #include "initial_session_coordinator.h"
 #include "terminal_action_result.h"
+#include "terminal_inspector_snapshot.h"
 #include "terminal_session_options.h"
 #include "terminal_types.h"
 #include "terminal_write_file_action.h"
@@ -196,6 +197,9 @@ public:
                                                      quint64 contentRevision);
     void commitHyperlinkActivation(quint64 requestId, int column, int row);
     void cancelHyperlinkActivation(quint64 requestId);
+    // Request an owned public-VT snapshot. Zero means the session cannot
+    // currently accept a request; at most one request may be in flight.
+    [[nodiscard]] quint64 requestTerminalInspectorSnapshot();
 
 Q_SIGNALS:
     void terminalUpdated(const TerminalUpdate &update);
@@ -223,6 +227,9 @@ Q_SIGNALS:
                                      TerminalLinkKind kind,
                                      const QByteArray &uri);
     void searchUpdated(const TerminalSearchUpdate &update);
+    void
+    terminalInspectorSnapshotReady(quint64 requestId,
+                                   const TerminalInspectorSnapshot &snapshot);
     void unsafePasteConfirmationRequested(quint64 requestId,
                                           const QString &text);
     void terminalClipboardWriteRequested(
@@ -290,6 +297,7 @@ Q_SIGNALS:
     void hyperlinkActivationCommitRequested(quint64 requestId, int column,
                                             int row);
     void hyperlinkActivationCancellationRequested(quint64 requestId);
+    void terminalInspectorSnapshotRequested(quint64 requestId);
     void runtimeOptionsRequested(const TerminalSessionRuntimeOptions &options);
     void readOnlyRequested(bool readOnly);
     void shutdownRequested();
@@ -366,4 +374,6 @@ private:
     quint64 nextSearchGeneration_ = 0;
     quint64 activeSearchGeneration_ = 0;
     bool searchExpected_ = false;
+    quint64 nextTerminalInspectorRequestId_ = 0;
+    quint64 activeTerminalInspectorRequestId_ = 0;
 };

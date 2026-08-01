@@ -239,6 +239,7 @@ private Q_SLOTS:
     void skipsUnavailableTerminalFiles();
     void reportsTerminalInitializationSeparatelyFromChildExec();
     void reportsTerminalInitializationFailure();
+    void publishesCorrelatedInspectorSnapshots();
     void initializesGeometryBeforeSpawningChild();
     void resizesPtyWithPaddingExcludedPixels();
     void injectsInitialInputAtomicallyInOrder();
@@ -403,6 +404,46 @@ void SessionWorkerTest::classifiesAbnormalCommandExitBoundaries()
     QVERIFY(SessionWorker::isAbnormalCommandExit(
         1, 0, std::numeric_limits<quint32>::max(),
         std::numeric_limits<quint32>::max()));
+}
+
+void SessionWorkerTest::publishesCorrelatedInspectorSnapshots()
+{
+    qRegisterMetaType<TerminalInspectorSnapshot>();
+
+    SessionWorker worker;
+    QSignalSpy snapshots(&worker,
+                         &SessionWorker::terminalInspectorSnapshotReady);
+    worker.inspectTerminal(0);
+    QCOMPARE(snapshots.count(), 0);
+
+    worker.inspectTerminal(1);
+    QCOMPARE(snapshots.count(), 1);
+    QCOMPARE(snapshots.constLast().at(0).toULongLong(), quint64{1});
+    const TerminalInspectorSnapshot unavailable =
+        snapshots.constLast().at(1).value<TerminalInspectorSnapshot>();
+    QCOMPARE(unavailable.status, TerminalInspectorStatus::Unavailable);
+
+    TerminalSessionLaunchOptions options;
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+    worker.inspectTerminal(2);
+    QCOMPARE(snapshots.count(), 2);
+    QCOMPARE(snapshots.constLast().at(0).toULongLong(), quint64{2});
+    const TerminalInspectorSnapshot ready =
+        snapshots.constLast().at(1).value<TerminalInspectorSnapshot>();
+    QCOMPARE(ready.status, TerminalInspectorStatus::Ready);
+    QVERIFY(ready.contentRevision > 0);
+    QCOMPARE(ready.modes.size(), 41);
+
+    worker.resetTerminal();
+    worker.inspectTerminal(3);
+    QCOMPARE(snapshots.count(), 3);
+    const TerminalInspectorSnapshot reset =
+        snapshots.constLast().at(1).value<TerminalInspectorSnapshot>();
+    QCOMPARE(reset.status, TerminalInspectorStatus::Ready);
+    QVERIFY(reset.contentRevision > ready.contentRevision);
+    worker.shutdown();
 }
 
 void SessionWorkerTest::appliesLiveAbnormalExitPolicy()

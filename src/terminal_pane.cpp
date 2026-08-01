@@ -1793,6 +1793,7 @@ bool TerminalPane::controlInspector(
 
     if (inspectorModel_ == nullptr) return true;
     TerminalInspectorModel *const closing = inspectorModel_.data();
+    closing->deactivate();
     inspectorModel_.clear();
     Q_EMIT inspectorModelChanged();
     closing->deleteLater();

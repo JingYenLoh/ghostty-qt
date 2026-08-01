@@ -1336,7 +1336,7 @@
         "inspector": {
           "status": "partial",
           "scope": "qt_mapping",
-          "note": "Accepts the exact toggle/show/hide grammar as an executable, pane-scoped frontend action and preserves the originating stable pane identity. A separate Qt-native window reports live surface geometry, font, pointer, process, cursor, viewport, mouse, keybinding, renderer, shader, Kitty-image, color, and palette state without an additional dependency. It does not yet provide Ghostty's retained keyboard and parsed terminal-I/O event streams or its inactive-screen, page-allocation, and cell internals, which are not exposed by the public libghostty-vt API."
+          "note": "Accepts the exact toggle/show/hide grammar as an executable, pane-scoped frontend action and preserves the originating stable pane identity. A separate dependency-free Qt window combines frontend/render state with a request-driven, worker-authoritative public libghostty-vt snapshot: active screen, cursor position, DEC visibility and pending wrap, viewport/scrollback and pixel geometry, mouse tracking, effective/default colors and palette value differences, Kitty keyboard/storage policy, all 41 ANSI/DEC modes, and the sampled content revision. It permits one correlated request in flight on a 250 ms timer that exists only while open; no Ghostty handle crosses threads and stale responses are discarded. It does not yet provide Ghostty's retained keyboard and parsed terminal-I/O event streams or its inactive-screen, page-allocation, and on-demand cell internals."
         },
         "jump_to_prompt": {
           "status": "blocked_upstream",

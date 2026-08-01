@@ -15,6 +15,7 @@
 #include <array>
 #include <limits>
 #include <optional>
+#include <set>
 #include <utility>
 
 namespace {
@@ -161,6 +162,7 @@ private Q_SLOTS:
     void translatesCellStylesAndAppearanceMetadata();
     void preservesAuthoritativeCellCodepointsForShaping();
     void preservesTerminalAppearanceOverrides();
+    void snapshotsAuthoritativeInspectorState();
     void queriesSemanticPromptStateFromPublicTerminalData();
     void queriesKeyboardActionMode();
     void marksMinimumContrastExemptGlyphs();
@@ -2157,6 +2159,166 @@ void GhosttyVtAdapterTest::preservesTerminalAppearanceOverrides()
     QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.cursorStyle, 0);
     QVERIFY(frame.cursorBlinking);
+}
+
+void GhosttyVtAdapterTest::snapshotsAuthoritativeInspectorState()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry = {
+        .columns = 8,
+        .rows = 3,
+        .cellWidthPixels = 9,
+        .cellHeightPixels = 18,
+    };
+    options.appearance.foregroundColor = QColor(QStringLiteral("#d0d0d0"));
+    options.appearance.backgroundColor = QColor(QStringLiteral("#101010"));
+    options.kittyImageStorageLimitBytes = 123'456;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    adapter->writeVt(QByteArrayLiteral("12345678"));
+    const TerminalInspectorSnapshot initial = adapter->inspectorSnapshot();
+    QCOMPARE(initial.status, TerminalInspectorStatus::Ready);
+    QCOMPARE(initial.columns, quint16{8});
+    QCOMPARE(initial.rows, quint16{3});
+    QCOMPARE(initial.widthPixels, quint32{72});
+    QCOMPARE(initial.heightPixels, quint32{54});
+    QCOMPARE(initial.activeScreen, TerminalInspectorScreen::Primary);
+    QCOMPARE(initial.cursorColumn, quint16{7});
+    QCOMPARE(initial.cursorRow, quint16{0});
+    QVERIFY(initial.cursorPendingWrap);
+    QVERIFY(initial.cursorVisible);
+    QVERIFY(initial.viewportActive);
+    QCOMPARE(initial.effectiveForeground, options.appearance.foregroundColor);
+    QCOMPARE(initial.defaultForeground, options.appearance.foregroundColor);
+    QCOMPARE(initial.effectiveBackground, options.appearance.backgroundColor);
+    QCOMPARE(initial.defaultBackground, options.appearance.backgroundColor);
+    QVERIFY(!initial.effectiveCursor.isValid());
+    QVERIFY(!initial.defaultCursor.isValid());
+    QCOMPARE(initial.effectivePalette.size(), 256);
+    QCOMPARE(initial.defaultPalette.size(), 256);
+    QCOMPARE(initial.modes.size(), 41);
+    QCOMPARE(initial.kittyKeyboardFlags, quint8{0});
+    QVERIFY(initial.kittyGraphicsAvailable);
+    QCOMPARE(initial.kittyImageStorageLimitBytes, quint64{123'456});
+    QVERIFY(initial.kittyFileMedium);
+    QVERIFY(initial.kittyTemporaryFileMedium);
+    QVERIFY(initial.kittySharedMemoryMedium);
+
+    const std::set<std::pair<bool, quint16>> expectedModes{
+        {true, 2},     {true, 4},     {true, 12},    {true, 20},
+        {false, 1},    {false, 3},    {false, 4},    {false, 5},
+        {false, 6},    {false, 7},    {false, 8},    {false, 9},
+        {false, 12},   {false, 25},   {false, 40},   {false, 45},
+        {false, 47},   {false, 66},   {false, 67},   {false, 69},
+        {false, 1000}, {false, 1002}, {false, 1003}, {false, 1004},
+        {false, 1005}, {false, 1006}, {false, 1007}, {false, 1015},
+        {false, 1016}, {false, 1035}, {false, 1036}, {false, 1039},
+        {false, 1045}, {false, 1047}, {false, 1048}, {false, 1049},
+        {false, 2004}, {false, 2026}, {false, 2027}, {false, 2031},
+        {false, 2048},
+    };
+    std::set<std::pair<bool, quint16>> actualModes;
+    for (const TerminalInspectorModeState &mode : initial.modes) {
+        actualModes.emplace(mode.ansi, mode.number);
+    }
+    QVERIFY(actualModes == expectedModes);
+
+    // Public color getters expose value differences, not OSC override
+    // provenance. An equal-valued override is therefore indistinguishable
+    // until the embedder default changes underneath it.
+    const QColor originalPaletteOne = initial.defaultPalette.at(1);
+    adapter->writeVt(QByteArrayLiteral("\033]4;1;")
+                     + originalPaletteOne.name(QColor::HexRgb).toLatin1()
+                     + QByteArrayLiteral("\007"));
+    const TerminalInspectorSnapshot equalOverride =
+        adapter->inspectorSnapshot();
+    QCOMPARE(equalOverride.effectivePalette.at(1),
+             equalOverride.defaultPalette.at(1));
+    TerminalAppearance reloaded = options.appearance;
+    reloaded.palette = initial.defaultPalette;
+    reloaded.palette[1] = originalPaletteOne == QColor(Qt::black)
+        ? QColor(Qt::white)
+        : QColor(Qt::black);
+    QVERIFY(adapter->setAppearance(reloaded));
+    const TerminalInspectorSnapshot revealedOverride =
+        adapter->inspectorSnapshot();
+    QCOMPARE(revealedOverride.effectivePalette.at(1), originalPaletteOne);
+    QVERIFY(revealedOverride.effectivePalette.at(1)
+            != revealedOverride.defaultPalette.at(1));
+
+    adapter->writeVt(QByteArrayLiteral("\033]4;1;#00bb00\007"
+                                       "\033]10;#112233\007"
+                                       "\033[?1049h"
+                                       "\033[?1h"
+                                       "\033[?7l"
+                                       "\033[?1002h"
+                                       "\033[2h"
+                                       "\033[>11u"));
+    const TerminalInspectorSnapshot changed = adapter->inspectorSnapshot();
+    QCOMPARE(changed.status, TerminalInspectorStatus::Ready);
+    QCOMPARE(changed.activeScreen, TerminalInspectorScreen::Alternate);
+    QCOMPARE(changed.kittyKeyboardFlags, quint8{11});
+    QVERIFY(changed.terminalMouseTracking);
+    QCOMPARE(changed.effectiveForeground, QColor(QStringLiteral("#112233")));
+    QCOMPARE(changed.defaultForeground, options.appearance.foregroundColor);
+    QCOMPARE(changed.effectivePalette.at(1), QColor(QStringLiteral("#00bb00")));
+    QVERIFY(changed.effectivePalette.at(1) != changed.defaultPalette.at(1));
+
+    const auto modeNamed = [&changed](QStringView name) {
+        return std::ranges::find_if(
+            changed.modes, [name](const TerminalInspectorModeState &mode) {
+                return mode.name == name;
+            });
+    };
+    const auto kam = modeNamed(u"KAM");
+    const auto cursorKeys = modeNamed(u"DECCKM");
+    const auto wraparound = modeNamed(u"DECAWM");
+    const auto buttonMouse = modeNamed(u"Button-event mouse");
+    QVERIFY(kam != changed.modes.cend());
+    QVERIFY(cursorKeys != changed.modes.cend());
+    QVERIFY(wraparound != changed.modes.cend());
+    QVERIFY(buttonMouse != changed.modes.cend());
+    QVERIFY(kam->ansi);
+    QVERIFY(kam->enabled);
+    QVERIFY(!cursorKeys->ansi);
+    QVERIFY(cursorKeys->enabled);
+    QVERIFY(!wraparound->enabled);
+    QVERIFY(buttonMouse->enabled);
+
+    GhosttyVtAdapter::Options historyOptions;
+    historyOptions.geometry = {
+        .columns = 8,
+        .rows = 3,
+        .cellWidthPixels = 9,
+        .cellHeightPixels = 18,
+    };
+    auto historyAdapter = GhosttyVtAdapter::create(historyOptions);
+    QVERIFY(historyAdapter != nullptr);
+    historyAdapter->writeVt(
+        QByteArrayLiteral("row-0\r\nrow-1\r\nrow-2\r\nrow-3\r\n"
+                          "row-4\r\nrow-5\r\nrow-6\r\nrow-7"));
+    const TerminalInspectorSnapshot bottom =
+        historyAdapter->inspectorSnapshot();
+    QCOMPARE(bottom.status, TerminalInspectorStatus::Ready);
+    QVERIFY(bottom.viewportActive);
+    QCOMPARE(bottom.totalRows, quint64{8});
+    QCOMPARE(bottom.scrollbackRows, quint64{5});
+    QCOMPARE(bottom.scrollTotal, bottom.totalRows);
+    QCOMPARE(bottom.scrollLength, quint64{3});
+    QCOMPARE(bottom.scrollOffset, quint64{5});
+
+    QVERIFY(historyAdapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Top,
+    }));
+    const TerminalInspectorSnapshot top = historyAdapter->inspectorSnapshot();
+    QCOMPARE(top.status, TerminalInspectorStatus::Ready);
+    QVERIFY(!top.viewportActive);
+    QCOMPARE(top.totalRows, bottom.totalRows);
+    QCOMPARE(top.scrollbackRows, bottom.scrollbackRows);
+    QCOMPARE(top.scrollTotal, bottom.scrollTotal);
+    QCOMPARE(top.scrollLength, bottom.scrollLength);
+    QCOMPARE(top.scrollOffset, quint64{0});
 }
 
 void GhosttyVtAdapterTest::queriesKeyboardActionMode()

@@ -161,6 +161,8 @@ void TerminalController::connectWorkerRequestRelays()
     relayWorkerRequest(
         &TerminalController::hyperlinkActivationCancellationRequested,
         &SessionWorker::cancelHyperlinkActivation);
+    relayWorkerRequest(&TerminalController::terminalInspectorSnapshotRequested,
+                       &SessionWorker::inspectTerminal);
     relayWorkerRequest(&TerminalController::runtimeOptionsRequested,
                        &SessionWorker::applyRuntimeOptions);
     relayWorkerRequest(&TerminalController::readOnlyRequested,
@@ -191,7 +193,8 @@ TerminalController::TerminalController(
         TerminalSelectionPressInput, TerminalSelectionDragInput,
         QVector<QPoint>, TerminalSessionRuntimeOptions,
         TerminalClipboardDestination, TerminalClipboardWriteRequest,
-        TerminalActionResult, TerminalWriteFileAction>();
+        TerminalActionResult, TerminalWriteFileAction,
+        TerminalInspectorSnapshot>();
 
     if (initialSessionCoordinator_ != nullptr) {
         launchOptions_.program.clear();
@@ -339,6 +342,17 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
             }
             searchExpected_ = update.active;
             Q_EMIT searchUpdated(update);
+        },
+        Qt::QueuedConnection);
+    connect(
+        worker, &SessionWorker::terminalInspectorSnapshotReady, this,
+        [this](quint64 requestId, const TerminalInspectorSnapshot &snapshot) {
+            if (requestId == 0
+                || requestId != activeTerminalInspectorRequestId_) {
+                return;
+            }
+            activeTerminalInspectorRequestId_ = 0;
+            Q_EMIT terminalInspectorSnapshotReady(requestId, snapshot);
         },
         Qt::QueuedConnection);
     connect(
@@ -684,6 +698,7 @@ void TerminalController::applyRuntimeOptions(
 void TerminalController::beginShutdown()
 {
     pendingRightClickRequestIds_.clear();
+    activeTerminalInspectorRequestId_ = 0;
     if (sessionStartState_ != SessionStartState::Started) {
         sessionStartState_ = SessionStartState::Cancelled;
         pendingWorkerRequests_.clear();
@@ -1124,4 +1139,21 @@ void TerminalController::cancelHyperlinkActivation(quint64 requestId)
     }
     Q_EMIT hyperlinkActivationCancellationRequested(requestId);
     activeHyperlinkActivationId_ = 0;
+}
+
+quint64 TerminalController::requestTerminalInspectorSnapshot()
+{
+    if (sessionStartState_ != SessionStartState::Started || closing_
+        || activeTerminalInspectorRequestId_ != 0) {
+        return 0;
+    }
+
+    do {
+        ++nextTerminalInspectorRequestId_;
+    } while (nextTerminalInspectorRequestId_ == 0);
+    const quint64 requestId = nextTerminalInspectorRequestId_;
+    activeTerminalInspectorRequestId_ = requestId;
+    const QPointer<TerminalController> guard(this);
+    Q_EMIT terminalInspectorSnapshotRequested(requestId);
+    return guard != nullptr ? requestId : 0;
 }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "terminal_inspector_snapshot.h"
+
 #include <QObject>
 #include <QPointer>
 #include <QVariantMap>
@@ -23,12 +25,17 @@ public:
 
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void close();
+    void deactivate();
 
 Q_SIGNALS:
     void snapshotChanged();
 
 private:
+    void rebuildSnapshot();
+
     QPointer<TerminalPane> pane_;
     QVariantMap snapshot_;
     QTimer *refreshTimer_ = nullptr;
+    TerminalInspectorSnapshot terminalSnapshot_;
+    quint64 pendingTerminalRequestId_ = 0;
 };

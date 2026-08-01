@@ -2,6 +2,7 @@
 
 #include "pty_write_buffer.h"
 #include "terminal_action_result.h"
+#include "terminal_inspector_snapshot.h"
 #include "terminal_session_options.h"
 #include "terminal_types.h"
 #include "terminal_write_file_action.h"
@@ -126,6 +127,7 @@ public Q_SLOTS:
                                     int column, int row);
     void commitHyperlinkActivation(quint64 requestId, int column, int row);
     void cancelHyperlinkActivation(quint64 requestId);
+    void inspectTerminal(quint64 requestId);
     void shutdown();
 
 Q_SIGNALS:
@@ -168,6 +170,9 @@ Q_SIGNALS:
                                      TerminalLinkKind kind,
                                      const QByteArray &uri);
     void searchUpdated(const TerminalSearchUpdate &update);
+    void
+    terminalInspectorSnapshotReady(quint64 requestId,
+                                   const TerminalInspectorSnapshot &snapshot);
     void sessionExited(int exitCode, int signalNumber, bool hold,
                        bool waitForKey, quint64 runtimeMilliseconds,
                        bool abnormal);

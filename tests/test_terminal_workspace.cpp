@@ -4447,7 +4447,24 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
     const PaneId firstId = workspace.tabModel()->entryAt(0)->activePaneId;
     TerminalPane *const firstPane = workspace.findChild<TerminalPane *>();
     QVERIFY(firstPane != nullptr);
+    TerminalController *const firstController =
+        firstPane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    QSignalSpy inspectorRequests(
+        firstController,
+        &TerminalController::terminalInspectorSnapshotRequested);
     QVERIFY(!firstPane->inspectorVisible());
+
+    quint64 reentrantRequestId = std::numeric_limits<quint64>::max();
+    const QMetaObject::Connection reentrantConnection = connect(
+        firstController,
+        &TerminalController::terminalInspectorSnapshotRequested,
+        firstController, [&] {
+            if (reentrantRequestId == std::numeric_limits<quint64>::max()) {
+                reentrantRequestId =
+                    firstController->requestTerminalInspectorSnapshot();
+            }
+        });
 
     QVERIFY(workspace.controlInspector(
         firstId, WorkspaceFrontendActions::InspectorMode::Show));
@@ -4469,14 +4486,49 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
              firstPane->width());
     QCOMPARE(surface.value(QStringLiteral("height")).toDouble(),
              firstPane->height());
+    QTRY_COMPARE_WITH_TIMEOUT(firstModel->snapshot()
+                                  .value(QStringLiteral("terminal"))
+                                  .toMap()
+                                  .value(QStringLiteral("authoritativeStatus"))
+                                  .toString(),
+                              QStringLiteral("Ready"), 1000);
+    const QVariantMap authoritativeTerminal =
+        firstModel->snapshot().value(QStringLiteral("terminal")).toMap();
+    QCOMPARE(
+        authoritativeTerminal.value(QStringLiteral("activeScreen")).toString(),
+        QStringLiteral("Primary"));
+    QCOMPARE(
+        authoritativeTerminal.value(QStringLiteral("modes")).toList().size(),
+        41);
+    QVERIFY(authoritativeTerminal.value(QStringLiteral("workerContentRevision"))
+                .toULongLong()
+            > 0);
+    QCOMPARE(authoritativeTerminal.value(QStringLiteral("effectiveCursor"))
+                 .toString(),
+             QString{});
+    QVERIFY(!inspectorRequests.isEmpty());
+    QCOMPARE(reentrantRequestId, quint64{0});
+    disconnect(reentrantConnection);
+    const QVariantMap authoritativeRenderer =
+        firstModel->snapshot().value(QStringLiteral("renderer")).toMap();
+    QVERIFY(
+        authoritativeRenderer.value(QStringLiteral("kittyProtocolAvailable"))
+            .toBool());
+    QVERIFY(
+        authoritativeRenderer.contains(QStringLiteral("kittyStorageLimit")));
 
     // Show and hide are idempotent; toggle changes the current state.
     QVERIFY(workspace.controlInspector(
         firstId, WorkspaceFrontendActions::InspectorMode::Show));
     QCOMPARE(firstPane->inspectorModel(), firstModel);
+    QPointer<TerminalInspectorModel> hiddenModel(firstModel);
     QVERIFY(workspace.controlInspector(
         firstId, WorkspaceFrontendActions::InspectorMode::Toggle));
     QVERIFY(!firstPane->inspectorVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(hiddenModel.isNull(), 1000);
+    const int requestsAfterHide = inspectorRequests.count();
+    QTest::qWait(350);
+    QCOMPARE(inspectorRequests.count(), requestsAfterHide);
     QVERIFY(workspace.controlInspector(
         firstId, WorkspaceFrontendActions::InspectorMode::Hide));
     QVERIFY(!firstPane->inspectorVisible());

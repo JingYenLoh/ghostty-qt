@@ -65,6 +65,24 @@ Item {
         return (value / (1024 * 1024 * 1024)).toFixed(1) + " GiB"
     }
 
+    function modeCode(mode) {
+        if (mode === undefined || mode === null)
+            return ""
+        return (mode.ansi ? "" : "?") + mode.number
+    }
+
+    function hexByte(value) {
+        if (value === undefined || value === null)
+            return "\u2014"
+        return "0x" + Number(value).toString(16).padStart(2, "0")
+    }
+
+    function authoritativeDisplay(value, emptyText) {
+        if (!terminal.authoritativeAvailable)
+            return display(terminal.authoritativeStatus)
+        return display(value, emptyText)
+    }
+
     function refresh() {
         if (inspectorModel !== null)
             inspectorModel.refresh()
@@ -311,22 +329,61 @@ Item {
                         value: host.display(host.terminal.readOnly)
                     }
 
+                    SectionHeading { text: qsTr("Authoritative VT state") }
+                    InspectorRow {
+                        name: qsTr("Snapshot")
+                        value: host.display(host.terminal.authoritativeStatus)
+                    }
+                    InspectorRow {
+                        name: qsTr("Active screen")
+                        value: host.display(host.terminal.activeScreen)
+                    }
+                    InspectorRow {
+                        name: qsTr("Terminal grid")
+                        value: host.dimensions(host.terminal.vtColumns,
+                                               host.terminal.vtRows,
+                                               qsTr("cells"))
+                    }
+                    InspectorRow {
+                        name: qsTr("Terminal pixels")
+                        value: host.dimensions(host.terminal.vtWidthPixels,
+                                               host.terminal.vtHeightPixels,
+                                               qsTr("px"))
+                    }
+                    InspectorRow {
+                        name: qsTr("Worker content revision")
+                        value: host.display(host.terminal.workerContentRevision)
+                    }
+
                     SectionHeading { text: qsTr("Cursor") }
                     InspectorRow {
-                        name: qsTr("Visible")
+                        name: qsTr("Rendered visible")
                         value: host.display(host.terminal.cursorVisible)
+                    }
+                    InspectorRow {
+                        name: qsTr("DEC mode visible")
+                        value: host.display(host.terminal.decCursorVisible)
                     }
                     InspectorRow {
                         name: qsTr("Blinking")
                         value: host.display(host.terminal.cursorBlinking)
                     }
                     InspectorRow {
-                        name: qsTr("Position")
+                        name: qsTr("Rendered position")
                         value: host.position(host.terminal.cursorColumn,
                                              host.terminal.cursorRow)
                     }
                     InspectorRow {
-                        name: qsTr("Style")
+                        name: qsTr("VT position")
+                        value: host.position(host.terminal.vtCursorColumn,
+                                             host.terminal.vtCursorRow)
+                    }
+                    InspectorRow {
+                        name: qsTr("Pending wrap")
+                        value: host.display(host.terminal.cursorPendingWrap)
+                    }
+                    InspectorRow {
+                        name: qsTr("Visual shape")
                         value: host.display(host.terminal.cursorStyle)
                     }
                     InspectorRow {
@@ -336,7 +393,19 @@ Item {
 
                     SectionHeading { text: qsTr("Viewport") }
                     InspectorRow {
+                        name: qsTr("Pinned to active area")
+                        value: host.display(host.terminal.viewportActive)
+                    }
+                    InspectorRow {
+                        name: qsTr("Total rows")
+                        value: host.display(host.terminal.totalRows)
+                    }
+                    InspectorRow {
                         name: qsTr("Scrollback rows")
+                        value: host.display(host.terminal.scrollbackRows)
+                    }
+                    InspectorRow {
+                        name: qsTr("Scrollbar total")
                         value: host.display(host.terminal.scrollTotal)
                     }
                     InspectorRow {
@@ -365,6 +434,21 @@ Item {
                         name: qsTr("Reporting enabled")
                         value: host.display(host.terminal.mouseReportingEnabled)
                     }
+
+                    SectionHeading { text: qsTr("ANSI and DEC modes") }
+                    Repeater {
+                        model: host.terminal.modes || []
+
+                        delegate: InspectorRow {
+                            required property var modelData
+
+                            name: host.modeCode(modelData) + "  "
+                                  + modelData.name
+                            value: modelData.enabled ? qsTr("Set")
+                                                     : qsTr("Reset")
+                            monospace: true
+                        }
+                    }
                 }
 
                 InspectorPage {
@@ -376,6 +460,16 @@ Item {
                     InspectorRow {
                         name: qsTr("Input suppressed")
                         value: host.display(host.terminal.keyboardInputSuppressed)
+                    }
+                    InspectorRow {
+                        name: qsTr("Kitty flags")
+                        value: host.terminal.authoritativeAvailable
+                               ? host.hexByte(host.keyboard.kittyFlagsValue)
+                                 + "  "
+                                 + host.display(host.keyboard.kittyFlags,
+                                                qsTr("Disabled"))
+                               : host.authoritativeDisplay(undefined)
+                        monospace: true
                     }
                     InspectorRow {
                         name: qsTr("Held modifiers")
@@ -452,21 +546,90 @@ Item {
                         name: qsTr("Storage generation")
                         value: host.display(host.renderer.kittyStorageGeneration)
                     }
+                    InspectorRow {
+                        name: qsTr("Protocol available")
+                        value: host.display(host.renderer.kittyProtocolAvailable)
+                    }
+                    InspectorRow {
+                        name: qsTr("Configured storage limit")
+                        value: host.bytes(host.renderer.kittyStorageLimit)
+                    }
+                    InspectorRow {
+                        name: qsTr("File medium")
+                        value: host.display(host.renderer.kittyFileMedium)
+                    }
+                    InspectorRow {
+                        name: qsTr("Temporary-file medium")
+                        value: host.display(host.renderer.kittyTemporaryFileMedium)
+                    }
+                    InspectorRow {
+                        name: qsTr("Shared-memory medium")
+                        value: host.display(host.renderer.kittySharedMemoryMedium)
+                    }
 
                     SectionHeading { text: qsTr("Terminal colors") }
                     InspectorRow {
-                        name: qsTr("Foreground")
+                        name: qsTr("Rendered foreground")
                         value: host.display(host.terminal.foreground)
                         monospace: true
                     }
                     InspectorRow {
-                        name: qsTr("Background")
+                        name: qsTr("Rendered background")
                         value: host.display(host.terminal.background)
                         monospace: true
                     }
                     InspectorRow {
-                        name: qsTr("Cursor")
+                        name: qsTr("Rendered cursor")
                         value: host.display(host.terminal.cursorColor)
+                        monospace: true
+                    }
+                    InspectorRow {
+                        name: qsTr("Effective foreground")
+                        value: host.authoritativeDisplay(
+                                   host.terminal.effectiveForeground,
+                                   qsTr("Unset"))
+                        monospace: true
+                    }
+                    InspectorRow {
+                        name: qsTr("Default foreground")
+                        value: host.authoritativeDisplay(
+                                   host.terminal.defaultForeground,
+                                   qsTr("Unset"))
+                        monospace: true
+                    }
+                    InspectorRow {
+                        name: qsTr("Effective background")
+                        value: host.authoritativeDisplay(
+                                   host.terminal.effectiveBackground,
+                                   qsTr("Unset"))
+                        monospace: true
+                    }
+                    InspectorRow {
+                        name: qsTr("Default background")
+                        value: host.authoritativeDisplay(
+                                   host.terminal.defaultBackground,
+                                   qsTr("Unset"))
+                        monospace: true
+                    }
+                    InspectorRow {
+                        name: qsTr("Effective cursor")
+                        value: host.authoritativeDisplay(
+                                   host.terminal.effectiveCursor,
+                                   qsTr("Unset"))
+                        monospace: true
+                    }
+                    InspectorRow {
+                        name: qsTr("Default cursor")
+                        value: host.authoritativeDisplay(
+                                   host.terminal.defaultCursor,
+                                   qsTr("Unset"))
+                        monospace: true
+                    }
+                    InspectorRow {
+                        name: qsTr("Palette entries differing from default")
+                        value: host.authoritativeDisplay(
+                                   host.terminal.paletteDifferences,
+                                   qsTr("None"))
                         monospace: true
                     }
 

@@ -3577,6 +3577,16 @@ void SessionWorker::cancelHyperlinkActivation(quint64 requestId)
     hyperlinkState_->trackedActivation.reset();
 }
 
+void SessionWorker::inspectTerminal(quint64 requestId)
+{
+    if (requestId == 0) return;
+
+    TerminalInspectorSnapshot snapshot =
+        vt_ != nullptr ? vt_->inspectorSnapshot() : TerminalInspectorSnapshot{};
+    snapshot.contentRevision = terminalContentRevision_;
+    Q_EMIT terminalInspectorSnapshotReady(requestId, snapshot);
+}
+
 void SessionWorker::scheduleFrame()
 {
     if (frameTimer_ != nullptr && !frameTimer_->isActive()) {

@@ -529,6 +529,56 @@ GhosttyColorRgb toGhosttyColor(const QColor &color)
     };
 }
 
+struct InspectorModeSpec {
+    GhosttyMode mode;
+    const char *name;
+};
+
+const std::array inspectorModeSpecs{
+    InspectorModeSpec{GHOSTTY_MODE_KAM, "KAM"},
+    InspectorModeSpec{GHOSTTY_MODE_INSERT, "IRM"},
+    InspectorModeSpec{GHOSTTY_MODE_SRM, "SRM"},
+    InspectorModeSpec{GHOSTTY_MODE_LINEFEED, "LNM"},
+    InspectorModeSpec{GHOSTTY_MODE_DECCKM, "DECCKM"},
+    InspectorModeSpec{GHOSTTY_MODE_132_COLUMN, "DECCOLM"},
+    InspectorModeSpec{GHOSTTY_MODE_SLOW_SCROLL, "DECSCLM"},
+    InspectorModeSpec{GHOSTTY_MODE_REVERSE_COLORS, "DECSCNM"},
+    InspectorModeSpec{GHOSTTY_MODE_ORIGIN, "DECOM"},
+    InspectorModeSpec{GHOSTTY_MODE_WRAPAROUND, "DECAWM"},
+    InspectorModeSpec{GHOSTTY_MODE_AUTOREPEAT, "DECARM"},
+    InspectorModeSpec{GHOSTTY_MODE_X10_MOUSE, "X10 mouse"},
+    InspectorModeSpec{GHOSTTY_MODE_CURSOR_BLINKING, "Cursor blinking"},
+    InspectorModeSpec{GHOSTTY_MODE_CURSOR_VISIBLE, "DECTCEM"},
+    InspectorModeSpec{GHOSTTY_MODE_ENABLE_MODE_3, "Allow DECCOLM"},
+    InspectorModeSpec{GHOSTTY_MODE_REVERSE_WRAP, "Reverse wrap"},
+    InspectorModeSpec{GHOSTTY_MODE_ALT_SCREEN_LEGACY, "Alternate screen (47)"},
+    InspectorModeSpec{GHOSTTY_MODE_KEYPAD_KEYS, "Application keypad"},
+    InspectorModeSpec{GHOSTTY_MODE_BACKARROW_KEY_MODE, "DECBKM"},
+    InspectorModeSpec{GHOSTTY_MODE_LEFT_RIGHT_MARGIN, "DECLRMM"},
+    InspectorModeSpec{GHOSTTY_MODE_NORMAL_MOUSE, "Normal mouse"},
+    InspectorModeSpec{GHOSTTY_MODE_BUTTON_MOUSE, "Button-event mouse"},
+    InspectorModeSpec{GHOSTTY_MODE_ANY_MOUSE, "Any-event mouse"},
+    InspectorModeSpec{GHOSTTY_MODE_FOCUS_EVENT, "Focus events"},
+    InspectorModeSpec{GHOSTTY_MODE_UTF8_MOUSE, "UTF-8 mouse"},
+    InspectorModeSpec{GHOSTTY_MODE_SGR_MOUSE, "SGR mouse"},
+    InspectorModeSpec{GHOSTTY_MODE_ALT_SCROLL, "Alternate scroll"},
+    InspectorModeSpec{GHOSTTY_MODE_URXVT_MOUSE, "URXVT mouse"},
+    InspectorModeSpec{GHOSTTY_MODE_SGR_PIXELS_MOUSE, "SGR pixel mouse"},
+    InspectorModeSpec{GHOSTTY_MODE_NUMLOCK_KEYPAD, "NumLock keypad"},
+    InspectorModeSpec{GHOSTTY_MODE_ALT_ESC_PREFIX, "Alt ESC prefix"},
+    InspectorModeSpec{GHOSTTY_MODE_ALT_SENDS_ESC, "Alt sends ESC"},
+    InspectorModeSpec{GHOSTTY_MODE_REVERSE_WRAP_EXT, "Extended reverse wrap"},
+    InspectorModeSpec{GHOSTTY_MODE_ALT_SCREEN, "Alternate screen (1047)"},
+    InspectorModeSpec{GHOSTTY_MODE_SAVE_CURSOR, "Save cursor"},
+    InspectorModeSpec{GHOSTTY_MODE_ALT_SCREEN_SAVE,
+                      "Alternate screen + save cursor (1049)"},
+    InspectorModeSpec{GHOSTTY_MODE_BRACKETED_PASTE, "Bracketed paste"},
+    InspectorModeSpec{GHOSTTY_MODE_SYNC_OUTPUT, "Synchronized output"},
+    InspectorModeSpec{GHOSTTY_MODE_GRAPHEME_CLUSTER, "Grapheme clusters"},
+    InspectorModeSpec{GHOSTTY_MODE_COLOR_SCHEME_REPORT, "Color-scheme reports"},
+    InspectorModeSpec{GHOSTTY_MODE_IN_BAND_RESIZE, "In-band resize"},
+};
+
 constexpr GhosttyColorScheme
 toGhosttyColorScheme(TerminalColorScheme scheme) noexcept
 {
@@ -1929,6 +1979,166 @@ public:
             return std::nullopt;
         }
         return screen;
+    }
+
+    TerminalInspectorSnapshot inspectorSnapshot() const
+    {
+        TerminalInspectorSnapshot snapshot;
+        if (terminal_ == nullptr) return snapshot;
+        snapshot.status = TerminalInspectorStatus::Failed;
+
+        GhosttyTerminalScreen screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+        GhosttyTerminalScrollbar scrollbar{};
+        size_t totalRows = 0;
+        size_t scrollbackRows = 0;
+        GhosttyKittyKeyFlags kittyKeyboardFlags = GHOSTTY_KITTY_KEY_DISABLED;
+        constexpr std::array keys{
+            GHOSTTY_TERMINAL_DATA_COLS,
+            GHOSTTY_TERMINAL_DATA_ROWS,
+            GHOSTTY_TERMINAL_DATA_CURSOR_X,
+            GHOSTTY_TERMINAL_DATA_CURSOR_Y,
+            GHOSTTY_TERMINAL_DATA_CURSOR_PENDING_WRAP,
+            GHOSTTY_TERMINAL_DATA_CURSOR_VISIBLE,
+            GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN,
+            GHOSTTY_TERMINAL_DATA_VIEWPORT_ACTIVE,
+            GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING,
+            GHOSTTY_TERMINAL_DATA_TOTAL_ROWS,
+            GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS,
+            GHOSTTY_TERMINAL_DATA_SCROLLBAR,
+            GHOSTTY_TERMINAL_DATA_WIDTH_PX,
+            GHOSTTY_TERMINAL_DATA_HEIGHT_PX,
+            GHOSTTY_TERMINAL_DATA_KITTY_KEYBOARD_FLAGS,
+        };
+        std::array<void *, keys.size()> values{
+            &snapshot.columns,
+            &snapshot.rows,
+            &snapshot.cursorColumn,
+            &snapshot.cursorRow,
+            &snapshot.cursorPendingWrap,
+            &snapshot.cursorVisible,
+            &screen,
+            &snapshot.viewportActive,
+            &snapshot.terminalMouseTracking,
+            &totalRows,
+            &scrollbackRows,
+            &scrollbar,
+            &snapshot.widthPixels,
+            &snapshot.heightPixels,
+            &kittyKeyboardFlags,
+        };
+        size_t written = 0;
+        if (ghostty_terminal_get_multi(terminal_, keys.size(), keys.data(),
+                                       values.data(), &written)
+                != GHOSTTY_SUCCESS
+            || written != keys.size()
+            || (screen != GHOSTTY_TERMINAL_SCREEN_PRIMARY
+                && screen != GHOSTTY_TERMINAL_SCREEN_ALTERNATE)) {
+            return snapshot;
+        }
+
+        snapshot.activeScreen = screen == GHOSTTY_TERMINAL_SCREEN_ALTERNATE
+            ? TerminalInspectorScreen::Alternate
+            : TerminalInspectorScreen::Primary;
+        snapshot.totalRows = static_cast<quint64>(totalRows);
+        snapshot.scrollbackRows = static_cast<quint64>(scrollbackRows);
+        snapshot.scrollTotal = scrollbar.total;
+        snapshot.scrollOffset = scrollbar.offset;
+        snapshot.scrollLength = scrollbar.len;
+        snapshot.kittyKeyboardFlags = kittyKeyboardFlags;
+
+        const auto queryColor = [this](GhosttyTerminalData data,
+                                       QColor *result) {
+            GhosttyColorRgb color{};
+            const GhosttyResult query =
+                ghostty_terminal_get(terminal_, data, &color);
+            if (query == GHOSTTY_SUCCESS) {
+                *result = toQColor(color);
+                return true;
+            }
+            if (query == GHOSTTY_NO_VALUE) {
+                *result = QColor{};
+                return true;
+            }
+            return false;
+        };
+        if (!queryColor(GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND,
+                        &snapshot.effectiveForeground)
+            || !queryColor(GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND,
+                           &snapshot.effectiveBackground)
+            || !queryColor(GHOSTTY_TERMINAL_DATA_COLOR_CURSOR,
+                           &snapshot.effectiveCursor)
+            || !queryColor(GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND_DEFAULT,
+                           &snapshot.defaultForeground)
+            || !queryColor(GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND_DEFAULT,
+                           &snapshot.defaultBackground)
+            || !queryColor(GHOSTTY_TERMINAL_DATA_COLOR_CURSOR_DEFAULT,
+                           &snapshot.defaultCursor)) {
+            return snapshot;
+        }
+
+        const auto queryPalette = [this](GhosttyTerminalData data,
+                                         QVector<QColor> *result) {
+            std::array<GhosttyColorRgb, 256> colors{};
+            if (ghostty_terminal_get(terminal_, data, colors.data())
+                != GHOSTTY_SUCCESS) {
+                return false;
+            }
+            result->reserve(static_cast<qsizetype>(colors.size()));
+            for (const GhosttyColorRgb color : colors) {
+                result->append(toQColor(color));
+            }
+            return true;
+        };
+        if (!queryPalette(GHOSTTY_TERMINAL_DATA_COLOR_PALETTE,
+                          &snapshot.effectivePalette)
+            || !queryPalette(GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT,
+                             &snapshot.defaultPalette)) {
+            return snapshot;
+        }
+
+        uint64_t kittyStorageLimit = 0;
+        const GhosttyResult kittyResult = ghostty_terminal_get(
+            terminal_, GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_STORAGE_LIMIT,
+            &kittyStorageLimit);
+        if (kittyResult == GHOSTTY_SUCCESS) {
+            snapshot.kittyGraphicsAvailable = true;
+            snapshot.kittyImageStorageLimitBytes = kittyStorageLimit;
+            if (ghostty_terminal_get(
+                    terminal_, GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_FILE,
+                    &snapshot.kittyFileMedium)
+                    != GHOSTTY_SUCCESS
+                || ghostty_terminal_get(
+                       terminal_,
+                       GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_TEMP_FILE,
+                       &snapshot.kittyTemporaryFileMedium)
+                    != GHOSTTY_SUCCESS
+                || ghostty_terminal_get(
+                       terminal_,
+                       GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_SHARED_MEM,
+                       &snapshot.kittySharedMemoryMedium)
+                    != GHOSTTY_SUCCESS) {
+                return snapshot;
+            }
+        } else if (kittyResult != GHOSTTY_NO_VALUE) {
+            return snapshot;
+        }
+
+        snapshot.modes.reserve(
+            static_cast<qsizetype>(inspectorModeSpecs.size()));
+        for (const InspectorModeSpec &spec : inspectorModeSpecs) {
+            TerminalInspectorModeState mode{
+                .name = QString::fromLatin1(spec.name),
+                .number = ghostty_mode_value(spec.mode),
+                .ansi = ghostty_mode_ansi(spec.mode),
+            };
+            if (ghostty_terminal_mode_get(terminal_, spec.mode, &mode.enabled)
+                != GHOSTTY_SUCCESS) {
+                return snapshot;
+            }
+            snapshot.modes.append(std::move(mode));
+        }
+        snapshot.status = TerminalInspectorStatus::Ready;
+        return snapshot;
     }
 
     GhosttyVtAdapter::SemanticPromptState semanticPromptState() const
@@ -5093,6 +5303,11 @@ bool GhosttyVtAdapter::trackedTextRangeValid(
 bool GhosttyVtAdapter::installTextRange(const TrackedTextRange &range)
 {
     return range.impl_ != nullptr && impl_->installTextRange(*range.impl_);
+}
+
+TerminalInspectorSnapshot GhosttyVtAdapter::inspectorSnapshot() const
+{
+    return impl_->inspectorSnapshot();
 }
 
 std::optional<GhosttyVtAdapter::TextRangeMatch>

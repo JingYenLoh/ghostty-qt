@@ -1,6 +1,7 @@
 #pragma once
 
 #include "terminal_appearance.h"
+#include "terminal_inspector_snapshot.h"
 #include "terminal_session_options.h"
 #include "terminal_types.h"
 #include "terminal_write_file_action.h"
@@ -384,6 +385,10 @@ public:
     // validity query above.
     std::optional<TextRangeMatch>
     resolveTextRange(const TrackedTextRange &range) const;
+
+    // Copy public terminal state into an owned diagnostic value. This is
+    // intentionally request-driven rather than part of every render update.
+    [[nodiscard]] TerminalInspectorSnapshot inspectorSnapshot() const;
 
     // Mirror Ghostty's cursor-at-prompt policy using the public C surface:
     // alternate screens are always Away; a semantic prompt/continuation row

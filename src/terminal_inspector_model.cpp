@@ -67,6 +67,25 @@ QString colorName(const QColor &color)
                            : QStringLiteral("invalid");
 }
 
+QString optionalColorName(const QColor &color)
+{
+    return color.isValid() ? color.name(QColor::HexArgb) : QString{};
+}
+
+QString terminalStatusName(TerminalInspectorStatus status, bool requestPending)
+{
+    if (requestPending && status == TerminalInspectorStatus::Unavailable) {
+        return QStringLiteral("Requesting");
+    }
+    switch (status) {
+    case TerminalInspectorStatus::Unavailable:
+        return QStringLiteral("Unavailable");
+    case TerminalInspectorStatus::Ready: return QStringLiteral("Ready");
+    case TerminalInspectorStatus::Failed: return QStringLiteral("Failed");
+    }
+    return QStringLiteral("Unavailable");
+}
+
 } // namespace
 
 TerminalInspectorModel::TerminalInspectorModel(TerminalPane *pane)
@@ -78,11 +97,40 @@ TerminalInspectorModel::TerminalInspectorModel(TerminalPane *pane)
     refreshTimer_->setTimerType(Qt::CoarseTimer);
     connect(refreshTimer_, &QTimer::timeout, this,
             &TerminalInspectorModel::refresh);
+    if (pane != nullptr && pane->controller_ != nullptr) {
+        connect(pane->controller_,
+                &TerminalController::terminalInspectorSnapshotReady, this,
+                [this](quint64 requestId,
+                       const TerminalInspectorSnapshot &snapshot) {
+                    if (requestId == 0
+                        || requestId != pendingTerminalRequestId_) {
+                        return;
+                    }
+                    pendingTerminalRequestId_ = 0;
+                    terminalSnapshot_ = snapshot;
+                    rebuildSnapshot();
+                });
+    }
     refresh();
     refreshTimer_->start();
 }
 
 void TerminalInspectorModel::refresh()
+{
+    rebuildSnapshot();
+    if (pendingTerminalRequestId_ != 0) return;
+
+    TerminalPane *const pane = pane_.data();
+    if (pane == nullptr || pane->controller_ == nullptr) return;
+    pendingTerminalRequestId_ =
+        pane->controller_->requestTerminalInspectorSnapshot();
+    if (pendingTerminalRequestId_ != 0
+        && terminalSnapshot_.status == TerminalInspectorStatus::Unavailable) {
+        rebuildSnapshot();
+    }
+}
+
+void TerminalInspectorModel::rebuildSnapshot()
 {
     TerminalPane *const pane = pane_.data();
     if (pane == nullptr) return;
@@ -191,7 +239,7 @@ void TerminalInspectorModel::refresh()
         surface.insert(QStringLiteral("gridHeight"), layout->gridRect.height());
     }
 
-    const QVariantMap terminal{
+    QVariantMap terminal{
         {QStringLiteral("running"),
          controller != nullptr && controller->running()},
         {QStringLiteral("activeProcess"),
@@ -229,7 +277,7 @@ void TerminalInspectorModel::refresh()
         {QStringLiteral("palette"), paletteNames},
     };
 
-    const QVariantMap keyboard{
+    QVariantMap keyboard{
         {QStringLiteral("activeTables"), pane->activeKeyTables()},
         {QStringLiteral("pendingSequence"), pane->pendingKeySequence()},
         {QStringLiteral("modifiers"), modifierNames(pane->keyboardModifiers_)},
@@ -238,7 +286,7 @@ void TerminalInspectorModel::refresh()
          static_cast<qlonglong>(pane->deferredInputs_.size())},
     };
 
-    const QVariantMap renderer{
+    QVariantMap renderer{
         {QStringLiteral("graphicsApi"), graphicsApiName(window)},
         {QStringLiteral("customShaderStages"),
          pane->customShaderStages_.size()},
@@ -251,6 +299,121 @@ void TerminalInspectorModel::refresh()
          QVariant::fromValue(kittyStorageGeneration)},
         {QStringLiteral("kittyVirtualPlacements"), kittyVirtualPlacements},
     };
+
+    terminal.insert(QStringLiteral("authoritativeStatus"),
+                    terminalStatusName(terminalSnapshot_.status,
+                                       pendingTerminalRequestId_ != 0));
+    terminal.insert(QStringLiteral("authoritativeAvailable"),
+                    terminalSnapshot_.status == TerminalInspectorStatus::Ready);
+    if (terminalSnapshot_.status == TerminalInspectorStatus::Ready) {
+        const TerminalInspectorSnapshot &vt = terminalSnapshot_;
+        terminal.insert(QStringLiteral("workerContentRevision"),
+                        QVariant::fromValue(vt.contentRevision));
+        terminal.insert(QStringLiteral("activeScreen"),
+                        vt.activeScreen == TerminalInspectorScreen::Alternate
+                            ? QStringLiteral("Alternate")
+                            : QStringLiteral("Primary"));
+        terminal.insert(QStringLiteral("vtColumns"), vt.columns);
+        terminal.insert(QStringLiteral("vtRows"), vt.rows);
+        terminal.insert(QStringLiteral("vtWidthPixels"), vt.widthPixels);
+        terminal.insert(QStringLiteral("vtHeightPixels"), vt.heightPixels);
+        terminal.insert(QStringLiteral("vtCursorColumn"), vt.cursorColumn);
+        terminal.insert(QStringLiteral("vtCursorRow"), vt.cursorRow);
+        terminal.insert(QStringLiteral("cursorPendingWrap"),
+                        vt.cursorPendingWrap);
+        terminal.insert(QStringLiteral("decCursorVisible"), vt.cursorVisible);
+        terminal.insert(QStringLiteral("viewportActive"), vt.viewportActive);
+        terminal.insert(QStringLiteral("totalRows"),
+                        QVariant::fromValue(vt.totalRows));
+        terminal.insert(QStringLiteral("scrollbackRows"),
+                        QVariant::fromValue(vt.scrollbackRows));
+        terminal.insert(QStringLiteral("scrollTotal"),
+                        QVariant::fromValue(vt.scrollTotal));
+        terminal.insert(QStringLiteral("scrollOffset"),
+                        QVariant::fromValue(vt.scrollOffset));
+        terminal.insert(QStringLiteral("scrollLength"),
+                        QVariant::fromValue(vt.scrollLength));
+        terminal.insert(QStringLiteral("terminalMouseTracking"),
+                        vt.terminalMouseTracking);
+        terminal.insert(QStringLiteral("effectiveForeground"),
+                        optionalColorName(vt.effectiveForeground));
+        terminal.insert(QStringLiteral("effectiveBackground"),
+                        optionalColorName(vt.effectiveBackground));
+        terminal.insert(QStringLiteral("effectiveCursor"),
+                        optionalColorName(vt.effectiveCursor));
+        terminal.insert(QStringLiteral("defaultForeground"),
+                        optionalColorName(vt.defaultForeground));
+        terminal.insert(QStringLiteral("defaultBackground"),
+                        optionalColorName(vt.defaultBackground));
+        terminal.insert(QStringLiteral("defaultCursor"),
+                        optionalColorName(vt.defaultCursor));
+
+        QVariantList effectivePalette;
+        effectivePalette.reserve(vt.effectivePalette.size());
+        for (const QColor &color : vt.effectivePalette) {
+            effectivePalette.append(colorName(color));
+        }
+        terminal.insert(QStringLiteral("palette"), effectivePalette);
+
+        QVariantList paletteDifferences;
+        if (vt.effectivePalette.size() == vt.defaultPalette.size()) {
+            for (qsizetype index = 0; index < vt.effectivePalette.size();
+                 ++index) {
+                if (vt.effectivePalette.at(index)
+                    != vt.defaultPalette.at(index)) {
+                    paletteDifferences.append(index);
+                }
+            }
+        }
+        terminal.insert(QStringLiteral("paletteDifferences"),
+                        paletteDifferences);
+
+        QVariantList modes;
+        modes.reserve(vt.modes.size());
+        for (const TerminalInspectorModeState &mode : vt.modes) {
+            modes.append(QVariantMap{
+                {QStringLiteral("name"), mode.name},
+                {QStringLiteral("number"), mode.number},
+                {QStringLiteral("ansi"), mode.ansi},
+                {QStringLiteral("enabled"), mode.enabled},
+            });
+        }
+        terminal.insert(QStringLiteral("modes"), modes);
+
+        QStringList kittyFlags;
+        if ((vt.kittyKeyboardFlags & quint8{1U << 0U}) != 0) {
+            kittyFlags.append(QStringLiteral("Disambiguate"));
+        }
+        if ((vt.kittyKeyboardFlags & quint8{1U << 1U}) != 0) {
+            kittyFlags.append(QStringLiteral("Report events"));
+        }
+        if ((vt.kittyKeyboardFlags & quint8{1U << 2U}) != 0) {
+            kittyFlags.append(QStringLiteral("Report alternates"));
+        }
+        if ((vt.kittyKeyboardFlags & quint8{1U << 3U}) != 0) {
+            kittyFlags.append(QStringLiteral("Report all"));
+        }
+        if ((vt.kittyKeyboardFlags & quint8{1U << 4U}) != 0) {
+            kittyFlags.append(QStringLiteral("Report associated text"));
+        }
+        keyboard.insert(QStringLiteral("kittyFlagsValue"),
+                        vt.kittyKeyboardFlags);
+        keyboard.insert(QStringLiteral("kittyFlags"), kittyFlags);
+
+        renderer.insert(QStringLiteral("kittyProtocolAvailable"),
+                        vt.kittyGraphicsAvailable);
+        if (vt.kittyGraphicsAvailable) {
+            renderer.insert(
+                QStringLiteral("kittyStorageLimit"),
+                QVariant::fromValue(vt.kittyImageStorageLimitBytes));
+            renderer.insert(QStringLiteral("kittyFileMedium"),
+                            vt.kittyFileMedium);
+            renderer.insert(QStringLiteral("kittyTemporaryFileMedium"),
+                            vt.kittyTemporaryFileMedium);
+            renderer.insert(QStringLiteral("kittySharedMemoryMedium"),
+                            vt.kittySharedMemoryMedium);
+        }
+    }
 
     QVariantMap next{
         {QStringLiteral("title"), pane->title()},
@@ -267,4 +430,10 @@ void TerminalInspectorModel::refresh()
 void TerminalInspectorModel::close()
 {
     if (pane_ != nullptr) pane_->closeInspector();
+}
+
+void TerminalInspectorModel::deactivate()
+{
+    refreshTimer_->stop();
+    pendingTerminalRequestId_ = 0;
 }

@@ -693,6 +693,21 @@ ownership explicit and localizing future upstream C API changes. A full-grid
 fallback keeps resize and viewport changes simple while ordinary output avoids
 copying unchanged rows between threads.
 
+The pane-local inspector follows the same ownership boundary without adding
+diagnostic work to the output path. Its model and 250 ms coarse timer exist
+only while the separate inspector window is open. The model permits one
+correlated request in flight; `SessionWorker` samples the terminal between its
+other serialized operations and stamps the result with the terminal-content
+revision. `GhosttyVtAdapter` copies active-screen geometry, cursor position,
+DEC visibility and pending wrap, viewport and scrollback metadata, raw mouse
+tracking, effective and default colors and palettes, Kitty keyboard/storage
+state, and all 41 public ANSI/DEC modes into one owned value. The controller
+discards superseded IDs, and the model accepts only its pending ID. Closing the
+inspector destroys the timer immediately, so hidden panes make no requests.
+This public snapshot deliberately does not expose inactive-screen, PageList,
+parser, or cell internals; explicit cell queries remain a separate on-demand
+concern because history coordinates may traverse and restore compressed pages.
+
 The finalized `scroll-to-bottom.output` flag is evaluated at the frame
 boundary, before the visible value update is copied. When output scrolling is
 enabled and synchronized output is not active, the adapter resolves the active

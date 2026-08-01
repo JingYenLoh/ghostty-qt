@@ -875,6 +875,7 @@ qt_add_shaders(
 add_library(ghostty-qt-vt-adapter STATIC
     src/ghostty_vt_adapter.cpp
     src/ghostty_vt_adapter.h
+    src/terminal_inspector_snapshot.h
 )
 target_include_directories(ghostty-qt-vt-adapter PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
