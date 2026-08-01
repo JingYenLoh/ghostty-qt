@@ -4474,6 +4474,113 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
     QVERIFY(firstPane->inspectorVisible());
     TerminalInspectorModel *const firstModel = firstPane->inspectorModel();
     QVERIFY(firstModel != nullptr);
+    auto *const firstEvents =
+        qobject_cast<TerminalInspectorEventModel *>(firstModel->eventModel());
+    QVERIFY(firstEvents != nullptr);
+    QCOMPARE(firstEvents->capacity(),
+             TerminalInspectorEventModel::DefaultCapacity);
+    firstEvents->clear();
+    const QVariantMap initialSurface =
+        firstModel->snapshot().value(QStringLiteral("surface")).toMap();
+    const QVariantMap initialTerminal =
+        firstModel->snapshot().value(QStringLiteral("terminal")).toMap();
+    const TerminalUpdate diagnosticUpdate{
+        .columns = initialSurface.value(QStringLiteral("gridColumns")).toInt(),
+        .rows = initialSurface.value(QStringLiteral("gridRows")).toInt(),
+        .contentRevision =
+            initialTerminal.value(QStringLiteral("contentRevision"))
+                .toULongLong(),
+        .resetCursorBlink = true,
+    };
+    QSignalSpy skippedChanged(
+        firstEvents, &TerminalInspectorEventModel::skippedWhilePausedChanged);
+    firstController->terminalUpdated(diagnosticUpdate);
+    firstEvents->setPaused(true);
+    QCOMPARE(firstEvents->count(), 0);
+    QCOMPARE(firstEvents->skippedWhilePaused(), quint64{1});
+    QCOMPARE(skippedChanged.count(), 0);
+    firstController->sendKey({.key = Qt::Key_B, .text = QStringLiteral("b")});
+    QCOMPARE(firstEvents->count(), 0);
+    QCOMPARE(firstEvents->skippedWhilePaused(), quint64{2});
+    QCOMPARE(skippedChanged.count(), 0);
+    firstEvents->setPaused(false);
+    QCOMPARE(skippedChanged.count(), 1);
+
+    firstController->sendKey({
+        .key = Qt::Key_A,
+        .modifiers = Qt::ControlModifier,
+        .text = QStringLiteral("a\t\u202e"),
+        .nativeScanCode = 0x26,
+    });
+    QCOMPARE(firstEvents->count(), 1);
+    const QModelIndex forwardedKey = firstEvents->index(0, 0);
+    QCOMPARE(firstEvents
+                 ->data(forwardedKey, TerminalInspectorEventModel::SequenceRole)
+                 .toULongLong(),
+             quint64{3});
+    QCOMPARE(firstEvents
+                 ->data(forwardedKey, TerminalInspectorEventModel::CategoryRole)
+                 .toString(),
+             QStringLiteral("Input"));
+    QCOMPARE(
+        firstEvents->data(forwardedKey, TerminalInspectorEventModel::KindRole)
+            .toString(),
+        QStringLiteral("Forwarded key request"));
+    const QString forwardedSummary =
+        firstEvents
+            ->data(forwardedKey, TerminalInspectorEventModel::SummaryRole)
+            .toString();
+    QVERIFY(forwardedSummary.contains(QStringLiteral("Ctrl")));
+    QVERIFY(forwardedSummary.contains(QStringLiteral("\\t")));
+    QVERIFY(forwardedSummary.contains(QStringLiteral("\\u{202e}")));
+    QVERIFY(!forwardedSummary.contains(QChar(0x202e)));
+
+    firstEvents->setCategoryFilter(
+        static_cast<int>(TerminalInspectorEventModel::Category::Terminal));
+    firstEvents->clear();
+    firstController->terminalUpdated(diagnosticUpdate);
+    firstController->terminalUpdated(diagnosticUpdate);
+    QTRY_COMPARE_WITH_TIMEOUT(firstEvents->count(), 1, 1000);
+    const QModelIndex coalescedFrame = firstEvents->index(0, 0);
+    QCOMPARE(
+        firstEvents->data(coalescedFrame, TerminalInspectorEventModel::KindRole)
+            .toString(),
+        QStringLiteral("Frame update"));
+    const QString coalescedSummary =
+        firstEvents
+            ->data(coalescedFrame, TerminalInspectorEventModel::SummaryRole)
+            .toString();
+    bool updateCountValid = false;
+    const int coalescedUpdateCount =
+        coalescedSummary.section(u' ', 0, 0).toInt(&updateCountValid);
+    QVERIFY2(updateCountValid && coalescedUpdateCount >= 2,
+             qPrintable(coalescedSummary));
+
+    firstEvents->clear();
+    firstEvents->setCategoryFilter(-1);
+    firstController->terminalUpdated(diagnosticUpdate);
+    firstController->sendKey({.key = Qt::Key_C, .text = QStringLiteral("c")});
+    QCOMPARE(firstEvents->count(), 2);
+    QCOMPARE(firstEvents
+                 ->data(firstEvents->index(0, 0),
+                        TerminalInspectorEventModel::KindRole)
+                 .toString(),
+             QStringLiteral("Forwarded key request"));
+    QCOMPARE(firstEvents
+                 ->data(firstEvents->index(1, 0),
+                        TerminalInspectorEventModel::KindRole)
+                 .toString(),
+             QStringLiteral("Frame update"));
+
+    firstEvents->setCategoryFilter(
+        static_cast<int>(TerminalInspectorEventModel::Category::Terminal));
+    firstEvents->clear();
+    firstController->terminalUpdated(diagnosticUpdate);
+    firstEvents->clear();
+    QTest::qWait(75);
+    QCOMPARE(firstEvents->count(), 0);
+    firstEvents->setCategoryFilter(-1);
+    firstEvents->clear();
     firstModel->refresh();
     const QVariantMap firstSnapshot = firstModel->snapshot();
     QCOMPARE(firstSnapshot.value(QStringLiteral("title")).toString(),
@@ -4587,6 +4694,7 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
     firstModel->beginCellPick();
     QVERIFY(firstPane->inspectorCellPicking());
     QPointer<TerminalInspectorModel> hiddenModel(firstModel);
+    QPointer<TerminalInspectorEventModel> hiddenEvents(firstEvents);
     QVERIFY(workspace.controlInspector(
         firstId, WorkspaceFrontendActions::InspectorMode::Toggle));
     QVERIFY(!firstPane->inspectorVisible());
@@ -4599,6 +4707,7 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
     QCOMPARE(cellRequests.count(), cellRequestsBeforeInactiveCalls);
     QVERIFY(!firstPane->inspectorCellPicking());
     QTRY_VERIFY_WITH_TIMEOUT(hiddenModel.isNull(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(hiddenEvents.isNull(), 1000);
     const int requestsAfterHide = inspectorRequests.count();
     QTest::qWait(350);
     QCOMPARE(inspectorRequests.count(), requestsAfterHide);
@@ -4628,6 +4737,18 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
     QVERIFY(firstPane->inspectorVisible());
     QVERIFY(secondPane->inspectorVisible());
     QVERIFY(firstPane->inspectorModel() != secondPane->inspectorModel());
+    auto *const reopenedFirstEvents =
+        qobject_cast<TerminalInspectorEventModel *>(
+            firstPane->inspectorModel()->eventModel());
+    auto *const secondEvents = qobject_cast<TerminalInspectorEventModel *>(
+        secondPane->inspectorModel()->eventModel());
+    QVERIFY(reopenedFirstEvents != nullptr);
+    QVERIFY(secondEvents != nullptr);
+    reopenedFirstEvents->clear();
+    secondEvents->clear();
+    firstController->sendKey({.key = Qt::Key_C, .text = QStringLiteral("c")});
+    QCOMPARE(reopenedFirstEvents->count(), 1);
+    QCOMPARE(secondEvents->count(), 0);
     QCOMPARE(firstPane->inspectorModel()
                  ->snapshot()
                  .value(QStringLiteral("cell"))
@@ -4703,6 +4824,31 @@ void TerminalWorkspaceTest::inspectorQmlWindowTracksPaneLifetime()
     QVERIFY(
         host->findChild<QQuickItem *>(QStringLiteral("terminalInspectorTabs"))
         != nullptr);
+    for (const QString &objectName :
+         {QStringLiteral("terminalInspectorEventsTab"),
+          QStringLiteral("terminalInspectorEventsPage"),
+          QStringLiteral("terminalInspectorEventCategory"),
+          QStringLiteral("terminalInspectorEventSearch"),
+          QStringLiteral("terminalInspectorEventPause"),
+          QStringLiteral("terminalInspectorEventClear"),
+          QStringLiteral("terminalInspectorEventStatus"),
+          QStringLiteral("terminalInspectorEventList"),
+          QStringLiteral("terminalInspectorEventDetails")}) {
+        QVERIFY2(host->findChild<QQuickItem *>(objectName) != nullptr,
+                 qPrintable(objectName));
+    }
+    auto *const eventModel = qobject_cast<TerminalInspectorEventModel *>(
+        pane->inspectorModel()->eventModel());
+    TerminalController *const controller =
+        pane->findChild<TerminalController *>();
+    QQuickItem *const eventList = host->findChild<QQuickItem *>(
+        QStringLiteral("terminalInspectorEventList"));
+    QVERIFY(eventModel != nullptr);
+    QVERIFY(controller != nullptr);
+    QVERIFY(eventList != nullptr);
+    eventModel->clear();
+    controller->sendKey({.key = Qt::Key_D, .text = QStringLiteral("d")});
+    QTRY_COMPARE_WITH_TIMEOUT(eventList->property("count").toInt(), 1, 1000);
 
     pane->inspectorModel()->beginCellPick();
     QVERIFY(pane->inspectorCellPicking());

@@ -716,6 +716,31 @@ Inactive-screen and page-allocation data remain unavailable through the public
 API, while arbitrary history coordinates stay out of the periodic path because
 they may traverse and restore compressed pages.
 
+The same short-lived inspector model owns a separate `QAbstractListModel` event
+ring rather than adding event rows to the 250 ms snapshot. It retains at most
+256 copied summaries, newest first. Controller input requests, pane and session
+state transitions, and terminal frame publications enter one monotonic
+sequence; frame publications are reduced to scalar flags, dimensions, dirty-row
+counts, cursor position, and revisions, then coalesced over 50 ms. Terminal
+cells, palettes, Kitty image pointers, paste contents, and serialized CSI,
+escape, and raw-text payloads never enter the ring. Text diagnostics use bounded
+escaped previews, while every stored field and the filter query also have hard
+length limits. Key and input-method previews can contain typed secrets; their
+capture lifetime is therefore the explicitly open inspector window.
+Filtering rebuilds only the visible projection, pausing advances sequence IDs
+without retaining observations or publishing per-observation model updates,
+and clearing cannot publish an already pending frame batch. Closing the
+inspector disconnects all sources and destroys the ring, so capture has no
+hidden-pane lifetime.
+
+This event ring is an intentionally incremental diagnostic projection, not yet
+Ghostty's complete inspector trace. It observes requests that reach the pane's
+controller but not root-consumed keybinding decisions, and it does not correlate
+those requests with the session worker's encoded bytes. Exact terminal-I/O rows
+also require a second, inspector-only parser stream built against the pinned
+Ghostty Zig module; the public C bridge exposes terminal effects, not its raw
+parser-action stream.
+
 The finalized `scroll-to-bottom.output` flag is evaluated at the frame
 boundary, before the visible value update is copied. When output scrolling is
 enabled and synchronized output is not active, the adapter resolves the active

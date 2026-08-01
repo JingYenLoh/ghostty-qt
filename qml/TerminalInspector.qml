@@ -19,6 +19,9 @@ Item {
     readonly property var snapshot: inspectorModel !== null
                                     && inspectorModel.snapshot !== undefined
                                     ? inspectorModel.snapshot : ({})
+    readonly property var eventModel: inspectorModel !== null
+                                      && inspectorModel.eventModel !== undefined
+                                      ? inspectorModel.eventModel : null
     readonly property var surface: snapshot.surface || ({})
     readonly property var terminal: snapshot.terminal || ({})
     readonly property var keyboard: snapshot.keyboard || ({})
@@ -270,6 +273,10 @@ Item {
                 TabButton { text: qsTr("Cell") }
                 TabButton { text: qsTr("Terminal") }
                 TabButton { text: qsTr("Keyboard") }
+                TabButton {
+                    objectName: "terminalInspectorEventsTab"
+                    text: qsTr("Events")
+                }
                 TabButton { text: qsTr("Renderer") }
             }
 
@@ -661,9 +668,314 @@ Item {
                     Label {
                         Layout.fillWidth: true
                         Layout.topMargin: 14
-                        text: qsTr("Raw VT parser and encoded keyboard event streams are not exposed by libghostty-vt.")
+                        text: qsTr("The Events tab records requests forwarded by this pane. Root-consumed binding decisions and the worker's encoded key bytes are not retained yet.")
                         wrapMode: Text.WordWrap
                         opacity: 0.68
+                    }
+                }
+
+                Item {
+                    id: eventsPage
+
+                    property bool eventSelected: false
+                    property string selectedSequence: ""
+                    property string selectedSummary: ""
+                    property string selectedDetails: ""
+
+                    objectName: "terminalInspectorEventsPage"
+
+                    function clearEventSelection() {
+                        eventSelected = false
+                        selectedSequence = ""
+                        selectedSummary = ""
+                        selectedDetails = ""
+                        eventList.currentIndex = -1
+                    }
+
+                    function emptyMessage() {
+                        if (host.eventModel === null)
+                            return qsTr("Event capture is unavailable")
+                        if (host.eventModel.retainedCount === 0) {
+                            return host.eventModel.paused
+                                    ? qsTr("Capture is paused")
+                                    : qsTr("Waiting for events…")
+                        }
+                        return qsTr("No matching events")
+                    }
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: 8
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            ComboBox {
+                                id: eventCategory
+
+                                objectName: "terminalInspectorEventCategory"
+                                Layout.preferredWidth: 130
+                                enabled: host.eventModel !== null
+                                textRole: "text"
+                                valueRole: "value"
+                                model: [
+                                    { "text": qsTr("All events"), "value": -1 },
+                                    { "text": qsTr("Input"), "value": 0 },
+                                    { "text": qsTr("Terminal"), "value": 1 },
+                                    { "text": qsTr("State"), "value": 2 }
+                                ]
+                                currentIndex: host.eventModel !== null
+                                              ? host.eventModel.categoryFilter + 1
+                                              : 0
+                                Accessible.name: qsTr("Event category")
+                                onActivated: {
+                                    if (host.eventModel !== null)
+                                        host.eventModel.setCategoryFilter(currentValue)
+                                }
+                            }
+
+                            TextField {
+                                id: eventSearch
+
+                                objectName: "terminalInspectorEventSearch"
+                                Layout.fillWidth: true
+                                enabled: host.eventModel !== null
+                                text: host.eventModel !== null
+                                      ? host.eventModel.filterText : ""
+                                placeholderText: qsTr("Filter retained events")
+                                maximumLength: 128
+                                selectByMouse: true
+                                Accessible.name: placeholderText
+                                onTextEdited: {
+                                    if (host.eventModel !== null)
+                                        host.eventModel.setFilterText(text)
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Button {
+                                id: eventPause
+
+                                objectName: "terminalInspectorEventPause"
+                                enabled: host.eventModel !== null
+                                checkable: true
+                                checked: host.eventModel !== null
+                                         && host.eventModel.paused
+                                text: checked ? qsTr("Resume capture")
+                                              : qsTr("Pause capture")
+                                Accessible.name: text
+                                onToggled: {
+                                    if (host.eventModel !== null)
+                                        host.eventModel.setPaused(checked)
+                                }
+                            }
+
+                            Button {
+                                objectName: "terminalInspectorEventClear"
+                                enabled: host.eventModel !== null
+                                         && host.eventModel.retainedCount > 0
+                                text: qsTr("Clear")
+                                Accessible.name: qsTr("Clear retained events")
+                                onClicked: host.eventModel.clear()
+                            }
+
+                            Label {
+                                objectName: "terminalInspectorEventStatus"
+                                Layout.fillWidth: true
+                                horizontalAlignment: Text.AlignRight
+                                elide: Text.ElideLeft
+                                opacity: 0.72
+                                text: {
+                                    if (host.eventModel === null)
+                                        return qsTr("Unavailable")
+                                    let status = qsTr("%1 shown · %2/%3 retained")
+                                        .arg(host.eventModel.count)
+                                        .arg(host.eventModel.retainedCount)
+                                        .arg(host.eventModel.capacity)
+                                    if (host.eventModel.evictedCount > 0) {
+                                        status += qsTr(" · %1 evicted")
+                                            .arg(host.eventModel.evictedCount)
+                                    }
+                                    if (host.eventModel.skippedWhilePaused > 0) {
+                                        status += qsTr(" · %1 skipped")
+                                            .arg(host.eventModel.skippedWhilePaused)
+                                    }
+                                    if (host.eventModel.paused)
+                                        status += qsTr(" · Paused")
+                                    return status
+                                }
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("This stream contains frontend requests, coalesced terminal frame updates, and pane state changes. Input rows retain bounded, escaped key or input-method text previews that can include typed secrets; paste contents are omitted, and capture stops when the inspector closes. It does not yet retain root-consumed binding decisions, worker-encoded key bytes, or a separately parsed raw VT action stream.")
+                            wrapMode: Text.WordWrap
+                            opacity: 0.68
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            Layout.minimumHeight: 80
+                            color: inspectorWindow.palette.base
+                            border.color: inspectorWindow.palette.mid
+                            border.width: 1
+                            radius: 3
+                            clip: true
+
+                            ListView {
+                                id: eventList
+
+                                objectName: "terminalInspectorEventList"
+                                anchors.fill: parent
+                                anchors.margins: 1
+                                model: host.eventModel
+                                clip: true
+                                reuseItems: true
+                                cacheBuffer: 96
+                                boundsBehavior: Flickable.StopAtBounds
+                                currentIndex: -1
+                                focus: false
+
+                                delegate: ItemDelegate {
+                                    id: eventDelegate
+
+                                    required property int index
+                                    required property var sequence
+                                    required property string elapsedText
+                                    required property string category
+                                    required property string kind
+                                    required property string summary
+                                    required property string details
+
+                                    width: ListView.view.width
+                                    height: 52
+                                    highlighted: ListView.isCurrentItem
+                                    Accessible.name: summary
+                                    Accessible.description: details
+                                    onClicked: {
+                                        eventList.currentIndex = index
+                                        eventsPage.eventSelected = true
+                                        eventsPage.selectedSequence = String(sequence)
+                                        eventsPage.selectedSummary = summary
+                                        eventsPage.selectedDetails = details
+                                    }
+
+                                    contentItem: ColumnLayout {
+                                        spacing: 1
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 7
+
+                                            Label {
+                                                text: "#" + eventDelegate.sequence
+                                                font.family: "monospace"
+                                                opacity: 0.68
+                                            }
+                                            Label {
+                                                text: eventDelegate.category
+                                                font.bold: true
+                                            }
+                                            Label {
+                                                Layout.fillWidth: true
+                                                text: eventDelegate.kind
+                                                elide: Text.ElideRight
+                                                opacity: 0.78
+                                            }
+                                            Label {
+                                                text: eventDelegate.elapsedText
+                                                font.family: "monospace"
+                                                opacity: 0.68
+                                            }
+                                        }
+
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: eventDelegate.summary
+                                            elide: Text.ElideRight
+                                            font.family: "monospace"
+                                        }
+                                    }
+                                }
+
+                                ScrollBar.vertical: ScrollBar {}
+                            }
+
+                            Label {
+                                anchors.centerIn: parent
+                                visible: eventList.count === 0
+                                text: eventsPage.emptyMessage()
+                                opacity: 0.68
+                            }
+                        }
+
+                        Frame {
+                            objectName: "terminalInspectorEventDetails"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: visible ? 112 : 0
+                            visible: eventsPage.eventSelected
+                            padding: 8
+
+                            contentItem: ColumnLayout {
+                                spacing: 4
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: eventsPage.eventSelected
+                                          ? qsTr("Event #%1 details")
+                                              .arg(eventsPage.selectedSequence)
+                                          : ""
+                                    font.bold: true
+                                    elide: Text.ElideRight
+                                }
+
+                                ScrollView {
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                                    TextArea {
+                                        readOnly: true
+                                        selectByMouse: true
+                                        wrapMode: TextEdit.WrapAnywhere
+                                        text: {
+                                            if (!eventsPage.eventSelected)
+                                                return ""
+                                            if (eventsPage.selectedDetails.length === 0)
+                                                return eventsPage.selectedSummary
+                                            return eventsPage.selectedSummary
+                                                    + "\n\n"
+                                                    + eventsPage.selectedDetails
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Connections {
+                        target: host.eventModel
+
+                        function onModelReset() {
+                            eventsPage.clearEventSelection()
+                        }
+
+                        function onCleared() {
+                            eventsPage.clearEventSelection()
+                        }
+
+                        function onEventEvicted(sequence) {
+                            if (eventsPage.selectedSequence === String(sequence))
+                                eventsPage.clearEventSelection()
+                        }
                     }
                 }
 

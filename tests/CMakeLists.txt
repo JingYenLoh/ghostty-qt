@@ -554,6 +554,8 @@ add_test(NAME linux-cgroup COMMAND test-linux-cgroup)
 set_tests_properties(linux-cgroup PROPERTIES TIMEOUT 15)
 
 ghostty_qt_add_internal_library(ghostty-qt-render-test-support
+    ../src/terminal_inspector_event_model.cpp
+    ../src/terminal_inspector_event_model.h
     ../src/terminal_inspector_model.cpp
     ../src/terminal_inspector_model.h
     ../src/terminal_pane.cpp
@@ -663,6 +665,22 @@ target_link_libraries(test-terminal-bell PRIVATE
 )
 add_test(NAME terminal-bell COMMAND test-terminal-bell)
 set_tests_properties(terminal-bell PROPERTIES TIMEOUT 10)
+
+qt_add_executable(test-terminal-inspector-events
+    test_terminal_inspector_events.cpp
+    ../src/terminal_inspector_event_model.cpp
+    ../src/terminal_inspector_event_model.h
+)
+target_include_directories(test-terminal-inspector-events PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-terminal-inspector-events PRIVATE
+    Qt6::Core
+    Qt6::Test
+)
+add_test(NAME terminal-inspector-events
+    COMMAND test-terminal-inspector-events)
+set_tests_properties(terminal-inspector-events PROPERTIES TIMEOUT 10)
 
 qt_add_executable(test-ghostty-smoke
     test_ghostty_smoke.cpp

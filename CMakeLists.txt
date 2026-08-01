@@ -1104,6 +1104,8 @@ qt_add_executable(ghostty-qt
     src/terminal_pane_renderer.h
     src/terminal_session_options.h
     src/terminal_initial_input.h
+    src/terminal_inspector_event_model.cpp
+    src/terminal_inspector_event_model.h
     src/terminal_inspector_model.cpp
     src/terminal_inspector_model.h
     src/terminal_typography.h
