@@ -672,18 +672,17 @@ renderer can apply those later policies without reconstructing terminal style
 state.
 
 ENQ (`0x05`) follows a terminal-protocol return path inside that same worker
-transaction. The adapter owns Ghostty's finalized raw `enquiry-response` bytes
-and keeps that storage stable across the enquiry callback return and
-libghostty's synchronous consumption. An empty response is silent. For a
-response of 1–255 bytes, each parsed ENQ invokes the callback once and
-libghostty forwards one byte-exact write—including embedded NUL—through its
-ordinary `write_pty` callback. `SessionWorker` queues that callback with
-device-status and other terminal-generated replies rather than with surface
-input, so read-only mode does not suppress it. Live configuration replacement
-happens on the session thread before later VT parsing, keeping the callback
-storage and response generation ordered. The pinned public libghostty bridge
-uses a 256-byte scratch buffer and silently drops responses of 256 bytes or
-more; full Ghostty's termio path has no corresponding configured-length limit.
+transaction. The adapter owns Ghostty's finalized raw `enquiry-response` bytes.
+An empty response is silent. Each parsed ENQ invokes the public callback once;
+the adapter publishes the complete value—including embedded NUL—through the
+same ordered public PTY sink and returns an empty response to prevent the
+standalone stream bridge from writing it again. This matches full Ghostty while
+avoiding that bridge's private 255-byte scratch-buffer ceiling without parsing
+terminal input twice. `SessionWorker` queues the callback with device-status
+and other terminal-generated replies rather than with surface input, so
+read-only mode does not suppress it. Live configuration replacement happens on
+the session thread before later VT parsing, keeping response generation
+ordered.
 
 The application-facing adapter header contains only Qt and project value
 types; the Ghostty C header and every Ghostty handle remain in its private

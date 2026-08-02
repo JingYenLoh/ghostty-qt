@@ -8397,6 +8397,11 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
         QStringLiteral("ctrl+r=reload_config"),
         QStringLiteral("alt+f4=close_window"),
         QStringLiteral("ctrl+y=open_config"),
+        QStringLiteral("alt+a=close_all_windows"),
+        QStringLiteral("unconsumed:alt+b=close_all_windows"),
+        QStringLiteral("performable:alt+c=close_all_windows"),
+        QStringLiteral("alt+z=close_all_windows"),
+        QStringLiteral("chain=new_tab"),
         QStringLiteral("ctrl+b=copy_to_clipboard:mixed"),
         QStringLiteral("unconsumed:ctrl+l=reload_config"),
         QStringLiteral("unconsumed:ctrl+i=ignore"),
@@ -8493,6 +8498,40 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QCOMPARE(applicationActionCount(ApplicationAction::OpenConfig), 1);
     QCOMPARE(forwarded.count(), beforeOpenConfig);
 
+    const int beforeDeprecatedNoOp = forwarded.count();
+    QKeyEvent deprecatedNoOp(QEvent::KeyPress, Qt::Key_A, Qt::AltModifier,
+                             QStringLiteral("a"));
+    QCoreApplication::sendEvent(&pane, &deprecatedNoOp);
+    QCOMPARE(
+        applicationActionCount(ApplicationAction::DeprecatedCloseAllWindows),
+        1);
+    QCOMPARE(forwarded.count(), beforeDeprecatedNoOp);
+
+    QKeyEvent unconsumedDeprecatedNoOp(QEvent::KeyPress, Qt::Key_B,
+                                       Qt::AltModifier, QStringLiteral("b"));
+    QCoreApplication::sendEvent(&pane, &unconsumedDeprecatedNoOp);
+    QCOMPARE(
+        applicationActionCount(ApplicationAction::DeprecatedCloseAllWindows),
+        2);
+    QCOMPARE(forwarded.count(), beforeDeprecatedNoOp + 1);
+
+    QKeyEvent performableDeprecatedNoOp(QEvent::KeyPress, Qt::Key_C,
+                                        Qt::AltModifier, QStringLiteral("c"));
+    QCoreApplication::sendEvent(&pane, &performableDeprecatedNoOp);
+    QCOMPARE(
+        applicationActionCount(ApplicationAction::DeprecatedCloseAllWindows),
+        3);
+    QCOMPARE(forwarded.count(), beforeDeprecatedNoOp + 1);
+
+    QKeyEvent chainedDeprecatedNoOp(QEvent::KeyPress, Qt::Key_Z,
+                                    Qt::AltModifier, QStringLiteral("z"));
+    QCoreApplication::sendEvent(&pane, &chainedDeprecatedNoOp);
+    QCOMPARE(
+        applicationActionCount(ApplicationAction::DeprecatedCloseAllWindows),
+        4);
+    QCOMPARE(newTab.count(), 2);
+    QCOMPARE(forwarded.count(), beforeDeprecatedNoOp + 1);
+
     // A normal consumed binding suppresses terminal input even when the
     // worker authoritatively reports that there is nothing to copy.
     QKeyEvent consumedEmptyCopy(QEvent::KeyPress, Qt::Key_B,
@@ -8500,7 +8539,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QCoreApplication::sendEvent(&pane, &consumedEmptyCopy);
     QCOMPARE(copied.count(), 1);
     QTRY_COMPARE(terminalActions.count(), 1);
-    QCOMPARE(forwarded.count(), beforeOpenConfig);
+    QCOMPARE(forwarded.count(), beforeDeprecatedNoOp + 1);
 
     // Direct programmatic dispatch reports that the correlated request was
     // accepted; its eventual performed state is delivered asynchronously.
@@ -8531,7 +8570,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
                            Qt::ControlModifier, QString(QChar(0x0a)));
     QCoreApplication::sendEvent(&pane, &partialChain);
     QCOMPARE(applicationActionCount(ApplicationAction::OpenConfig), 2);
-    QCOMPARE(newTab.count(), 2);
+    QCOMPARE(newTab.count(), 3);
 
     // Ghostty executes the complete chain before reporting a surface-closing
     // outcome. Workspace removal is deferred, so the later action is safe.
@@ -8542,7 +8581,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QCOMPARE(qvariant_cast<CloseTabMode>(
                  closeTab.constLast().constFirst()),
              CloseTabMode::Right);
-    QCOMPARE(newTab.count(), 3);
+    QCOMPARE(newTab.count(), 4);
 
     // `quit` is not one of Ghostty's closing-surface actions. A following
     // ignore still runs and therefore leaves the release unsuppressed.

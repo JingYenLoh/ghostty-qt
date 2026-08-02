@@ -849,6 +849,11 @@ bool ApplicationController::dispatch(ApplicationAction action,
 {
     switch (action) {
     case ApplicationAction::Ignore: return true;
+    case ApplicationAction::DeprecatedCloseAllWindows:
+        // Pinned GTK consumes this deprecated Linux action without mutating
+        // any window. Keep it distinct from Ignore, whose input semantics are
+        // intentionally special.
+        return true;
     case ApplicationAction::OpenConfig:
         Q_EMIT configOpenRequested();
         return true;
@@ -957,6 +962,7 @@ void ApplicationController::dispatchRequestedAction(
     // is inert, so both actions can enter dispatch immediately.
     switch (action) {
     case ApplicationAction::Ignore:
+    case ApplicationAction::DeprecatedCloseAllWindows:
     case ApplicationAction::NewWindow:
         (void)dispatch(action, sourceWorkspace, sourcePaneId);
         return;

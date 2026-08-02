@@ -806,6 +806,7 @@ void GhosttyActionCatalogTest::parsesApplicationActionsExactly()
         ApplicationAction action;
     } accepted[] = {
         {"ignore", ApplicationAction::Ignore},
+        {"close_all_windows", ApplicationAction::DeprecatedCloseAllWindows},
         {"new_window", ApplicationAction::NewWindow},
         {"open_config", ApplicationAction::OpenConfig},
         {"reload_config", ApplicationAction::ReloadConfig},
@@ -836,7 +837,6 @@ void GhosttyActionCatalogTest::parsesApplicationActionsExactly()
 
     for (const QString &unsupported : {
              QStringLiteral("unbind"),
-             QStringLiteral("close_all_windows"),
              QStringLiteral("toggle_visibility"),
              QStringLiteral("check_for_updates"),
              QStringLiteral("show_gtk_inspector"),
@@ -852,6 +852,8 @@ void GhosttyActionCatalogTest::parsesApplicationActionsExactly()
     for (const QString &rejected : {
              QStringLiteral("ignore:"),
              QStringLiteral("ignore:anything"),
+             QStringLiteral("close_all_windows:"),
+             QStringLiteral("close_all_windows:now"),
              QStringLiteral("new_window:"),
              QStringLiteral("new_window:now"),
              QStringLiteral("open_config:"),

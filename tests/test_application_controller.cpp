@@ -340,6 +340,7 @@ class ApplicationControllerTest : public QObject {
 
 private Q_SLOTS:
     void initTestCase();
+    void consumesDeprecatedCloseAllWindowsWithoutMutation();
     void configuresInitialWindowStateBeforePresentation_data();
     void configuresInitialWindowStateBeforePresentation();
     void configuresInitialWindowDecorationBeforePresentation_data();
@@ -418,6 +419,51 @@ void ApplicationControllerTest::initTestCase()
     QVERIFY(QQuickWindow::hasDefaultAlphaBuffer());
     QVERIFY(QDir().mkpath(
         QDir::current().filePath(QStringLiteral("tmp"))));
+}
+
+void ApplicationControllerTest::
+    consumesDeprecatedCloseAllWindowsWithoutMutation()
+{
+    WindowFactoryHarness emptyHarness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    ApplicationController empty(options, emptyHarness.factory(), false);
+    QVERIFY(empty.dispatch(ApplicationAction::DeprecatedCloseAllWindows));
+    QCOMPARE(empty.windowCount(), 0);
+    QCOMPARE(emptyHarness.calls, 0);
+
+    WindowFactoryHarness harness;
+    ApplicationController controller(options, harness.factory(), false);
+    const auto first = controller.createInitialWindow();
+    QVERIFY(first.has_value());
+    QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 2, 1000);
+
+    const QVector<ApplicationWindow> before = controller.windows();
+    QSignalSpy quitRequested(&controller,
+                             &ApplicationController::quitRequested);
+    QSignalSpy quitCommitted(&controller,
+                             &ApplicationController::applicationQuitCommitted);
+    QSignalSpy openConfig(&controller,
+                          &ApplicationController::configOpenRequested);
+    QSignalSpy reloadConfig(&controller,
+                            &ApplicationController::configReloadRequested);
+
+    QVERIFY(controller.dispatch(ApplicationAction::DeprecatedCloseAllWindows,
+                                first->workspace,
+                                activePaneId(first->workspace)));
+    QCoreApplication::processEvents();
+    QCOMPARE(controller.windowCount(), 2);
+    const QVector<ApplicationWindow> after = controller.windows();
+    QCOMPARE(after.size(), before.size());
+    for (qsizetype index = 0; index < before.size(); ++index) {
+        QCOMPARE(after[index].window, before[index].window);
+        QCOMPARE(after[index].workspace, before[index].workspace);
+    }
+    QCOMPARE(quitRequested.count(), 0);
+    QCOMPARE(quitCommitted.count(), 0);
+    QCOMPARE(openConfig.count(), 0);
+    QCOMPARE(reloadConfig.count(), 0);
+    QVERIFY(!controller.lifetimeController()->hasRequestedQuit());
 }
 
 void ApplicationControllerTest::

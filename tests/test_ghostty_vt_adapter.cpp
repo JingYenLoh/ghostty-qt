@@ -808,21 +808,41 @@ void GhosttyVtAdapterTest::respondsToEnquiryWithConfiguredBytes()
     QCOMPARE(writes.size(), 3);
     QCOMPARE(writes.constLast(), reloaded);
 
-    const QByteArray maximumBridgeResponse(255, 'y');
-    adapter->setEnquiryResponse(maximumBridgeResponse);
+    const QByteArray boundaryResponse(255, 'y');
+    adapter->setEnquiryResponse(boundaryResponse);
     adapter->writeVt(QByteArray(1, '\x05'));
     QCOMPARE(writes.size(), 4);
-    QCOMPARE(writes.constLast(), maximumBridgeResponse);
+    QCOMPARE(writes.constLast(), boundaryResponse);
 
-    // The pinned public C bridge reserves one byte in a 256-byte stack buffer
-    // for its terminator and silently ignores responses that do not fit.
-    adapter->setEnquiryResponse(QByteArray(256, 'z'));
+    const QByteArray formerBridgeLimit(256, 'z');
+    adapter->setEnquiryResponse(formerBridgeLimit);
     adapter->writeVt(QByteArray(1, '\x05'));
-    QCOMPARE(writes.size(), 4);
+    QCOMPARE(writes.size(), 5);
+    QCOMPARE(writes.constLast(), formerBridgeLimit);
+
+    QByteArray largeResponse(4096, '\0');
+    for (qsizetype index = 0; index < largeResponse.size(); ++index) {
+        largeResponse[index] = static_cast<char>(index);
+    }
+    adapter->setEnquiryResponse(largeResponse);
+    adapter->writeVt(QByteArray(1, '\x05'));
+    QCOMPARE(writes.size(), 6);
+    QCOMPARE(writes.constLast(), largeResponse);
+
+    // Direct ENQ publication remains ordered with replies emitted later by
+    // the same libghostty parse transaction.
+    const QByteArray orderedResponse = QByteArrayLiteral("ordered-enquiry");
+    adapter->setEnquiryResponse(orderedResponse);
+    writes.clear();
+    adapter->writeVt(QByteArrayLiteral("\x05\x1b[6n"));
+    QCOMPARE(writes.size(), 2);
+    QCOMPARE(writes.constFirst(), orderedResponse);
+    QVERIFY(writes.constLast().startsWith(QByteArrayLiteral("\x1b[")));
+    QVERIFY(writes.constLast().endsWith('R'));
 
     adapter->setEnquiryResponse({});
     adapter->writeVt(QByteArray(1, '\x05'));
-    QCOMPARE(writes.size(), 4);
+    QCOMPARE(writes.size(), 2);
 }
 
 void GhosttyVtAdapterTest::reportsConfiguredColorSchemeAndLiveChanges()

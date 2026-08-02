@@ -7,6 +7,7 @@
 // interpreting quit, reload, or new-window against only one terminal window.
 enum class ApplicationAction {
     Ignore,
+    DeprecatedCloseAllWindows,
     NewWindow,
     OpenConfig,
     ReloadConfig,

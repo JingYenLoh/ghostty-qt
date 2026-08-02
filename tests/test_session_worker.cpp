@@ -4096,7 +4096,10 @@ void SessionWorkerTest::appliesLiveEnquiryResponse()
     const QString thirdResponsePath =
         controls.filePath(QStringLiteral("third-response"));
 
-    const QByteArray initialResponse = QByteArray::fromHex("004180ff");
+    QByteArray initialResponse(1024, '\0');
+    for (qsizetype index = 0; index < initialResponse.size(); ++index) {
+        initialResponse[index] = static_cast<char>(index);
+    }
     const QByteArray reloadedResponse = QByteArrayLiteral("NEXT");
     const QByteArray readOnlyResponse = QByteArray::fromHex("0052fe");
 
@@ -4107,7 +4110,7 @@ void SessionWorkerTest::appliesLiveEnquiryResponse()
         QStringLiteral("-c"),
         QStringLiteral("stty raw -echo; "
                        "printf 'enquiry-ready\\005'; "
-                       "dd bs=1 count=4 of=\"$1\" 2>/dev/null; "
+                       "dd bs=1 count=1024 of=\"$1\" 2>/dev/null; "
                        "printf '\\r\\nfirst-complete'; "
                        "while [ ! -e \"$2\" ]; do sleep 0.01; done; "
                        "printf '\\005'; "

@@ -4983,15 +4983,15 @@ private:
             return {};
         }
 
-        // libghostty copies this borrowed response synchronously before the
-        // surrounding terminal write returns. Adapter-owned storage therefore
-        // remains valid across the callback return and preserves arbitrary
-        // bytes, including NUL.
-        return {
-            .ptr = reinterpret_cast<const uint8_t *>(
-                impl->enquiryResponse_.constData()),
-            .len = static_cast<size_t>(impl->enquiryResponse_.size()),
-        };
+        // Full Ghostty forwards the configured byte slice without the
+        // standalone stream bridge's 255-byte scratch-buffer ceiling. The
+        // public callback identifies the parser-normalized ENQ synchronously,
+        // so publish through the same ordered public PTY sink and return an
+        // empty slice to prevent a duplicate bridge write.
+        if (impl->callbacks_.writePty) {
+            impl->callbacks_.writePty(impl->enquiryResponse_);
+        }
+        return {};
     }
 
     static void bellCallback(GhosttyTerminal, void *userdata)

@@ -500,8 +500,8 @@ semantics, later-entry-wins codepoint maps, FreeType approximations, maximal
 compatible row shaping, device-pixel boundary fallback, physical-pixel/DPR
 projection, decoration and cursor geometry, live reload, and manual zoom.
 Adapter tests
-verify binary ENQ callbacks at the empty, 255-byte, and public-bridge
-256-byte boundaries as well as config-default changes preserving
+verify binary ENQ callbacks at empty, 1, 255, 256, and 4096-byte boundaries,
+ordered terminal replies, and config-default changes preserving
 OSC/DECSCUSR terminal overrides; and
 `terminal-pane-render` verifies
 frontend-only terminal color/style, retained split dimming, live link-matcher
