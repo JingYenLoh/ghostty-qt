@@ -26,6 +26,7 @@ class TerminalInspectorEventModelTest : public QObject {
 private Q_SLOTS:
     void exposesRolesAndNewestEventFirst();
     void evictsOldestEventsAtCapacity();
+    void reentrantEvictionRemainsBounded();
     void preservesSequenceGapsWhilePaused();
     void clearRetainsSequenceProgress();
     void filtersByCategoryAndText();
@@ -114,6 +115,43 @@ void TerminalInspectorEventModelTest::evictsOldestEventsAtCapacity()
     QCOMPARE(evicted.constLast().constFirst().toULongLong(), quint64{2});
     QCOMPARE(sequenceAt(model, 0), quint64{4});
     QCOMPARE(sequenceAt(model, 1), quint64{3});
+}
+
+void TerminalInspectorEventModelTest::reentrantEvictionRemainsBounded()
+{
+    TerminalInspectorEventModel model(nullptr, 1);
+    QAbstractItemModelTester modelTester(
+        &model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    QSignalSpy evicted(&model, &TerminalInspectorEventModel::eventEvicted);
+    bool appendedReentrantly = false;
+    connect(&model, &TerminalInspectorEventModel::eventEvicted, &model,
+            [&model, &appendedReentrantly] {
+                if (appendedReentrantly) return;
+                appendedReentrantly = true;
+                QCOMPARE(
+                    model.append(TerminalInspectorEventModel::Category::State,
+                                 QStringLiteral("nested"),
+                                 QStringLiteral("from observer")),
+                    quint64{3});
+            });
+
+    QCOMPARE(model.append(TerminalInspectorEventModel::Category::Input,
+                          QStringLiteral("first"), QStringLiteral("retained")),
+             quint64{1});
+    QCOMPARE(model.append(TerminalInspectorEventModel::Category::Terminal,
+                          QStringLiteral("outer"),
+                          QStringLiteral("replacement")),
+             quint64{2});
+
+    QVERIFY(appendedReentrantly);
+    QCOMPARE(model.capacity(), 1);
+    QCOMPARE(model.retainedCount(), 1);
+    QCOMPARE(model.count(), 1);
+    QCOMPARE(model.evictedCount(), quint64{2});
+    QCOMPARE(evicted.count(), 2);
+    QCOMPARE(sequenceAt(model, 0), quint64{3});
+    QCOMPARE(textAt(model, 0, TerminalInspectorEventModel::KindRole),
+             QStringLiteral("nested"));
 }
 
 void TerminalInspectorEventModelTest::preservesSequenceGapsWhilePaused()

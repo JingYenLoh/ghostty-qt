@@ -454,6 +454,7 @@ private Q_SLOTS:
     void overlayComponentsShareOneLifecycle();
     void inspectorIsPaneLocalAndUsesStableTargets();
     void inspectorQmlWindowTracksPaneLifetime();
+    void inspectorLifecycleSurvivesReentrantDestruction();
     void keyStateOverlayPresentsAndRetainsPerPaneDragPosition();
     void searchOverlaySnapsAndRetainsPerPaneCorner();
     void pendingPaneReloadsDuringOverlayCompletion();
@@ -4833,22 +4834,68 @@ void TerminalWorkspaceTest::inspectorQmlWindowTracksPaneLifetime()
           QStringLiteral("terminalInspectorEventClear"),
           QStringLiteral("terminalInspectorEventStatus"),
           QStringLiteral("terminalInspectorEventList"),
-          QStringLiteral("terminalInspectorEventDetails")}) {
+          QStringLiteral("terminalInspectorEventDetails"),
+          QStringLiteral("terminalInspectorEventDetailsText")}) {
         QVERIFY2(host->findChild<QQuickItem *>(objectName) != nullptr,
                  qPrintable(objectName));
     }
-    auto *const eventModel = qobject_cast<TerminalInspectorEventModel *>(
+    auto *eventModel = qobject_cast<TerminalInspectorEventModel *>(
         pane->inspectorModel()->eventModel());
     TerminalController *const controller =
         pane->findChild<TerminalController *>();
     QQuickItem *const eventList = host->findChild<QQuickItem *>(
         QStringLiteral("terminalInspectorEventList"));
+    QQuickItem *const eventsPage = host->findChild<QQuickItem *>(
+        QStringLiteral("terminalInspectorEventsPage"));
+    QQuickItem *const eventDetails = host->findChild<QQuickItem *>(
+        QStringLiteral("terminalInspectorEventDetails"));
+    QQuickItem *const eventDetailsText = host->findChild<QQuickItem *>(
+        QStringLiteral("terminalInspectorEventDetailsText"));
     QVERIFY(eventModel != nullptr);
     QVERIFY(controller != nullptr);
     QVERIFY(eventList != nullptr);
+    QVERIFY(eventsPage != nullptr);
+    QVERIFY(eventDetails != nullptr);
+    QVERIFY(eventDetailsText != nullptr);
     eventModel->clear();
     controller->sendKey({.key = Qt::Key_D, .text = QStringLiteral("d")});
     QTRY_COMPARE_WITH_TIMEOUT(eventList->property("count").toInt(), 1, 1000);
+
+    // The detail view copies selected input text out of the bounded model.
+    // Replacing that model at close/reopen is therefore also a privacy
+    // boundary for every copied QML property and the rendered document.
+    const QString secretSummary = QStringLiteral("typed secret summary");
+    const QString secretDetails = QStringLiteral("typed secret details");
+    QVERIFY(eventsPage->setProperty("eventSelected", true));
+    QVERIFY(eventsPage->setProperty("selectedSequence", QStringLiteral("1")));
+    QVERIFY(eventsPage->setProperty("selectedSummary", secretSummary));
+    QVERIFY(eventsPage->setProperty("selectedDetails", secretDetails));
+    QVERIFY(eventsPage->property("eventSelected").toBool());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        eventDetailsText->property("text").toString(),
+        secretSummary + QStringLiteral("\n\n") + secretDetails, 1000);
+
+    QPointer<TerminalInspectorEventModel> closedEvents(eventModel);
+    QVERIFY(workspace->controlInspector(
+        paneId, WorkspaceFrontendActions::InspectorMode::Hide));
+    QTRY_VERIFY_WITH_TIMEOUT(!inspectorWindow->isVisible(), 1000);
+    QVERIFY(closedEvents == nullptr || closedEvents->retainedCount() == 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!eventsPage->property("eventSelected").toBool(),
+                             1000);
+    QCOMPARE(eventsPage->property("selectedSequence").toString(), QString{});
+    QCOMPARE(eventsPage->property("selectedSummary").toString(), QString{});
+    QCOMPARE(eventsPage->property("selectedDetails").toString(), QString{});
+    QCOMPARE(eventList->property("currentIndex").toInt(), -1);
+    QCOMPARE(eventDetailsText->property("text").toString(), QString{});
+
+    QVERIFY(workspace->controlInspector(
+        paneId, WorkspaceFrontendActions::InspectorMode::Show));
+    QTRY_VERIFY_WITH_TIMEOUT(inspectorWindow->isVisible(), 1000);
+    eventModel = qobject_cast<TerminalInspectorEventModel *>(
+        pane->inspectorModel()->eventModel());
+    QVERIFY(eventModel != nullptr);
+    QCOMPARE(eventModel->retainedCount(), 0);
+    QVERIFY(!eventsPage->property("eventSelected").toBool());
 
     pane->inspectorModel()->beginCellPick();
     QVERIFY(pane->inspectorCellPicking());
@@ -4872,6 +4919,81 @@ void TerminalWorkspaceTest::inspectorQmlWindowTracksPaneLifetime()
     QTRY_VERIFY_WITH_TIMEOUT(hostGuard.isNull(), 1000);
     QTRY_VERIFY_WITH_TIMEOUT(inspectorGuard.isNull(), 1000);
     terminalWindow.close();
+}
+
+void TerminalWorkspaceTest::inspectorLifecycleSurvivesReentrantDestruction()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    {
+        auto workspace = std::make_unique<TerminalWorkspace>();
+        workspace->setSize(QSizeF(800.0, 480.0));
+        QVERIFY(workspace->initialize(options));
+        QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+        const PaneId paneId = workspace->tabModel()->entryAt(0)->activePaneId;
+        TerminalPane *const pane = workspace->findChild<TerminalPane *>();
+        QVERIFY(pane != nullptr);
+        QVERIFY(workspace->controlInspector(
+            paneId, WorkspaceFrontendActions::InspectorMode::Show));
+        QPointer<TerminalInspectorModel> model(pane->inspectorModel());
+        connect(
+            pane, &TerminalPane::inspectorModelChanged, pane,
+            [&workspace] { workspace.reset(); }, Qt::DirectConnection);
+
+        pane->closeInspector();
+        QVERIFY(workspace == nullptr);
+        QVERIFY(model == nullptr);
+    }
+
+    {
+        auto workspace = std::make_unique<TerminalWorkspace>();
+        workspace->setSize(QSizeF(800.0, 480.0));
+        QVERIFY(workspace->initialize(options));
+        QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+        const PaneId paneId = workspace->tabModel()->entryAt(0)->activePaneId;
+        TerminalPane *const pane = workspace->findChild<TerminalPane *>();
+        QVERIFY(pane != nullptr);
+        TerminalController *const controller =
+            pane->findChild<TerminalController *>();
+        QVERIFY(controller != nullptr);
+        connect(
+            controller, &TerminalController::terminalInspectorSnapshotRequested,
+            controller, [&workspace] { workspace.reset(); },
+            Qt::DirectConnection);
+
+        QVERIFY(workspace->controlInspector(
+            paneId, WorkspaceFrontendActions::InspectorMode::Show));
+        QPointer<TerminalInspectorModel> model(pane->inspectorModel());
+        QTRY_VERIFY_WITH_TIMEOUT(workspace == nullptr, 1000);
+        QVERIFY(model == nullptr);
+    }
+
+    {
+        auto workspace = std::make_unique<TerminalWorkspace>();
+        workspace->setSize(QSizeF(800.0, 480.0));
+        QVERIFY(workspace->initialize(options));
+        QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+        const PaneId paneId = workspace->tabModel()->entryAt(0)->activePaneId;
+        TerminalPane *const pane = workspace->findChild<TerminalPane *>();
+        QVERIFY(pane != nullptr);
+        QVERIFY(workspace->controlInspector(
+            paneId, WorkspaceFrontendActions::InspectorMode::Show));
+        QPointer<TerminalInspectorModel> model(pane->inspectorModel());
+        QVERIFY(model != nullptr);
+        connect(
+            model, &TerminalInspectorModel::snapshotChanged, model,
+            [&workspace] { workspace.reset(); }, Qt::DirectConnection);
+
+        pane->setWidth(pane->width() + 1.0);
+        model->refresh();
+        QVERIFY(workspace == nullptr);
+        QVERIFY(model == nullptr);
+    }
 }
 
 void TerminalWorkspaceTest::

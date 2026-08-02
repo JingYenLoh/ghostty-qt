@@ -703,7 +703,9 @@ DEC visibility and pending wrap, viewport and scrollback metadata, raw mouse
 tracking, effective and default colors and palettes, Kitty keyboard/storage
 state, and all 41 public ANSI/DEC modes into one owned value. The controller
 discards superseded IDs, and the model accepts only its pending ID. Closing the
-inspector destroys the timer immediately, so hidden panes make no requests.
+inspector stops its timers and capture immediately, clears retained event
+payloads, and schedules the short-lived model for deletion, so hidden panes
+make no requests.
 This public snapshot deliberately does not expose inactive-screen, PageList,
 or parser internals. Cell inspection is a separate, one-shot path: the user
 arms a pane-local crosshair and a strict grid hit supplies a viewport coordinate
@@ -730,8 +732,9 @@ capture lifetime is therefore the explicitly open inspector window.
 Filtering rebuilds only the visible projection, pausing advances sequence IDs
 without retaining observations or publishing per-observation model updates,
 and clearing cannot publish an already pending frame batch. Closing the
-inspector disconnects all sources and destroys the ring, so capture has no
-hidden-pane lifetime.
+inspector clears the ring immediately; deferred QObject teardown then
+disconnects its sources and destroys the inactive model, so capture and copied
+payloads have no hidden-pane lifetime.
 
 This event ring is an intentionally incremental diagnostic projection, not yet
 Ghostty's complete inspector trace. It observes requests that reach the pane's

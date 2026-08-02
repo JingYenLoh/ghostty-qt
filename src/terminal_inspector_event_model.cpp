@@ -70,11 +70,32 @@ quint64 TerminalInspectorEventModel::append(Category category, QString kind,
         .details = bounded(std::move(details), maximumDetailsLength),
     };
 
+    if (appending_) {
+        pendingEvents_.push_back(std::move(event));
+        return sequence;
+    }
+
+    appending_ = true;
+    appendEvent(std::move(event));
+    while (!pendingEvents_.empty()) {
+        Event pending = std::move(pendingEvents_.front());
+        pendingEvents_.pop_front();
+        appendEvent(std::move(pending));
+    }
+    appending_ = false;
+    return sequence;
+}
+
+void TerminalInspectorEventModel::appendEvent(Event event)
+{
+    Q_ASSERT(appending_);
+
     const int previousRetainedCount = retainedCount();
     const int previousVisibleCount = count();
+    quint64 evictedSequence = 0;
     if (retainedCount() == capacity_) {
         const Event *const oldest = &events_.front();
-        const quint64 evictedSequence = oldest->sequence;
+        evictedSequence = oldest->sequence;
         if (matches(*oldest)) {
             Q_ASSERT(!visible_.isEmpty());
             Q_ASSERT(visible_.constLast() == oldest);
@@ -87,8 +108,6 @@ quint64 TerminalInspectorEventModel::append(Category category, QString kind,
             events_.pop_front();
         }
         ++evictedCount_;
-        Q_EMIT evictedCountChanged();
-        Q_EMIT eventEvicted(evictedSequence);
     }
 
     const bool visible = matches(event);
@@ -102,7 +121,10 @@ quint64 TerminalInspectorEventModel::append(Category category, QString kind,
         || previousVisibleCount != count()) {
         Q_EMIT countChanged();
     }
-    return sequence;
+    if (evictedSequence != 0) {
+        Q_EMIT evictedCountChanged();
+        Q_EMIT eventEvicted(evictedSequence);
+    }
 }
 
 quint64 TerminalInspectorEventModel::skipObservation()

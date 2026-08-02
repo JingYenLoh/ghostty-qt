@@ -1170,7 +1170,9 @@ quint64 TerminalController::requestTerminalInspectorSnapshot()
     activeTerminalInspectorRequestId_ = requestId;
     const QPointer<TerminalController> guard(this);
     Q_EMIT terminalInspectorSnapshotRequested(requestId);
-    return guard != nullptr ? requestId : 0;
+    return guard != nullptr && activeTerminalInspectorRequestId_ == requestId
+        ? requestId
+        : 0;
 }
 
 quint64 TerminalController::requestTerminalInspectorCell(

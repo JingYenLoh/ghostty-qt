@@ -1786,18 +1786,22 @@ bool TerminalPane::controlInspector(
             && inspectorModel_ == nullptr);
     if (show) {
         if (inspectorModel_ != nullptr) return true;
+        const QPointer<TerminalPane> guard(this);
         inspectorModel_ = new TerminalInspectorModel(this);
         Q_EMIT inspectorModelChanged();
-        return true;
+        return guard != nullptr;
     }
 
     if (inspectorModel_ == nullptr) return true;
-    TerminalInspectorModel *const closing = inspectorModel_.data();
+    const QPointer<TerminalPane> guard(this);
+    const QPointer<TerminalInspectorModel> closing(inspectorModel_);
     closing->deactivate();
+    if (guard == nullptr) return false;
+    if (inspectorModel_.data() != closing.data()) return true;
     inspectorModel_.clear();
     Q_EMIT inspectorModelChanged();
-    closing->deleteLater();
-    return true;
+    if (closing != nullptr) closing->deleteLater();
+    return guard != nullptr;
 }
 
 void TerminalPane::closeInspector()

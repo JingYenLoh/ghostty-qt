@@ -943,6 +943,7 @@ Item {
                                     ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                                     TextArea {
+                                        objectName: "terminalInspectorEventDetailsText"
                                         readOnly: true
                                         selectByMouse: true
                                         wrapMode: TextEdit.WrapAnywhere
@@ -975,6 +976,14 @@ Item {
                         function onEventEvicted(sequence) {
                             if (eventsPage.selectedSequence === String(sequence))
                                 eventsPage.clearEventSelection()
+                        }
+                    }
+
+                    Connections {
+                        target: host
+
+                        function onEventModelChanged() {
+                            eventsPage.clearEventSelection()
                         }
                     }
                 }

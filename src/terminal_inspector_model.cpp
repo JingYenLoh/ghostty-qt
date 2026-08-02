@@ -659,7 +659,10 @@ TerminalInspectorModel::TerminalInspectorModel(TerminalPane *pane)
                     rebuildSnapshot();
                 });
     }
-    refresh();
+    // Populate the value-only GUI projection before publication, but defer
+    // the first outward worker request until construction is complete.
+    rebuildSnapshot();
+    QTimer::singleShot(0, this, [this] { refresh(); });
     refreshTimer_->start();
 }
 
@@ -668,9 +671,11 @@ void TerminalInspectorModel::appendEvent(
     QString summary, QString details)
 {
     if (!active_) return;
+    const QPointer<TerminalInspectorModel> guard(this);
     flushPendingTerminalEvent();
-    eventModel_->append(category, std::move(kind), std::move(summary),
-                        std::move(details));
+    if (guard == nullptr || !guard->active_) return;
+    guard->eventModel_->append(category, std::move(kind), std::move(summary),
+                               std::move(details));
 }
 
 bool TerminalInspectorModel::skipEventWhilePaused()
@@ -774,19 +779,23 @@ void TerminalInspectorModel::clearPendingTerminalEvent()
 void TerminalInspectorModel::refresh()
 {
     if (!active_) return;
-    rebuildSnapshot();
-    if (pendingTerminalRequestId_ != 0) return;
-
-    TerminalPane *const pane = pane_.data();
-    if (pane == nullptr || pane->controller_ == nullptr) return;
     const QPointer<TerminalInspectorModel> guard(this);
+    rebuildSnapshot();
+    if (guard == nullptr || !guard->active_
+        || guard->pendingTerminalRequestId_ != 0) {
+        return;
+    }
+
+    TerminalPane *const pane = guard->pane_.data();
+    if (pane == nullptr || pane->controller_ == nullptr) return;
     const quint64 requestId =
         pane->controller_->requestTerminalInspectorSnapshot();
     if (guard == nullptr || !guard->active_) return;
-    pendingTerminalRequestId_ = requestId;
-    if (pendingTerminalRequestId_ != 0
-        && terminalSnapshot_.status == TerminalInspectorStatus::Unavailable) {
-        rebuildSnapshot();
+    guard->pendingTerminalRequestId_ = requestId;
+    if (guard->pendingTerminalRequestId_ != 0
+        && guard->terminalSnapshot_.status
+            == TerminalInspectorStatus::Unavailable) {
+        guard->rebuildSnapshot();
     }
 }
 
@@ -1202,5 +1211,7 @@ void TerminalInspectorModel::deactivate()
     clearPendingTerminalEvent();
     pendingTerminalRequestId_ = 0;
     pendingCellRequestId_ = 0;
+    const QPointer<TerminalInspectorModel> guard(this);
     if (pane_ != nullptr) pane_->setInspectorCellPicking(false);
+    if (guard != nullptr) guard->eventModel_->clear();
 }

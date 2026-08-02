@@ -112,9 +112,11 @@ private:
     [[nodiscard]] static QString elapsedName(qint64 milliseconds);
     [[nodiscard]] static QString bounded(QString value, qsizetype maximum);
     [[nodiscard]] quint64 nextSequence();
+    void appendEvent(Event event);
 
     const int capacity_;
     std::deque<Event> events_;
+    std::deque<Event> pendingEvents_;
     QVector<const Event *> visible_;
     QElapsedTimer elapsed_;
     QString filterText_;
@@ -124,4 +126,5 @@ private:
     quint64 skippedWhilePaused_ = 0;
     bool skippedNotificationPending_ = false;
     bool paused_ = false;
+    bool appending_ = false;
 };

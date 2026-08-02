@@ -454,6 +454,7 @@ private Q_SLOTS:
     void normalizesHorizontalWheelInputIndependently();
     void switchesTabsFromPrecisionHorizontalScroll();
     void forwardsTypedSelectionPointerMetadataOnce();
+    void invalidatesInspectorRequestDuringSynchronousDispatch();
     void isolatesInspectorCellPickGestures();
     void cancelsSelectionWhenMouseGrabIsRevoked();
     void togglesMouseReportingPolicyAcrossGesturesAndReloads();
@@ -4844,6 +4845,27 @@ void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
     QCOMPARE(pane->cursor().shape(), Qt::IBeamCursor);
 
     delete pane;
+}
+
+void TerminalPaneTest::invalidatesInspectorRequestDuringSynchronousDispatch()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    TerminalController *const controller =
+        pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QVERIFY(controller->startSession());
+    QVERIFY(controller->sessionStarted());
+
+    connect(controller, &TerminalController::terminalInspectorSnapshotRequested,
+            controller, &TerminalController::beginShutdown,
+            Qt::DirectConnection);
+    QCOMPARE(controller->requestTerminalInspectorSnapshot(), quint64{0});
 }
 
 void TerminalPaneTest::isolatesInspectorCellPickGestures()
