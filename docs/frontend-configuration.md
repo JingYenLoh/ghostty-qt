@@ -99,6 +99,11 @@ existing parent directory, so creating, deleting, or atomically replacing the
 file is detected. File-system bursts are debounced for 75 milliseconds and
 watched reloads run on a dedicated worker.
 
+Each generation opens the path once, validates that opened descriptor as a
+regular file, and reads at most 1 MiB. FIFOs and other non-regular inputs are
+rejected without blocking, and a file that grows past the limit while being
+read fails transactionally instead of publishing a truncated snapshot.
+
 The `reload_config` application action requests both the shared Ghostty reload
 and the frontend reload. Each domain publishes independently, and the
 application resolves the latest successful snapshot from each one.

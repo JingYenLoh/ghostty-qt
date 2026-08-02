@@ -38,14 +38,20 @@ using FrontendConfigLoadResult = std::expected<FrontendConfigSnapshot, QString>;
 using FrontendConfigLoader =
     std::function<FrontendConfigLoadResult(const QString &path)>;
 
+// This file controls only a handful of scalar Qt settings. A fixed ceiling
+// keeps startup and asynchronous reload work proportional even when the path
+// is replaced by an unexpectedly large file.
+inline constexpr qsizetype MaximumFrontendConfigFileSize = 1024 * 1024;
+
 // Parse one strict UTF-8 frontend configuration document. The grammar is one
 // scalar `key = value` assignment per non-empty line. Comments must occupy a
 // complete line, and duplicate or unknown keys are errors.
 [[nodiscard]] std::expected<FrontendConfigValues, QString>
 parseFrontendConfig(QByteArrayView contents, QStringView sourceName = {});
 
-// A missing file is a successful load of built-in defaults. Every other I/O
-// or syntax failure is returned without a partial configuration.
+// A missing file is a successful load of built-in defaults. Every other I/O,
+// file-type, size, or syntax failure is returned without a partial
+// configuration.
 [[nodiscard]] FrontendConfigLoadResult
 loadFrontendConfigFile(const QString &path);
 

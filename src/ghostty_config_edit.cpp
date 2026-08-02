@@ -1,4 +1,6 @@
 #include "ghostty_config_edit.h"
+#include "posix_regular_file.h"
+#include "unique_file_descriptor.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -9,8 +11,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <optional>
-#include <sys/stat.h>
-#include <unistd.h>
+#include <utility>
 
 namespace {
 
@@ -25,23 +26,31 @@ QString nativeError(const QString &operation, const QString &path,
 std::expected<std::optional<qint64>, QString> candidateSize(const QString &path)
 {
     const QByteArray nativePath = QFile::encodeName(path);
-    const int descriptor = ::open(nativePath.constData(), O_RDONLY | O_CLOEXEC);
-    if (descriptor < 0) {
-        const int errorNumber = errno;
-        if (errorNumber == ENOENT) return std::optional<qint64>{};
-        return std::unexpected(nativeError(QStringLiteral("Could not inspect"),
-                                           path, errorNumber));
-    }
+    const auto size = inspectPosixRegularFile(nativePath);
+    if (size) return std::optional<qint64>{*size};
 
-    struct stat status{};
-    if (::fstat(descriptor, &status) != 0) {
-        const int errorNumber = errno;
-        (void)::close(descriptor);
-        return std::unexpected(nativeError(QStringLiteral("Could not inspect"),
-                                           path, errorNumber));
+    const PosixRegularFileError error = size.error();
+    if (error.kind == PosixRegularFileErrorKind::Open
+        && error.systemError == ENOENT) {
+        return std::optional<qint64>{};
     }
-    (void)::close(descriptor);
-    return std::optional<qint64>{static_cast<qint64>(status.st_size)};
+    if (error.kind == PosixRegularFileErrorKind::InvalidPath) {
+        return std::unexpected(
+            QStringLiteral("Could not inspect '%1': path contains a NUL byte")
+                .arg(path));
+    }
+    if (error.kind == PosixRegularFileErrorKind::NotRegular) {
+        return std::unexpected(
+            QStringLiteral("Could not inspect '%1': not a regular file")
+                .arg(path));
+    }
+    if (error.kind == PosixRegularFileErrorKind::TooLarge) {
+        return std::unexpected(
+            QStringLiteral("Could not inspect '%1': invalid file size")
+                .arg(path));
+    }
+    return std::unexpected(nativeError(QStringLiteral("Could not inspect"),
+                                       path, error.systemError));
 }
 
 std::expected<void, QString> createConfigFile(const QString &path)
@@ -54,17 +63,36 @@ std::expected<void, QString> createConfigFile(const QString &path)
     }
 
     const QByteArray nativePath = QFile::encodeName(path);
-    const int descriptor = ::open(
-        nativePath.constData(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
-    if (descriptor >= 0) {
-        (void)::close(descriptor);
-        return {};
-    }
+    constexpr int maximumAttempts = 3;
+    for (int attempt = 0; attempt < maximumAttempts; ++attempt) {
+        int descriptor = -1;
+        do {
+            descriptor = ::open(nativePath.constData(),
+                                O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+        } while (descriptor < 0 && errno == EINTR);
+        if (descriptor >= 0) {
+            const UniqueFileDescriptor file(descriptor);
+            return {};
+        }
 
-    const int errorNumber = errno;
-    if (errorNumber == EEXIST) return {};
-    return std::unexpected(nativeError(
-        QStringLiteral("Could not create config file"), path, errorNumber));
+        const int errorNumber = errno;
+        if (errorNumber != EEXIST) {
+            return std::unexpected(
+                nativeError(QStringLiteral("Could not create config file"),
+                            path, errorNumber));
+        }
+
+        const auto existing = candidateSize(path);
+        if (existing && existing->has_value()) return {};
+        if (!existing) return std::unexpected(existing.error());
+        if (attempt + 1 == maximumAttempts) {
+            return std::unexpected(
+                QStringLiteral(
+                    "Could not create config file '%1': path changed repeatedly")
+                    .arg(path));
+        }
+    }
+    std::unreachable();
 }
 
 } // namespace

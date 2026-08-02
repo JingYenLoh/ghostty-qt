@@ -1594,10 +1594,12 @@ file. Its current complete schema is `single-instance=false|true|detect`,
 default to true; the quick-terminal values default to `top` and
 `ghostty-quick-terminal`. Unknown keys, duplicate keys, malformed assignments,
 unsupported values, invalid UTF-8, and partial documents are errors. A missing
-file is a successful default generation. The service watches the file and its
-nearest existing directory, uses the same 75 ms debounce, loads watched
-generations on its own one-thread pool, suppresses stale generations, and
-retries failures while retaining its last-good snapshot. Deleting the file
+file is a successful default generation. Every load opens the path once with
+nonblocking semantics, validates the resulting descriptor as a regular file,
+and enforces a 1 MiB bound before and during the read. The service watches the
+file and its nearest existing directory, uses the same 75 ms debounce, loads
+watched generations on its own one-thread pool, suppresses stale generations,
+and retries failures while retaining its last-good snapshot. Deleting the file
 therefore restores the typed frontend defaults.
 
 `QuickTerminalSurface` maps the four frontend layer values one-to-one onto

@@ -4,6 +4,7 @@
 #include "ghostty_shell_integration.h"
 #include "ghostty_vt_adapter.h"
 #include "linux_cgroup.h"
+#include "posix_regular_file.h"
 #include "terminal_clipboard.h"
 #include "terminal_osc8_index.h"
 #include "terminfo_paths.h"
@@ -67,30 +68,6 @@ constexpr qsizetype kMaximumInitialInputFileSize = 10 * 1024 * 1024;
 constexpr Qt::KeyboardModifiers kTrackedTerminalModifiers = Qt::ShiftModifier
     | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier;
 
-class ScopedFileDescriptor final {
-public:
-    explicit ScopedFileDescriptor(int descriptor) noexcept
-        : descriptor_(descriptor)
-    {}
-
-    ~ScopedFileDescriptor()
-    {
-        if (descriptor_ >= 0) {
-            (void)::close(descriptor_);
-        }
-    }
-
-    ScopedFileDescriptor(const ScopedFileDescriptor &) = delete;
-    ScopedFileDescriptor &operator=(const ScopedFileDescriptor &) = delete;
-    ScopedFileDescriptor(ScopedFileDescriptor &&) = delete;
-    ScopedFileDescriptor &operator=(ScopedFileDescriptor &&) = delete;
-
-    [[nodiscard]] int get() const noexcept { return descriptor_; }
-
-private:
-    int descriptor_;
-};
-
 QString initialInputPathLabel(QByteArrayView path)
 {
     return QString::fromLocal8Bit(path.data(), path.size());
@@ -99,50 +76,25 @@ QString initialInputPathLabel(QByteArrayView path)
 std::expected<QByteArray, QString> readInitialInputFile(QByteArrayView path,
                                                         qsizetype index)
 {
-    if (path.contains('\0')) {
+    auto contents =
+        readBoundedPosixRegularFile(path, kMaximumInitialInputFileSize);
+    if (contents) return std::move(*contents);
+
+    const PosixRegularFileError error = contents.error();
+    if (error.kind == PosixRegularFileErrorKind::InvalidPath) {
         return std::unexpected(
             QStringLiteral(
                 "Initial input path at entry %1 contains a NUL byte.")
                 .arg(index));
     }
-
-    const QByteArray nullTerminatedPath(path.data(), path.size());
-    int descriptor = -1;
-    do {
-        // Nonblocking open lets us inspect and reject FIFOs without waiting
-        // for an unrelated writer. It has no effect on regular-file reads.
-        descriptor = ::open(nullTerminatedPath.constData(),
-                            O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOCTTY);
-    } while (descriptor < 0 && errno == EINTR);
-    if (descriptor < 0) {
-        return std::unexpected(
-            QStringLiteral("Unable to open initial input path \"%1\" at entry "
-                           "%2: %3")
-                .arg(initialInputPathLabel(path))
-                .arg(index)
-                .arg(QString::fromLocal8Bit(std::strerror(errno))));
-    }
-    ScopedFileDescriptor file(descriptor);
-
-    struct stat status{};
-    if (::fstat(file.get(), &status) != 0) {
-        return std::unexpected(
-            QStringLiteral("Unable to inspect initial input path \"%1\" at "
-                           "entry %2: %3")
-                .arg(initialInputPathLabel(path))
-                .arg(index)
-                .arg(QString::fromLocal8Bit(std::strerror(errno))));
-    }
-    if (!S_ISREG(status.st_mode)) {
+    if (error.kind == PosixRegularFileErrorKind::NotRegular) {
         return std::unexpected(
             QStringLiteral("Initial input path \"%1\" at entry %2 is not a "
                            "regular file.")
                 .arg(initialInputPathLabel(path))
                 .arg(index));
     }
-    if (status.st_size < 0
-        || static_cast<quint64>(status.st_size)
-            > static_cast<quint64>(kMaximumInitialInputFileSize)) {
+    if (error.kind == PosixRegularFileErrorKind::TooLarge) {
         return std::unexpected(
             QStringLiteral("Initial input path \"%1\" at entry %2 exceeds the "
                            "10 MiB limit.")
@@ -150,40 +102,16 @@ std::expected<QByteArray, QString> readInitialInputFile(QByteArrayView path,
                 .arg(index));
     }
 
-    QByteArray contents;
-    contents.reserve(static_cast<qsizetype>(status.st_size));
-    std::array<char, 64 * 1024> buffer{};
-    while (true) {
-        // Read one byte beyond the remaining allowance so a file that grows
-        // after fstat cannot bypass the same 10 MiB boundary.
-        const qsizetype remaining =
-            kMaximumInitialInputFileSize - contents.size();
-        const size_t requestSize = static_cast<size_t>(
-            std::min<qsizetype>(buffer.size(), remaining + 1));
-        ssize_t count = -1;
-        do {
-            count = ::read(file.get(), buffer.data(), requestSize);
-        } while (count < 0 && errno == EINTR);
-        if (count < 0) {
-            return std::unexpected(
-                QStringLiteral("Unable to read initial input path \"%1\" at "
-                               "entry %2: %3")
-                    .arg(initialInputPathLabel(path))
-                    .arg(index)
-                    .arg(QString::fromLocal8Bit(std::strerror(errno))));
-        }
-        if (count == 0) break;
-        if (count > remaining) {
-            return std::unexpected(
-                QStringLiteral(
-                    "Initial input path \"%1\" at entry %2 exceeds the 10 MiB "
-                    "limit.")
-                    .arg(initialInputPathLabel(path))
-                    .arg(index));
-        }
-        contents.append(buffer.data(), static_cast<qsizetype>(count));
-    }
-    return contents;
+    const QString operation = error.kind == PosixRegularFileErrorKind::Read
+        ? QStringLiteral("read")
+        : error.kind == PosixRegularFileErrorKind::Inspect
+        ? QStringLiteral("inspect")
+        : QStringLiteral("open");
+    return std::unexpected(
+        QStringLiteral("Unable to %1 initial input path \"%2\" at entry %3: %4")
+            .arg(operation, initialInputPathLabel(path))
+            .arg(index)
+            .arg(QString::fromLocal8Bit(std::strerror(error.systemError))));
 }
 
 std::expected<QVector<QByteArray>, QString>

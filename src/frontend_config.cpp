@@ -1,4 +1,5 @@
 #include "frontend_config.h"
+#include "posix_regular_file.h"
 
 #include <QDir>
 #include <QFile>
@@ -7,6 +8,7 @@
 #include <QStringDecoder>
 #include <QStringList>
 
+#include <cstring>
 #include <optional>
 #include <utility>
 
@@ -193,36 +195,48 @@ parseFrontendConfig(QByteArrayView contents, QStringView sourceName)
 
 FrontendConfigLoadResult loadFrontendConfigFile(const QString &path)
 {
+    if (path.contains(QChar::Null)) {
+        return std::unexpected(QStringLiteral(
+            "Frontend configuration path must contain no NUL character"));
+    }
     const QString absolutePath = normalizedAbsolutePath(path);
     if (absolutePath.isEmpty()) {
         return std::unexpected(
             QStringLiteral("Frontend configuration path must not be empty"));
     }
 
-    const QFileInfo info(absolutePath);
-    if (!info.exists()) {
-        return FrontendConfigSnapshot{};
-    }
-    if (!info.isFile()) {
+    auto contents = readBoundedPosixRegularFile(QFile::encodeName(absolutePath),
+                                                MaximumFrontendConfigFileSize);
+    if (!contents) {
+        const PosixRegularFileError error = contents.error();
+        if (error.kind == PosixRegularFileErrorKind::Open
+            && error.systemError == ENOENT) {
+            return FrontendConfigSnapshot{};
+        }
+        if (error.kind == PosixRegularFileErrorKind::NotRegular) {
+            return std::unexpected(
+                QStringLiteral(
+                    "%1: frontend configuration is not a regular file")
+                    .arg(absolutePath));
+        }
+        if (error.kind == PosixRegularFileErrorKind::TooLarge) {
+            return std::unexpected(
+                QStringLiteral(
+                    "%1: frontend configuration exceeds the 1 MiB limit")
+                    .arg(absolutePath));
+        }
+        const QString operation = error.kind == PosixRegularFileErrorKind::Read
+            ? QStringLiteral("read")
+            : error.kind == PosixRegularFileErrorKind::Inspect
+            ? QStringLiteral("inspect")
+            : QStringLiteral("open");
         return std::unexpected(
-            QStringLiteral("%1: frontend configuration is not a regular file")
-                .arg(absolutePath));
+            QStringLiteral("%1: could not %2 frontend configuration: %3")
+                .arg(absolutePath, operation,
+                     QString::fromLocal8Bit(std::strerror(error.systemError))));
     }
 
-    QFile file(absolutePath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        return std::unexpected(
-            QStringLiteral("%1: could not open frontend configuration: %2")
-                .arg(absolutePath, file.errorString()));
-    }
-    const QByteArray contents = file.readAll();
-    if (file.error() != QFileDevice::NoError) {
-        return std::unexpected(
-            QStringLiteral("%1: could not read frontend configuration: %2")
-                .arg(absolutePath, file.errorString()));
-    }
-
-    auto values = parseFrontendConfig(contents, absolutePath);
+    auto values = parseFrontendConfig(*contents, absolutePath);
     if (!values) return std::unexpected(std::move(values.error()));
     return FrontendConfigSnapshot{
         .values = std::move(*values),

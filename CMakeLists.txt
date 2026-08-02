@@ -715,6 +715,19 @@ target_compile_options(ghostty-qt-linux-cgroup PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )
 
+add_library(ghostty-qt-posix-regular-file STATIC
+    src/posix_regular_file.cpp
+    src/posix_regular_file.h
+    src/unique_file_descriptor.h
+)
+target_include_directories(ghostty-qt-posix-regular-file PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+target_link_libraries(ghostty-qt-posix-regular-file PUBLIC Qt6::Core)
+target_compile_options(ghostty-qt-posix-regular-file PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
+)
+
 add_library(ghostty-qt-frontend-config STATIC
     src/frontend_config.cpp
     src/frontend_config.h
@@ -727,6 +740,9 @@ target_include_directories(ghostty-qt-frontend-config PUBLIC
 target_link_libraries(ghostty-qt-frontend-config PUBLIC
     Qt6::Core
     Qt6::Gui
+)
+target_link_libraries(ghostty-qt-frontend-config PRIVATE
+    ghostty-qt-posix-regular-file
 )
 target_compile_options(ghostty-qt-frontend-config PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
@@ -972,6 +988,7 @@ target_link_libraries(ghostty-qt-session-worker
         ghostty-qt-desktop-activation
         ghostty-qt-linux-cgroup
         ghostty-qt-link-matcher
+        ghostty-qt-posix-regular-file
         ghostty-qt-runtime-paths
         ghostty-qt-shell-integration
         ghostty-qt-terminal-foundation
@@ -1078,6 +1095,7 @@ target_link_libraries(ghostty-qt-config-runtime PUBLIC
 )
 target_link_libraries(ghostty-qt-config-runtime PRIVATE
     ghostty-qt-action-pipeline
+    ghostty-qt-posix-regular-file
 )
 
 ghostty_qt_add_internal_library(ghostty-qt-single-instance-activation

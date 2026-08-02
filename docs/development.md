@@ -372,10 +372,11 @@ The frontend parser accepts the closed `single-instance`, `tabs-location`,
 `wide-tabs`, `horizontal-tab-scroll`, `quick-terminal-layer`, and
 `quick-terminal-namespace` schema described in
 [Frontend configuration](frontend-configuration.md). It rejects malformed,
-unknown, or duplicate assignments transactionally. The service watches the
-file and nearest existing directory, debounces changes, reloads off the GUI
-thread, and retains the last-good snapshot after a failed reload. A missing
-file successfully restores typed defaults.
+unknown, or duplicate assignments transactionally. The descriptor-first loader
+requires a regular file and enforces a 1 MiB bound even across concurrent
+growth. The service watches the file and nearest existing directory, debounces
+changes, reloads off the GUI thread, and retains the last-good snapshot after a
+failed reload. A missing file successfully restores typed defaults.
 
 The application retains the latest successful Ghostty and frontend snapshots
 independently. On either publication it rebuilds effective launch options from

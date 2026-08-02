@@ -6,6 +6,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <sys/stat.h>
+
 namespace {
 
 bool writeFile(const QString &path, const QByteArray &contents)
@@ -34,6 +36,7 @@ private Q_SLOTS:
     void createsPreferredPathAndParentWithoutTruncation();
     void opensEncodedLocalUrlAndReportsDesktopFailure();
     void rejectsInvalidPathsAndCreationFailure();
+    void rejectsNulAndNonRegularCandidates();
 };
 
 void GhosttyConfigEditTest::selectsUsingPinnedLinuxPrecedence_data()
@@ -176,6 +179,35 @@ void GhosttyConfigEditTest::rejectsInvalidPathsAndCreationFailure()
     QVERIFY(!failed.has_value());
     QCOMPARE(attempts, 0);
     QVERIFY(failed.error().contains(QStringLiteral("directory")));
+}
+
+void GhosttyConfigEditTest::rejectsNulAndNonRegularCandidates()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+
+    QString nulPath =
+        QDir(temporary.path()).filePath(QStringLiteral("config.ghostty"));
+    nulPath += QChar::Null;
+    nulPath += QStringLiteral("ignored");
+    const auto nul = prepareGhosttyConfigForEditing({nulPath});
+    QVERIFY(!nul.has_value());
+    QVERIFY2(nul.error().contains(QStringLiteral("NUL")),
+             qPrintable(nul.error()));
+
+    const auto directory = prepareGhosttyConfigForEditing({temporary.path()});
+    QVERIFY(!directory.has_value());
+    QVERIFY2(directory.error().contains(QStringLiteral("regular file")),
+             qPrintable(directory.error()));
+
+    const QString fifoPath =
+        QDir(temporary.path()).filePath(QStringLiteral("config-fifo"));
+    const QByteArray nativeFifoPath = QFile::encodeName(fifoPath);
+    QCOMPARE(::mkfifo(nativeFifoPath.constData(), 0600), 0);
+    const auto fifo = prepareGhosttyConfigForEditing({fifoPath});
+    QVERIFY(!fifo.has_value());
+    QVERIFY2(fifo.error().contains(QStringLiteral("regular file")),
+             qPrintable(fifo.error()));
 }
 
 QTEST_APPLESS_MAIN(GhosttyConfigEditTest)

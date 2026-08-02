@@ -16,6 +16,8 @@
 #include <chrono>
 #include <thread>
 
+#include <sys/stat.h>
+
 namespace {
 
 bool replaceFile(const QString &path, const QByteArray &contents)
@@ -58,6 +60,8 @@ private Q_SLOTS:
     void reportsDuplicatePathAndLine();
     void loadsMissingFileAsDefaults();
     void loadsExistingFileWithCanonicalSourcePath();
+    void rejectsInvalidPathNonRegularAndOversizedFiles();
+    void acceptsMaximumSizeAndReportsReadFailures();
     void resolvesStandardConfigPath();
     void watchesAbsentFileAndAtomicReplacements();
     void debouncesAsynchronousReloads();
@@ -308,6 +312,71 @@ void FrontendConfigTest::loadsExistingFileWithCanonicalSourcePath()
     QCOMPARE(loaded->values.tabsLocation, TabsLocation::Bottom);
     QCOMPARE(loaded->sourcePath,
              QDir::cleanPath(QFileInfo(path).absoluteFilePath()));
+}
+
+void FrontendConfigTest::rejectsInvalidPathNonRegularAndOversizedFiles()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+
+    QString nulPath = temporary.path();
+    nulPath += QChar::Null;
+    nulPath += QStringLiteral("ignored");
+    const FrontendConfigLoadResult nul = loadFrontendConfigFile(nulPath);
+    QVERIFY(!nul.has_value());
+    QVERIFY2(nul.error().contains(QStringLiteral("NUL")),
+             qPrintable(nul.error()));
+
+    const FrontendConfigLoadResult directory =
+        loadFrontendConfigFile(temporary.path());
+    QVERIFY(!directory.has_value());
+    QVERIFY2(directory.error().contains(QStringLiteral("regular file")),
+             qPrintable(directory.error()));
+
+    const QString fifoPath =
+        QDir(temporary.path()).filePath(QStringLiteral("config-fifo"));
+    const QByteArray nativeFifoPath = QFile::encodeName(fifoPath);
+    QCOMPARE(::mkfifo(nativeFifoPath.constData(), 0600), 0);
+    const FrontendConfigLoadResult fifo = loadFrontendConfigFile(fifoPath);
+    QVERIFY(!fifo.has_value());
+    QVERIFY2(fifo.error().contains(QStringLiteral("regular file")),
+             qPrintable(fifo.error()));
+
+    const QString oversizedPath =
+        QDir(temporary.path()).filePath(QStringLiteral("oversized"));
+    QFile oversized(oversizedPath);
+    QVERIFY(oversized.open(QIODevice::WriteOnly));
+    QVERIFY(oversized.resize(MaximumFrontendConfigFileSize + 1));
+    oversized.close();
+
+    const FrontendConfigLoadResult oversizedResult =
+        loadFrontendConfigFile(oversizedPath);
+    QVERIFY(!oversizedResult.has_value());
+    QVERIFY2(oversizedResult.error().contains(QStringLiteral("1 MiB")),
+             qPrintable(oversizedResult.error()));
+}
+
+void FrontendConfigTest::acceptsMaximumSizeAndReportsReadFailures()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+
+    const QString maximumPath =
+        QDir(temporary.path()).filePath(QStringLiteral("maximum"));
+    QByteArray maximum(MaximumFrontendConfigFileSize, 'x');
+    maximum.front() = '#';
+    QVERIFY(replaceFile(maximumPath, maximum));
+    const FrontendConfigLoadResult accepted =
+        loadFrontendConfigFile(maximumPath);
+    QVERIFY2(accepted.has_value(), qPrintable(errorMessage(accepted)));
+
+    const QString unreadablePath = QStringLiteral("/proc/self/mem");
+    if (!QFileInfo::exists(unreadablePath)) QSKIP("procfs is unavailable");
+    const FrontendConfigLoadResult unreadable =
+        loadFrontendConfigFile(unreadablePath);
+    QVERIFY(!unreadable.has_value());
+    QVERIFY2(unreadable.error().contains(QStringLiteral("could not read")),
+             qPrintable(unreadable.error()));
 }
 
 void FrontendConfigTest::resolvesStandardConfigPath()
