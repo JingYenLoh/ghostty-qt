@@ -480,6 +480,7 @@ inline QJsonObject values()
         {QStringLiteral("metric-modifier-order"), metricModifierOrder()},
         {QStringLiteral("foreground"), QStringLiteral("#112233")},
         {QStringLiteral("background"), QStringLiteral("#445566")},
+        {QStringLiteral("alpha-blending"), QStringLiteral("linear")},
         {QStringLiteral("background-opacity"), 0.375},
         {QStringLiteral("background-opacity-cells"), true},
         {QStringLiteral("background-blur"), -2},

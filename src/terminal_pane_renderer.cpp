@@ -542,7 +542,8 @@ void appendUnderline(QVector<ColoredRect> &rects, const QRectF &cellRect,
 }
 
 QSGTextNode *createTextNode(QQuickWindow *window, const QRectF &viewport,
-                            const QColor &defaultColor)
+                            const QColor &defaultColor,
+                            TerminalAlphaBlending alphaBlending)
 {
     if (window == nullptr) {
         return nullptr;
@@ -555,7 +556,7 @@ QSGTextNode *createTextNode(QQuickWindow *window, const QRectF &viewport,
     // backends. Set every node property before adding layouts, as required by
     // QSGTextNode's public contract.
     node->setRenderType(QSGTextNode::QtRendering);
-    node->setColor(defaultColor);
+    node->setColor(terminalRenderingColor(defaultColor, alphaBlending));
     node->setTextStyle(QSGTextNode::Normal);
     node->setFiltering(QSGTexture::Linear);
     node->setViewport(viewport);
@@ -565,6 +566,7 @@ QSGTextNode *createTextNode(QQuickWindow *window, const QRectF &viewport,
 void appendTextLayout(QSGTextNode *node, const QString &text, const QFont &font,
                       const QColor &color, const QPointF &position,
                       qreal baseline, qreal lineWidth,
+                      TerminalAlphaBlending alphaBlending,
                       Qt::LayoutDirection direction = Qt::LayoutDirectionAuto)
 {
     if (node == nullptr || text.isEmpty()) {
@@ -581,7 +583,7 @@ void appendTextLayout(QSGTextNode *node, const QString &text, const QFont &font,
     QTextLayout::FormatRange range;
     range.start = 0;
     range.length = static_cast<int>(text.size());
-    range.format.setForeground(color);
+    range.format.setForeground(terminalRenderingColor(color, alphaBlending));
     layout.setFormats({range});
 
     layout.beginLayout();
@@ -641,7 +643,8 @@ struct TerminalRunLayoutResult {
 
 TerminalRunLayoutResult
 appendTerminalTextRun(QSGTextNode *node, const TerminalTextRun &run, qreal top,
-                      qreal baseline, qreal cellWidth, qreal devicePixelRatio)
+                      qreal baseline, qreal cellWidth, qreal devicePixelRatio,
+                      TerminalAlphaBlending alphaBlending)
 {
     if (node == nullptr || run.text.isEmpty()) {
         return {};
@@ -659,7 +662,8 @@ appendTerminalTextRun(QSGTextNode *node, const TerminalTextRun &run, qreal top,
     QTextLayout::FormatRange range;
     range.start = 0;
     range.length = static_cast<int>(run.text.size());
-    range.format.setForeground(run.color);
+    range.format.setForeground(
+        terminalRenderingColor(run.color, alphaBlending));
     layout.setFormats({range});
 
     layout.beginLayout();
@@ -684,7 +688,8 @@ appendTerminalTextRun(QSGTextNode *node, const TerminalTextRun &run, qreal top,
         appendTextLayout(
             node, cell.text, run.font, run.color,
             QPointF(static_cast<qreal>(cell.column) * cellWidth, top), baseline,
-            static_cast<qreal>(cell.columnSpan) * cellWidth, Qt::LeftToRight);
+            static_cast<qreal>(cell.columnSpan) * cellWidth, alphaBlending,
+            Qt::LeftToRight);
     }
     return result;
 }
@@ -714,15 +719,18 @@ struct TextLayoutSpec {
 // identify and retain.
 struct OverlayTextRenderState {
     OverlayTextRenderState(QQuickWindow *renderWindow,
-                           const QRectF &renderViewport, QColor renderColor)
+                           const QRectF &renderViewport, QColor renderColor,
+                           TerminalAlphaBlending renderAlphaBlending)
         : window(renderWindow)
         , viewport(renderViewport)
         , defaultColor(std::move(renderColor))
+        , alphaBlending(renderAlphaBlending)
     {}
 
     QQuickWindow *window = nullptr;
     QRectF viewport;
     QColor defaultColor;
+    TerminalAlphaBlending alphaBlending = TerminalAlphaBlending::Native;
     QVarLengthArray<TextLayoutSpec, 2> layouts;
 
     void append(TextLayoutSpec layout)
@@ -790,6 +798,7 @@ struct TerminalTextRenderState {
     int frameRows = 0;
     int visibleColumns = 0;
     int visibleRows = 0;
+    TerminalAlphaBlending alphaBlending = TerminalAlphaBlending::Native;
 
     bool operator==(const TerminalTextRenderState &) const = default;
 };
@@ -833,6 +842,7 @@ struct TerminalSolidRenderState {
     int visibleColumns = 0;
     int visibleRows = 0;
     bool softwareRenderer = false;
+    TerminalAlphaBlending alphaBlending = TerminalAlphaBlending::Native;
 
     bool operator==(const TerminalSolidRenderState &) const = default;
 };
@@ -961,7 +971,8 @@ public:
         }
     }
 
-    void setUnfocusedSplitOverlay(const QRectF &rect, QColor color) const
+    void setUnfocusedSplitOverlay(const QRectF &rect, QColor color,
+                                  TerminalAlphaBlending alphaBlending)
     {
         QRectF effectiveRect = rect;
         if (effectiveRect.isEmpty() || !color.isValid() || color.alpha() == 0) {
@@ -971,8 +982,11 @@ public:
         if (unfocusedSplitOverlay->rect() != effectiveRect) {
             unfocusedSplitOverlay->setRect(effectiveRect);
         }
-        if (unfocusedSplitOverlay->color() != color) {
-            unfocusedSplitOverlay->setColor(color);
+        unfocusedSplitLogicalColor = color;
+        const QColor renderingColor =
+            terminalRenderingColor(color, alphaBlending);
+        if (unfocusedSplitOverlay->color() != renderingColor) {
+            unfocusedSplitOverlay->setColor(renderingColor);
         }
     }
 
@@ -981,10 +995,11 @@ public:
         return rectLayers[terminalEnumIndex(layer)]->beginUpdate();
     }
 
-    void commitRectLayers(bool softwareRenderer) const
+    void commitRectLayers(bool softwareRenderer,
+                          TerminalAlphaBlending alphaBlending) const
     {
         for (TerminalRectBatch *batch : rectLayers) {
-            batch->commit(softwareRenderer);
+            batch->commit(softwareRenderer, alphaBlending);
         }
     }
 
@@ -1050,12 +1065,13 @@ public:
 
     void updateSolidRow(SolidRowLayer layer, int row,
                         const QVector<ColoredRect> &rects,
-                        bool softwareRenderer) const
+                        bool softwareRenderer,
+                        TerminalAlphaBlending alphaBlending) const
     {
         TerminalRectBatch *const batch =
             solidRowLayers[terminalEnumIndex(layer)].at(row);
         batch->beginUpdate() = rects;
-        batch->commit(softwareRenderer);
+        batch->commit(softwareRenderer, alphaBlending);
     }
 
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
@@ -1103,11 +1119,13 @@ public:
 
     QSGTextNode *prepareTextRow(int row, QQuickWindow *window,
                                 const QRectF &viewport,
-                                const QColor &defaultColor)
+                                const QColor &defaultColor,
+                                TerminalAlphaBlending alphaBlending)
     {
         QSGTextNode *&textNode = rowTextNodes[row];
         if (textNode == nullptr) {
-            textNode = createTextNode(window, viewport, defaultColor);
+            textNode =
+                createTextNode(window, viewport, defaultColor, alphaBlending);
             if (textNode != nullptr) {
                 rowContainers.at(row)->appendChildNode(textNode);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
@@ -1191,7 +1209,7 @@ private:
         TextNodeUpdate result;
         if (node == nullptr && !state.layouts.isEmpty()) {
             node = createTextNode(state.window, state.viewport,
-                                  state.defaultColor);
+                                  state.defaultColor, state.alphaBlending);
             if (node != nullptr) {
                 container->appendChildNode(node);
                 result.created = true;
@@ -1207,11 +1225,12 @@ private:
 
         node->clear();
         node->setViewport(state.viewport);
-        node->setColor(state.defaultColor);
+        node->setColor(
+            terminalRenderingColor(state.defaultColor, state.alphaBlending));
         for (const TextLayoutSpec &layout : state.activeLayouts()) {
             appendTextLayout(node, layout.text, layout.font, layout.color,
-                             layout.position, layout.baseline,
-                             layout.lineWidth);
+                             layout.position, layout.baseline, layout.lineWidth,
+                             state.alphaBlending);
         }
         previous = state;
         result.rebuilt = true;
@@ -1236,6 +1255,7 @@ public:
     QSGNode *paneOverlayTextContainer = nullptr;
     QSGTextNode *paneOverlayText = nullptr;
     QSGSimpleRectNode *unfocusedSplitOverlay = nullptr;
+    QColor unfocusedSplitLogicalColor;
     std::array<TerminalRectBatch *, terminalEnumIndex(RectLayer::Count)>
         rectLayers{};
     std::array<QSGNode *, terminalEnumIndex(SolidRowLayer::Count)>
@@ -1334,6 +1354,8 @@ void publishRenderProbe(
     const QVector<QColor> &glyphForegrounds,
     const QVector<QColor> &decorationForegrounds,
     const QVector<QColor> &underlineColors, const QColor &cursorColor,
+    TerminalAlphaBlending requestedAlphaBlending,
+    TerminalAlphaBlending effectiveAlphaBlending,
     const QVector<QRectF> &underlineRects,
     const QVector<QRectF> &strikethroughRects,
     const QVector<QRectF> &overlineRects, const QVector<QRectF> &cursorRects)
@@ -1342,6 +1364,8 @@ void publishRenderProbe(
     TerminalPaneRenderProbeSnapshot &snapshot = renderProbes[pane];
     ++snapshot.paintSerial;
     snapshot.rootSerial = root.rootSerial;
+    snapshot.requestedAlphaBlending = requestedAlphaBlending;
+    snapshot.effectiveAlphaBlending = effectiveAlphaBlending;
     snapshot.unfocusedSplitOverlaySerial = root.unfocusedSplitOverlaySerial;
     snapshot.startingTextNodeSerial = root.startingTextNodeSerial;
     snapshot.overlayTextNodeSerial = root.overlayTextNodeSerial;
@@ -1355,7 +1379,7 @@ void publishRenderProbe(
     snapshot.paneOverlayTextBuildCount = root.paneOverlayTextBuildCount;
     snapshot.startingTextBuildCount = root.startingTextBuildCount;
     snapshot.unfocusedSplitOverlayRect = root.unfocusedSplitOverlay->rect();
-    snapshot.unfocusedSplitOverlayColor = root.unfocusedSplitOverlay->color();
+    snapshot.unfocusedSplitOverlayColor = root.unfocusedSplitLogicalColor;
     snapshot.backgroundImageAssetSerial = root.backdrop->assetSerial();
     snapshot.backgroundImageRect = root.backdrop->imageRect();
     snapshot.backgroundImageSourceRect = root.backdrop->sourceRect();
@@ -1479,7 +1503,7 @@ bool terminalPaneDelegatedPaintNodeTeardownForTest(TerminalPane *pane)
     pane->renderItem_ = TerminalPaneRenderer::createRenderItem(pane);
     QSGNode *const result =
         pane->updatePaintNode(new LifetimeNode(&destroyed), nullptr);
-    pane->useDirectTerminalRendering();
+    pane->useUnfilteredTerminalRendering();
     return result == nullptr && destroyed && pane->renderItem_ == nullptr
         && pane->flags().testFlag(QQuickItem::ItemHasContents);
 }
@@ -1518,6 +1542,9 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
     std::shared_ptr<const TerminalBackgroundImageAsset> backgroundImageAsset;
     TerminalPaddingOptions paddingOptions;
     SplitAppearance splitAppearance;
+    TerminalAlphaBlending requestedAlphaBlending =
+        TerminalAlphaBlending::LinearCorrected;
+    bool alphaBlendingPipelineActive = false;
     TerminalCellMetrics metrics;
     QString preedit;
     QString status;
@@ -1537,6 +1564,8 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
         backgroundImageAsset = backgroundImageAsset_;
         paddingOptions = paddingOptions_;
         splitAppearance = splitAppearance_;
+        requestedAlphaBlending = alphaBlending_;
+        alphaBlendingPipelineActive = alphaBlendingPipelineActive_;
         metrics = metrics_;
         preedit = preedit_;
         status = statusMessage_;
@@ -1593,6 +1622,19 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
     const bool customBackdropRenderer = rendererInterface != nullptr
         && QSGRendererInterface::isApiRhiBased(
                                             rendererInterface->graphicsApi());
+    const QSGRendererInterface::GraphicsApi graphicsApi =
+        rendererInterface != nullptr ? rendererInterface->graphicsApi()
+                                     : QSGRendererInterface::Unknown;
+    const bool alphaBlendingSupported =
+        graphicsApi == QSGRendererInterface::OpenGL
+        || graphicsApi == QSGRendererInterface::Vulkan;
+    const bool linearAlphaBlendingActive =
+        alphaBlendingSupported && alphaBlendingPipelineActive;
+    const TerminalAlphaBlending alphaBlending =
+        terminalUsesLinearBlending(requestedAlphaBlending)
+            && !linearAlphaBlendingActive
+        ? TerminalAlphaBlending::Native
+        : requestedAlphaBlending;
     const QColor opaqueBackground =
         hasFrame ? frame.background : appearance.backgroundColor;
     const int baseBackgroundAlpha =
@@ -1604,7 +1646,8 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
         withAlpha(opaqueBackground, baseBackgroundAlpha);
     root->backdrop->update(window(), viewport, globalBackground,
                            backgroundImageAsset, backgroundOptions.image,
-                           devicePixelRatio, customBackdropRenderer);
+                           devicePixelRatio, customBackdropRenderer,
+                           alphaBlending);
     auto &backgrounds = root->rects(RectLayer::Background);
     auto &cursorBackgrounds = root->rects(RectLayer::CursorBackground);
     auto &decorationsBeforeText = root->rects(RectLayer::DecorationBeforeText);
@@ -1633,18 +1676,20 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
     underlineProbe = &underlineRects;
     cursorProbe = &cursorRects;
 #endif
-    OverlayTextRenderState overlayTextState(
-        window(), gridViewport, QColor(QStringLiteral("#eceff4")));
+    OverlayTextRenderState overlayTextState(window(), gridViewport,
+                                            QColor(QStringLiteral("#eceff4")),
+                                            alphaBlending);
     OverlayTextRenderState paneOverlayTextState(
-        window(), viewport, QColor(QStringLiteral("#eceff4")));
-    OverlayTextRenderState startingTextState(
-        window(), gridViewport, QColor(QStringLiteral("#88909d")));
+        window(), viewport, QColor(QStringLiteral("#eceff4")), alphaBlending);
+    OverlayTextRenderState startingTextState(window(), gridViewport,
+                                             QColor(QStringLiteral("#88909d")),
+                                             alphaBlending);
 
     if (!hasFrame || frame.columns <= 0 || frame.rows <= 0) {
         root->kittyGraphics.update(window(), root->kittyBelowBackground,
                                    root->kittyBelowText, root->kittyAboveText,
                                    {}, QSizeF(cellWidth, cellHeight), {},
-                                   customBackdropRenderer);
+                                   customBackdropRenderer, alphaBlending);
         root->clearMainText();
         root->clearSolidRows();
         startingTextState.append({
@@ -1675,7 +1720,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
             QSizeF(cellWidth, cellHeight),
             QRectF(0.0, 0.0, static_cast<qreal>(visibleColumns) * cellWidth,
                    static_cast<qreal>(visibleRows) * cellHeight),
-            customBackdropRenderer);
+            customBackdropRenderer, alphaBlending);
         const bool focused = hasActiveFocus();
         const bool logicalCursorActive = frame.cursorVisible
             && frame.cursorColumn >= 0 && frame.cursorColumn < visibleColumns
@@ -1735,6 +1780,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
         textState.frameRows = frame.rows;
         textState.visibleColumns = visibleColumns;
         textState.visibleRows = visibleRows;
+        textState.alphaBlending = alphaBlending;
 
         const bool rebuildAllText = !root->textState.has_value()
             || *root->textState != textState
@@ -1772,6 +1818,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
             .visibleColumns = visibleColumns,
             .visibleRows = visibleRows,
             .softwareRenderer = softwareRenderer,
+            .alphaBlending = alphaBlending,
         };
         const bool rebuildAllSolids = !root->solidState.has_value()
             || *root->solidState != solidState
@@ -1843,7 +1890,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                 || blockCursorChangedThisRow;
             QSGTextNode *rowText = rebuildRowText
                 ? root->prepareTextRow(row, window(), gridViewport,
-                                       frame.foreground)
+                                       frame.foreground, alphaBlending)
                 : nullptr;
             QVector<TerminalTextCell> rowTextCells;
             if (rowText != nullptr) {
@@ -2109,7 +2156,8 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                 for (const TerminalTextRun &run : runs) {
                     const TerminalRunLayoutResult result =
                         appendTerminalTextRun(rowText, run, top, baseline,
-                                              cellWidth, devicePixelRatio);
+                                              cellWidth, devicePixelRatio,
+                                              alphaBlending);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
                     root->rowLayoutCounts[row] += result.layoutCount;
                     root->rowFallbackCellCounts[row] +=
@@ -2127,14 +2175,14 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                 solidRow.builtEpoch = solidRowEpoch;
                 if (!softwareRenderer) {
                     root->updateSolidRow(SolidRowLayer::Background, row,
-                                         solidRow.backgrounds,
-                                         softwareRenderer);
+                                         solidRow.backgrounds, softwareRenderer,
+                                         alphaBlending);
                     root->updateSolidRow(SolidRowLayer::DecorationBeforeText,
                                          row, solidRow.decorationsBeforeText,
-                                         softwareRenderer);
+                                         softwareRenderer, alphaBlending);
                     root->updateSolidRow(SolidRowLayer::DecorationAfterText,
                                          row, solidRow.decorationsAfterText,
-                                         softwareRenderer);
+                                         softwareRenderer, alphaBlending);
                 }
             }
             if (softwareRenderer) {
@@ -2441,7 +2489,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
     root->updateStartingText(startingTextState);
     root->updateOverlayText(overlayTextState);
     root->updatePaneOverlayText(paneOverlayTextState);
-    root->commitRectLayers(softwareRenderer);
+    root->commitRectLayers(softwareRenderer, alphaBlending);
 
     QColor unfocusedSplitColor;
     const bool surfaceFocused =
@@ -2456,12 +2504,14 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                 unfocusedSplitOverlayOpacity(splitAppearance.unfocusedOpacity));
         }
     }
-    root->setUnfocusedSplitOverlay(viewport, unfocusedSplitColor);
+    root->setUnfocusedSplitOverlay(viewport, unfocusedSplitColor,
+                                   alphaBlending);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
     publishRenderProbe(this, *root, metrics, fontRoleCellCounts,
                        globalBackground, cellBackgroundLayers, glyphForegrounds,
                        decorationForegrounds, underlineColors,
-                       renderedCursorColor, underlineRects, strikethroughRects,
+                       renderedCursorColor, requestedAlphaBlending,
+                       alphaBlending, underlineRects, strikethroughRects,
                        overlineRects, cursorRects);
 #endif
     return root;

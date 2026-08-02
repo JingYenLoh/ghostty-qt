@@ -5,6 +5,7 @@
 #include "ghostty_config_snapshot.h"
 #include "ghostty_config_values.h"
 #include "modifier_remap_types.h"
+#include "terminal_alpha_blending.h"
 #include "terminal_custom_shader_options.h"
 #include "terminal_initial_input.h"
 #include "terminal_session_options.h"
@@ -94,6 +95,10 @@ struct LaunchOptions {
     bool configDefaultFiles = true;
     bool configDefaultFilesExplicit = false;
     TerminalAppearance appearance;
+    // Pane-local compositing policy. This is GUI/render-thread state and never
+    // wakes the terminal worker on live reload.
+    TerminalAlphaBlending alphaBlending =
+        TerminalAlphaBlending::LinearCorrected;
     // Qt-only compositing policy. This deliberately does not enter
     // TerminalSessionRuntimeOptions, so opacity reloads repaint existing panes
     // without waking SessionWorker or mutating libghostty terminal state.

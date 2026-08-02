@@ -445,9 +445,9 @@ void GhosttyConfigProcessLoaderTest::diagnosesOnlyNonDefaultUnsupportedActions()
         configured.value(QStringLiteral("keybindings")).toObject();
     QJsonArray root = current.value(QStringLiteral("root")).toArray();
     root.append(binding({unicodeTrigger('x', GhosttyKeybindCtrl)},
-                        {QStringLiteral("crash:main")}));
+                        {QStringLiteral("clear_screen")}));
     root.append(binding({unicodeTrigger('y', GhosttyKeybindCtrl)},
-                        {QStringLiteral("crash:main")}));
+                        {QStringLiteral("clear_screen")}));
     root.append(binding({unicodeTrigger('z', GhosttyKeybindCtrl)},
                         {QStringLiteral("inspector:toggle")}));
     current.insert(QStringLiteral("root"), root);
@@ -458,7 +458,7 @@ void GhosttyConfigProcessLoaderTest::diagnosesOnlyNonDefaultUnsupportedActions()
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     const auto warnings = std::ranges::count_if(
         result->diagnostics, [](const GhosttyConfigDiagnostic &diagnostic) {
-            return diagnostic.message.contains(QStringLiteral("crash:main"));
+            return diagnostic.message.contains(QStringLiteral("clear_screen"));
         });
     QCOMPARE(warnings, 1);
     QVERIFY(std::ranges::none_of(result->diagnostics,
@@ -475,7 +475,7 @@ void GhosttyConfigProcessLoaderTest::diagnosesOnlyNonDefaultUnsupportedActions()
     QJsonObject changed = root.at(0).toObject();
     changed.insert(QStringLiteral("flags"), flags(false));
     changed.insert(QStringLiteral("actions"),
-                   QJsonArray{QStringLiteral("crash:main")});
+                   QJsonArray{QStringLiteral("clear_screen")});
     root.replace(0, changed);
     current.insert(QStringLiteral("root"), root);
     configured.insert(QStringLiteral("keybindings"), current);
@@ -486,7 +486,7 @@ void GhosttyConfigProcessLoaderTest::diagnosesOnlyNonDefaultUnsupportedActions()
         std::ranges::count_if(result->diagnostics,
                               [](const GhosttyConfigDiagnostic &diagnostic) {
                                   return diagnostic.message.contains(
-                                      QStringLiteral("crash:main"));
+                                      QStringLiteral("clear_screen"));
                               }),
         1);
 }

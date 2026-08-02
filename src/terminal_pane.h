@@ -217,6 +217,7 @@ public:
         TerminalCustomShaderPipelineEffect *effect) override;
 
     void focusTerminal();
+    [[nodiscard]] bool requestIoCrash();
     void setSurfaceTitle(QString title);
     void setSurfaceTitleOverride(std::optional<QString> title);
     void copySelection();
@@ -485,10 +486,12 @@ private:
     void setBellRinging(bool ringing);
     void setCustomShaderStageComponent(QQmlComponent *component);
     void reloadCustomShaders(const TerminalCustomShaderOptions &options);
+    [[nodiscard]] bool refreshEffectiveCustomShaderStages();
     void publishCustomShaderDiagnostic();
     void rebuildCustomShaderStages();
     void clearCustomShaderStages();
-    void useDirectTerminalRendering();
+    void useUnfilteredTerminalRendering();
+    void setAlphaBlendingPipelineActive(bool active);
     void syncCustomShaderStageGeometry();
     [[nodiscard]] bool customShaderRenderingSupported() const;
     [[nodiscard]] std::shared_ptr<TerminalCustomShaderUniforms>
@@ -507,6 +510,9 @@ private:
     // Mirrored separately so the render thread can take a value-only snapshot
     // under renderMutex_ while live configuration updates options_.
     TerminalAppearance appearance_;
+    TerminalAlphaBlending alphaBlending_ =
+        TerminalAlphaBlending::LinearCorrected;
+    bool alphaBlendingPipelineActive_ = false;
     TerminalBackgroundOptions backgroundOptions_;
     TerminalPaddingOptions paddingOptions_;
     SplitAppearance splitAppearance_;
@@ -519,6 +525,7 @@ private:
     QQuickItem *renderItem_ = nullptr;
     QPointer<QQmlComponent> customShaderStageComponent_;
     QVector<QPointer<QQuickItem>> customShaderStageItems_;
+    QVector<TerminalCustomShaderStage> userCustomShaderStages_;
     QVector<TerminalCustomShaderStage> customShaderStages_;
     quint64 customShaderCompileGeneration_ = 0;
     QString customShaderCompileDiagnostic_;

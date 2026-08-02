@@ -22,7 +22,13 @@ if command -v xvfb-run >/dev/null 2>&1; then
 fi
 
 if [[ -n "${DISPLAY:-}" ]]; then
-    exec "$@"
+    if ! command -v xdpyinfo >/dev/null 2>&1 \
+        || xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+        exec "$@"
+    fi
+    printf 'SKIP: DISPLAY=%s is not reachable for OpenGL RHI test\n' \
+        "$DISPLAY"
+    exit 77
 fi
 
 printf 'SKIP: no X display or xvfb-run for OpenGL RHI test\n'

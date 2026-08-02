@@ -1,5 +1,7 @@
 #include "terminal_rect_batch.h"
 
+#include <QSGGeometry>
+#include <QSGGeometryNode>
 #include <QSGSimpleRectNode>
 #include <QTest>
 
@@ -35,6 +37,15 @@ QVector<QSGSimpleRectNode *> softwareNodes(TerminalRectBatch &batch)
     return result;
 }
 
+const QSGGeometry::ColoredPoint2D *hardwareVertices(TerminalRectBatch &batch)
+{
+    const auto *node =
+        dynamic_cast<const QSGGeometryNode *>(batch.firstChild());
+    return node != nullptr && node->geometry() != nullptr
+        ? node->geometry()->vertexDataAsColoredPoint2D()
+        : nullptr;
+}
+
 } // namespace
 
 class TerminalRectBatchTest final : public QObject {
@@ -43,6 +54,7 @@ class TerminalRectBatchTest final : public QObject {
 private Q_SLOTS:
     void reusesHardwareGeometry();
     void reusesSoftwareNodePool();
+    void linearizesHardwareColorsAndInvalidatesRetainedGeometry();
 };
 
 void TerminalRectBatchTest::reusesHardwareGeometry()
@@ -136,6 +148,54 @@ void TerminalRectBatchTest::reusesSoftwareNodePool()
     QCOMPARE(batch.allocationGeneration(), quint64{6});
     QCOMPARE(batch.commitGeneration(), quint64{5});
     QCOMPARE(softwareNodes(batch), fiveNodes);
+}
+
+void TerminalRectBatchTest::
+    linearizesHardwareColorsAndInvalidatesRetainedGeometry()
+{
+    TerminalRectBatch batch;
+    QVector<TerminalColoredRect> &native = batch.beginUpdate();
+    native.append({
+        .rect = QRectF(0.0, 0.0, 1.0, 1.0),
+        .color = QColor::fromRgb(128, 128, 128, 128),
+    });
+    batch.commit(false, TerminalAlphaBlending::Native);
+    const QSGGeometry::ColoredPoint2D *vertices = hardwareVertices(batch);
+    QVERIFY(vertices != nullptr);
+    QCOMPARE(vertices[0].r, uchar{64});
+    QCOMPARE(vertices[0].g, uchar{64});
+    QCOMPARE(vertices[0].b, uchar{64});
+    QCOMPARE(vertices[0].a, uchar{128});
+    QCOMPARE(batch.commitGeneration(), quint64{1});
+    QCOMPARE(batch.allocationGeneration(), quint64{1});
+
+    QVector<TerminalColoredRect> &linear = batch.beginUpdate();
+    linear.append({
+        .rect = QRectF(0.0, 0.0, 1.0, 1.0),
+        .color = QColor::fromRgb(128, 128, 128, 128),
+    });
+    batch.commit(false, TerminalAlphaBlending::Linear);
+    vertices = hardwareVertices(batch);
+    QVERIFY(vertices != nullptr);
+    QCOMPARE(vertices[0].r, uchar{28});
+    QCOMPARE(vertices[0].g, uchar{28});
+    QCOMPARE(vertices[0].b, uchar{28});
+    QCOMPARE(vertices[0].a, uchar{128});
+    QCOMPARE(batch.commitGeneration(), quint64{2});
+    QCOMPARE(batch.allocationGeneration(), quint64{1});
+
+    QVector<TerminalColoredRect> &corrected = batch.beginUpdate();
+    corrected.append({
+        .rect = QRectF(0.0, 0.0, 1.0, 1.0),
+        .color = QColor::fromRgb(128, 128, 128, 128),
+    });
+    batch.commit(false, TerminalAlphaBlending::LinearCorrected);
+    vertices = hardwareVertices(batch);
+    QVERIFY(vertices != nullptr);
+    QCOMPARE(vertices[0].r, uchar{28});
+    QCOMPARE(vertices[0].a, uchar{128});
+    QCOMPARE(batch.commitGeneration(), quint64{3});
+    QCOMPARE(batch.allocationGeneration(), quint64{1});
 }
 
 QTEST_GUILESS_MAIN(TerminalRectBatchTest)

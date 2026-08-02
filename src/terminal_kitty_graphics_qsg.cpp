@@ -34,7 +34,7 @@ namespace {
 using namespace TerminalKittyGraphicsShaderLayout;
 
 static_assert(matrixSize == 64);
-static_assert(uniformBufferSize == 68);
+static_assert(uniformBufferSize == 72);
 
 bool validImage(const TerminalKittyGraphicsImage &image)
 {
@@ -91,27 +91,8 @@ public:
             QStringLiteral(":/ghostty-qt/shaders/terminal_kitty.frag.qsb"));
     }
 
-    bool updateUniformData(RenderState &state, QSGMaterial *,
-                           QSGMaterial *oldMaterial) override
-    {
-        QByteArray &buffer = *state.uniformData();
-        Q_ASSERT(buffer.size() >= uniformBufferSize);
-        bool changed = false;
-        if (oldMaterial == nullptr || state.isMatrixDirty()) {
-            const QMatrix4x4 matrix = state.combinedMatrix();
-            Q_ASSERT(matrixSize == static_cast<qsizetype>(sizeof(float) * 16));
-            std::memcpy(buffer.data() + matrixOffset, matrix.constData(),
-                        static_cast<std::size_t>(matrixSize));
-            changed = true;
-        }
-        if (oldMaterial == nullptr || state.isOpacityDirty()) {
-            const float opacity = state.opacity();
-            std::memcpy(buffer.data() + inheritedOpacityOffset, &opacity,
-                        sizeof(opacity));
-            changed = true;
-        }
-        return changed;
-    }
+    bool updateUniformData(RenderState &state, QSGMaterial *newMaterial,
+                           QSGMaterial *oldMaterial) override;
 
     void updateSampledImage(RenderState &state, int binding,
                             QSGTexture **texture, QSGMaterial *newMaterial,
@@ -120,8 +101,11 @@ public:
 
 class TerminalKittyQsgMaterial final : public QSGMaterial {
 public:
-    explicit TerminalKittyQsgMaterial(TerminalStraightRgbaTexture *texture)
+    explicit TerminalKittyQsgMaterial(TerminalStraightRgbaTexture *texture,
+                                      TerminalAlphaBlending alphaBlending)
         : texture_(texture)
+        , linearBlending_(terminalUsesLinearBlending(alphaBlending) ? 1.0F
+                                                                    : 0.0F)
     {
         setFlag(QSGMaterial::Blending);
     }
@@ -145,9 +129,12 @@ public:
         const std::less<QSGTexture *> less;
         QSGTexture *const leftTexture = texture_->sampledTexture();
         QSGTexture *const rightTexture = right->texture_->sampledTexture();
-        return leftTexture == rightTexture    ? 0
-            : less(leftTexture, rightTexture) ? -1
-                                              : 1;
+        if (leftTexture != rightTexture) {
+            return less(leftTexture, rightTexture) ? -1 : 1;
+        }
+        return linearBlending_ == right->linearBlending_ ? 0
+            : linearBlending_ < right->linearBlending_   ? -1
+                                                         : 1;
     }
 
     [[nodiscard]] TerminalStraightRgbaTexture *texture() const noexcept
@@ -162,9 +149,61 @@ public:
         return true;
     }
 
+    bool setAlphaBlending(TerminalAlphaBlending alphaBlending) noexcept
+    {
+        const float next =
+            terminalUsesLinearBlending(alphaBlending) ? 1.0F : 0.0F;
+        if (linearBlending_ == next) return false;
+        linearBlending_ = next;
+        uniformsDirty_ = true;
+        return true;
+    }
+
+    [[nodiscard]] float linearBlending() const noexcept
+    {
+        return linearBlending_;
+    }
+
+    [[nodiscard]] bool takeUniformsDirty() const noexcept
+    {
+        return std::exchange(uniformsDirty_, false);
+    }
+
 private:
     TerminalStraightRgbaTexture *texture_ = nullptr;
+    float linearBlending_ = 0.0F;
+    mutable bool uniformsDirty_ = true;
 };
+
+bool TerminalKittyQsgShader::updateUniformData(RenderState &state,
+                                               QSGMaterial *newMaterial,
+                                               QSGMaterial *oldMaterial)
+{
+    QByteArray &buffer = *state.uniformData();
+    Q_ASSERT(buffer.size() >= uniformBufferSize);
+    bool changed = false;
+    if (oldMaterial == nullptr || state.isMatrixDirty()) {
+        const QMatrix4x4 matrix = state.combinedMatrix();
+        Q_ASSERT(matrixSize == static_cast<qsizetype>(sizeof(float) * 16));
+        std::memcpy(buffer.data() + matrixOffset, matrix.constData(),
+                    static_cast<std::size_t>(matrixSize));
+        changed = true;
+    }
+    if (oldMaterial == nullptr || state.isOpacityDirty()) {
+        const float opacity = state.opacity();
+        std::memcpy(buffer.data() + inheritedOpacityOffset, &opacity,
+                    sizeof(opacity));
+        changed = true;
+    }
+    auto *const material = static_cast<TerminalKittyQsgMaterial *>(newMaterial);
+    if (oldMaterial != newMaterial || material->takeUniformsDirty()) {
+        const float linearBlending = material->linearBlending();
+        std::memcpy(buffer.data() + linearBlendingOffset, &linearBlending,
+                    sizeof(linearBlending));
+        changed = true;
+    }
+    return changed;
+}
 
 void TerminalKittyQsgShader::updateSampledImage(RenderState &state, int binding,
                                                 QSGTexture **texture,
@@ -191,10 +230,11 @@ struct PlacementNodeUpdate {
 class TerminalKittyQsgNode final : public QSGGeometryNode {
 public:
     TerminalKittyQsgNode(TerminalStraightRgbaTexture *texture,
-                         const QRectF &destination, const QRectF &source)
+                         const QRectF &destination, const QRectF &source,
+                         TerminalAlphaBlending alphaBlending)
         : geometry_(new QSGGeometry(
               QSGGeometry::defaultAttributes_TexturedPoint2D(), 4))
-        , material_(new TerminalKittyQsgMaterial(texture))
+        , material_(new TerminalKittyQsgMaterial(texture, alphaBlending))
     {
         geometry_->setDrawingMode(QSGGeometry::DrawTriangleStrip);
         geometry_->setVertexDataPattern(QSGGeometry::DynamicPattern);
@@ -211,7 +251,8 @@ public:
     }
 
     PlacementNodeUpdate update(TerminalStraightRgbaTexture *texture,
-                               const QRectF &destination, const QRectF &source)
+                               const QRectF &destination, const QRectF &source,
+                               TerminalAlphaBlending alphaBlending)
     {
         PlacementNodeUpdate result;
         const QRectF normalizedSource =
@@ -226,6 +267,10 @@ public:
             result.geometryChanged = true;
         }
         if (material_->setTexture(texture)) {
+            markDirty(QSGNode::DirtyMaterial);
+            result.materialChanged = true;
+        }
+        if (material_->setAlphaBlending(alphaBlending)) {
             markDirty(QSGNode::DirtyMaterial);
             result.materialChanged = true;
         }
@@ -442,7 +487,8 @@ public:
     }
 
     PlacementNode createPlacementNode(const MaterializedPlacement &materialized,
-                                      bool useCustomMaterial)
+                                      bool useCustomMaterial,
+                                      TerminalAlphaBlending renderAlphaBlending)
     {
         const TerminalKittyGraphicsRenderPlacement &placement =
             materialized.placement;
@@ -450,7 +496,7 @@ public:
         if (useCustomMaterial) {
             node = new TerminalKittyQsgNode(
                 materialized.textures->straightRgba.get(),
-                placement.destination, placement.source);
+                placement.destination, placement.source, renderAlphaBlending);
         } else {
             auto *textureNode = new QSGSimpleTextureNode;
             textureNode->setOwnsTexture(false);
@@ -477,10 +523,9 @@ public:
         };
     }
 
-    PlacementNodeUpdate
-    updatePlacementNode(PlacementNode &node,
-                        const MaterializedPlacement &materialized,
-                        bool useCustomMaterial)
+    PlacementNodeUpdate updatePlacementNode(
+        PlacementNode &node, const MaterializedPlacement &materialized,
+        bool useCustomMaterial, TerminalAlphaBlending renderAlphaBlending)
     {
         const TerminalKittyGraphicsRenderPlacement &placement =
             materialized.placement;
@@ -488,7 +533,7 @@ public:
         if (useCustomMaterial) {
             result = static_cast<TerminalKittyQsgNode *>(node.node)->update(
                 materialized.textures->straightRgba.get(),
-                placement.destination, placement.source);
+                placement.destination, placement.source, renderAlphaBlending);
         } else {
             auto *textureNode = static_cast<QSGSimpleTextureNode *>(node.node);
             QSGTexture *const oldTexture = textureNode->texture();
@@ -560,7 +605,8 @@ public:
 
     void
     reconcilePlacementNodes(const QVector<MaterializedPlacement> &materialized,
-                            bool useCustomMaterial)
+                            bool useCustomMaterial,
+                            TerminalAlphaBlending renderAlphaBlending)
     {
         if (materialized.isEmpty()) {
             clearPlacementNodes();
@@ -569,8 +615,8 @@ public:
         if (placementNodes.isEmpty()) {
             placementNodes.reserve(materialized.size());
             for (const MaterializedPlacement &desired : materialized) {
-                PlacementNode node =
-                    createPlacementNode(desired, useCustomMaterial);
+                PlacementNode node = createPlacementNode(
+                    desired, useCustomMaterial, renderAlphaBlending);
                 parentForLayer(node.key.layer, belowBackground, belowText,
                                aboveText)
                     ->appendChildNode(node.node);
@@ -603,7 +649,8 @@ public:
         if (canUpdateInOrder) {
             for (qsizetype index = 0; index < materialized.size(); ++index) {
                 updatePlacementNode(placementNodes[index],
-                                    materialized.at(index), useCustomMaterial);
+                                    materialized.at(index), useCustomMaterial,
+                                    renderAlphaBlending);
             }
             return;
         }
@@ -628,12 +675,14 @@ public:
                 selected = found->second.take(desired.placement, consumed);
             }
             if (selected < 0) {
-                next.append(createPlacementNode(desired, useCustomMaterial));
+                next.append(createPlacementNode(desired, useCustomMaterial,
+                                                renderAlphaBlending));
                 continue;
             }
             consumed[selected] = 1;
             PlacementNode retained = placementNodes.at(selected);
-            updatePlacementNode(retained, desired, useCustomMaterial);
+            updatePlacementNode(retained, desired, useCustomMaterial,
+                                renderAlphaBlending);
             next.append(std::move(retained));
         }
 
@@ -672,6 +721,7 @@ public:
     QSizeF cellSize;
     QRectF gridViewport;
     bool custom = false;
+    TerminalAlphaBlending alphaBlending = TerminalAlphaBlending::Native;
     std::map<quint64, std::unique_ptr<TextureSet>> textures;
     QVector<PlacementNode> placementNodes;
     QVector<TerminalKittyGraphicsRenderPlacement> rendered;
@@ -693,19 +743,22 @@ void TerminalKittyGraphicsScene::update(
     QQuickWindow *window, QSGNode *belowBackground, QSGNode *belowText,
     QSGNode *aboveText,
     const std::shared_ptr<const TerminalKittyGraphicsSnapshot> &snapshot,
-    const QSizeF &cellSize, const QRectF &gridViewport, bool useCustomMaterial)
+    const QSizeF &cellSize, const QRectF &gridViewport, bool useCustomMaterial,
+    TerminalAlphaBlending alphaBlending)
 {
     const bool parentsChanged = impl_->belowBackground != belowBackground
         || impl_->belowText != belowText || impl_->aboveText != aboveText;
     if (!parentsChanged && impl_->window == window
         && impl_->snapshot == snapshot && impl_->cellSize == cellSize
         && impl_->gridViewport == gridViewport
-        && impl_->custom == useCustomMaterial) {
+        && impl_->custom == useCustomMaterial
+        && impl_->alphaBlending == alphaBlending) {
         return;
     }
 
     const bool windowChanged = impl_->window != window;
-    const bool materialPathChanged = impl_->custom != useCustomMaterial;
+    const bool materialPathChanged = impl_->custom != useCustomMaterial
+        || impl_->alphaBlending != alphaBlending;
     if (parentsChanged || windowChanged || materialPathChanged) {
         impl_->clearPlacementNodes();
         impl_->rendered.clear();
@@ -721,6 +774,7 @@ void TerminalKittyGraphicsScene::update(
     impl_->cellSize = cellSize;
     impl_->gridViewport = gridViewport;
     impl_->custom = useCustomMaterial;
+    impl_->alphaBlending = alphaBlending;
 
     std::set<quint64> activeTextures;
     QVector<MaterializedPlacement> materialized;
@@ -757,7 +811,8 @@ void TerminalKittyGraphicsScene::update(
         }
     }
 
-    impl_->reconcilePlacementNodes(materialized, useCustomMaterial);
+    impl_->reconcilePlacementNodes(materialized, useCustomMaterial,
+                                   alphaBlending);
     impl_->evictInactiveTextures(activeTextures);
     impl_->rendered = std::move(rendered);
     impl_->snapshot = snapshot;

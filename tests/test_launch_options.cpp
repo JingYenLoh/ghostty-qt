@@ -149,6 +149,7 @@ GhosttyConfigSnapshot completeSnapshot()
         .faintOpacity = 0.375,
         .minimumContrast = 4.25,
     };
+    values.alphaBlending = TerminalAlphaBlending::Linear;
     values.background = {
         .opacity = 0.375,
         .opacityCells = true,
@@ -1344,6 +1345,7 @@ void LaunchOptionsTest::mapsBellAudio()
 void LaunchOptionsTest::mapsBackdropAndPaddingSnapshots()
 {
     LaunchOptions base;
+    base.alphaBlending = TerminalAlphaBlending::Native;
     base.background = {
         .opacity = 0.25,
         .opacityCells = false,
@@ -1371,6 +1373,7 @@ void LaunchOptionsTest::mapsBackdropAndPaddingSnapshots()
 
     const LaunchOptions configured = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(configured.background.opacity, 0.375);
+    QCOMPARE(configured.alphaBlending, TerminalAlphaBlending::Linear);
     QVERIFY(configured.background.opacityCells);
     QVERIFY(configured.background == snapshot.values.background);
     QCOMPARE(configured.backgroundBlur, qint16{42});
@@ -1388,6 +1391,7 @@ void LaunchOptionsTest::mapsBackdropAndPaddingSnapshots()
                 .repeat = false,
             },
     };
+    snapshot.values.alphaBlending = TerminalAlphaBlending::LinearCorrected;
     snapshot.values.backgroundBlur = 0;
     snapshot.values.padding = {
         .horizontal = {.leadingPoints = 13, .trailingPoints = 17},
@@ -1398,6 +1402,7 @@ void LaunchOptionsTest::mapsBackdropAndPaddingSnapshots()
     const LaunchOptions reloaded =
         applyGhosttyConfigSnapshot(configured, snapshot);
     QCOMPARE(reloaded.background.opacity, 0.75);
+    QCOMPARE(reloaded.alphaBlending, TerminalAlphaBlending::LinearCorrected);
     QVERIFY(!reloaded.background.opacityCells);
     QVERIFY(reloaded.background == snapshot.values.background);
     QCOMPARE(reloaded.backgroundBlur, qint16{0});

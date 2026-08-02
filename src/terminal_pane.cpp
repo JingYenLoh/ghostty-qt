@@ -386,6 +386,7 @@ TerminalPane::TerminalPane(
     : QQuickItem(parent)
     , options_(options)
     , appearance_(options.appearance)
+    , alphaBlending_(options.alphaBlending)
     , backgroundOptions_(options.background)
     , paddingOptions_(options.padding)
     , splitAppearance_(options.splitAppearance)
@@ -769,7 +770,7 @@ void TerminalPane::terminalCustomShaderPipelineDetached(
 
 bool TerminalPane::shouldAnimateCustomShaders() const
 {
-    if (customShaderStageItems_.isEmpty()
+    if (userCustomShaderStages_.isEmpty() || customShaderStageItems_.isEmpty()
         || (customShaderEffects_.isEmpty()
             && customShaderPipelineEffect_ == nullptr)
         || !isVisible() || width() <= 0.0 || height() <= 0.0
@@ -1102,15 +1103,27 @@ void TerminalPane::reloadCustomShaders(
 {
     const quint64 generation = ++customShaderCompileGeneration_;
     if (options.sources.isEmpty()) {
-        customShaderStages_.clear();
+        userCustomShaderStages_.clear();
+        const bool stagesChanged = refreshEffectiveCustomShaderStages();
+        const bool retryRetainedPipeline = customShaderRetainedFailed_;
         customShaderStageGeneration_ = generation;
         customShaderRetainedFailed_ = false;
         customShaderRetainedFailureGeneration_ = 0;
         customShaderCompileDiagnostic_.clear();
         customShaderRenderDiagnostic_.clear();
         customShaderFramePending_ = false;
-        rebuildCustomShaderStages();
+        if (stagesChanged || retryRetainedPipeline) {
+            rebuildCustomShaderStages();
+        } else {
+            publishCustomShaderDiagnostic();
+        }
         return;
+    }
+
+    if (refreshEffectiveCustomShaderStages()) {
+        customShaderStageGeneration_ = generation;
+        customShaderFramePending_ = false;
+        rebuildCustomShaderStages();
     }
 
     const QPointer<TerminalPane> guard(this);
@@ -1128,12 +1141,14 @@ void TerminalPane::reloadCustomShaders(
                     && guard->customShaderRetainedFailureGeneration_
                         < generation;
                 rebuild = retryRetainedPipeline
-                    || guard->customShaderStages_ != result.stages
+                    || guard->userCustomShaderStages_ != result.stages
                     || (guard->customShaderStageItems_.isEmpty()
                         && !result.stages.isEmpty()
                         && guard->customShaderStageComponent_ != nullptr
                         && guard->customShaderRenderingSupported());
-                guard->customShaderStages_ = std::move(result.stages);
+                guard->userCustomShaderStages_ = std::move(result.stages);
+                rebuild =
+                    guard->refreshEffectiveCustomShaderStages() || rebuild;
                 if (rebuild) {
                     guard->customShaderStageGeneration_ = generation;
                 }
@@ -1146,7 +1161,8 @@ void TerminalPane::reloadCustomShaders(
                     guard->customShaderRenderDiagnostic_.clear();
                 }
             } else {
-                guard->customShaderStages_.clear();
+                guard->userCustomShaderStages_.clear();
+                (void)guard->refreshEffectiveCustomShaderStages();
                 guard->customShaderCompileDiagnostic_ =
                     std::move(result.diagnostic);
                 guard->customShaderRenderDiagnostic_.clear();
@@ -1159,6 +1175,21 @@ void TerminalPane::reloadCustomShaders(
                 guard->publishCustomShaderDiagnostic();
             }
         });
+}
+
+bool TerminalPane::refreshEffectiveCustomShaderStages()
+{
+    QVector<TerminalCustomShaderStage> effective = userCustomShaderStages_;
+    if (terminalUsesLinearBlending(alphaBlending_)) {
+        const TerminalCustomShaderStage &encode =
+            terminalAlphaEncodeShaderStage();
+        if (!encode.qsbPath.isEmpty() && !encode.serializedShader.isEmpty()) {
+            effective.append(encode);
+        }
+    }
+    if (effective == customShaderStages_) return false;
+    customShaderStages_ = std::move(effective);
+    return true;
 }
 
 void TerminalPane::publishCustomShaderDiagnostic()
@@ -1213,37 +1244,54 @@ void TerminalPane::clearCustomShaderStages()
         });
 }
 
-void TerminalPane::useDirectTerminalRendering()
+void TerminalPane::useUnfilteredTerminalRendering()
 {
-    if (renderItem_ != nullptr) {
+    if (!customShaderRenderingSupported()) {
         delete renderItem_;
         renderItem_ = nullptr;
+        update();
+        return;
     }
-    // TerminalPane keeps ItemHasContents in both modes. While delegated,
-    // updatePaintNode() tears down its former direct node and returns null;
-    // switching back needs one content update to create that node again.
+    if (renderItem_ == nullptr) {
+        renderItem_ = TerminalPaneRenderer::createRenderItem(this);
+        renderItem_->setSize(size());
+    }
+    renderItem_->setParent(this);
+    renderItem_->setParentItem(this);
+    renderItem_->setZ(-1'000.0);
+    // Keep one render item for the lifetime of a hardware scene graph. Moving
+    // that item into or out of a shader layer preserves its retained terminal
+    // scene root across alpha-mode and custom-shader reloads. Software keeps
+    // the lower-overhead direct pane node because it cannot run either effect.
     update();
+}
+
+void TerminalPane::setAlphaBlendingPipelineActive(bool active)
+{
+    QMutexLocker locker(&renderMutex_);
+    alphaBlendingPipelineActive_ = active;
 }
 
 void TerminalPane::rebuildCustomShaderStages()
 {
     clearCustomShaderStages();
+    setAlphaBlendingPipelineActive(false);
     if (customShaderStages_.isEmpty()
         || customShaderStageComponent_ == nullptr) {
-        useDirectTerminalRendering();
+        useUnfilteredTerminalRendering();
         customShaderRenderDiagnostic_.clear();
         requestRenderUpdate();
         publishCustomShaderDiagnostic();
         return;
     }
     if (useRetainedCustomShaderPipeline() && customShaderRetainedFailed_) {
-        useDirectTerminalRendering();
+        useUnfilteredTerminalRendering();
         requestRenderUpdate();
         publishCustomShaderDiagnostic();
         return;
     }
     if (!customShaderRenderingSupported()) {
-        useDirectTerminalRendering();
+        useUnfilteredTerminalRendering();
         const QQuickWindow *const quickWindow = window();
         const QSGRendererInterface *const renderer =
             quickWindow != nullptr ? quickWindow->rendererInterface() : nullptr;
@@ -1282,6 +1330,8 @@ void TerminalPane::rebuildCustomShaderStages()
                           QVariant::fromValue(static_cast<QObject *>(this)));
         properties.insert(QStringLiteral("sourceDevicePixelRatio"),
                           devicePixelRatio);
+        properties.insert(QStringLiteral("linearBlending"),
+                          terminalUsesLinearBlending(alphaBlending_));
         QObject *const created =
             customShaderStageComponent_->createWithInitialProperties(
                 properties);
@@ -1336,13 +1386,17 @@ void TerminalPane::rebuildCustomShaderStages()
     }
     if (creationFailed) {
         clearCustomShaderStages();
-        useDirectTerminalRendering();
+        useUnfilteredTerminalRendering();
         customShaderRenderDiagnostic_ =
             QStringLiteral("custom-shader: unable to create Qt render stage; "
                            "terminal rendering is unchanged");
         publishCustomShaderDiagnostic();
         return;
     }
+    const bool alphaEncodeActive = terminalUsesLinearBlending(alphaBlending_)
+        && !customShaderStages_.isEmpty()
+        && customShaderStages_.constLast() == terminalAlphaEncodeShaderStage();
+    setAlphaBlendingPipelineActive(alphaEncodeActive);
     source->setParent(this);
     source->setParentItem(this);
     source->setZ(-1'000.0);
@@ -1719,6 +1773,11 @@ void TerminalPane::setSurfaceTitle(QString title)
     controller_->setSurfaceTitle(std::move(title));
 }
 
+bool TerminalPane::requestIoCrash()
+{
+    return controller_->requestIoCrash();
+}
+
 void TerminalPane::setSurfaceTitleOverride(std::optional<QString> title)
 {
     if (surfaceTitleOverride_ == title) {
@@ -1895,6 +1954,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.fontFamilyExplicit = options.fontFamilyExplicit;
     updated.fontSizeExplicit = options.fontSizeExplicit;
     updated.appearance = options.appearance;
+    updated.alphaBlending = options.alphaBlending;
     updated.colorScheme = options.colorScheme;
     updated.configuredTitle = options.configuredTitle;
     updated.background = options.background;
@@ -1943,6 +2003,10 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     if (guard == nullptr
         || !guard->runtimeOptionsRevision_.isCurrent(revision)) {
         return;
+    }
+    {
+        QMutexLocker locker(&renderMutex_);
+        alphaBlending_ = updated.alphaBlending;
     }
     // Re-read same-path shader edits on every successful configuration
     // application. Content-addressed compilation makes unchanged sources a

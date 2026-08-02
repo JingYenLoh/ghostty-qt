@@ -1,5 +1,6 @@
 #pragma once
 
+#include "terminal_alpha_blending.h"
 #include "terminal_kitty_graphics.h"
 
 #include <QRectF>
@@ -18,8 +19,10 @@ namespace TerminalKittyGraphicsShaderLayout {
 inline constexpr qsizetype matrixOffset = 0;
 inline constexpr qsizetype matrixSize = sizeof(float) * 16;
 inline constexpr qsizetype inheritedOpacityOffset = matrixOffset + matrixSize;
-inline constexpr qsizetype uniformBufferSize =
+inline constexpr qsizetype linearBlendingOffset =
     inheritedOpacityOffset + sizeof(float);
+inline constexpr qsizetype uniformBufferSize =
+    linearBlendingOffset + sizeof(float);
 } // namespace TerminalKittyGraphicsShaderLayout
 
 // Render-thread-only retained Kitty scene. Duplicate-safe placement identities
@@ -40,7 +43,8 @@ public:
            QSGNode *aboveText,
            const std::shared_ptr<const TerminalKittyGraphicsSnapshot> &snapshot,
            const QSizeF &cellSize, const QRectF &gridViewport,
-           bool useCustomMaterial);
+           bool useCustomMaterial,
+           TerminalAlphaBlending alphaBlending = TerminalAlphaBlending::Native);
     void clear();
 
     [[nodiscard]] const QVector<TerminalKittyGraphicsRenderPlacement> &

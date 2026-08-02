@@ -773,7 +773,8 @@ bool isExecutableFrontendAction(
                request.action)
         || std::holds_alternative<FrontendAction::ShowOnScreenKeyboard>(
                request.action)
-        || std::holds_alternative<FrontendAction::Inspector>(request.action);
+        || std::holds_alternative<FrontendAction::Inspector>(request.action)
+        || std::holds_alternative<FrontendAction::Crash>(request.action);
 }
 
 std::optional<ApplicationAction>

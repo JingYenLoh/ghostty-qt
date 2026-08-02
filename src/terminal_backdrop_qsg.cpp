@@ -37,7 +37,7 @@ constexpr qsizetype matrixSize = 64;
 constexpr qsizetype inheritedOpacityOffset = 64;
 constexpr qsizetype imageOpacityOffset = 68;
 constexpr qsizetype repeatOffset = 72;
-constexpr qsizetype paddingOffset = 76;
+constexpr qsizetype linearBlendingOffset = 76;
 constexpr qsizetype backgroundOffset = 80;
 constexpr qsizetype destinationOffset = 96;
 constexpr qsizetype uniformBufferSize = 112;
@@ -67,6 +67,41 @@ constexpr qsizetype uniformBufferSize = 112;
 {
     return !straightRgba.isNull()
         && straightRgba.format() == QImage::Format_RGBA8888;
+}
+
+QImage linearizedPremultipliedImage(QImage image,
+                                    TerminalAlphaBlending alphaBlending)
+{
+    if (!terminalUsesLinearBlending(alphaBlending) || image.isNull()) {
+        return image;
+    }
+    image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    const auto byte = [](float component) {
+        return std::clamp(static_cast<int>(std::lround(component * 255.0F)), 0,
+                          255);
+    };
+    for (int y = 0; y < image.height(); ++y) {
+        auto *pixels = reinterpret_cast<QRgb *>(image.scanLine(y));
+        for (int x = 0; x < image.width(); ++x) {
+            const int alphaByte = qAlpha(pixels[x]);
+            if (alphaByte == 0) {
+                pixels[x] = 0;
+                continue;
+            }
+            const float alpha = static_cast<float>(alphaByte) / 255.0F;
+            const auto channel = [alpha, alphaByte, &byte](int premultiplied) {
+                const float straight =
+                    std::clamp(static_cast<float>(premultiplied)
+                                   / static_cast<float>(alphaByte),
+                               0.0F, 1.0F);
+                return byte(terminalSrgbToLinear(straight) * alpha);
+            };
+            pixels[x] =
+                qRgba(channel(qRed(pixels[x])), channel(qGreen(pixels[x])),
+                      channel(qBlue(pixels[x])), alphaByte);
+        }
+    }
+    return image;
 }
 
 template <typename Value>
@@ -128,7 +163,8 @@ public:
 
     [[nodiscard]] bool setComposition(const QColor &background,
                                       float imageOpacity, bool repeat,
-                                      const QRectF &destination) noexcept
+                                      const QRectF &destination,
+                                      TerminalAlphaBlending alphaBlending)
     {
         const QColor rgb = background.toRgb();
         const std::array<float, 4> nextBackground{
@@ -144,14 +180,18 @@ public:
             static_cast<float>(destination.height()),
         };
         const float nextRepeat = repeat ? 1.0F : 0.0F;
+        const float nextLinearBlending =
+            terminalUsesLinearBlending(alphaBlending) ? 1.0F : 0.0F;
         if (background_ == nextBackground && destination_ == nextDestination
-            && imageOpacity_ == imageOpacity && repeat_ == nextRepeat) {
+            && imageOpacity_ == imageOpacity && repeat_ == nextRepeat
+            && linearBlending_ == nextLinearBlending) {
             return false;
         }
         background_ = nextBackground;
         destination_ = nextDestination;
         imageOpacity_ = imageOpacity;
         repeat_ = nextRepeat;
+        linearBlending_ = nextLinearBlending;
         uniformsDirty_ = true;
         return true;
     }
@@ -170,6 +210,11 @@ public:
 
     [[nodiscard]] float repeat() const noexcept { return repeat_; }
 
+    [[nodiscard]] float linearBlending() const noexcept
+    {
+        return linearBlending_;
+    }
+
     [[nodiscard]] const std::array<float, 4> &background() const noexcept
     {
         return background_;
@@ -186,6 +231,7 @@ private:
     std::array<float, 4> destination_{};
     float imageOpacity_ = 1.0F;
     float repeat_ = 0.0F;
+    float linearBlending_ = 0.0F;
     mutable bool uniformsDirty_ = true;
 };
 
@@ -228,7 +274,7 @@ bool TerminalBackdropQsgShader::updateUniformData(RenderState &state,
     if (oldMaterial != newMaterial || uniformsDirty) {
         writeUniform(buffer, imageOpacityOffset, material->imageOpacity());
         writeUniform(buffer, repeatOffset, material->repeat());
-        writeUniform(buffer, paddingOffset, 0.0F);
+        writeUniform(buffer, linearBlendingOffset, material->linearBlending());
         writeUniform(buffer, backgroundOffset, material->background());
         writeUniform(buffer, destinationOffset, material->destination());
         changed = true;
@@ -276,7 +322,7 @@ TerminalBackdropQsgNode::~TerminalBackdropQsgNode() = default;
 bool TerminalBackdropQsgNode::update(
     QQuickWindow *window, const QImage &straightRgba, quint64 assetSerial,
     const QRectF &viewport, const QColor &background, double imageOpacity,
-    bool repeat, const QRectF &destination)
+    bool repeat, const QRectF &destination, TerminalAlphaBlending alphaBlending)
 {
     constexpr double floatMaximum =
         static_cast<double>(std::numeric_limits<float>::max());
@@ -303,8 +349,9 @@ bool TerminalBackdropQsgNode::update(
         markDirty(QSGNode::DirtyGeometry);
     }
 
-    const bool materialChanged = material_->setComposition(
-        background, static_cast<float>(imageOpacity), repeat, destination);
+    const bool materialChanged =
+        material_->setComposition(background, static_cast<float>(imageOpacity),
+                                  repeat, destination, alphaBlending);
     if (materialChanged) markDirty(QSGNode::DirtyMaterial);
     return true;
 }
@@ -428,8 +475,9 @@ void TerminalBackdropSceneNode::setBase(std::size_t index,
     QSGSimpleRectNode *const node = baseBackgrounds_[index];
     const QRectF effective = rect.isEmpty() ? QRectF{} : rect;
     if (node->rect() != effective) node->setRect(effective);
-    const QColor effectiveColor =
-        effective.isEmpty() ? Qt::transparent : color;
+    const QColor effectiveColor = effective.isEmpty()
+        ? QColor(Qt::transparent)
+        : terminalRenderingColor(color, alphaBlending_);
     if (node->color() != effectiveColor) node->setColor(effectiveColor);
 }
 
@@ -453,8 +501,9 @@ void TerminalBackdropSceneNode::update(
     QQuickWindow *window, const QRectF &viewport, const QColor &background,
     const std::shared_ptr<const TerminalBackgroundImageAsset> &asset,
     const TerminalBackgroundImageOptions &options, qreal devicePixelRatio,
-    bool useCustomMaterial)
+    bool useCustomMaterial, TerminalAlphaBlending alphaBlending)
 {
+    alphaBlending_ = alphaBlending;
     const auto useSolidFallback = [&] {
         hardwareBackdrop_->clear();
         clearCpuTexture();
@@ -484,9 +533,10 @@ void TerminalBackdropSceneNode::update(
             .window = window,
         };
         if (failedMaterialKey_ != materialKey) {
-            if (hardwareBackdrop_->update(
-                    window, asset->straightRgba, asset->serial, viewport,
-                    background, options.opacity, options.repeat, target)) {
+            if (hardwareBackdrop_->update(window, asset->straightRgba,
+                                          asset->serial, viewport, background,
+                                          options.opacity, options.repeat,
+                                          target, alphaBlending)) {
                 failedMaterialKey_.reset();
                 clearCpuTexture();
                 clearBases(background);
@@ -511,6 +561,7 @@ void TerminalBackdropSceneNode::update(
         .window = window,
         .background = background.rgba(),
         .imageOpacityBits = std::bit_cast<quint64>(options.opacity),
+        .alphaBlending = alphaBlending,
     };
     if (!texture_ && failedTextureKey_ == textureKey) {
         setSolidBase(viewport, background);
@@ -523,9 +574,11 @@ void TerminalBackdropSceneNode::update(
         clearCpuTexture();
         QColor opaqueColor = background;
         opaqueColor.setAlpha(255);
-        const QImage composited = terminalCompositedBackgroundImage(
-            *asset, opaqueColor,
-            static_cast<quint8>(background.alpha()), options.opacity);
+        const QImage composited = linearizedPremultipliedImage(
+            terminalCompositedBackgroundImage(
+                *asset, opaqueColor, static_cast<quint8>(background.alpha()),
+                options.opacity),
+            alphaBlending);
         texture_.reset(window->createTextureFromImage(
             composited, QQuickWindow::TextureHasAlphaChannel));
         if (!texture_) {

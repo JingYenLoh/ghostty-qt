@@ -315,8 +315,8 @@
           "note": "The modifier applies in rounded physical pixels to the regular-face underline thickness and drives every rendered underline style."
         },
         "alpha-blending": {
-          "status": "planned",
-          "note": "Qt Quick currently owns text and primitive blending and does not expose Ghostty's exact native, linear, and linear-corrected renderer pipeline, including the Linux linear-corrected default. Background opacity is implemented independently and does not claim this color-space behavior."
+          "status": "partial",
+          "note": "The finalized native, linear, and linear-corrected values, including Ghostty's Linux default, are exported through the pinned helper. Native retains Qt's sRGB scene path. OpenGL and Vulkan linear modes convert terminal text, primitive, backdrop, and Kitty-image inputs to linear RGB, retain pane and user-shader intermediates as RGBA16F, and append a built-in premultiplied sRGB encode pass; selection, search, inverse, explicit/default background opacity, and minimum-contrast decisions remain logical-color operations before encoding. The pane-local pipeline leaves window chrome outside the effect and reloads existing and future split panes without replacing scene roots, controllers, workers, or PTYs; unsupported Qt backends fall back explicitly to native. Linear-corrected currently renders as linear because Qt's public QSGTextNode material does not expose each glyph fragment's grayscale coverage and effective cell background, which Ghostty's correction formula requires."
         },
         "app-notifications": {
           "status": "supported",
@@ -1286,6 +1286,10 @@
           "status": "supported",
           "note": "The exact void action copies the originating pane's currently accepted hyperlink destination byte-for-QString exact as the standard text/plain clipboard payload without QUrl normalization. This covers OSC 8 and the pinned default URL/path matcher; unavailable custom link definitions are tracked under the separate link configuration key. Malformed explicit destinations remain copyable even when Qt desktop-service activation rejects them."
         },
+        "crash": {
+          "status": "supported",
+          "note": "The exact required main, io, and render targets enter the typed surface-action pipeline with the originating stable PaneId. Main terminates through qFatal on the GUI thread; io is queued in controller-owned FIFO order on that pane's SessionWorker, including deferred startup, and is discarded if the session closes or is cancelled first; render is scheduled as a QQuickWindow render job before synchronization. Dispatch changes no focus, selection, tab, or split state, rejects stale panes, and uses one fatal path so Qt's installed crash-report handler remains authoritative. Tests inject a non-fatal dispatcher to verify all target and identity routing without terminating the suite."
+        },
         "csi": {
           "status": "supported",
           "note": "Restores the configured byte payload from Ghostty's canonical action format, queues it with the CSI introducer as one contiguous sequence on the worker thread, and scrolls the viewport to the active area."
@@ -1610,6 +1614,14 @@
         "version"
       ],
       "overrides": {
+        "boo": {
+          "status": "supported",
+          "note": "Delegates the pinned interactive vaxis implementation before Qt starts, including Ghostty's compressed animation frames, terminal sizing, input handling, raw streams, and exit status. The relocatable helper embeds the exact pinned frame generator inputs; process-parity tests cover action selection and action-specific help without replacing the test terminal with the interactive animation."
+        },
+        "crash-report": {
+          "status": "supported",
+          "note": "Delegates the pinned crash-report implementation before Qt starts, preserving its standard crash directory, report discovery and newest-first formatting, TTY-sensitive empty state, raw streams, and exit status. Exact helper/application tests cover action-specific help and an isolated empty report directory."
+        },
         "edit-config": {
           "status": "supported",
           "note": "Delegates the pinned Linux implementation before Qt starts: standard config loading and preferred-file creation, non-empty VISUAL then EDITOR selection, preferred/non-empty legacy path choice, shell-escaped path construction, /bin/sh replacement, raw streams, and editor exit status are preserved. The pinned implementation currently leaves a newly created file empty despite its template-writing intent. This is distinct from the GUI open_config action."

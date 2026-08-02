@@ -972,7 +972,7 @@ void TerminalInspectorModel::rebuildSnapshot()
     QVariantMap renderer{
         {QStringLiteral("graphicsApi"), graphicsApiName(window)},
         {QStringLiteral("customShaderStages"),
-         pane->customShaderStages_.size()},
+         pane->userCustomShaderStages_.size()},
         {QStringLiteral("customShaderDiagnostic"),
          pane->customShaderDiagnostic_},
         {QStringLiteral("kittyPlacements"), kittyPlacements},

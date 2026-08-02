@@ -3,6 +3,7 @@
 #include "application_shell_options.h"
 #include "ghostty_config_path.h"
 #include "modifier_remap_types.h"
+#include "terminal_alpha_blending.h"
 #include "terminal_custom_shader_options.h"
 #include "terminal_initial_input.h"
 #include "terminal_session_options.h"
@@ -208,6 +209,8 @@ struct GhosttyConfigValues {
     // finalized 256-color palette in QVector's implicitly shared storage and
     // avoids rebuilding it whenever a snapshot is projected to LaunchOptions.
     TerminalAppearance appearance;
+    TerminalAlphaBlending alphaBlending =
+        TerminalAlphaBlending::LinearCorrected;
     TerminalBackgroundOptions background;
     // Ordered, finalized paths and animation policy for the frontend-owned
     // ShaderToy post-processing pipeline.

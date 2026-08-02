@@ -48,8 +48,8 @@ inline constexpr auto GhosttyPinnedCliActions =
         {"+explain-config", GhosttyCliFrontendSupport::Delegated},
         {"+validate-config", GhosttyCliFrontendSupport::Delegated},
         {"+show-face", GhosttyCliFrontendSupport::Delegated},
-        {"+crash-report", GhosttyCliFrontendSupport::Unsupported},
-        {"+boo", GhosttyCliFrontendSupport::Unsupported},
+        {"+crash-report", GhosttyCliFrontendSupport::Delegated},
+        {"+boo", GhosttyCliFrontendSupport::Delegated},
         {"+new-window", GhosttyCliFrontendSupport::ApplicationIpc},
         {"+toggle-quick-terminal", GhosttyCliFrontendSupport::ApplicationIpc},
     });

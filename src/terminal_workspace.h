@@ -240,6 +240,7 @@ public:
     [[nodiscard]] bool
     controlInspector(PaneId paneId,
                      WorkspaceFrontendActions::InspectorMode mode);
+    [[nodiscard]] bool requestIoCrash(PaneId paneId);
     // Samples committed GUI-thread state and exposes stable identities rather
     // than pane pointers to process-owned consumers such as the palette.
     [[nodiscard]] QVector<WorkspaceSurfaceSnapshot> surfaceSnapshot() const;

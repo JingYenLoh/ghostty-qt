@@ -604,6 +604,8 @@ fn writeValues(
     try writeRgb(json, config.foreground);
     try json.objectField("background");
     try writeRgb(json, config.background);
+    try json.objectField("alpha-blending");
+    try json.write(@tagName(config.@"alpha-blending"));
     try json.objectField("background-opacity");
     try json.write(config.@"background-opacity");
     try json.objectField("background-opacity-cells");

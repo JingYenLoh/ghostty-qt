@@ -10,10 +10,17 @@ layout(std140, binding = 0) uniform buf {
     float qt_Opacity;
     float imageOpacity;
     float repeatImage;
-    float _padding;
+    float linearBlending;
     vec4 background;
     vec4 destination;
 } uniforms;
+
+vec3 srgbToLinear(vec3 component)
+{
+    bvec3 low = lessThanEqual(component, vec3(0.04045));
+    vec3 high = pow((component + 0.055) / 1.055, vec3(2.4));
+    return mix(high, component / 12.92, low);
+}
 
 void main()
 {
@@ -32,6 +39,9 @@ void main()
     vec4 image = vec4(0.0);
     if (repeating || !outside) {
         image = texture(straightRgba, coordinate);
+        if (uniforms.linearBlending > 0.5) {
+            image.rgb = srgbToLinear(image.rgb);
+        }
         image.rgb *= image.a;
     }
 
@@ -39,9 +49,11 @@ void main()
         ? min(uniforms.imageOpacity, 1.0 / uniforms.background.a)
         : uniforms.imageOpacity;
     image *= relativeOpacity;
-    image += max(
-        vec4(0.0),
-        vec4(uniforms.background.rgb, 1.0) * (1.0 - image.a));
+    vec3 background = uniforms.background.rgb;
+    if (uniforms.linearBlending > 0.5) {
+        background = srgbToLinear(background);
+    }
+    image += max(vec4(0.0), vec4(background, 1.0) * (1.0 - image.a));
     image *= uniforms.background.a;
     fragmentColor = image * uniforms.qt_Opacity;
 }

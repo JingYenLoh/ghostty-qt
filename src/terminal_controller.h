@@ -147,6 +147,9 @@ public:
     void sendEscape(const QByteArray &payload);
     void sendRawText(const QByteArray &serializedText);
     void resetTerminal();
+    // Queue the intentional crash on the session worker rather than crashing
+    // the GUI thread that decoded the binding.
+    [[nodiscard]] bool requestIoCrash();
     void sendMouse(const TerminalMouseInput &input);
     void sendWheel(const TerminalWheelInput &input);
     // Returns a non-zero correlation ID retained until the worker resolves

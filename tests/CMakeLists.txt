@@ -345,6 +345,21 @@ target_link_libraries(test-terminal-backdrop PRIVATE
 add_test(NAME terminal-backdrop COMMAND test-terminal-backdrop)
 set_tests_properties(terminal-backdrop PROPERTIES TIMEOUT 10)
 
+qt_add_executable(test-terminal-alpha-blending
+    test_terminal_alpha_blending.cpp
+)
+target_include_directories(test-terminal-alpha-blending PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-terminal-alpha-blending PRIVATE
+    Qt6::Core
+    Qt6::GuiPrivate
+    Qt6::Test
+    ghostty-qt-terminal-rendering
+)
+add_test(NAME terminal-alpha-blending COMMAND test-terminal-alpha-blending)
+set_tests_properties(terminal-alpha-blending PROPERTIES TIMEOUT 10)
+
 qt_add_executable(test-terminal-kitty-graphics
     test_terminal_kitty_graphics.cpp
 )
@@ -737,6 +752,19 @@ set(ghostty_qt_test_asan_build 0)
 if(CMAKE_CXX_FLAGS MATCHES "(^| )-fsanitize=[^ ]*address")
     set(ghostty_qt_test_asan_build 1)
 endif()
+add_test(
+    NAME terminal-custom-shader-linear-xcb-rhi
+    COMMAND
+        "${CMAKE_CURRENT_SOURCE_DIR}/run_xcb_rhi_test.sh"
+        "$<TARGET_FILE:test-terminal-custom-shader-rhi>"
+        retainedLinearModeUsesFloatTargetsAndReloads
+)
+set_tests_properties(terminal-custom-shader-linear-xcb-rhi PROPERTIES
+    TIMEOUT 30
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT
+        "GHOSTTY_QT_ASAN_BUILD=${ghostty_qt_test_asan_build};LIBGL_ALWAYS_SOFTWARE=1;QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;QT_SCALE_FACTOR=1"
+)
 add_test(
     NAME terminal-pane-kitty-rhi
     COMMAND

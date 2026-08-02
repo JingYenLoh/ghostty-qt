@@ -6,6 +6,7 @@
 #include "launch_options.h"
 #include "revision_counter.h"
 #include "window_navigation_action.h"
+#include "workspace_action.h"
 #include "workspace_ids.h"
 
 #include <QObject>
@@ -49,6 +50,9 @@ class ApplicationController final : public QObject {
 public:
     using WindowFactory =
         std::move_only_function<std::expected<ApplicationWindow, QString>()>;
+    using CrashActionDispatcher = std::move_only_function<bool(
+        QQuickWindow *, TerminalWorkspace *, PaneId,
+        WorkspaceFrontendActions::CrashTarget)>;
 
     enum class ConfigurationSource {
         Ghostty,
@@ -61,6 +65,11 @@ public:
                           QObject *parent = nullptr);
     ApplicationController(LaunchOptions effectiveOptions,
                           WindowFactory windowFactory,
+                          bool enableGlobalShortcutsPortal = true,
+                          QObject *parent = nullptr);
+    ApplicationController(LaunchOptions effectiveOptions,
+                          WindowFactory windowFactory,
+                          CrashActionDispatcher crashActionDispatcher,
                           bool enableGlobalShortcutsPortal = true,
                           QObject *parent = nullptr);
     ~ApplicationController() override;
@@ -203,6 +212,7 @@ private:
     void rehostApplicationQuit();
 
     WindowFactory windowFactory_;
+    CrashActionDispatcher crashActionDispatcher_;
     LaunchOptions effectiveOptions_;
     RevisionCounter launchOptionsRevision_;
     std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator_;

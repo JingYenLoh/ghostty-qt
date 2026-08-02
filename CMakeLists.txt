@@ -175,6 +175,8 @@ set(GHOSTTY_QT_ZIG_GLOBAL_CACHE_DIR
 # the Qt application. The source-local build area is shared by the checked-in
 # CMake presets, with parser outputs isolated by Ghostty revision.
 if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+    file(GLOB GHOSTTY_QT_FRAME_SOURCES CONFIGURE_DEPENDS
+        "${GHOSTTY_SOURCE_DIR}/src/build/framegen/frames/*.txt")
     pkg_check_modules(GHOSTTY_QT_FONTCONFIG REQUIRED fontconfig)
     set(GHOSTTY_QT_CONFIG_BUILD_PATCH
         "${CMAKE_CURRENT_SOURCE_DIR}/patches/ghostty-build-runtime-none-themes.patch")
@@ -308,6 +310,8 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
             "${GHOSTTY_SOURCE_DIR}/include/ghostty.h"
             "${GHOSTTY_SOURCE_DIR}/src/cli/action.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/args.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/boo.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/crash_report.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/edit_config.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/ghostty.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/list_fonts.zig"
@@ -327,6 +331,8 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
             "${GHOSTTY_SOURCE_DIR}/src/config/formatter.zig"
             "${GHOSTTY_SOURCE_DIR}/src/config/formatter_file.zig"
             "${GHOSTTY_SOURCE_DIR}/src/config/theme.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/crash/dir.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/crash/main.zig"
             "${GHOSTTY_SOURCE_DIR}/src/font/CodepointMap.zig"
             "${GHOSTTY_SOURCE_DIR}/src/font/CodepointResolver.zig"
             "${GHOSTTY_SOURCE_DIR}/src/font/Collection.zig"
@@ -339,6 +345,9 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
             "${GHOSTTY_SOURCE_DIR}/src/font/library.zig"
             "${GHOSTTY_SOURCE_DIR}/src/font/main.zig"
             "${GHOSTTY_SOURCE_DIR}/src/input/Binding.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/build/GhosttyFrameData.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/build/framegen/main.c"
+            ${GHOSTTY_QT_FRAME_SOURCES}
             "${GHOSTTY_SOURCE_DIR}/pkg/fontconfig/build.zig"
             "${GHOSTTY_SOURCE_DIR}/src/termio/shell_integration.zig"
             "${GHOSTTY_SOURCE_DIR}/src/terminal/color.zig"
@@ -781,6 +790,8 @@ target_compile_options(ghostty-qt-terminal-bell PRIVATE
 )
 
 add_library(ghostty-qt-terminal-rendering STATIC
+    src/terminal_alpha_blending.cpp
+    src/terminal_alpha_blending.h
     src/terminal_custom_shader_compiler.cpp
     src/terminal_custom_shader_compiler.h
     src/terminal_custom_shader_options.h
@@ -850,9 +861,11 @@ qt_add_shaders(
 
     FILES
         shaders/terminal_custom_shader.vert
+        shaders/terminal_alpha_encode.frag
 
     OUTPUTS
         terminal_custom_shader.vert.qsb
+        terminal_alpha_encode.frag.qsb
 )
 qt_add_shaders(
     ghostty-qt-terminal-rendering

@@ -24,10 +24,12 @@ constexpr qsizetype verticesPerRectangle = 6;
 }
 
 void setRectangleVertices(QSGGeometry::ColoredPoint2D *vertices,
-                          const TerminalColoredRect &coloredRect)
+                          const TerminalColoredRect &coloredRect,
+                          TerminalAlphaBlending alphaBlending)
 {
     const QRectF rect = coloredRect.rect.normalized();
-    const QColor color = coloredRect.color.toRgb();
+    const QColor color =
+        terminalRenderingColor(coloredRect.color, alphaBlending).toRgb();
     const int alpha = color.alpha();
     const auto premultiply = [alpha](int component) {
         return static_cast<uchar>((component * alpha + 127) / 255);
@@ -75,15 +77,17 @@ QVector<TerminalColoredRect> &TerminalRectBatch::beginUpdate() noexcept
     return pending_;
 }
 
-void TerminalRectBatch::commit(bool softwareRenderer)
+void TerminalRectBatch::commit(bool softwareRenderer,
+                               TerminalAlphaBlending alphaBlending)
 {
-    const bool modeChanged =
-        committedSoftwareRenderer_ != softwareRenderer;
+    const bool modeChanged = committedSoftwareRenderer_ != softwareRenderer
+        || committedAlphaBlending_ != alphaBlending;
     if (!modeChanged && pending_ == committed_) {
         return;
     }
 
     committedSoftwareRenderer_ = softwareRenderer;
+    committedAlphaBlending_ = alphaBlending;
     if (softwareRenderer) {
         commitSoftware();
         hideHardware();
@@ -127,7 +131,7 @@ void TerminalRectBatch::commitHardware()
     QSGGeometry::ColoredPoint2D *vertices =
         hardwareGeometry_->vertexDataAsColoredPoint2D();
     for (const TerminalColoredRect &rect : pending_) {
-        setRectangleVertices(vertices, rect);
+        setRectangleVertices(vertices, rect, committedAlphaBlending_);
         vertices += verticesPerRectangle;
     }
     hardwareNode_->markDirty(QSGNode::DirtyGeometry);
@@ -148,7 +152,9 @@ void TerminalRectBatch::commitSoftware()
         const TerminalColoredRect &next = pending_.at(index);
         const QRectF rect = next.rect.normalized();
         if (node->rect() != rect) node->setRect(rect);
-        if (node->color() != next.color) node->setColor(next.color);
+        const QColor color =
+            terminalRenderingColor(next.color, committedAlphaBlending_);
+        if (node->color() != color) node->setColor(color);
     }
     for (; index < softwareNodes_.size(); ++index) {
         QSGSimpleRectNode *const node = softwareNodes_.at(index);

@@ -265,6 +265,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     const TerminalAppearance &appearance = values.appearance;
     QCOMPARE(appearance.foregroundColor, QColor(QStringLiteral("#112233")));
     QCOMPARE(appearance.backgroundColor, QColor(QStringLiteral("#445566")));
+    QCOMPARE(values.alphaBlending, TerminalAlphaBlending::Linear);
     QCOMPARE(values.background.opacity, 0.375);
     QVERIFY(values.background.opacityCells);
     QCOMPARE(values.backgroundBlur, qint16{-2});
@@ -758,6 +759,16 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
             QCOMPARE(projection(parsed->values), expected);
         }
     };
+
+    verifyMappings(
+        QLatin1StringView("alpha-blending"),
+        std::to_array<std::pair<QLatin1StringView, TerminalAlphaBlending>>({
+            {QLatin1StringView("native"), TerminalAlphaBlending::Native},
+            {QLatin1StringView("linear"), TerminalAlphaBlending::Linear},
+            {QLatin1StringView("linear-corrected"),
+             TerminalAlphaBlending::LinearCorrected},
+        }),
+        [](const GhosttyConfigValues &values) { return values.alphaBlending; });
 
     verifyMappings(
         QLatin1StringView("background-image-position"),
@@ -1934,6 +1945,9 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-background-opacity")
         << withoutValue(object(), QStringLiteral("background-opacity"))
         << QStringLiteral("values is missing field 'background-opacity'");
+    QTest::newRow("missing-alpha-blending")
+        << withoutValue(object(), QStringLiteral("alpha-blending"))
+        << QStringLiteral("values is missing field 'alpha-blending'");
     QTest::newRow("missing-background-opacity-cells")
         << withoutValue(object(), QStringLiteral("background-opacity-cells"))
         << QStringLiteral("values is missing field 'background-opacity-cells'");
@@ -2710,6 +2724,11 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withValue(object(), QStringLiteral("background-opacity"),
                      QStringLiteral("0.5"))
         << QStringLiteral("values.background-opacity must be a finite number");
+    QTest::newRow("alpha-blending-invalid")
+        << withValue(object(), QStringLiteral("alpha-blending"),
+                     QStringLiteral("gamma"))
+        << QStringLiteral(
+               "values.alpha-blending has unsupported value 'gamma'");
     QTest::newRow("background-opacity-cells-type")
         << withValue(object(), QStringLiteral("background-opacity-cells"), 1)
         << QStringLiteral("values.background-opacity-cells must be a boolean");

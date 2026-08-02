@@ -240,6 +240,7 @@ private Q_SLOTS:
     void retainedSharedProgramKeepsPerProviderUniformsIsolated();
     void retainedTargetsAreBoundedAndReused_data();
     void retainedTargetsAreBoundedAndReused();
+    void retainedLinearModeUsesFloatTargetsAndReloads();
     void retainedResizeKeepsPipelinesAndUpdatesGeometry();
     void retainedParentOpacityCompositesPremultipliedContent();
     void retainedRectangularClipUsesScissor();
@@ -1259,6 +1260,90 @@ Item {
     QVERIFY(second.frameCount > first.frameCount);
     QVERIFY(second.drawCount
             >= first.drawCount + static_cast<std::uint64_t>(passCount));
+
+    root.reset();
+}
+
+void TerminalCustomShaderRhiTest::retainedLinearModeUsesFloatTargetsAndReloads()
+{
+    TestUniformProvider provider(Qt::white);
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("pipelineStages"),
+        terminalCustomShaderStagesToVariantList(orderedStages_.mid(0, 3)));
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("testUniformProvider"), &provider);
+
+    QQmlComponent component(&engine);
+    component.setData(
+        R"qml(
+import QtQuick
+import GhosttyQtShaderRhiTest 1.0
+
+Item {
+    width: 32
+    height: 32
+    layer.enabled: true
+    layer.live: true
+    layer.smooth: false
+    layer.textureMirroring: ShaderEffectSource.NoMirroring
+    layer.textureSize: Qt.size(width, height)
+    layer.effect: Component {
+        TerminalCustomShaderPipelineEffect {
+            objectName: "pipeline"
+            shaderStages: pipelineStages
+            uniformProvider: testUniformProvider
+        }
+    }
+    Rectangle { anchors.fill: parent; color: "#204060" }
+}
+)qml",
+        QUrl(QStringLiteral(
+            "qrc:/test/custom-shader-retained-linear-reload.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QQuickItem> root(
+        qobject_cast<QQuickItem *>(component.create()));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(32, 32);
+    root->setParentItem(window.contentItem());
+    QVERIFY(!renderWindow(window).isNull());
+    if (window.rendererInterface()->graphicsApi() != requestedGraphicsApi) {
+        QSKIP("The platform cannot initialize the requested RHI context.");
+    }
+
+    TerminalCustomShaderPipelineEffect *const pipeline = provider.pipeline();
+    QVERIFY(pipeline != nullptr);
+    const TerminalCustomShaderPipelineSnapshot native =
+        pipeline->renderSnapshot();
+    QCOMPARE(native.liveTargetCount, 2);
+    QCOMPARE(native.ownedTextureBytes, std::uint64_t{2 * 32 * 32 * 4});
+
+    pipeline->setLinearBlending(true);
+    window.update();
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalCustomShaderPipelineSnapshot linear =
+        pipeline->renderSnapshot();
+    QCOMPARE(linear.liveTargetCount, 2);
+    QCOMPARE(linear.ownedTextureBytes, std::uint64_t{2 * 32 * 32 * 8});
+    QVERIFY(linear.targetCreateCount > native.targetCreateCount);
+    QVERIFY(linear.targetDestroyCount > native.targetDestroyCount);
+    QVERIFY(linear.resourceGeneration > native.resourceGeneration);
+    QVERIFY2(linear.diagnostic.isEmpty(), qPrintable(linear.diagnostic));
+
+    pipeline->setLinearBlending(false);
+    window.update();
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalCustomShaderPipelineSnapshot restored =
+        pipeline->renderSnapshot();
+    QCOMPARE(restored.liveTargetCount, 2);
+    QCOMPARE(restored.ownedTextureBytes, std::uint64_t{2 * 32 * 32 * 4});
+    QVERIFY(restored.targetCreateCount > linear.targetCreateCount);
+    QVERIFY(restored.targetDestroyCount > linear.targetDestroyCount);
+    QVERIFY(restored.resourceGeneration > linear.resourceGeneration);
+    QVERIFY2(restored.diagnostic.isEmpty(), qPrintable(restored.diagnostic));
 
     root.reset();
 }

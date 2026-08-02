@@ -964,6 +964,7 @@ void TerminalWorkspaceTest::backgroundOpacityReloadIsPaneLocalAndInherited()
     options.appearance.foregroundColor = Qt::white;
     options.appearance.backgroundColor =
         QColor(QStringLiteral("#101820"));
+    options.alphaBlending = TerminalAlphaBlending::Native;
     options.background = {
         .opacity = 0.25,
         .opacityCells = false,
@@ -1077,6 +1078,14 @@ void TerminalWorkspaceTest::backgroundOpacityReloadIsPaneLocalAndInherited()
                            255);
     QVERIFY(firstInitial.rootSerial != 0);
     QVERIFY(secondInitial.rootSerial != 0);
+    QCOMPARE(firstInitial.requestedAlphaBlending,
+             TerminalAlphaBlending::Native);
+    QCOMPARE(secondInitial.requestedAlphaBlending,
+             TerminalAlphaBlending::Native);
+    QCOMPARE(firstInitial.effectiveAlphaBlending,
+             TerminalAlphaBlending::Native);
+    QCOMPARE(secondInitial.effectiveAlphaBlending,
+             TerminalAlphaBlending::Native);
 
     const QRectF firstGeometry(first.pane->position(), first.pane->size());
     const QRectF secondGeometry(second.pane->position(), second.pane->size());
@@ -1097,10 +1106,13 @@ void TerminalWorkspaceTest::backgroundOpacityReloadIsPaneLocalAndInherited()
         .opacity = 0.5,
         .opacityCells = true,
     };
+    reloaded.alphaBlending = TerminalAlphaBlending::Linear;
     workspace->applyLaunchOptions(reloaded);
     QVERIFY(!window.grabWindow().isNull());
     QVERIFY(workspace->effectiveLaunchOptions().background
             == reloaded.background);
+    QCOMPARE(workspace->effectiveLaunchOptions().alphaBlending,
+             TerminalAlphaBlending::Linear);
 
     const TerminalPaneRenderProbeSnapshot firstReloaded =
         terminalPaneRenderProbe(first.pane);
@@ -1110,6 +1122,17 @@ void TerminalWorkspaceTest::backgroundOpacityReloadIsPaneLocalAndInherited()
                            127);
     verifyBackgroundLayers(secondReloaded, secondBackground, secondExplicit,
                            128, 127);
+    QCOMPARE(firstReloaded.requestedAlphaBlending,
+             TerminalAlphaBlending::Linear);
+    QCOMPARE(secondReloaded.requestedAlphaBlending,
+             TerminalAlphaBlending::Linear);
+    // This suite deliberately uses Qt's software scene graph. Unsupported
+    // renderers preserve native blending while retaining the requested value
+    // for a later hardware scene-graph recreation.
+    QCOMPARE(firstReloaded.effectiveAlphaBlending,
+             TerminalAlphaBlending::Native);
+    QCOMPARE(secondReloaded.effectiveAlphaBlending,
+             TerminalAlphaBlending::Native);
     QCOMPARE(firstReloaded.rootSerial, firstInitial.rootSerial);
     QCOMPARE(secondReloaded.rootSerial, secondInitial.rootSerial);
     QVERIFY(firstReloaded.paintSerial > firstInitial.paintSerial);
@@ -1159,6 +1182,10 @@ void TerminalWorkspaceTest::backgroundOpacityReloadIsPaneLocalAndInherited()
         terminalPaneRenderProbe(third.pane);
     verifyBackgroundLayers(thirdPainted, thirdBackground, thirdExplicit, 128,
                            127);
+    QCOMPARE(thirdPainted.requestedAlphaBlending,
+             TerminalAlphaBlending::Linear);
+    QCOMPARE(thirdPainted.effectiveAlphaBlending,
+             TerminalAlphaBlending::Native);
     QVERIFY(thirdPainted.rootSerial != 0);
 
     workspace.reset();

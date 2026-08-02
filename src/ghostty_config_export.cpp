@@ -84,6 +84,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("metric-modifier-order"),
     QLatin1StringView("foreground"),
     QLatin1StringView("background"),
+    QLatin1StringView("alpha-blending"),
     QLatin1StringView("background-opacity"),
     QLatin1StringView("background-opacity-cells"),
     QLatin1StringView("background-blur"),
@@ -2207,6 +2208,13 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
             {QLatin1StringView("dark"), WindowTheme::Dark},
             {QLatin1StringView("ghostty"), WindowTheme::Ghostty},
         });
+    constexpr auto AlphaBlendingModes =
+        std::to_array<std::pair<QLatin1StringView, TerminalAlphaBlending>>({
+            {QLatin1StringView("native"), TerminalAlphaBlending::Native},
+            {QLatin1StringView("linear"), TerminalAlphaBlending::Linear},
+            {QLatin1StringView("linear-corrected"),
+             TerminalAlphaBlending::LinearCorrected},
+        });
     constexpr auto WindowSubtitles =
         std::to_array<std::pair<QLatin1StringView, WindowSubtitleMode>>({
             {QLatin1StringView("false"), WindowSubtitleMode::Disabled},
@@ -2369,6 +2377,11 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         return std::unexpected(std::move(parsed.error()));
     if (auto parsed = assignEnum(QLatin1StringView("window-theme"),
                                  result.windowAppearance.theme, WindowThemes);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed = assignEnum(QLatin1StringView("alpha-blending"),
+                                 result.alphaBlending, AlphaBlendingModes);
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }

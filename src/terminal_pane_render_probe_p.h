@@ -2,6 +2,7 @@
 
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
 
+#include "terminal_alpha_blending.h"
 #include "terminal_cell_metrics.h"
 #include "terminal_kitty_graphics.h"
 #include "terminal_session_options.h"
@@ -32,6 +33,10 @@ struct TerminalPaneRenderProbeSnapshot {
     std::optional<TerminalSessionGeometry> initialGeometry;
     quint64 paintSerial = 0;
     quint64 rootSerial = 0;
+    TerminalAlphaBlending requestedAlphaBlending =
+        TerminalAlphaBlending::LinearCorrected;
+    TerminalAlphaBlending effectiveAlphaBlending =
+        TerminalAlphaBlending::Native;
     quint64 unfocusedSplitOverlaySerial = 0;
     quint64 startingTextNodeSerial = 0;
     quint64 overlayTextNodeSerial = 0;

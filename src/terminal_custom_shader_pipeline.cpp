@@ -169,7 +169,8 @@ public:
     void setState(
         QSGTexture *source, const QRectF &viewport,
         QVector<std::shared_ptr<const TerminalCustomShaderProgram>> programs,
-        QVector<TerminalCustomShaderUniformSnapshot> uniforms)
+        QVector<TerminalCustomShaderUniformSnapshot> uniforms,
+        bool linearBlending)
     {
         source_ = source;
         viewport_ = viewport;
@@ -178,6 +179,11 @@ public:
             programsChanged_ = true;
         }
         uniforms_ = std::move(uniforms);
+        if (linearBlending_ != linearBlending) {
+            linearBlending_ = linearBlending;
+            resetTargets();
+            programsChanged_ = true;
+        }
         (void)buildTerminalCustomShaderUniformSlotPlan(
             uniforms_, &stageUniformSlots_, &uniformSlotStages_);
 
@@ -467,7 +473,8 @@ private:
                 telemetry_->snapshot.ownedTextureBytes =
                     static_cast<std::uint64_t>(count)
                     * static_cast<std::uint64_t>(size.width())
-                    * static_cast<std::uint64_t>(size.height()) * 4U;
+                    * static_cast<std::uint64_t>(size.height())
+                    * (linearBlending_ ? 8U : 4U);
                 telemetry_->snapshot.resourceGeneration = targetGeneration_;
             }
             return true;
@@ -481,13 +488,17 @@ private:
         pingTargets_.reserve(static_cast<std::size_t>(count));
 
         for (int index = 0; index < count; ++index) {
-            std::unique_ptr<QRhiTexture> texture(rhi_->newTexture(
-                QRhiTexture::RGBA8, size, 1, QRhiTexture::RenderTarget));
+            const QRhiTexture::Format format =
+                linearBlending_ ? QRhiTexture::RGBA16F : QRhiTexture::RGBA8;
+            std::unique_ptr<QRhiTexture> texture(
+                rhi_->newTexture(format, size, 1, QRhiTexture::RenderTarget));
             if (texture == nullptr) {
                 setTelemetryDiagnostic(
                     telemetry_,
                     QStringLiteral("custom-shader: unable to allocate retained "
-                                   "RGBA8 render target %1")
+                                   "%1 render target %2")
+                        .arg(linearBlending_ ? QStringLiteral("RGBA16F")
+                                             : QStringLiteral("RGBA8"))
                         .arg(index + 1));
                 resetTargets();
                 return false;
@@ -498,7 +509,9 @@ private:
                 setTelemetryDiagnostic(
                     telemetry_,
                     QStringLiteral("custom-shader: unable to allocate retained "
-                                   "RGBA8 render target %1")
+                                   "%1 render target %2")
+                        .arg(linearBlending_ ? QStringLiteral("RGBA16F")
+                                             : QStringLiteral("RGBA8"))
                         .arg(index + 1));
                 resetTargets();
                 return false;
@@ -562,7 +575,8 @@ private:
             telemetry_->snapshot.ownedTextureBytes =
                 static_cast<std::uint64_t>(count)
                 * static_cast<std::uint64_t>(size.width())
-                * static_cast<std::uint64_t>(size.height()) * 4U;
+                * static_cast<std::uint64_t>(size.height())
+                * (linearBlending_ ? 8U : 4U);
             telemetry_->snapshot.resourceGeneration = targetGeneration_;
         }
         return true;
@@ -1076,6 +1090,7 @@ private:
     QSize targetSize_;
     int targetCount_ = 0;
     bool targetPlanInitialized_ = false;
+    bool linearBlending_ = false;
     std::uint64_t targetGeneration_ = 0;
     std::vector<std::unique_ptr<QRhiTexture>> pingTextures_;
     std::vector<std::unique_ptr<QRhiTextureRenderTarget>> pingTargets_;
@@ -1276,6 +1291,19 @@ QObject *TerminalCustomShaderPipelineEffect::uniformProvider() const noexcept
     return uniformProvider_;
 }
 
+bool TerminalCustomShaderPipelineEffect::linearBlending() const noexcept
+{
+    return linearBlending_;
+}
+
+void TerminalCustomShaderPipelineEffect::setLinearBlending(bool enabled)
+{
+    if (linearBlending_ == enabled) return;
+    linearBlending_ = enabled;
+    Q_EMIT linearBlendingChanged();
+    update();
+}
+
 void TerminalCustomShaderPipelineEffect::setUniformProvider(QObject *provider)
 {
     if (uniformProvider_ == provider) return;
@@ -1361,7 +1389,8 @@ QSGNode *TerminalCustomShaderPipelineEffect::updatePaintNode(
     if (node == nullptr) {
         node = new TerminalCustomShaderPipelineNode(window(), telemetry_);
     }
-    node->setState(texture, boundingRect(), programs_, std::move(uniforms));
+    node->setState(texture, boundingRect(), programs_, std::move(uniforms),
+                   linearBlending_);
     return node;
 }
 

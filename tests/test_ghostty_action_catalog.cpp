@@ -991,12 +991,24 @@ void GhosttyActionCatalogTest::parsesFrontendActionsExactly()
         QCOMPARE(crash->target, testCase.target);
         QCOMPARE(request->context, source);
 
-        // A crash request is intentionally not admitted into normal action
-        // chains until each target thread has an explicit dispatcher.
-        QVERIFY(!GhosttyActionCatalog::parseConfiguredAction(serialized));
-        QVERIFY(!GhosttyActionCatalog::isImplemented(serialized));
+        const std::optional<GhosttyConfiguredAction> configured =
+            GhosttyActionCatalog::parseConfiguredAction(serialized, source);
+        QVERIFY(configured.has_value());
+        QCOMPARE(std::get<WorkspaceFrontendActionRequest>(*configured),
+                 *request);
+        QVERIFY(GhosttyActionCatalog::isImplemented(serialized));
         QCOMPARE(GhosttyActionCatalog::scope(serialized),
                  GhosttyActionScope::Surface);
+
+        const GhosttyCompiledActionChain compiled =
+            GhosttyActionCatalog::compileActionChain({serialized});
+        QVERIFY(!compiled.applicationOnly);
+        QCOMPARE(compiled.entries.size(), 1);
+        const auto *const compiledRequest =
+            compiled.entries.constFirst()
+                .getIf<WorkspaceFrontendActionRequest>();
+        QVERIFY(compiledRequest != nullptr);
+        QCOMPARE(compiledRequest->action, request->action);
     }
 
     const QStringList rejected{

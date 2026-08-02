@@ -354,6 +354,7 @@ private Q_SLOTS:
     void integratesQuickTerminalLifecycleAndLiveShellReload();
     void quickTerminalAutohideRequiresActivationAndReloadsLive();
     void routesWindowUiActionsAndNotificationPolicy();
+    void routesCrashActionsByStablePaneAndTypedTarget();
     void configurationFailuresReachExistingAndFutureWindows();
     void configurationDiagnosticsDialogIsScrollableAndExplicit();
     void remoteNewWindowOverridesOnlyItsFirstSurface();
@@ -711,6 +712,68 @@ void ApplicationControllerTest::routesWindowUiActionsAndNotificationPolicy()
     // the live clipboard-copy policy on the originating window only.
     Q_EMIT firstPane->standardClipboardCommitted(true);
     QCOMPARE(ui->toastMessage(), QStringLiteral("Cleared clipboard"));
+}
+
+void ApplicationControllerTest::routesCrashActionsByStablePaneAndTypedTarget()
+{
+    struct Invocation {
+        QQuickWindow *window = nullptr;
+        TerminalWorkspace *workspace = nullptr;
+        PaneId paneId;
+        WorkspaceFrontendActions::CrashTarget target =
+            WorkspaceFrontendActions::CrashTarget::Main;
+    };
+
+    QVector<Invocation> invocations;
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    ApplicationController controller(
+        options, harness.factory(),
+        [&invocations](QQuickWindow *window, TerminalWorkspace *workspace,
+                       PaneId paneId,
+                       WorkspaceFrontendActions::CrashTarget target) {
+            invocations.append({window, workspace, paneId, target});
+            return true;
+        },
+        false);
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+
+    const QVector<WorkspaceSurfaceSnapshot> surfaces =
+        initial->workspace->surfaceSnapshot();
+    QCOMPARE(surfaces.size(), 1);
+    const PaneId paneId = surfaces.constFirst().paneId;
+    QVERIFY(paneId.isValid());
+
+    const struct {
+        const char *action;
+        WorkspaceFrontendActions::CrashTarget target;
+    } cases[] = {
+        {"crash:main", WorkspaceFrontendActions::CrashTarget::Main},
+        {"crash:io", WorkspaceFrontendActions::CrashTarget::Io},
+        {"crash:render", WorkspaceFrontendActions::CrashTarget::Render},
+    };
+    for (const auto &testCase : cases) {
+        QVERIFY(initial->workspace->executeActiveConfiguredAction(
+            QString::fromLatin1(testCase.action)));
+        QCOMPARE(invocations.constLast().window, initial->window);
+        QCOMPARE(invocations.constLast().workspace, initial->workspace);
+        QCOMPARE(invocations.constLast().paneId, paneId);
+        QCOMPARE(invocations.constLast().target, testCase.target);
+    }
+    QCOMPARE(invocations.size(), 3);
+
+    Q_EMIT initial->workspace->frontendActionRequested({
+        .action =
+            WorkspaceFrontendActions::Crash{
+                .target = WorkspaceFrontendActions::CrashTarget::Io,
+            },
+        .context =
+            {
+                .paneId = PaneId(std::numeric_limits<quint64>::max()),
+            },
+    });
+    QCOMPARE(invocations.size(), 3);
 }
 
 void ApplicationControllerTest::

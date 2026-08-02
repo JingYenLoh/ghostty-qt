@@ -1,5 +1,7 @@
 #pragma once
 
+#include "terminal_alpha_blending.h"
+
 #include <QColor>
 #include <QRectF>
 #include <QSGNode>
@@ -30,7 +32,9 @@ public:
     ~TerminalRectBatch() override;
 
     [[nodiscard]] QVector<TerminalColoredRect> &beginUpdate() noexcept;
-    void commit(bool softwareRenderer);
+    void
+    commit(bool softwareRenderer,
+           TerminalAlphaBlending alphaBlending = TerminalAlphaBlending::Native);
 
     [[nodiscard]] qsizetype size() const noexcept;
     [[nodiscard]] quint64 allocationGeneration() const noexcept;
@@ -51,4 +55,6 @@ private:
     quint64 allocationGeneration_ = 0;
     quint64 commitGeneration_ = 0;
     std::optional<bool> committedSoftwareRenderer_;
+    TerminalAlphaBlending committedAlphaBlending_ =
+        TerminalAlphaBlending::Native;
 };

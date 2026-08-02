@@ -1,5 +1,6 @@
 #pragma once
 
+#include "terminal_alpha_blending.h"
 #include "terminal_backdrop.h"
 
 #include <QColor>
@@ -37,10 +38,12 @@ public:
     // Returns true when the node is drawable. Invalid state or a texture
     // creation failure clears the geometry and texture, making an already
     // attached node safe while its caller falls back to a solid background.
-    [[nodiscard]] bool update(QQuickWindow *window, const QImage &straightRgba,
-                              quint64 assetSerial, const QRectF &viewport,
-                              const QColor &background, double imageOpacity,
-                              bool repeat, const QRectF &destination);
+    [[nodiscard]] bool
+    update(QQuickWindow *window, const QImage &straightRgba,
+           quint64 assetSerial, const QRectF &viewport,
+           const QColor &background, double imageOpacity, bool repeat,
+           const QRectF &destination,
+           TerminalAlphaBlending alphaBlending = TerminalAlphaBlending::Native);
 
     void clear();
 
@@ -75,11 +78,13 @@ public:
     TerminalBackdropSceneNode();
     ~TerminalBackdropSceneNode() override;
 
-    void update(
-        QQuickWindow *window, const QRectF &viewport, const QColor &background,
-        const std::shared_ptr<const TerminalBackgroundImageAsset> &asset,
-        const TerminalBackgroundImageOptions &options, qreal devicePixelRatio,
-        bool useCustomMaterial);
+    void
+    update(QQuickWindow *window, const QRectF &viewport,
+           const QColor &background,
+           const std::shared_ptr<const TerminalBackgroundImageAsset> &asset,
+           const TerminalBackgroundImageOptions &options,
+           qreal devicePixelRatio, bool useCustomMaterial,
+           TerminalAlphaBlending alphaBlending = TerminalAlphaBlending::Native);
 
     [[nodiscard]] quint64 assetSerial() const noexcept;
     [[nodiscard]] const QRectF &imageRect() const noexcept;
@@ -99,6 +104,7 @@ private:
         QQuickWindow *window = nullptr;
         QRgb background = 0;
         quint64 imageOpacityBits = 0;
+        TerminalAlphaBlending alphaBlending = TerminalAlphaBlending::Native;
 
         bool operator==(const CpuTextureKey &) const = default;
     };
@@ -117,6 +123,7 @@ private:
     std::optional<CpuTextureKey> failedTextureKey_;
     std::optional<MaterialFailureKey> failedMaterialKey_;
     bool textureRepeat_ = false;
+    TerminalAlphaBlending alphaBlending_ = TerminalAlphaBlending::Native;
     QRectF imageRect_;
     QRectF sourceRect_;
 };

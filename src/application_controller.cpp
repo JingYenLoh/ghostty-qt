@@ -5,6 +5,7 @@
 #include "ghostty_application_ipc.h"
 #include "ghostty_application_keybindings.h"
 #include "initial_session_coordinator.h"
+#include "intentional_crash.h"
 #include "quick_terminal_surface.h"
 #include "terminal_cell_metrics.h"
 #include "terminal_geometry.h"
@@ -19,6 +20,7 @@
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickWindow>
+#include <QRunnable>
 #include <QScopeGuard>
 #include <QScreen>
 #include <QTimer>
@@ -40,6 +42,25 @@ template <typename... Visitor> struct Overloaded : Visitor... {
 
 constexpr QByteArrayView QuickTerminalEnvironmentKey("GHOSTTY_QUICK_TERMINAL");
 constexpr std::chrono::milliseconds QuickTerminalAutohideDelay{50};
+
+bool dispatchIntentionalCrash(QQuickWindow *window,
+                              TerminalWorkspace *workspace, PaneId paneId,
+                              WorkspaceFrontendActions::CrashTarget target)
+{
+    using enum WorkspaceFrontendActions::CrashTarget;
+    switch (target) {
+    case Main: intentionalCrash("main");
+    case Io: return workspace != nullptr && workspace->requestIoCrash(paneId);
+    case Render:
+        if (window == nullptr) return false;
+        window->scheduleRenderJob(
+            QRunnable::create([] { intentionalCrash("render"); }),
+            QQuickWindow::BeforeSynchronizingStage);
+        window->update();
+        return true;
+    }
+    return false;
+}
 
 std::optional<TerminalCommand>
 selectedFirstCommand(const LaunchOptions &options)
@@ -219,8 +240,18 @@ ApplicationController::ApplicationController(LaunchOptions effectiveOptions,
                                              WindowFactory windowFactory,
                                              bool enableGlobalShortcutsPortal,
                                              QObject *parent)
+    : ApplicationController(std::move(effectiveOptions),
+                            std::move(windowFactory), dispatchIntentionalCrash,
+                            enableGlobalShortcutsPortal, parent)
+{}
+
+ApplicationController::ApplicationController(
+    LaunchOptions effectiveOptions, WindowFactory windowFactory,
+    CrashActionDispatcher crashActionDispatcher,
+    bool enableGlobalShortcutsPortal, QObject *parent)
     : QObject(parent)
     , windowFactory_(std::move(windowFactory))
+    , crashActionDispatcher_(std::move(crashActionDispatcher))
     , effectiveOptions_(std::move(effectiveOptions))
     , initialSessionCoordinator_(std::make_shared<InitialSessionCoordinator>(
           InitialSessionCoordinator::Payload{
@@ -1724,7 +1755,12 @@ bool ApplicationController::dispatchFrontendAction(
                 const FrontendAction::Inspector &inspector) {
                 return workspace->controlInspector(paneId, inspector.mode);
             },
-            [](const FrontendAction::Crash &) { return false; },
+            [this, record, workspace, paneId = request.context.paneId](
+                const FrontendAction::Crash &crash) {
+                return crashActionDispatcher_ != nullptr
+                    && crashActionDispatcher_(record->window, workspace, paneId,
+                                              crash.target);
+            },
         },
         request.action);
 }

@@ -321,8 +321,20 @@ void TerminalCustomShaderQsgTest::
             &effect, &TerminalCustomShaderPipelineEffect::activeChanged);
         QSignalSpy stagesChanged(
             &effect, &TerminalCustomShaderPipelineEffect::shaderStagesChanged);
+        QSignalSpy linearBlendingChanged(
+            &effect,
+            &TerminalCustomShaderPipelineEffect::linearBlendingChanged);
 
         QVERIFY(!effect.isActive());
+        QVERIFY(!effect.linearBlending());
+        effect.setLinearBlending(true);
+        QVERIFY(effect.linearBlending());
+        QCOMPARE(linearBlendingChanged.count(), 1);
+        effect.setLinearBlending(true);
+        QCOMPARE(linearBlendingChanged.count(), 1);
+        effect.setLinearBlending(false);
+        QVERIFY(!effect.linearBlending());
+        QCOMPARE(linearBlendingChanged.count(), 2);
         effect.setUniformProvider(&provider);
         QCOMPARE(provider.pipelineAttachments,
                  (QVector<TerminalCustomShaderPipelineEffect *>{&effect}));

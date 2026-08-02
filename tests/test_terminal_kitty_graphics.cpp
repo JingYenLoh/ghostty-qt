@@ -172,7 +172,7 @@ void TerminalKittyGraphicsTest::embeddedShaderMatchesCpuUniformLayout()
     QCOMPARE(
         block.size,
         static_cast<int>(TerminalKittyGraphicsShaderLayout::uniformBufferSize));
-    QCOMPARE(block.members.size(), 2);
+    QCOMPARE(block.members.size(), 3);
 
     const auto *matrix = memberNamed(block, QByteArrayView("qt_Matrix"));
     QVERIFY(matrix != nullptr);
@@ -190,6 +190,15 @@ void TerminalKittyGraphicsTest::embeddedShaderMatchesCpuUniformLayout()
              static_cast<int>(
                  TerminalKittyGraphicsShaderLayout::inheritedOpacityOffset));
     QCOMPARE(opacity->size, static_cast<int>(sizeof(float)));
+
+    const auto *linearBlending =
+        memberNamed(block, QByteArrayView("linearBlending"));
+    QVERIFY(linearBlending != nullptr);
+    QCOMPARE(linearBlending->type, QShaderDescription::Float);
+    QCOMPARE(linearBlending->offset,
+             static_cast<int>(
+                 TerminalKittyGraphicsShaderLayout::linearBlendingOffset));
+    QCOMPARE(linearBlending->size, static_cast<int>(sizeof(float)));
 
     const auto samplers = shader.description().combinedImageSamplers();
     if (!hasImageSamplers) {

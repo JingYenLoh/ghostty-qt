@@ -3128,10 +3128,14 @@ be checked interactively in a real Wayland session.
   FreeType flags, and cluster placement remain Qt-owned approximations. There
   is no color-emoji pipeline. Kitty graphics render ordinary placements;
   Unicode virtual placements await an expanded-placement public API.
-- `alpha-blending` remains planned. Qt Quick owns text and primitive blending,
-  and the current public scene-graph path does not expose an exact mapping for
-  Ghostty's `native`, `linear`, and `linear-corrected` modes. The implemented
-  background alpha policy is independent of that color-space choice.
+- `alpha-blending` is implemented as a pane-local color pipeline on OpenGL and
+  Vulkan. Native uses Qt's sRGB path; linear inputs and user-shader
+  intermediates use RGBA16F and a final built-in pass restores premultiplied
+  sRGB for Qt composition. Software and other unsupported scene-graph backends
+  deliberately fall back to native. Qt's public text node does not expose the
+  per-fragment glyph coverage and effective cell background needed by
+  Ghostty's luminance-based `linear-corrected` weight, so that value currently
+  shares linear coverage and remains partial in the parity ledger.
 - Background images use a dedicated packed-RGBA material on RHI backends so
   straight RGB and alpha are filtered before premultiplication and
   repeated through Ghostty's explicit modulo coordinates. The software

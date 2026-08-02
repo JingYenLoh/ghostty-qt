@@ -202,6 +202,8 @@ QProcessEnvironment controlledEnvironment(const QString &configHome)
     QProcessEnvironment environment =
         QProcessEnvironment::systemEnvironment();
     environment.insert(QStringLiteral("XDG_CONFIG_HOME"), configHome);
+    environment.insert(QStringLiteral("XDG_STATE_HOME"),
+                       QDir(configHome).filePath(QStringLiteral("state")));
     environment.insert(QStringLiteral("QT_QPA_PLATFORM"),
                        QStringLiteral("ghostty-cli-test-must-not-load-qt"));
     environment.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
@@ -532,6 +534,15 @@ void GhosttyCliDelegationTest::matchesPinnedHelper_data()
                "You must specify a codepoint with --cp or a string with "
                "--string\n")
         << 1;
+    QTest::newRow("crash-report-help")
+        << QStringList{QStringLiteral("+crash-report"),
+                       QStringLiteral("--help")}
+        << QByteArrayLiteral("crash-report") << 0;
+    QTest::newRow("crash-report-empty")
+        << QStringList{QStringLiteral("+crash-report")} << QByteArray{} << 0;
+    QTest::newRow("boo-help")
+        << QStringList{QStringLiteral("+boo"), QStringLiteral("--help")}
+        << QByteArrayLiteral("boo") << 0;
     QTest::newRow("list-keybinds")
         << QStringList{QStringLiteral("+list-keybinds"),
                        QStringLiteral("--default"),

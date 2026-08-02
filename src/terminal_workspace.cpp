@@ -1012,6 +1012,13 @@ bool TerminalWorkspace::controlInspector(
     return pane != nullptr && pane->controlInspector(mode);
 }
 
+bool TerminalWorkspace::requestIoCrash(PaneId paneId)
+{
+    if (windowCloseState_ != WindowCloseState::Open) return false;
+    TerminalPane *const pane = paneForId(paneId);
+    return pane != nullptr && pane->requestIoCrash();
+}
+
 QVector<WorkspaceSurfaceSnapshot> TerminalWorkspace::surfaceSnapshot() const
 {
     if (windowCloseState_ != WindowCloseState::Open) return {};

@@ -1,5 +1,6 @@
 #include "terminal_controller.h"
 
+#include "intentional_crash.h"
 #include "session_worker.h"
 #include "terminal_clipboard.h"
 
@@ -451,6 +452,16 @@ void TerminalController::enqueueWorkerRequest(WorkerRequest request)
             }
         },
         Qt::QueuedConnection);
+}
+
+bool TerminalController::requestIoCrash()
+{
+    Q_ASSERT(QThread::currentThread() == thread());
+    if (closing_ || sessionStartState_ == SessionStartState::Cancelled) {
+        return false;
+    }
+    enqueueWorkerRequest([](SessionWorker &) { intentionalCrash("I/O"); });
+    return true;
 }
 
 void TerminalController::createWorkerRuntime()

@@ -75,6 +75,8 @@ class TerminalCustomShaderPipelineEffect : public QQuickItem {
                    NOTIFY shaderStagesChanged)
     Q_PROPERTY(QObject *uniformProvider READ uniformProvider WRITE
                    setUniformProvider NOTIFY uniformProviderChanged)
+    Q_PROPERTY(bool linearBlending READ linearBlending WRITE setLinearBlending
+                   NOTIFY linearBlendingChanged)
     Q_PROPERTY(bool active READ isActive NOTIFY activeChanged)
 
 public:
@@ -93,6 +95,9 @@ public:
     [[nodiscard]] QObject *uniformProvider() const noexcept;
     void setUniformProvider(QObject *provider);
 
+    [[nodiscard]] bool linearBlending() const noexcept;
+    void setLinearBlending(bool enabled);
+
     [[nodiscard]] bool isActive() const noexcept;
     [[nodiscard]] TerminalCustomShaderPipelineSnapshot renderSnapshot() const;
     [[nodiscard]] QString renderDiagnostic() const;
@@ -101,6 +106,7 @@ Q_SIGNALS:
     void sourceChanged();
     void shaderStagesChanged();
     void uniformProviderChanged();
+    void linearBlendingChanged();
     void activeChanged();
 
 protected:
@@ -122,6 +128,7 @@ private:
     QVector<TerminalCustomShaderStage> stages_;
     QVector<std::shared_ptr<const TerminalCustomShaderProgram>> programs_;
     QPointer<QObject> uniformProvider_;
+    bool linearBlending_ = false;
     std::shared_ptr<TerminalCustomShaderPipelineTelemetry> telemetry_;
     QString stageDiagnostic_;
     QMetaObject::Connection sourceDestroyedConnection_;

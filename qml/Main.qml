@@ -662,6 +662,7 @@ ApplicationWindow {
         id: titleDialog
         objectName: "titleDialog"
         property var promptId: 0
+        property var focusReturnTarget: null
         anchors.centerIn: parent
         width: Math.max(320, Math.min(520, window.width - 32))
         modal: true
@@ -679,6 +680,12 @@ ApplicationWindow {
             const rejectedPromptId = promptId
             promptId = 0
             workspace.cancelTitlePrompt(rejectedPromptId)
+        }
+        onClosed: {
+            const target = focusReturnTarget
+            focusReturnTarget = null
+            if (target)
+                target.forceActiveFocus()
         }
 
         ColumnLayout {
@@ -741,6 +748,10 @@ ApplicationWindow {
             titleDialog.promptId = promptId
             titleDialog.title = heading
             titleField.text = initialTitle
+            // Popup focus restoration differs between Qt versions. Preserve
+            // the exact pre-dialog item so broad title actions never infer a
+            // pane target or disturb the active tab/split on close.
+            titleDialog.focusReturnTarget = window.activeFocusItem
             titleDialog.open()
         }
         function onTitlePromptResolved(promptId) {

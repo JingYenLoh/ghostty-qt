@@ -7,6 +7,7 @@ Item {
     required property bool retainedPipeline
     required property var uniformProvider
     required property real sourceDevicePixelRatio
+    required property bool linearBlending
     property string fragmentShaderFileName
     property var fragmentShaderData
     property int stageIndex: 0
@@ -16,6 +17,8 @@ Item {
     layer.live: true
     layer.smooth: true
     layer.textureMirroring: ShaderEffectSource.NoMirroring
+    layer.format: linearBlending ? ShaderEffectSource.RGBA16F
+                                 : ShaderEffectSource.RGBA8
     layer.textureSize: Qt.size(
         Math.max(1, Math.round(width * sourceDevicePixelRatio)),
         Math.max(1, Math.round(height * sourceDevicePixelRatio)))
@@ -28,6 +31,7 @@ Item {
         TerminalCustomShaderPipelineEffect {
             shaderStages: root.shaderStages
             uniformProvider: root.uniformProvider
+            linearBlending: root.linearBlending
         }
     }
 
