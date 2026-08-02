@@ -51,8 +51,8 @@ public:
     {
         return baseTitle_.has_value() ? *baseTitle_ : QString{};
     }
-    // An explicit empty set_surface_title value is distinct from the absence
-    // of terminal metadata, which lets TerminalPane select its launch fallback.
+    // A present empty base (direct argv[0], set_surface_title, or OSC) is
+    // distinct from no base, which lets TerminalPane select its fallback.
     bool hasTitle() const { return baseTitle_.has_value(); }
     QString currentDirectory() const
     {
@@ -196,9 +196,9 @@ public:
     // Search requests are generation-scoped so an incremental scan can yield
     // to PTY and UI work without publishing results from a superseded query.
     void search(const QString &text);
-    void searchSerialized(const QByteArray &serializedText);
-    void cancelSearch();
-    void navigateSearch(TerminalSearchDirection direction);
+    [[nodiscard]] bool searchSerialized(const QByteArray &serializedText);
+    [[nodiscard]] bool cancelSearch();
+    [[nodiscard]] bool navigateSearch(TerminalSearchDirection direction);
     [[nodiscard]] bool searchSelectionAction(quint64 requestId);
     [[nodiscard]] bool searchExpected() const { return searchExpected_; }
     void requestHyperlink(int column, int row, quint64 contentRevision);
@@ -252,10 +252,11 @@ Q_SIGNALS:
                                           const QString &text);
     void terminalClipboardWriteRequested(
         const TerminalClipboardWriteRequest &request);
-    // Published only after this GUI-thread adapter successfully commits to the
-    // standard clipboard. Primary-selection-only writes intentionally do not
-    // participate in application toast policy.
-    void standardClipboardCommitted(bool empty);
+    // Carries only the worker-prepared value. The stable owning workspace
+    // revalidates the PaneId before its GUI thread accesses QClipboard.
+    void
+    selectionClipboardWriteRequested(const QString &text,
+                                     TerminalClipboardDestination destination);
     void terminalActionReady(const TerminalActionResult &result);
     void rightClickResolved(const TerminalRightClickResult &result);
 
@@ -345,6 +346,8 @@ private:
     [[nodiscard]] bool applyInitialSessionPayload(
         const InitialSessionCoordinator::Payload &payload);
     [[nodiscard]] bool applyFirstSessionCommandOverride();
+    [[nodiscard]] std::optional<QString> directLaunchBaseTitle() const;
+    [[nodiscard]] bool installDirectLaunchBaseTitle();
     void cancelInitialSessionRequest();
     [[nodiscard]] bool beginTerminalActionRequest(quint64 requestId);
     void failPendingTerminalActions();

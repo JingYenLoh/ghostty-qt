@@ -694,6 +694,24 @@ bool TerminalWorkspace::broadPaneTargetIsLive(
     return target.pane != nullptr && paneForId(target.paneId) == target.pane;
 }
 
+bool TerminalWorkspace::executeBroadSurfaceAction(
+    const BroadPaneTarget &target, const GhosttyConfiguredAction &action)
+{
+    if (topologyMutation_ || !broadPaneTargetIsLive(target)
+        || std::holds_alternative<ApplicationAction>(action)) {
+        return false;
+    }
+
+    const QPointer<TerminalWorkspace> guard(this);
+    const bool previousBroadFanout = std::exchange(broadActionFanout_, true);
+    const auto restoreBroadFanout = qScopeGuard([guard, previousBroadFanout] {
+        if (guard != nullptr) {
+            guard->broadActionFanout_ = previousBroadFanout;
+        }
+    });
+    return target.pane->executeConfiguredAction(action);
+}
+
 void TerminalWorkspace::setDefaultLaunchOptions(const LaunchOptions &options)
 {
     defaultOptions_ = options;
@@ -1529,6 +1547,18 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                                  TerminalPane *) {
                 beginTerminalClipboardWrite(request, {paneId, pane});
             });
+    connect(pane, &TerminalPane::selectionClipboardWriteRequested, this,
+            [this, paneId, pane](const QString &text,
+                                 TerminalClipboardDestination destination,
+                                 TerminalPane *source) {
+                if (source != pane || paneForId(paneId) != pane) return;
+                const TerminalClipboardWriteTargets targets =
+                    writeTerminalClipboard(QGuiApplication::clipboard(), text,
+                                           destination);
+                if (targets.standard) {
+                    Q_EMIT standardClipboardCommitted(text.isEmpty());
+                }
+            });
     connect(pane, &TerminalPane::standardClipboardCommitted, this,
             [this, paneId, pane](bool empty) {
                 if (paneForId(paneId) == pane) {
@@ -1627,6 +1657,11 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createNewTab(
     const TabListEntry entry = tabListEntry(*tab);
     tabs_.insert(tabs_.begin() + insertionIndex, std::move(tab));
     initialTabCreated_ = true;
+    Q_EMIT paneCommitted(pane.id, pane.pane);
+    if (guard == nullptr || pane.pane == nullptr
+        || paneForId(pane.id) != pane.pane) {
+        return {};
+    }
 
     const bool modelInserted = tabModel_.insert(insertionIndex, entry);
     if (guard == nullptr) return {};
@@ -1854,6 +1889,11 @@ bool TerminalWorkspace::splitPane(PaneId paneId, Qt::Orientation orientation,
     node->second =
         std::make_unique<Node>(placeNewPaneFirst ? oldHandle : newPane);
     tab->activePaneId = newPane.id;
+    Q_EMIT paneCommitted(newPane.id, newPane.pane);
+    if (guard == nullptr || newPane.pane == nullptr
+        || paneForId(newPane.id) != newPane.pane) {
+        return true;
+    }
     updateSplitMembership(*tab);
     if (guard == nullptr) return true;
     const bool targetIsCurrent = tabId == currentTabId();
@@ -1961,9 +2001,15 @@ void TerminalWorkspace::closePane(PaneId paneId, bool force)
         if (tab->zoomedPaneId == paneId) {
             tab->zoomedPaneId = {};
         }
+        retiringPaneIds_.insert(paneId);
+        const auto finishRetirement = qScopeGuard([guard, paneId] {
+            if (guard != nullptr) guard->retiringPaneIds_.remove(paneId);
+        });
         resolvePendingPaneRemoval({paneId, pane});
         if (guard == nullptr) return;
         removePaneFromNode(tab->root, paneId);
+        Q_EMIT paneRemoved(paneId, pane);
+        if (guard == nullptr) return;
         if (tab->root == nullptr) {
             removeTab(tabId);
         } else {
@@ -2179,6 +2225,15 @@ void TerminalWorkspace::removeTabs(PendingTabClose close)
             }
         });
         for (const PaneHandle &handle : panes) {
+            retiringPaneIds_.insert(handle.id);
+        }
+        const auto finishRetirements = qScopeGuard([guard, &panes] {
+            if (guard == nullptr) return;
+            for (const PaneHandle &handle : panes) {
+                guard->retiringPaneIds_.remove(handle.id);
+            }
+        });
+        for (const PaneHandle &handle : panes) {
             resolvePendingPaneRemoval(handle);
             if (guard == nullptr) return;
             handle.pane->beginShutdown();
@@ -2207,6 +2262,10 @@ void TerminalWorkspace::removeTabs(PendingTabClose close)
             if (guard == nullptr) return;
             Q_ASSERT(modelRemoved);
             Q_UNUSED(modelRemoved);
+        }
+        for (const PaneHandle &handle : panes) {
+            Q_EMIT paneRemoved(handle.id, handle.pane);
+            if (guard == nullptr) return;
         }
         for (const IndexedTarget &target : targets) {
             resolvePendingTabRemoval(target.id);
@@ -3600,7 +3659,7 @@ PaneId TerminalWorkspace::focusTargetAfterClosing(const Tab &tab,
 
 TerminalPane *TerminalWorkspace::paneForId(PaneId paneId) const
 {
-    if (!paneId.isValid()) {
+    if (!paneId.isValid() || retiringPaneIds_.contains(paneId)) {
         return nullptr;
     }
     for (const std::unique_ptr<Tab> &tab : tabs_) {

@@ -233,8 +233,8 @@ public:
     void zoomOut();
     void resetZoom();
     Q_INVOKABLE void setSearchUiText(const QString &text);
-    Q_INVOKABLE void endSearchUi();
-    Q_INVOKABLE void navigateSearch(int direction);
+    Q_INVOKABLE bool endSearchUi();
+    Q_INVOKABLE bool navigateSearch(int direction);
     Q_INVOKABLE void scrollbarMoveTo(qreal position);
     Q_INVOKABLE void dismissAbnormalExit();
     Q_INVOKABLE void closeInspector();
@@ -286,6 +286,10 @@ Q_SIGNALS:
                               TerminalPane *pane);
     void terminalClipboardWriteRequested(
         const TerminalClipboardWriteRequest &request, TerminalPane *pane);
+    void
+    selectionClipboardWriteRequested(const QString &text,
+                                     TerminalClipboardDestination destination,
+                                     TerminalPane *pane);
     void standardClipboardCommitted(bool empty);
     void sessionEnded(TerminalPane *pane, int exitCode, int signalNumber);
 

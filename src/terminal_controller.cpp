@@ -2,10 +2,9 @@
 
 #include "intentional_crash.h"
 #include "session_worker.h"
-#include "terminal_clipboard.h"
+#include "zig_string_escape.h"
 
 #include <QFileInfo>
-#include <QGuiApplication>
 #include <QMetaObject>
 #include <QPointer>
 #include <QThread>
@@ -207,6 +206,9 @@ TerminalController::TerminalController(
                 &TerminalController::tryStartSession, Qt::QueuedConnection);
     }
     (void)applyFirstSessionCommandOverride();
+    if (initialSessionCoordinator_ == nullptr) {
+        (void)installDirectLaunchBaseTitle();
+    }
     connectWorkerRequestRelays();
 }
 
@@ -221,11 +223,10 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
             // value. Keep consuming terminal metadata in the worker while
             // preventing it from replacing the GUI's configured base layer.
             if (launchOptions_.configuredTitle.has_value()) return;
-            // Empty terminal metadata means no title and restores the
-            // pane's launch fallback. set_surface_title: instead installs
-            // an explicit empty optional until this worker event arrives.
-            std::optional<QString> next;
-            if (!title.isEmpty()) next = title;
+            // OSC and set_surface_title share Ghostty's application-runtime
+            // base layer. A present empty title is not the absence that
+            // selects the launch fallback.
+            std::optional<QString> next(std::in_place, title);
             if (baseTitle_ == next) return;
             baseTitle_ = std::move(next);
             Q_EMIT titleChanged(this->title());
@@ -343,7 +344,6 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
             if (update.generation != activeSearchGeneration_) {
                 return;
             }
-            searchExpected_ = update.active;
             Q_EMIT searchUpdated(update);
         },
         Qt::QueuedConnection);
@@ -373,12 +373,7 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
     connect(
         worker, &SessionWorker::clipboardTextReady, this,
         [this](const QString &text, TerminalClipboardDestination destination) {
-            const TerminalClipboardWriteTargets targets =
-                writeTerminalClipboard(QGuiApplication::clipboard(), text,
-                                       destination);
-            if (targets.standard) {
-                Q_EMIT standardClipboardCommitted(text.isEmpty());
-            }
+            Q_EMIT selectionClipboardWriteRequested(text, destination);
         },
         Qt::QueuedConnection);
     connect(worker, &SessionWorker::terminalClipboardWriteRequested, this,
@@ -412,7 +407,7 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
             // remains readable, so also ask the worker to release search
             // state and finish recompressing any pages restored by it.
             const QPointer<TerminalController> guard(this);
-            cancelSearch();
+            (void)cancelSearch();
             if (guard == nullptr) return;
             failPendingTerminalActions();
             if (guard == nullptr) return;
@@ -562,6 +557,7 @@ void TerminalController::tryStartSession()
     }
     launchTitleChanged =
         applyFirstSessionCommandOverride() || launchTitleChanged;
+    const bool baseTitleChanged = installDirectLaunchBaseTitle();
 
     sessionStartState_ = SessionStartState::Started;
     const bool notifyRunning = !running_;
@@ -576,6 +572,10 @@ void TerminalController::tryStartSession()
     QPointer<TerminalController> guard(this);
     if (launchTitleChanged) {
         Q_EMIT launchProgramChanged();
+        if (guard.isNull()) return;
+    }
+    if (baseTitleChanged) {
+        Q_EMIT titleChanged(title());
         if (guard.isNull()) return;
     }
     if (notifyRunning) {
@@ -619,6 +619,29 @@ bool TerminalController::applyFirstSessionCommandOverride()
     launchOptions_.hold = false;
     explicitProgram_ = true;
     return changed;
+}
+
+std::optional<QString> TerminalController::directLaunchBaseTitle() const
+{
+    if (!launchOptions_.program.isEmpty()) {
+        return launchOptions_.program.constFirst();
+    }
+    if (!launchOptions_.command.has_value()
+        || launchOptions_.command->kind != TerminalCommandKind::Direct
+        || launchOptions_.command->directArguments.isEmpty()) {
+        return std::nullopt;
+    }
+    return QString::fromLocal8Bit(
+        launchOptions_.command->directArguments.constFirst());
+}
+
+bool TerminalController::installDirectLaunchBaseTitle()
+{
+    if (baseTitle_.has_value()) return false;
+    const std::optional<QString> title = directLaunchBaseTitle();
+    if (!title.has_value()) return false;
+    baseTitle_ = title;
+    return true;
 }
 
 QString TerminalController::launchTitle() const
@@ -1075,29 +1098,33 @@ void TerminalController::search(const QString &text)
     Q_EMIT searchRequested(activeSearchGeneration_, text.toUtf8());
 }
 
-void TerminalController::searchSerialized(const QByteArray &serializedText)
+bool TerminalController::searchSerialized(const QByteArray &serializedText)
 {
+    const bool wasActive = searchExpected_;
     activeSearchGeneration_ = nextSearchGeneration();
-    // Escape decoding intentionally stays on the worker. Treat the request as
-    // active until its authoritative update arrives so an action chain such
-    // as `search:term>navigate_search:next` remains ordered and performable.
-    searchExpected_ = !serializedText.isEmpty();
+    const std::optional<QByteArray> decoded =
+        decodeGhosttyActionString(serializedText);
+    searchExpected_ = decoded.has_value() && !decoded->isEmpty();
     Q_EMIT serializedSearchRequested(activeSearchGeneration_, serializedText);
+    return searchExpected_ || wasActive;
 }
 
-void TerminalController::cancelSearch()
+bool TerminalController::cancelSearch()
 {
+    const bool wasActive = searchExpected_;
     activeSearchGeneration_ = nextSearchGeneration();
     searchExpected_ = false;
     Q_EMIT searchCancellationRequested(activeSearchGeneration_);
+    return wasActive;
 }
 
-void TerminalController::navigateSearch(TerminalSearchDirection direction)
+bool TerminalController::navigateSearch(TerminalSearchDirection direction)
 {
     if (!searchExpected_ || activeSearchGeneration_ == 0) {
-        return;
+        return false;
     }
     Q_EMIT searchNavigationRequested(activeSearchGeneration_, direction);
+    return true;
 }
 
 bool TerminalController::searchSelectionAction(quint64 requestId)

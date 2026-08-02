@@ -16,6 +16,7 @@
 #include <QPointer>
 #include <QQmlComponent>
 #include <QQuickItem>
+#include <QSet>
 #include <QStringList>
 #include <QStringView>
 #include <QVector>
@@ -299,6 +300,11 @@ Q_SIGNALS:
                                    PaneId sourcePaneId);
     void frontendActionRequested(const WorkspaceFrontendActionRequest &request);
     void standardClipboardCommitted(bool empty);
+    // Process-wide broad dispatch mirrors Ghostty's append-on-create,
+    // swap-remove surface vector. These fire only after a pane gains a stable
+    // tree identity and immediately after that identity is retired.
+    void paneCommitted(PaneId paneId, TerminalPane *pane);
+    void paneRemoved(PaneId paneId, TerminalPane *pane);
     void broadActionsRequested(const GhosttyCompiledActionChain &actions);
     void workspaceActivated();
     void toggleFullscreenRequested();
@@ -420,6 +426,9 @@ private:
     [[nodiscard]] QVector<BroadPaneTarget> broadPaneSnapshot() const;
     [[nodiscard]] bool
     broadPaneTargetIsLive(const BroadPaneTarget &target) const;
+    [[nodiscard]] bool
+    executeBroadSurfaceAction(const BroadPaneTarget &target,
+                              const GhosttyConfiguredAction &action);
     bool executeAction(const WorkspaceActionRequest &request);
     PaneHandle createNewTab(
         PaneId sourcePaneId = {},
@@ -545,6 +554,10 @@ private:
     TabListModel tabModel_;
     std::vector<std::unique_ptr<Tab>> tabs_;
     QVector<QPointer<TerminalPane>> pendingPanes_;
+    // A pane stops being an action/clipboard target as soon as its close
+    // commits, including while synchronous model observers can still see its
+    // tree node during a batched removal.
+    QSet<PaneId> retiringPaneIds_;
     int currentIndex_ = -1;
     quint64 nextTabId_ = 1;
     quint64 nextPaneId_ = 1;

@@ -30,7 +30,7 @@
     "supported": "Upstream-compatible behavior is implemented and tested.",
     "partial": "Some behavior exists, but the upstream interface or semantics are incomplete.",
     "planned": "The item is in scope but is not implemented yet.",
-    "blocked_upstream": "Implementation requires a missing stable libghostty-vt capability.",
+    "blocked_upstream": "Implementation requires a missing stable upstream Ghostty capability or fix.",
     "not_applicable": "The item is outside the Linux/Wayland/Qt parity target."
   },
   "scope_definitions": {
@@ -653,7 +653,7 @@
     },
     "notify-on-command-finish-after": {
       "status": "blocked_upstream",
-      "note": "The exact duration threshold depends on Ghostty's parser-owned OSC 133 C-to-D timer, which standalone public libghostty-vt does not expose."
+      "note": "The exact duration threshold depends on ordered, normalized OSC 133 command-start and command-finish effects, which standalone public libghostty-vt does not expose. Matching pinned Ghostty, the embedding surface owns the monotonic clock and computes the C-to-D duration."
     },
     "mouse-hide-while-typing": {
       "status": "supported",
@@ -1268,7 +1268,7 @@
         },
         "close_tab": {
           "status": "partial",
-          "note": "Accepts the exact omitted/this/other/right grammar through a typed mode, anchors to the originating pane's stable containing tab, treats valid no-target modes as performed, correlates dialog responses, and freezes TabId membership across confirmation, reordering, insertion, focus restoration, and overlapping worker shutdown. Commit traverses those frozen members in the then-current reverse visual order. Qt matches Ghostty macOS only in grouping a multi-tab close behind one atomic confirmation: macOS recomputes membership after confirmation and traverses ascending, while Qt retains the original membership. Pinned GTK instead confirms each unsafe target independently and immediately closes safe targets. Broad fanout also follows Qt's tab/tree snapshot order rather than Ghostty's surface creation/swap-remove order, while broad default/this retains the pre-existing single-workspace coalescing."
+          "note": "Accepts the exact omitted/this/other/right grammar through a typed mode, anchors to the originating pane's stable containing tab, treats valid no-target modes as performed, correlates dialog responses, and freezes TabId membership across confirmation, reordering, insertion, focus restoration, and overlapping worker shutdown. Commit traverses those frozen members in the then-current reverse visual order. Qt matches Ghostty macOS only in grouping a multi-tab close behind one atomic confirmation: macOS recomputes membership after confirmation and traverses ascending, while Qt retains the original membership. Pinned GTK instead confirms each unsafe target independently and immediately closes safe targets. Broad surface targets now follow Ghostty's process-wide creation/swap-remove order, while broad default/this retains the pre-existing single-workspace coalescing."
         },
         "close_window": {
           "status": "supported",
@@ -1276,11 +1276,11 @@
         },
         "copy_to_clipboard": {
           "status": "partial",
-          "note": "Plain copy uses Ghostty's public selection formatter with live trailing-space trimming, then applies the finalized ordered clipboard-codepoint-map with last-overlap precedence before worker-atomic optional clearing. Selection presence and formatting are worker-authoritative even across separate input events. Correlated local chains commit the clipboard before continuing, while all/global chains prepare panes concurrently and commit in stable workspace/tab/tree order before advancing. The accepted mixed spelling currently emits this mapped plain text, while VT, HTML, and exact mixed formatting require clipboard-specific styled state not exposed by official libghostty-vt; the required contract is tracked in REQUIRES_UPSTREAM.md."
+          "note": "Plain copy uses Ghostty's public selection formatter with live trailing-space trimming, then applies the finalized ordered clipboard-codepoint-map with last-overlap precedence before worker-atomic optional clearing. Selection presence and formatting are worker-authoritative even across separate input events. Correlated local chains commit the clipboard before continuing, while all/global chains prepare panes concurrently and commit in Ghostty's process-wide creation/swap-remove order before advancing. A queued value payload from a pane whose stable identity was retired cannot mutate QClipboard. The accepted mixed spelling currently emits this mapped plain text, while VT, HTML, and exact mixed formatting require clipboard-specific styled state not exposed by official libghostty-vt; the required contract is tracked in REQUIRES_UPSTREAM.md."
         },
         "copy_title_to_clipboard": {
-          "status": "partial",
-          "note": "Local behavior is exact: only the void spelling is accepted, and the originating pane's raw persistent surface override or optional base is copied synchronously and byte-for-QString exact to the standard clipboard. Absent/empty titles return false; tab overrides, zoom/fallback labels, primary, trimming, selection clearing, focus, and terminal selection are excluded. All/global last-writer order follows Qt's tab/tree traversal rather than Ghostty's creation/swap-remove surface vector. Qt also models a direct program name as presentation fallback where pinned Ghostty may initialize it as a copyable base title."
+          "status": "supported",
+          "note": "Only the exact void spelling is accepted. Configured titles, the final selected direct command's exact argv[0] (including explicit empty), set_surface_title, and later OSC titles share the optional base layer; shell-form commands leave it absent, configured titles mask OSC updates, and persistent surface overrides mask without freezing the base. The originating pane's raw persistent surface override or optional base is copied synchronously and byte-for-QString exact to standard text/plain. Absent/empty titles return false; tab overrides, zoom/fallback labels, primary, trimming, selection clearing, focus, and terminal selection are excluded. All/global fanout snapshots the process-wide append-on-create/swap-remove surface registry for each chain entry, revalidates stable workspace/PaneId identity, and therefore preserves Ghostty's exact final-writer order across windows, splits, closure, and later creation."
         },
         "copy_url_to_clipboard": {
           "status": "supported",
@@ -1477,7 +1477,7 @@
         },
         "select_all": {
           "status": "supported",
-          "note": "Installs Ghostty's full selectable-content range and prepares the configured automatic clipboard copy from the same session-thread transaction. Its correlated result suspends local chains and process-wide action-major fanout until the GUI clipboard effect commits; broad effects publish in stable workspace/tab/tree order. The remaining exact mixed plain-plus-HTML automatic-copy payload limitation is tracked by copy_to_clipboard and REQUIRES_UPSTREAM.md."
+          "note": "Installs Ghostty's full selectable-content range and prepares the configured automatic clipboard copy from the same session-thread transaction. Its correlated result suspends local chains and process-wide action-major fanout until the GUI clipboard effect commits; broad effects publish in Ghostty's process-wide creation/swap-remove order. The remaining exact mixed plain-plus-HTML automatic-copy payload limitation is tracked by copy_to_clipboard and REQUIRES_UPSTREAM.md."
         },
         "set_font_size": {
           "status": "supported",
@@ -1575,7 +1575,7 @@
         },
         "write_screen_file": {
           "status": "partial",
-          "note": "Accepts the required copy, paste, or open disposition with omitted or explicit plain format and consumes valid no-data invocations. It formats the complete active PageList with soft wraps removed, trailing spaces retained, and trailing blank rows dropped: primary includes history plus screen, while alternate contains only its own page. The persistent screen.txt artifact is mode 0600 inside a deliberately stricter mode-0700 temporary directory; pinned Ghostty leaves the directory at its umask-derived default. Copy publishes the absolute path as standard-clipboard text, paste writes its raw filesystem bytes without newline, quoting, or bracketed-paste framing, and open uses the desktop local-file handler. Correlated completion suspends a local chain until its GUI effect commits; all/global actions prepare every pane concurrently, then commit in stable workspace/tab/tree order before the next entry. Styled VT and HTML formats are recognized but remain unsupported: libghostty-vt's public terminal formatter can emit styled content, but its C options do not expose the exact effective foreground, background, and palette path used by the pinned ScreenFormatter action, so byte-compatible parity still needs a bridge or an explicitly validated equivalent."
+          "note": "Accepts the required copy, paste, or open disposition with omitted or explicit plain format and consumes valid no-data invocations. It formats the complete active PageList with soft wraps removed, trailing spaces retained, and trailing blank rows dropped: primary includes history plus screen, while alternate contains only its own page. The persistent screen.txt artifact is mode 0600 inside a deliberately stricter mode-0700 temporary directory; pinned Ghostty leaves the directory at its umask-derived default. Copy publishes the absolute path as standard-clipboard text, paste writes its raw filesystem bytes without newline, quoting, or bracketed-paste framing, and open uses the desktop local-file handler. Correlated completion suspends a local chain until its GUI effect commits; all/global actions prepare every pane concurrently, then commit in Ghostty's process-wide creation/swap-remove order before the next entry. Styled VT and HTML formats are recognized but remain unsupported: libghostty-vt's public terminal formatter can emit styled content, but its C options do not expose the exact effective foreground, background, and palette path used by the pinned ScreenFormatter action, so byte-compatible parity still needs a bridge or an explicitly validated equivalent."
         },
         "write_scrollback_file": {
           "status": "partial",

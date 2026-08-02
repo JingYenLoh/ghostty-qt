@@ -6,6 +6,7 @@
 #include "launch_options.h"
 #include "modifier_remap.h"
 #include "terminal_action_result.h"
+#include "workspace_ids.h"
 
 #include <QInputMethodEvent>
 #include <QObject>
@@ -19,6 +20,7 @@
 
 class ApplicationController;
 class GhosttyGlobalShortcutPortal;
+class TerminalPane;
 class TerminalWorkspace;
 
 // Process-level keybinding coordination. Root application actions are checked
@@ -72,13 +74,27 @@ private:
     using DeferredInput =
         std::variant<DeferredKeyEvent, DeferredInputMethodEvent,
                      GhosttyCompiledActionChain>;
+    struct SurfaceTarget {
+        // Keep the raw workspace address solely as a removal key after its
+        // QPointer has already observed QObject destruction.
+        TerminalWorkspace *workspaceIdentity = nullptr;
+        QPointer<TerminalWorkspace> workspace;
+        PaneId paneId;
+        QPointer<TerminalPane> pane;
+    };
     struct BroadExecution;
 
     void beginConfigurationUpdate() noexcept;
     void endConfigurationUpdate();
     void dispatchOrDeferBroadActions(GhosttyCompiledActionChain actions);
     void drainDeferredInputs();
-    QVector<QPointer<TerminalWorkspace>> workspaceSnapshot() const;
+    void appendSurface(TerminalWorkspace *workspace, PaneId paneId,
+                       TerminalPane *pane);
+    void removeSurface(TerminalWorkspace *workspace, PaneId paneId);
+    void removeWorkspaceSurfaces(TerminalWorkspace *workspace);
+    void swapRemoveSurface(qsizetype index);
+    [[nodiscard]] QVector<SurfaceTarget> surfaceSnapshot() const;
+    [[nodiscard]] bool surfaceTargetIsLive(const SurfaceTarget &target) const;
     bool executeApplicationActions(const GhosttyCompiledActionChain &actions);
     void
     dispatchCompiledBroadActions(const GhosttyCompiledActionChain &actions);
@@ -93,7 +109,8 @@ private:
 
     GhosttyKeybindState rootState_;
     ModifierRemapTracker modifierRemaps_;
-    QVector<QPointer<TerminalWorkspace>> workspaces_;
+    QSet<TerminalWorkspace *> workspaces_;
+    QVector<SurfaceTarget> surfaces_;
     QSet<quint64> consumedKeys_;
     std::deque<DeferredInput> deferredInputs_;
     int configurationUpdateDepth_ = 0;

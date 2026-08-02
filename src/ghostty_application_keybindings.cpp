@@ -87,10 +87,21 @@ bool actionRequiresTerminalBarrier(const GhosttyConfiguredAction &action)
             || std::holds_alternative<TerminalWriteFileAction>(*paneAction));
 }
 
+bool isPerWindowToggle(const GhosttyConfiguredAction &action)
+{
+    const auto *workspaceAction = std::get_if<WorkspaceActionRequest>(&action);
+    return workspaceAction != nullptr
+        && (workspaceAction->action == WorkspaceAction::ToggleFullscreen
+            || workspaceAction->action == WorkspaceAction::ToggleMaximize
+            || workspaceAction->action
+                == WorkspaceAction::ToggleWindowDecorations);
+}
+
 } // namespace
 
 struct GhosttyApplicationKeybindings::BroadExecution {
     struct Target {
+        TerminalWorkspace *workspaceIdentity = nullptr;
         QPointer<TerminalWorkspace> workspace;
         PaneId paneId;
         QPointer<TerminalPane> pane;
@@ -224,22 +235,107 @@ void GhosttyApplicationKeybindings::registerWorkspace(
     TerminalWorkspace *workspace)
 {
     if (workspace == nullptr) return;
-    if (std::ranges::any_of(std::as_const(workspaces_),
-                            [workspace](const auto &candidate) {
-                                return candidate == workspace;
-                            })) {
-        return;
-    }
+    if (workspaces_.contains(workspace)) return;
 
-    workspaces_.append(workspace);
+    workspaces_.insert(workspace);
     connect(workspace, &TerminalWorkspace::broadActionsRequested, this,
             [this](const GhosttyCompiledActionChain &actions) {
                 dispatchOrDeferBroadActions(actions);
             });
-    connect(workspace, &QObject::destroyed, this, [this] {
-        workspaces_.removeIf(
-            [](const auto &candidate) { return candidate.isNull(); });
+    connect(workspace, &TerminalWorkspace::paneCommitted, this,
+            [this, workspace](PaneId paneId, TerminalPane *pane) {
+                appendSurface(workspace, paneId, pane);
+            });
+    connect(workspace, &TerminalWorkspace::paneRemoved, this,
+            [this, workspace](PaneId paneId, TerminalPane *) {
+                removeSurface(workspace, paneId);
+            });
+    connect(workspace, &QObject::destroyed, this, [this, workspace] {
+        removeWorkspaceSurfaces(workspace);
+        workspaces_.remove(workspace);
     });
+
+    for (const TerminalWorkspace::BroadPaneTarget &target :
+         workspace->broadPaneSnapshot()) {
+        appendSurface(workspace, target.paneId, target.pane);
+    }
+}
+
+void GhosttyApplicationKeybindings::appendSurface(TerminalWorkspace *workspace,
+                                                  PaneId paneId,
+                                                  TerminalPane *pane)
+{
+    if (workspace == nullptr || !paneId.isValid() || pane == nullptr
+        || std::ranges::any_of(
+            std::as_const(surfaces_),
+            [workspace, paneId, pane](const SurfaceTarget &target) {
+                return target.workspaceIdentity == workspace
+                    && target.paneId == paneId && target.pane == pane;
+            })) {
+        return;
+    }
+
+    surfaces_.append({
+        .workspaceIdentity = workspace,
+        .workspace = workspace,
+        .paneId = paneId,
+        .pane = pane,
+    });
+    connect(pane, &QObject::destroyed, this,
+            [this, workspace, paneId] { removeSurface(workspace, paneId); });
+}
+
+void GhosttyApplicationKeybindings::removeSurface(TerminalWorkspace *workspace,
+                                                  PaneId paneId)
+{
+    for (qsizetype index = 0; index < surfaces_.size(); ++index) {
+        const SurfaceTarget &target = surfaces_[index];
+        if (target.workspaceIdentity == workspace && target.paneId == paneId) {
+            swapRemoveSurface(index);
+            return;
+        }
+    }
+}
+
+void GhosttyApplicationKeybindings::removeWorkspaceSurfaces(
+    TerminalWorkspace *workspace)
+{
+    for (qsizetype index = surfaces_.size(); index-- > 0;) {
+        if (surfaces_[index].workspaceIdentity != workspace) continue;
+        swapRemoveSurface(index);
+    }
+}
+
+void GhosttyApplicationKeybindings::swapRemoveSurface(qsizetype index)
+{
+    Q_ASSERT(index >= 0 && index < surfaces_.size());
+    if (index != surfaces_.size() - 1) {
+        surfaces_[index] = std::move(surfaces_.back());
+    }
+    surfaces_.removeLast();
+}
+
+QVector<GhosttyApplicationKeybindings::SurfaceTarget>
+GhosttyApplicationKeybindings::surfaceSnapshot() const
+{
+    QVector<SurfaceTarget> result;
+    result.reserve(surfaces_.size());
+    for (const SurfaceTarget &target : surfaces_) {
+        if (target.workspace != nullptr && target.pane != nullptr) {
+            result.append(target);
+        }
+    }
+    return result;
+}
+
+bool GhosttyApplicationKeybindings::surfaceTargetIsLive(
+    const SurfaceTarget &target) const
+{
+    return target.workspace != nullptr && target.pane != nullptr
+        && target.workspace->broadPaneTargetIsLive({
+            .paneId = target.paneId,
+            .pane = target.pane,
+        });
 }
 
 GhosttyKeybindProgram
@@ -268,17 +364,6 @@ GhosttyApplicationKeybindings::applyLaunchOptions(const LaunchOptions &options)
         }
     }
     return program;
-}
-
-QVector<QPointer<TerminalWorkspace>>
-GhosttyApplicationKeybindings::workspaceSnapshot() const
-{
-    QVector<QPointer<TerminalWorkspace>> result;
-    result.reserve(workspaces_.size());
-    for (const QPointer<TerminalWorkspace> &workspace : workspaces_) {
-        if (workspace != nullptr) result.append(workspace);
-    }
-    return result;
 }
 
 bool GhosttyApplicationKeybindings::executeApplicationActions(
@@ -379,10 +464,14 @@ void GhosttyApplicationKeybindings::continueBroadExecution()
         // same confirmed workspace shutdown, without overwriting its single
         // pending-close dialog state during fanout.
         if (GhosttyActionCatalog::shouldCoalesceBroadClose(*entry.action)) {
-            const QVector<QPointer<TerminalWorkspace>> workspaces =
-                workspaceSnapshot();
-            for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
-                if (workspace != nullptr) workspace->requestWindowClose();
+            QSet<TerminalWorkspace *> visited;
+            for (const SurfaceTarget &target : surfaceSnapshot()) {
+                if (!surfaceTargetIsLive(target)
+                    || visited.contains(target.workspaceIdentity)) {
+                    continue;
+                }
+                visited.insert(target.workspaceIdentity);
+                target.workspace->requestWindowClose();
                 if (!stillCurrent()) return;
             }
             ++execution->entryIndex;
@@ -390,11 +479,27 @@ void GhosttyApplicationKeybindings::continueBroadExecution()
         }
 
         if (!actionRequiresTerminalBarrier(*entry.action)) {
-            const QVector<QPointer<TerminalWorkspace>> workspaces =
-                workspaceSnapshot();
-            for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
-                if (workspace != nullptr) {
-                    (void)workspace->executeSurfaceActionOnAllPanes(
+            const QVector<SurfaceTarget> surfaces = surfaceSnapshot();
+            if (isPerWindowToggle(*entry.action)) {
+                QSet<TerminalWorkspace *> visited;
+                for (const SurfaceTarget &target : surfaces) {
+                    if (!surfaceTargetIsLive(target)
+                        || visited.contains(target.workspaceIdentity)) {
+                        continue;
+                    }
+                    visited.insert(target.workspaceIdentity);
+                    (void)target.workspace->executeSurfaceActionOnAllPanes(
+                        *entry.action);
+                    if (!stillCurrent()) return;
+                }
+            } else {
+                for (const SurfaceTarget &target : surfaces) {
+                    if (!surfaceTargetIsLive(target)) continue;
+                    (void)target.workspace->executeBroadSurfaceAction(
+                        {
+                            .paneId = target.paneId,
+                            .pane = target.pane,
+                        },
                         *entry.action);
                     if (!stillCurrent()) return;
                 }
@@ -414,23 +519,17 @@ void GhosttyApplicationKeybindings::continueBroadExecution()
             // A fresh snapshot for each action matches Ghostty's action-major
             // fanout: topology changes from the previous entry affect the
             // target set of the next entry, never the entry already running.
-            const QVector<QPointer<TerminalWorkspace>> workspaces =
-                workspaceSnapshot();
-            for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
-                if (workspace == nullptr) continue;
-                const QVector<TerminalWorkspace::BroadPaneTarget> panes =
-                    workspace->broadPaneSnapshot();
-                for (const TerminalWorkspace::BroadPaneTarget &pane : panes) {
-                    execution->targets.append({
-                        .workspace = workspace,
-                        .paneId = pane.paneId,
-                        .pane = pane.pane,
-                        .resolved = false,
-                        .result = {},
-                        .paneDestruction = {},
-                        .workspaceDestruction = {},
-                    });
-                }
+            for (const SurfaceTarget &target : surfaceSnapshot()) {
+                execution->targets.append({
+                    .workspaceIdentity = target.workspaceIdentity,
+                    .workspace = target.workspace,
+                    .paneId = target.paneId,
+                    .pane = target.pane,
+                    .resolved = false,
+                    .result = {},
+                    .paneDestruction = {},
+                    .workspaceDestruction = {},
+                });
             }
 
             execution->unresolvedTargets = execution->targets.size();
@@ -493,7 +592,8 @@ void GhosttyApplicationKeybindings::continueBroadExecution()
 
         // All worker results are now known. Publish side effects only for
         // panes which still occupy their snapshotted identity, and do so in
-        // the deterministic registration/tab/tree order of the snapshot.
+        // the deterministic append-on-create/swap-remove order of the
+        // process surface snapshot.
         // Publication is resumable because a GUI effect can synchronously
         // destroy a target. Advancing the cursor before deferring prevents
         // both duplicate effects and the next chain entry from running
@@ -501,8 +601,9 @@ void GhosttyApplicationKeybindings::continueBroadExecution()
         while (execution->publishIndex < execution->targets.size()) {
             BroadExecution::Target &target =
                 execution->targets[execution->publishIndex];
-            if (target.workspace != nullptr && target.pane != nullptr
-                && target.workspace->broadPaneTargetIsLive({
+            if (surfaceTargetIsLive({
+                    .workspaceIdentity = target.workspaceIdentity,
+                    .workspace = target.workspace,
                     .paneId = target.paneId,
                     .pane = target.pane,
                 })) {

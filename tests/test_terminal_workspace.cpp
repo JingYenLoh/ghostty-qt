@@ -464,6 +464,7 @@ private Q_SLOTS:
     void readOnlyNaturalExitPromptsExactlyOnce();
     void queuesAndCorrelatesUnsafePasteConfirmations();
     void ordersAndConfirmsTerminalClipboardWrites();
+    void dropsSelectionClipboardWritesFromRetiredPanes();
     void performableTabChangeRequiresDifferentTarget();
     void relativeTabActionsUseCurrentSelectionAndBroadFanout();
     void alwaysModePromptsForIdleShell();
@@ -481,6 +482,7 @@ private Q_SLOTS:
     void windowNavigationRetainsSurfaceScopeAndBroadFanout();
     void broadBindingsReachInactivePanesAndIgnoreLocalFlags();
     void broadPasteActionsReachEveryPane();
+    void broadSurfaceRegistryTracksGhosttyCreationOrder();
     void broadWriteScreenOpenCreatesDistinctPerPaneArtifacts();
     void broadTerminalBarrierOrdersCommitsAndDefersInputs();
     void broadSelectionBarriersOrderEffects();
@@ -6302,6 +6304,132 @@ void TerminalWorkspaceTest::ordersAndConfirmsTerminalClipboardWrites()
              reentrantConfirmationId);
 }
 
+void TerminalWorkspaceTest::dropsSelectionClipboardWritesFromRetiredPanes()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+
+    TerminalWorkspace workspace;
+    QVERIFY(workspace.initialize(options, TerminalSessionStartMode::Deferred));
+    TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    TerminalController *const controller =
+        pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    QSignalSpy standardCommits(&workspace,
+                               &TerminalWorkspace::standardClipboardCommitted);
+
+    // The worker/controller path carries only a value payload. A live stable
+    // pane identity authorizes the GUI-thread clipboard mutation.
+    Q_EMIT controller->selectionClipboardWriteRequested(
+        QStringLiteral("live selection"),
+        TerminalClipboardDestination::Standard);
+    QCOMPARE(clipboard->text(QClipboard::Clipboard),
+             QStringLiteral("live selection"));
+    QCOMPARE(standardCommits.count(), 1);
+
+    clipboard->setText(QStringLiteral("stable sentinel"),
+                       QClipboard::Clipboard);
+    standardCommits.clear();
+    const PaneId paneId = workspace.surfaceSnapshot().constFirst().paneId;
+    const TabId tabId = workspace.tabModel()->idAt(0);
+    QPointer<TerminalPane> retiredPane(pane);
+    QPointer<TerminalController> retiredController(controller);
+
+    // Model the real queued worker result: it was prepared while the pane was
+    // live, but arrives after close retired the stable PaneId and before
+    // deleteLater destroys the QObject graph.
+    QVERIFY(QMetaObject::invokeMethod(
+        controller,
+        [controller] {
+            Q_EMIT controller->selectionClipboardWriteRequested(
+                QStringLiteral("stale selection"),
+                TerminalClipboardDestination::Standard);
+        },
+        Qt::QueuedConnection));
+    bool deliveredDuringRemoval = false;
+    const QMetaObject::Connection removalDelivery = connect(
+        &workspace, &TerminalWorkspace::paneRemoved, this,
+        [&](PaneId removedId, TerminalPane *removedPane) {
+            QCOMPARE(removedId, paneId);
+            QCOMPARE(removedPane, pane);
+            QCoreApplication::sendPostedEvents(controller, QEvent::MetaCall);
+            deliveredDuringRemoval = true;
+        });
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ClosePane,
+        {tabId, paneId, 0},
+    }));
+    disconnect(removalDelivery);
+    QVERIFY(deliveredDuringRemoval);
+    QCOMPARE(workspace.tabCount(), 0);
+    QVERIFY(retiredPane != nullptr);
+    QVERIFY(retiredController != nullptr);
+
+    QCoreApplication::sendPostedEvents(controller, QEvent::MetaCall);
+    QCOMPARE(clipboard->text(QClipboard::Clipboard),
+             QStringLiteral("stable sentinel"));
+    QCOMPARE(standardCommits.count(), 0);
+
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(retiredPane.isNull());
+    QVERIFY(retiredController.isNull());
+
+    // A batch removes tabs from right to left. During the first model update,
+    // a later target still has a tree node, but it has already committed to
+    // retirement and must not authorize a queued clipboard result.
+    TerminalWorkspace batchWorkspace;
+    QVERIFY(
+        batchWorkspace.initialize(options, TerminalSessionStartMode::Deferred));
+    const CurrentTabProbe first = currentTabProbe(batchWorkspace);
+    batchWorkspace.newTab();
+    const CurrentTabProbe second = currentTabProbe(batchWorkspace);
+    batchWorkspace.newTab();
+    const CurrentTabProbe third = currentTabProbe(batchWorkspace);
+    QVERIFY(first.pane && second.pane && third.pane);
+    TerminalController *const secondController =
+        second.pane->findChild<TerminalController *>();
+    QVERIFY(secondController != nullptr);
+
+    clipboard->setText(QStringLiteral("batch sentinel"), QClipboard::Clipboard);
+    QSignalSpy batchCommits(&batchWorkspace,
+                            &TerminalWorkspace::standardClipboardCommitted);
+    QVERIFY(QMetaObject::invokeMethod(
+        secondController,
+        [secondController] {
+            Q_EMIT secondController->selectionClipboardWriteRequested(
+                QStringLiteral("stale batch selection"),
+                TerminalClipboardDestination::Standard);
+        },
+        Qt::QueuedConnection));
+    bool deliveredBetweenTabRemovals = false;
+    const QMetaObject::Connection batchDelivery = connect(
+        batchWorkspace.tabModel(), &TabListModel::countChanged, this, [&] {
+            if (deliveredBetweenTabRemovals) return;
+            QCOMPARE(batchWorkspace.tabCount(), 2);
+            QCoreApplication::sendPostedEvents(secondController,
+                                               QEvent::MetaCall);
+            deliveredBetweenTabRemovals = true;
+        });
+    QVERIFY(
+        first.pane->executeConfiguredAction(QStringLiteral("close_tab:right")));
+    disconnect(batchDelivery);
+    QVERIFY(deliveredBetweenTabRemovals);
+    QCOMPARE(batchWorkspace.tabCount(), 1);
+    QCOMPARE(clipboard->text(QClipboard::Clipboard),
+             QStringLiteral("batch sentinel"));
+    QCOMPARE(batchCommits.count(), 0);
+
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    clipboard->clear(QClipboard::Clipboard);
+}
+
 void TerminalWorkspaceTest::performableTabChangeRequiresDifferentTarget()
 {
     ShellEnvironment shell;
@@ -7595,6 +7723,162 @@ void TerminalWorkspaceTest::broadPasteActionsReachEveryPane()
     }
 }
 
+void TerminalWorkspaceTest::broadSurfaceRegistryTracksGhosttyCreationOrder()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+
+    TerminalWorkspace firstWorkspace;
+    QVERIFY(
+        firstWorkspace.initialize(options, TerminalSessionStartMode::Deferred));
+    TerminalPane *const paneA = firstWorkspace.findChild<TerminalPane *>();
+    QVERIFY(paneA != nullptr);
+    const PaneId paneAId = firstWorkspace.surfaceSnapshot().constFirst().paneId;
+    const TabId firstTabId = firstWorkspace.tabModel()->idAt(0);
+
+    GhosttyApplicationKeybindings bindings(options, false);
+    bindings.registerWorkspace(&firstWorkspace);
+
+    TerminalWorkspace secondWorkspace;
+    QVERIFY(secondWorkspace.initialize(options,
+                                       TerminalSessionStartMode::Deferred));
+    TerminalPane *const paneB = secondWorkspace.findChild<TerminalPane *>();
+    QVERIFY(paneB != nullptr);
+    bindings.registerWorkspace(&secondWorkspace);
+
+    PaneId paneCId;
+    TerminalPane *paneC = nullptr;
+    const QMetaObject::Connection firstCommit =
+        connect(&firstWorkspace, &TerminalWorkspace::paneCommitted, this,
+                [&](PaneId paneId, TerminalPane *pane) {
+                    paneCId = paneId;
+                    paneC = pane;
+                });
+    QVERIFY(firstWorkspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {firstTabId, paneAId, 0},
+    }));
+    disconnect(firstCommit);
+    QVERIFY(paneCId.isValid());
+    QVERIFY(paneC != nullptr);
+
+    QStringList visitOrder;
+    const auto observe = [this, &visitOrder](TerminalPane *pane,
+                                             QString label) {
+        connect(pane, &TerminalPane::fontPointSizeChanged, this,
+                [&visitOrder, label = std::move(label)] {
+                    visitOrder.append(label);
+                });
+    };
+    observe(paneA, QStringLiteral("A"));
+    observe(paneB, QStringLiteral("B"));
+    observe(paneC, QStringLiteral("C"));
+
+    // Registration happened A, B, then the split created C. Ghostty fans out
+    // over that process-wide creation vector, not workspace/tab tree order.
+    bindings.dispatchBroadActions({QStringLiteral("increase_font_size:1")});
+    QCOMPARE(visitOrder,
+             QStringList({QStringLiteral("A"), QStringLiteral("B"),
+                          QStringLiteral("C")}));
+
+    QPointer<TerminalPane> removedA(paneA);
+    QVERIFY(firstWorkspace.dispatchAction({
+        WorkspaceAction::ClosePane,
+        {firstTabId, paneAId, 0},
+    }));
+
+    PaneId paneDId;
+    TerminalPane *paneD = nullptr;
+    const QMetaObject::Connection secondCommit =
+        connect(&firstWorkspace, &TerminalWorkspace::paneCommitted, this,
+                [&](PaneId paneId, TerminalPane *pane) {
+                    paneDId = paneId;
+                    paneD = pane;
+                });
+    QVERIFY(firstWorkspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {firstTabId, paneCId, 0},
+    }));
+    disconnect(secondCommit);
+    QVERIFY(paneDId.isValid());
+    QVERIFY(paneD != nullptr);
+    observe(paneD, QStringLiteral("D"));
+
+    // swapRemove(A) moves C into A's slot, then D appends: C, B, D.
+    visitOrder.clear();
+    bindings.dispatchBroadActions({QStringLiteral("increase_font_size:1")});
+    QCOMPARE(visitOrder,
+             QStringList({QStringLiteral("C"), QStringLiteral("B"),
+                          QStringLiteral("D")}));
+
+    const QString titleC = QStringLiteral("title C");
+    const QString titleB = QStringLiteral("title B");
+    const QString titleD = QStringLiteral("title D");
+    paneC->setSurfaceTitle(titleC);
+    paneB->setSurfaceTitle(titleB);
+    paneD->setSurfaceTitle(titleD);
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    QStringList clipboardWrites;
+    const QMetaObject::Connection clipboardConnection = connect(
+        clipboard, &QClipboard::changed, this,
+        [clipboard, &clipboardWrites](QClipboard::Mode mode) {
+            if (mode == QClipboard::Clipboard) {
+                clipboardWrites.append(clipboard->text(QClipboard::Clipboard));
+            }
+        });
+    clipboard->setText(QStringLiteral("sentinel"), QClipboard::Clipboard);
+    clipboardWrites.clear();
+    bindings.dispatchBroadActions({QStringLiteral("copy_title_to_clipboard")});
+    QTRY_COMPARE(clipboard->text(QClipboard::Clipboard), titleD);
+    QCOMPARE(clipboardWrites, QStringList({titleC, titleB, titleD}));
+    disconnect(clipboardConnection);
+    clipboard->clear(QClipboard::Clipboard);
+
+    PaneId paneEId;
+    TerminalPane *paneE = nullptr;
+    const QMetaObject::Connection thirdCommit =
+        connect(&firstWorkspace, &TerminalWorkspace::paneCommitted, this,
+                [&](PaneId paneId, TerminalPane *pane) {
+                    paneEId = paneId;
+                    paneE = pane;
+                    observe(pane, QStringLiteral("E"));
+                });
+    bool attemptedDuringChain = false;
+    bool createdDuringChain = false;
+    const QMetaObject::Connection createDuringChain =
+        connect(paneC, &TerminalPane::fontPointSizeChanged, this, [&] {
+            if (attemptedDuringChain) return;
+            attemptedDuringChain = true;
+            createdDuringChain = firstWorkspace.dispatchAction({
+                WorkspaceAction::SplitRight,
+                {firstTabId, paneDId, 0},
+            });
+        });
+    visitOrder.clear();
+    bindings.dispatchBroadActions({
+        QStringLiteral("increase_font_size:1"),
+        QStringLiteral("increase_font_size:1"),
+    });
+    disconnect(createDuringChain);
+    disconnect(thirdCommit);
+    QVERIFY(createdDuringChain);
+    QVERIFY(paneEId.isValid());
+    QVERIFY(paneE != nullptr);
+    QCOMPARE(visitOrder,
+             QStringList({QStringLiteral("C"), QStringLiteral("B"),
+                          QStringLiteral("D"), QStringLiteral("C"),
+                          QStringLiteral("B"), QStringLiteral("D"),
+                          QStringLiteral("E")}));
+
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(removedA.isNull());
+}
+
 void TerminalWorkspaceTest::
     broadWriteScreenOpenCreatesDistinctPerPaneArtifacts()
 {
@@ -7788,9 +8072,9 @@ void TerminalWorkspaceTest::
                  initialFontSizes.at(index));
     }
 
-    // Resolve the targets in reverse registration order. Partial completion
-    // must remain invisible; the final result publishes every effect in the
-    // stable workspace snapshot order.
+    // Resolve the targets in reverse creation order. Partial completion must
+    // remain invisible; the final result publishes every effect in the stable
+    // process surface-vector snapshot order.
     for (qsizetype index = targetCount - 1; index > 0; --index) {
         Q_EMIT controllers.at(index)->terminalActionReady(
             successfulOpenFileResult(
@@ -9553,6 +9837,8 @@ void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
         directory.filePath(QStringLiteral("first-release"));
     const QString secondRelease =
         directory.filePath(QStringLiteral("second-release"));
+    const QString thirdRelease =
+        directory.filePath(QStringLiteral("third-release"));
 
     ShellEnvironment shell(QByteArrayLiteral("/bin/sh"));
     LaunchOptions options = baseOptions();
@@ -9564,10 +9850,13 @@ void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
             "while [ ! -e \"$1\" ]; do sleep 0.02; done; "
             "printf 'selection-marker\\r\\n\\033]0;cached-title\\007'; "
             "while [ ! -e \"$2\" ]; do sleep 0.02; done; "
-            "printf '\\033]0;cached-title\\007'; sleep 30"),
+            "printf '\\033]0;cached-title\\007'; "
+            "while [ ! -e \"$3\" ]; do sleep 0.02; done; "
+            "printf '\\033]0;\\007'; sleep 30"),
         QStringLiteral("surface-title-test"),
         firstRelease,
         secondRelease,
+        thirdRelease,
     };
     options.hold = true;
     options.confirmCloseMode = ConfirmCloseMode::Never;
@@ -9591,8 +9880,9 @@ void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
     auto *firstController =
         firstPane->findChild<TerminalController *>();
     QVERIFY(firstController != nullptr);
-    QVERIFY(!firstController->hasTitle());
-    QCOMPARE(firstPane->title(), QStringLiteral("sh"));
+    QVERIFY(firstController->hasTitle());
+    QCOMPARE(firstController->title(), QStringLiteral("/bin/sh"));
+    QCOMPARE(firstPane->title(), QStringLiteral("/bin/sh"));
 
     // A required-but-empty payload is a present, empty base title rather
     // than the absence that selects the launch fallback.
@@ -9635,6 +9925,15 @@ void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
     QVERIFY(firstPane->executeConfiguredAction(
         QStringLiteral("set_tab_title:")));
     QCOMPARE(workspace.currentTitle(), QStringLiteral("cached-title"));
+
+    // OSC 0 with an empty payload is still a present base-title update. It
+    // must not uncover the direct-command fallback.
+    release.setFileName(thirdRelease);
+    QVERIFY(release.open(QIODevice::WriteOnly));
+    release.close();
+    QTRY_VERIFY_WITH_TIMEOUT(firstController->hasTitle(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(firstPane->title().isEmpty(), 3000);
+    QVERIFY(workspace.currentTitle().isEmpty());
 
     QVERIFY(workspace.dispatchAction({
         WorkspaceAction::SplitRight,
@@ -10255,8 +10554,8 @@ void TerminalWorkspaceTest::surfaceTitlePromptsPreserveStableTargetsAndLayers()
     QSignalSpy resolved(
         &workspace, &TerminalWorkspace::titlePromptResolved);
 
-    // Neither the launch fallback nor a containing-tab override seeds the
-    // raw per-surface prompt when no base title exists.
+    // The exact direct argv[0] is the initial base-title layer. A containing
+    // tab override masks presentation without changing the surface prompt.
     QVERIFY(firstPane->executeConfiguredAction(
         QStringLiteral("set_tab_title:tab mask")));
     QCOMPARE(workspace.currentTitle(), QStringLiteral("tab mask"));
@@ -10265,7 +10564,7 @@ void TerminalWorkspaceTest::surfaceTitlePromptsPreserveStableTargetsAndLayers()
     QCOMPARE(requested.count(), 1);
     QCOMPARE(requested.at(0).at(1).toString(),
              QStringLiteral("Change Terminal Title"));
-    QVERIFY(requested.at(0).at(2).toString().isEmpty());
+    QCOMPARE(requested.at(0).at(2).toString(), QStringLiteral("/bin/sh"));
     const quint64 absentPromptId =
         requested.at(0).at(0).toULongLong();
     workspace.cancelTitlePrompt(absentPromptId);

@@ -458,8 +458,12 @@ TerminalPane::TerminalPane(
     controller_ = new TerminalController(sessionOptions, this,
                                          std::move(initialSessionCoordinator));
     controller_->setMouseReportingEnabled(options.mouseReporting);
-    connect(controller_, &TerminalController::standardClipboardCommitted, this,
-            &TerminalPane::standardClipboardCommitted);
+    connect(
+        controller_, &TerminalController::selectionClipboardWriteRequested,
+        this,
+        [this](const QString &text, TerminalClipboardDestination destination) {
+            Q_EMIT selectionClipboardWriteRequested(text, destination, this);
+        });
     connect(
         controller_, &TerminalController::terminalUpdated, this,
         [this](const TerminalUpdate &terminalUpdate) {
@@ -2348,8 +2352,9 @@ void TerminalPane::setSearchUiText(const QString &text)
     controller_->search(searchUiText_);
 }
 
-void TerminalPane::endSearchUi()
+bool TerminalPane::endSearchUi()
 {
+    const bool performed = controller_->cancelSearch();
     setSearchUiActive(false);
     searchEngineActive_ = false;
     if (searchMatchLabel_ != QLatin1StringView("0/0")) {
@@ -2361,16 +2366,16 @@ void TerminalPane::endSearchUi()
         clearPendingSearchUpdateLocked();
         clearSearchDecorationsLocked();
     }
-    controller_->cancelSearch();
     requestRenderUpdate();
     forceActiveFocus(Qt::ShortcutFocusReason);
+    return performed;
 }
 
-void TerminalPane::navigateSearch(int direction)
+bool TerminalPane::navigateSearch(int direction)
 {
-    controller_->navigateSearch(direction < 0
-                                    ? TerminalSearchDirection::Previous
-                                    : TerminalSearchDirection::Next);
+    return controller_->navigateSearch(direction < 0
+                                           ? TerminalSearchDirection::Previous
+                                           : TerminalSearchDirection::Next);
 }
 
 void TerminalPane::clearSearchDecorationsLocked()
@@ -3866,27 +3871,19 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                 return true;
             },
             [this](const PaneAction::EndSearch &) {
-                const bool performed =
-                    searchEngineActive_ || controller_->searchExpected();
                 // Always clean up stale UI even when the backend had no
                 // active search and the action reports not performed.
-                endSearchUi();
-                return performed;
+                return endSearchUi();
             },
             [this](const PaneAction::SearchSelection &value) {
                 return executeConfiguredAction(
                     GhosttyConfiguredAction{GhosttyPaneAction{value}});
             },
             [this](const PaneAction::Search &value) {
-                const bool hadSearch =
-                    searchEngineActive_ || controller_->searchExpected();
-                controller_->searchSerialized(value.serializedNeedle);
-                return !value.serializedNeedle.isEmpty() || hadSearch;
+                return controller_->searchSerialized(value.serializedNeedle);
             },
             [this](const PaneAction::NavigateSearch &value) {
-                if (!controller_->searchExpected()) return false;
-                controller_->navigateSearch(value.direction);
-                return true;
+                return controller_->navigateSearch(value.direction);
             },
             [this](const PaneAction::SendCsi &value) {
                 controller_->sendCsi(value.serializedBytes);
@@ -3955,7 +3952,7 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                         clipboard, *title,
                         TerminalClipboardDestination::Standard);
                 if (targets.standard) {
-                    Q_EMIT standardClipboardCommitted(title->isEmpty());
+                    Q_EMIT standardClipboardCommitted(false);
                 }
                 return true;
             },

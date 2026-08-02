@@ -1016,8 +1016,9 @@ void ApplicationControllerTest::remoteNewWindowOverridesOnlyItsFirstSurface()
     QVERIFY(controller.startWithoutInitialWindow());
 
     const TerminalCommand remoteCommand = TerminalCommand::direct({
-        QByteArrayLiteral("/bin/sleep"),
-        QByteArrayLiteral("30"),
+        QByteArrayLiteral("/bin/sh"),
+        QByteArrayLiteral("-c"),
+        QByteArrayLiteral("sleep 30"),
     });
     QVERIFY(controller.activateNewWindow({
         .command = remoteCommand,
@@ -1034,9 +1035,13 @@ void ApplicationControllerTest::remoteNewWindowOverridesOnlyItsFirstSurface()
     QCOMPARE(firstTerminal->launchCommand(),
              std::optional<TerminalCommand>{remoteCommand});
     QVERIFY(!firstTerminal->launchHold());
+    QVERIFY(firstTerminal->hasTitle());
+    QCOMPARE(firstTerminal->title(), QStringLiteral("/bin/sh"));
     QCOMPARE(firstTerminal->launchWorkingDirectory(), directory.path());
     QVERIFY(!firstTerminal->launchInheritsWorkingDirectory());
     QCOMPARE(firstPane->surfaceTitleOverride(),
+             std::optional<QString>{QString{}});
+    QCOMPARE(firstPane->effectiveSurfaceTitle(),
              std::optional<QString>{QString{}});
 
     first.workspace->newTab();
@@ -2870,6 +2875,12 @@ void ApplicationControllerTest::commandPrecedenceAndReloadUseFirstSessionLease()
     QVERIFY(first->launchCommand()
             == std::optional<TerminalCommand>(reloadedInitial));
     QCOMPARE(first->launchTitle(), QStringLiteral("Terminal"));
+    QVERIFY(!first->hasTitle());
+    TerminalPane *const firstPane = controller.windows()
+                                        .constFirst()
+                                        .workspace->findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+    QVERIFY(!firstPane->effectiveSurfaceTitle().has_value());
 
     QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
     QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 2, 1000);
@@ -2881,6 +2892,13 @@ void ApplicationControllerTest::commandPrecedenceAndReloadUseFirstSessionLease()
     QVERIFY(second->launchCommand()
             == std::optional<TerminalCommand>(reloadedOrdinary));
     QCOMPARE(second->launchTitle(), QStringLiteral("/bin/sleep"));
+    QVERIFY(second->hasTitle());
+    QCOMPARE(second->title(), QStringLiteral("/bin/sleep"));
+    TerminalPane *const secondPane =
+        controller.windows().constLast().workspace->findChild<TerminalPane *>();
+    QVERIFY(secondPane != nullptr);
+    QCOMPARE(secondPane->effectiveSurfaceTitle(),
+             std::optional<QString>{QStringLiteral("/bin/sleep")});
 
     // The existing positional frontend command is already direct argv and has
     // higher first-session precedence than Ghostty initial-command. The
@@ -2901,6 +2919,13 @@ void ApplicationControllerTest::commandPrecedenceAndReloadUseFirstSessionLease()
     QVERIFY(cliFirst->launchCommand()
             == std::optional<TerminalCommand>(reloadedOrdinary));
     QCOMPARE(cliFirst->launchTitle(), QStringLiteral("true"));
+    QVERIFY(cliFirst->hasTitle());
+    QCOMPARE(cliFirst->title(), QStringLiteral("/bin/true"));
+    TerminalPane *const cliPane =
+        cliWindow->workspace->findChild<TerminalPane *>();
+    QVERIFY(cliPane != nullptr);
+    QCOMPARE(cliPane->effectiveSurfaceTitle(),
+             std::optional<QString>{QStringLiteral("/bin/true")});
 }
 
 void ApplicationControllerTest::suppressedStartupPreservesFirstSessionOptions()
@@ -3160,14 +3185,14 @@ void ApplicationControllerTest::immediateTabWinsInitialSessionLease()
     QVERIFY(immediate->sessionStarted());
     QCOMPARE(immediate->launchProgram(), options.program);
     QVERIFY(immediate->launchHold());
-    QCOMPARE(immediatePane->title(), QStringLiteral("sh"));
+    QCOMPARE(immediatePane->title(), QStringLiteral("/bin/sh"));
 
     QTRY_VERIFY_WITH_TIMEOUT(deferred->sessionStarted(), 2000);
     QVERIFY(deferred->launchProgram().isEmpty());
     QVERIFY(!deferred->launchHold());
     QCOMPARE(deferredPane->title(), QStringLiteral("Terminal"));
     const QStringList titles = created->workspace->tabTitles();
-    QVERIFY(titles.contains(QStringLiteral("sh")));
+    QVERIFY(titles.contains(QStringLiteral("/bin/sh")));
     QVERIFY(titles.contains(QStringLiteral("Terminal")));
     QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(marker), 2000);
     QFile starts(marker);

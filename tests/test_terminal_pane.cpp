@@ -3169,6 +3169,38 @@ void TerminalPaneTest::routesSearchActionsAndRetainsUiState()
     QVERIFY(closeSearch.isAccepted());
     QVERIFY(!pane.searchUiActive());
 
+    QSignalSpy serializedRequests(
+        controller, &TerminalController::serializedSearchRequested);
+    QSignalSpy navigationRequests(
+        controller, &TerminalController::searchNavigationRequested);
+    QSignalSpy cancellationRequests(
+        controller, &TerminalController::searchCancellationRequested);
+
+    // Performability changes synchronously at typed-action dispatch time, so
+    // adjacent search/navigation/end actions cannot observe a stale queued
+    // worker acknowledgement.
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("search:immediate")));
+    QVERIFY(controller->searchExpected());
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("navigate_search:next")));
+    QCOMPARE(navigationRequests.count(), 1);
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("search:")));
+    QVERIFY(!controller->searchExpected());
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("navigate_search:previous")));
+    QCOMPARE(navigationRequests.count(), 1);
+    QVERIFY(!pane.executeConfiguredAction(QStringLiteral("end_search")));
+    QVERIFY(!pane.searchUiActive());
+    QCOMPARE(cancellationRequests.count(), 1);
+    QCOMPARE(serializedRequests.count(), 2);
+
+    // A malformed Ghostty escape is still forwarded so the worker sees the
+    // ordered request, but it is synchronously inactive and unperformed.
+    QVERIFY(!controller->searchSerialized(QByteArrayLiteral("\\x")));
+    QVERIFY(!controller->searchExpected());
+    QVERIFY(!controller->navigateSearch(TerminalSearchDirection::Next));
+    QVERIFY(!controller->cancelSearch());
+
     // Empty search actions mirror Ghostty's performability while still
     // dispatching end_search so a stale frontend overlay is cleaned up.
     QVERIFY(!pane.executeConfiguredAction(QStringLiteral("search:")));
@@ -4031,27 +4063,53 @@ void TerminalPaneTest::copiesRawEffectiveSurfaceTitle()
         }
     };
 
-    // The visible argv[0] fallback is presentation only and is not copyable.
+    // Ghostty installs an exact direct argv[0] base title. It is intentionally
+    // not basename-normalized, and copy_title consumes that raw surface layer.
     resetClipboards();
-    QCOMPARE(pane.title(), QStringLiteral("true"));
-    QVERIFY(!pane.effectiveSurfaceTitle().has_value());
-    QVERIFY(!pane.executeConfiguredAction(copyAction));
-    QCOMPARE(clipboard->text(QClipboard::Clipboard), standardSentinel);
+    QCOMPARE(pane.title(), QStringLiteral("/bin/true"));
+    QCOMPARE(pane.effectiveSurfaceTitle(),
+             std::optional<QString>{QStringLiteral("/bin/true")});
+    QVERIFY(pane.executeConfiguredAction(copyAction));
+    QCOMPARE(clipboard->text(QClipboard::Clipboard),
+             QStringLiteral("/bin/true"));
     verifyPrimaryUnchanged();
 
     // Structured direct commands require an argv entry but deliberately retain
-    // an empty argv[0] for byte-exact transport and safe launch failure. Keep
-    // the presentation fallback useful rather than exposing a blank tab.
+    // an empty argv[0] for byte-exact transport and safe launch failure. The
+    // title layer preserves that explicit empty separately from absence.
     LaunchOptions emptyDirectOptions = options;
     emptyDirectOptions.program.clear();
     emptyDirectOptions.ordinaryCommand =
         TerminalCommand::direct({QByteArray{}});
     TerminalPane emptyDirectPane(emptyDirectOptions, nullptr, std::nullopt,
                                  TerminalSessionStartMode::Deferred);
-    QCOMPARE(emptyDirectPane.title(), QStringLiteral("Terminal"));
+    QVERIFY(emptyDirectPane.title().isEmpty());
+    QCOMPARE(emptyDirectPane.effectiveSurfaceTitle(),
+             std::optional<QString>{QString{}});
+    QVERIFY(!emptyDirectPane.executeConfiguredAction(copyAction));
+
+    LaunchOptions shellOptions = options;
+    shellOptions.program.clear();
+    shellOptions.ordinaryCommand =
+        TerminalCommand::shell(QByteArrayLiteral("exec /bin/true"));
+    TerminalPane shellPane(shellOptions, nullptr, std::nullopt,
+                           TerminalSessionStartMode::Deferred);
+    QCOMPARE(shellPane.title(), QStringLiteral("Terminal"));
+    QVERIFY(!shellPane.effectiveSurfaceTitle().has_value());
+    QVERIFY(!shellPane.executeConfiguredAction(copyAction));
+
+    LaunchOptions structuredOptions = options;
+    structuredOptions.program.clear();
+    structuredOptions.ordinaryCommand = TerminalCommand::direct(
+        {QByteArrayLiteral("/bin/sleep"), QByteArrayLiteral("1")});
+    TerminalPane structuredPane(structuredOptions, nullptr, std::nullopt,
+                                TerminalSessionStartMode::Deferred);
+    QCOMPARE(structuredPane.effectiveSurfaceTitle(),
+             std::optional<QString>{QStringLiteral("/bin/sleep")});
 
     // An explicit empty base remains a title-layer value, but upstream treats
     // it as a copy no-op just like absence.
+    resetClipboards();
     pane.setSurfaceTitle(QString{});
     QVERIFY(pane.effectiveSurfaceTitle().has_value());
     QVERIFY(pane.effectiveSurfaceTitle()->isEmpty());
@@ -8623,23 +8681,27 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QCoreApplication::sendEvent(&pane, &cleanupRelease);
     QCOMPARE(forwarded.count(), beforeCleanup + 2);
 
-    // The title action follows the same performable contract: absent or
-    // explicit-empty raw titles pass through, while a non-empty base consumes
-    // the key and synchronously writes the standard clipboard.
+    // The title action follows the same performable contract: the exact direct
+    // argv[0] launch base and later non-empty bases consume the key, while an
+    // explicit-empty raw title passes it through.
     QClipboard *const clipboard = QGuiApplication::clipboard();
     QVERIFY(clipboard != nullptr);
-    const int beforeEmptyTitleCopy = forwarded.count();
+    const int beforeTitleCopy = forwarded.count();
+    clipboard->setText(QStringLiteral("launch title sentinel"),
+                       QClipboard::Clipboard);
     QKeyEvent emptyTitleCopy(QEvent::KeyPress, Qt::Key_D,
                              Qt::ControlModifier, QString(QChar(0x04)));
     QCoreApplication::sendEvent(&pane, &emptyTitleCopy);
-    QCOMPARE(forwarded.count(), beforeEmptyTitleCopy + 1);
+    QCOMPARE(forwarded.count(), beforeTitleCopy);
+    QTRY_COMPARE(clipboard->text(QClipboard::Clipboard),
+                 QStringLiteral("/bin/true"));
 
     pane.setSurfaceTitle(QString{});
     QKeyEvent explicitEmptyTitleCopy(
         QEvent::KeyPress, Qt::Key_D,
         Qt::ControlModifier, QString(QChar(0x04)));
     QCoreApplication::sendEvent(&pane, &explicitEmptyTitleCopy);
-    QCOMPARE(forwarded.count(), beforeEmptyTitleCopy + 2);
+    QCOMPARE(forwarded.count(), beforeTitleCopy + 1);
 
     const QString performableTitle = QStringLiteral("performable title");
     pane.setSurfaceTitle(performableTitle);
@@ -8648,7 +8710,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QKeyEvent titleCopy(QEvent::KeyPress, Qt::Key_D,
                         Qt::ControlModifier, QString(QChar(0x04)));
     QCoreApplication::sendEvent(&pane, &titleCopy);
-    QCOMPARE(forwarded.count(), beforeEmptyTitleCopy + 2);
+    QCOMPARE(forwarded.count(), beforeTitleCopy + 1);
     QTRY_COMPARE(clipboard->text(QClipboard::Clipboard), performableTitle);
     clipboard->clear(QClipboard::Clipboard);
 
