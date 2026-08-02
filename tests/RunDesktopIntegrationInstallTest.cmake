@@ -1,6 +1,6 @@
 foreach(required_variable
-        BUILD_DIR STAGE_DIR INSTALL_BINDIR INSTALL_DATADIR APPLICATION_ID
-        EXPECT_CONFIG_HELPER CONFIG)
+        BUILD_DIR STAGE_DIR REPOSITORY_TMP_DIR INSTALL_BINDIR INSTALL_DATADIR
+        APPLICATION_ID EXPECT_CONFIG_HELPER CONFIG)
     if(NOT DEFINED ${required_variable})
         message(FATAL_ERROR "Missing required variable ${required_variable}")
     endif()
@@ -151,7 +151,14 @@ if(dbus_daemon AND gdbus AND kill_process)
     endif()
 
     set(activation_config "${STAGE_DIR}/activation-config")
-    set(activation_runtime "${STAGE_DIR}/activation-runtime")
+    # Keep the AF_UNIX address well below its platform limit even though this
+    # test intentionally exercises a long install prefix.
+    string(SHA256 activation_runtime_id
+        "${BUILD_DIR};${CONFIG};${EXPECT_CONFIG_HELPER}")
+    string(SUBSTRING "${activation_runtime_id}" 0 12 activation_runtime_id)
+    set(activation_runtime
+        "${REPOSITORY_TMP_DIR}/dbus-${activation_runtime_id}")
+    file(REMOVE_RECURSE "${activation_runtime}")
     file(MAKE_DIRECTORY
         "${activation_config}/ghostty"
         "${activation_config}/ghostty-qt"
@@ -216,6 +223,7 @@ if(dbus_daemon AND gdbus AND kill_process)
         ERROR_VARIABLE activation_error
         TIMEOUT 15)
     execute_process(COMMAND "${kill_process}" "${daemon_pid}")
+    file(REMOVE_RECURSE "${activation_runtime}")
     if(NOT activation_result EQUAL 0)
         message(FATAL_ERROR
             "Installed D-Bus service activation failed (${activation_result})\n${activation_output}\n${activation_error}\n${service_contents}")
