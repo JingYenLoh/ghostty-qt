@@ -238,22 +238,25 @@ struct LinearPremultipliedColor {
     float alpha = 0.0F;
 };
 
-float linearizeSrgb(float component)
-{
-    return component <= 0.04045F
-        ? component / 12.92F
-        : std::pow((component + 0.055F) / 1.055F, 2.4F);
-}
+constexpr LinearPremultipliedColor linearWhite{
+    .red = 1.0F,
+    .green = 1.0F,
+    .blue = 1.0F,
+    .alpha = 1.0F,
+};
+constexpr LinearPremultipliedColor linearBlack{
+    .alpha = 1.0F,
+};
 
-LinearPremultipliedColor loadLinearColor(const QColor &color)
+LinearPremultipliedColor
+loadLinearColor(const QColor &color,
+                const TerminalSrgb8ToLinearLookup &srgbToLinear)
 {
     const float alpha = static_cast<float>(color.alpha()) / 255.0F;
     return {
-        .red = linearizeSrgb(static_cast<float>(color.red()) / 255.0F) * alpha,
-        .green =
-            linearizeSrgb(static_cast<float>(color.green()) / 255.0F) * alpha,
-        .blue =
-            linearizeSrgb(static_cast<float>(color.blue()) / 255.0F) * alpha,
+        .red = srgbToLinear[static_cast<std::size_t>(color.red())] * alpha,
+        .green = srgbToLinear[static_cast<std::size_t>(color.green())] * alpha,
+        .blue = srgbToLinear[static_cast<std::size_t>(color.blue())] * alpha,
         .alpha = alpha,
     };
 }
@@ -283,12 +286,14 @@ QColor minimumContrastColor(const QColor &foreground,
         return foreground;
     }
 
+    const TerminalSrgb8ToLinearLookup &srgbToLinear =
+        terminalSrgb8ToLinearLookup();
     const LinearPremultipliedColor foregroundLinear =
-        loadLinearColor(foreground);
+        loadLinearColor(foreground, srgbToLinear);
     const LinearPremultipliedColor cellBackgroundLinear =
-        loadLinearColor(cellBackground);
+        loadLinearColor(cellBackground, srgbToLinear);
     const LinearPremultipliedColor globalBackgroundLinear =
-        loadLinearColor(globalBackground);
+        loadLinearColor(globalBackground, srgbToLinear);
     const float uncovered = 1.0F - cellBackgroundLinear.alpha;
     const LinearPremultipliedColor effectiveBackground{
         .red =
@@ -305,10 +310,8 @@ QColor minimumContrastColor(const QColor &foreground,
         return foreground;
     }
 
-    const LinearPremultipliedColor white = loadLinearColor(Qt::white);
-    const LinearPremultipliedColor black = loadLinearColor(Qt::black);
-    return colorContrast(white, effectiveBackground)
-            > colorContrast(black, effectiveBackground)
+    return colorContrast(linearWhite, effectiveBackground)
+            > colorContrast(linearBlack, effectiveBackground)
         ? QColor(Qt::white)
         : QColor(Qt::black);
 }

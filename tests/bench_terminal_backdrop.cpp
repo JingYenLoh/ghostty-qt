@@ -1,3 +1,4 @@
+#include "terminal_alpha_blending.h"
 #include "terminal_backdrop_p.h"
 
 #include <QCommandLineOption>
@@ -157,6 +158,24 @@ bool measureComposition(const TerminalBackgroundImageAsset &asset,
     return true;
 }
 
+bool measureLinearPremultipliedTransform(const QImage &source,
+                                         qint64 *nanoseconds, quint64 *checksum)
+{
+    QImage converted = source.copy();
+    if (converted.isNull()
+        || converted.format() != QImage::Format_ARGB32_Premultiplied) {
+        return false;
+    }
+    QElapsedTimer timer;
+    timer.start();
+    terminalLinearizePremultipliedSrgb8(converted);
+    *nanoseconds = timer.nsecsElapsed();
+    const QRgb sample =
+        converted.pixel(converted.width() / 2, converted.height() / 2);
+    *checksum += static_cast<quint64>(sample);
+    return true;
+}
+
 void printTiming(QTextStream &output, QStringView workload,
                  const TimingSummary &timing, int iterations,
                  double measuredPixels)
@@ -233,6 +252,13 @@ int main(int argc, char **argv)
         QTextStream(stderr) << "could not allocate source image\n";
         return 1;
     }
+    const QImage premultipliedSource =
+        source.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    if (premultipliedSource.isNull()) {
+        QTextStream(stderr)
+            << "could not allocate premultiplied source image\n";
+        return 1;
+    }
 
     QImage initialDecoded = source.copy();
     auto prepared =
@@ -245,11 +271,14 @@ int main(int argc, char **argv)
     quint64 packedChecksum = 0;
     quint64 legacyChecksum = 0;
     quint64 compositionChecksum = 0;
+    quint64 linearPremultipliedChecksum = 0;
     for (int iteration = 0; iteration < *warmup; ++iteration) {
         qint64 ignored = 0;
         if (!measurePackedPreparation(source, &ignored, &packedChecksum)
             || !measureLegacyPreparation(source, &ignored, &legacyChecksum)
-            || !measureComposition(*prepared, &ignored, &compositionChecksum)) {
+            || !measureComposition(*prepared, &ignored, &compositionChecksum)
+            || !measureLinearPremultipliedTransform(
+                premultipliedSource, &ignored, &linearPremultipliedChecksum)) {
             QTextStream(stderr) << "warmup iteration failed\n";
             return 1;
         }
@@ -257,13 +286,16 @@ int main(int argc, char **argv)
     packedChecksum = 0;
     legacyChecksum = 0;
     compositionChecksum = 0;
+    linearPremultipliedChecksum = 0;
 
     QVector<qint64> packedSamples;
     QVector<qint64> legacySamples;
     QVector<qint64> compositionSamples;
+    QVector<qint64> linearPremultipliedSamples;
     packedSamples.reserve(*iterations);
     legacySamples.reserve(*iterations);
     compositionSamples.reserve(*iterations);
+    linearPremultipliedSamples.reserve(*iterations);
     for (int iteration = 0; iteration < *iterations; ++iteration) {
         qint64 packedNanoseconds = 0;
         qint64 legacyNanoseconds = 0;
@@ -278,21 +310,28 @@ int main(int argc, char **argv)
                 && measurePackedPreparation(source, &packedNanoseconds,
                                             &packedChecksum);
         qint64 compositionNanoseconds = 0;
+        qint64 linearPremultipliedNanoseconds = 0;
         if (!preparationSucceeded
             || !measureComposition(*prepared, &compositionNanoseconds,
-                                   &compositionChecksum)) {
+                                   &compositionChecksum)
+            || !measureLinearPremultipliedTransform(
+                premultipliedSource, &linearPremultipliedNanoseconds,
+                &linearPremultipliedChecksum)) {
             QTextStream(stderr) << "measured iteration failed\n";
             return 1;
         }
         packedSamples.append(packedNanoseconds);
         legacySamples.append(legacyNanoseconds);
         compositionSamples.append(compositionNanoseconds);
+        linearPremultipliedSamples.append(linearPremultipliedNanoseconds);
     }
 
     const TimingSummary packedTiming = summarize(std::move(packedSamples));
     const TimingSummary legacyTiming = summarize(std::move(legacySamples));
     const TimingSummary compositionTiming =
         summarize(std::move(compositionSamples));
+    const TimingSummary linearPremultipliedTiming =
+        summarize(std::move(linearPremultipliedSamples));
     const quint64 packedBytes =
         static_cast<quint64>(prepared->straightRgba.sizeInBytes());
     const quint64 formerTwoPlaneBytes = packedBytes * 2ULL;
@@ -311,6 +350,8 @@ int main(int argc, char **argv)
                 legacyTiming, *iterations, pixels);
     printTiming(output, QStringLiteral("packed-asset-cpu-compose"),
                 compositionTiming, *iterations, pixels);
+    printTiming(output, QStringLiteral("linear-premultiplied-transform"),
+                linearPremultipliedTiming, *iterations, pixels);
     output << "comparison prepare_mean_speedup="
            << legacyTiming.meanMicroseconds
             / std::max(packedTiming.meanMicroseconds, 0.000'001)
@@ -325,6 +366,8 @@ int main(int argc, char **argv)
            << " packed_percent_saved=50.00"
            << " packed_checksum=" << packedChecksum
            << " legacy_checksum=" << legacyChecksum
-           << " composition_checksum=" << compositionChecksum << '\n';
+           << " composition_checksum=" << compositionChecksum
+           << " linear_premultiplied_checksum=" << linearPremultipliedChecksum
+           << '\n';
     return 0;
 }

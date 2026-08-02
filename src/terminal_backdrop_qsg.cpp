@@ -76,31 +76,7 @@ QImage linearizedPremultipliedImage(QImage image,
         return image;
     }
     image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-    const auto byte = [](float component) {
-        return std::clamp(static_cast<int>(std::lround(component * 255.0F)), 0,
-                          255);
-    };
-    for (int y = 0; y < image.height(); ++y) {
-        auto *pixels = reinterpret_cast<QRgb *>(image.scanLine(y));
-        for (int x = 0; x < image.width(); ++x) {
-            const int alphaByte = qAlpha(pixels[x]);
-            if (alphaByte == 0) {
-                pixels[x] = 0;
-                continue;
-            }
-            const float alpha = static_cast<float>(alphaByte) / 255.0F;
-            const auto channel = [alpha, alphaByte, &byte](int premultiplied) {
-                const float straight =
-                    std::clamp(static_cast<float>(premultiplied)
-                                   / static_cast<float>(alphaByte),
-                               0.0F, 1.0F);
-                return byte(terminalSrgbToLinear(straight) * alpha);
-            };
-            pixels[x] =
-                qRgba(channel(qRed(pixels[x])), channel(qGreen(pixels[x])),
-                      channel(qBlue(pixels[x])), alphaByte);
-        }
-    }
+    terminalLinearizePremultipliedSrgb8(image);
     return image;
 }
 
