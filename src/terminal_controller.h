@@ -54,7 +54,14 @@ public:
     // An explicit empty set_surface_title value is distinct from the absence
     // of terminal metadata, which lets TerminalPane select its launch fallback.
     bool hasTitle() const { return baseTitle_.has_value(); }
-    QString currentDirectory() const { return currentDirectory_; }
+    QString currentDirectory() const
+    {
+        return currentDirectory_.displayString();
+    }
+    [[nodiscard]] const QByteArray &currentDirectoryBytes() const
+    {
+        return currentDirectory_.bytes();
+    }
     // Effective capture requires both the terminal's DEC mouse mode and the
     // surface-local Ghostty policy. Keeping the conjunction here gives every
     // pointer path one authoritative predicate.
@@ -95,7 +102,7 @@ public:
     {
         return launchOptions_.environment;
     }
-    [[nodiscard]] const QString &launchWorkingDirectory() const
+    [[nodiscard]] const TerminalPath &launchWorkingDirectory() const
     {
         return launchOptions_.workingDirectory;
     }
@@ -366,7 +373,7 @@ private:
     std::vector<WorkerRequest> pendingWorkerRequests_;
     QSet<quint64> pendingTerminalActionRequests_;
     std::optional<QString> baseTitle_;
-    QString currentDirectory_;
+    TerminalPath currentDirectory_;
     bool terminalMouseTracking_ = false;
     bool mouseReportingEnabled_ = true;
     bool keyboardActionMode_ = false;

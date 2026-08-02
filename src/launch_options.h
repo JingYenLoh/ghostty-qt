@@ -8,6 +8,7 @@
 #include "terminal_alpha_blending.h"
 #include "terminal_custom_shader_options.h"
 #include "terminal_initial_input.h"
+#include "terminal_path.h"
 #include "terminal_session_options.h"
 #include "terminal_typography.h"
 
@@ -21,6 +22,7 @@
 #include <chrono>
 #include <expected>
 #include <optional>
+#include <span>
 
 struct LaunchOptions {
     // Finalized terminal identity for future children. This launch-only value
@@ -60,7 +62,7 @@ struct LaunchOptions {
     // Startup arbitration fixes this process fact once. Reloading the
     // frontend's single-instance preference cannot reclassify a live process.
     bool processUsesSingleInstance = false;
-    QString workingDirectory;
+    TerminalPath workingDirectory;
     // `inherit` preserves the process cwd and its logical PWD spelling. A
     // concrete CLI, config, or OSC-derived directory clears this bit.
     bool inheritWorkingDirectory = false;
@@ -320,6 +322,10 @@ bool shouldConfirmClose(ConfirmCloseMode mode, bool childIsRunning,
 // QCoreApplication::arguments().
 [[nodiscard]] std::expected<LaunchOptions, QString>
 parseLaunchOptions(const QStringList &arguments);
+// Preserve the original POSIX bytes of --working-directory while every other
+// frontend option continues through Qt's Unicode command-line parser.
+[[nodiscard]] std::expected<LaunchOptions, QString>
+parseLaunchOptionsFromRaw(std::span<char *const> arguments);
 
 // Project every explicit Ghostty configuration override back into Ghostty CLI
 // spelling. The config helper receives these after its action so pinned

@@ -469,12 +469,12 @@ QByteArray machineHostName()
     return QByteArray(buffer.data());
 }
 
-std::optional<QString>
+std::optional<QByteArray>
 validatedOsc7Directory(std::string_view reported,
                        const std::function<QByteArray()> &queryMachineHostName)
 {
     if (reported.empty()) {
-        return QStringLiteral("");
+        return QByteArrayLiteral("");
     }
 
     constexpr std::string_view filePrefix = "file://";
@@ -501,17 +501,14 @@ validatedOsc7Directory(std::string_view reported,
     }
 
     if (!rawKittyPath) {
-        const QByteArray path = percentDecode(uri->path);
-        return path.isEmpty() ? QStringLiteral("") : QString::fromUtf8(path);
+        return percentDecode(uri->path);
     }
 
     // Ghostty's kitty-shell-cwd variant intentionally treats the URI path as
     // raw text. Preserve literal percent sequences instead of URL-decoding
     // them a second time.
     const std::string_view path = reported.substr(uri->pathStart);
-    return path.empty()
-        ? QStringLiteral("")
-        : QString::fromUtf8(path.data(), static_cast<qsizetype>(path.size()));
+    return QByteArray(path.data(), static_cast<qsizetype>(path.size()));
 }
 
 QColor toQColor(GhosttyColorRgb color)
@@ -1113,6 +1110,19 @@ public:
             return false;
         }
 
+        if (adapterOptions.initialWorkingDirectory.has_value()) {
+            const QByteArray &directory =
+                *adapterOptions.initialWorkingDirectory;
+            const GhosttyString pwd{
+                .ptr = reinterpret_cast<const uint8_t *>(directory.constData()),
+                .len = static_cast<size_t>(directory.size()),
+            };
+            if (ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_PWD, &pwd)
+                != GHOSTTY_SUCCESS) {
+                return false;
+            }
+        }
+
         ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_USERDATA, this);
         ghostty_terminal_set(
             terminal_, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
@@ -1452,7 +1462,7 @@ public:
         // callback. Reset publishes no application title update, so the
         // frontend retains the last base title published by either OSC or
         // set_surface_title.
-        pendingCurrentDirectory_ = QStringLiteral("");
+        pendingCurrentDirectory_ = QByteArrayLiteral("");
 
         // Do not rely on the C API's dirty-state implementation detail. A
         // reset discards screen and scrollback contents, so the next update
@@ -5215,7 +5225,7 @@ private:
         kittyImageAssets_;
     bool hasPublishedFrame_ = false;
     bool titleDirty_ = false;
-    std::optional<QString> pendingCurrentDirectory_;
+    std::optional<QByteArray> pendingCurrentDirectory_;
     bool bellPending_ = false;
     TerminalColorScheme colorScheme_ = TerminalColorScheme::Light;
     TerminalClipboardAccess clipboardWriteAccess_ =

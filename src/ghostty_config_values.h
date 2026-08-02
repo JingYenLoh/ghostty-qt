@@ -197,8 +197,8 @@ struct GhosttyConfigValues {
     // panes constructed afterward, never an already-running process tree.
     LinuxCgroupConfig linuxCgroup;
     // nullopt is Ghostty's semantic `inherit`; a value is an already-finalized
-    // concrete path whose lexical spelling must be preserved.
-    std::optional<QString> workingDirectoryPath;
+    // POSIX byte path whose lexical spelling must be preserved.
+    std::optional<QByteArray> workingDirectoryPath;
     TerminalTypography typography;
     std::optional<QString> title;
     // Startup-only application identity bytes. Keep this lossless so invalid

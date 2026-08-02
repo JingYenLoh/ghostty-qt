@@ -159,6 +159,9 @@ public:
         TerminalColorScheme colorScheme = TerminalColorScheme::Light;
         TerminalClipboardAccess clipboardWriteAccess =
             TerminalClipboardAccess::Allow;
+        // A concrete launch directory initializes terminal-owned PWD before
+        // the child starts so immediately-created panes can inherit it.
+        std::optional<QByteArray> initialWorkingDirectory;
         // The pinned public C bridge emits at most 255 response bytes. Retain
         // longer values without truncation so a future upstream widening is
         // inherited automatically; the current bridge treats them as silent.
@@ -207,10 +210,10 @@ public:
     };
 
     struct DeferredEffects {
-        // A null QString means that the effect did not occur. An empty,
-        // non-null QString remains a valid title or working directory value.
+        // A null value means that the effect did not occur. An empty,
+        // non-null value remains a valid title or working-directory update.
         QString title;
-        QString currentDirectory;
+        QByteArray currentDirectory;
         bool bell = false;
         QVector<TerminalClipboardWriteRequest> clipboardWrites;
     };

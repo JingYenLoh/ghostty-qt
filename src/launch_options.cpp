@@ -3,17 +3,154 @@
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QDir>
-#include <QFileInfo>
 #include <QLocale>
+#include <QProcess>
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
+#include <pwd.h>
+#include <span>
+#include <string_view>
+#include <sys/types.h>
+#include <unistd.h>
 #include <utility>
+#include <vector>
 
 namespace {
 
 constexpr int kMaximumScrollbackLines = 10'000'000;
+
+QByteArrayView trimAsciiWhitespace(QByteArrayView value)
+{
+    constexpr std::string_view whitespace = " \t\n\r\v\f";
+    qsizetype begin = 0;
+    while (begin < value.size() && whitespace.contains(value.at(begin))) {
+        ++begin;
+    }
+    qsizetype end = value.size();
+    while (end > begin && whitespace.contains(value.at(end - 1))) {
+        --end;
+    }
+    return value.sliced(begin, end - begin);
+}
+
+std::optional<QByteArray> passwdHomeDirectory()
+{
+    const long suggested = ::sysconf(_SC_GETPW_R_SIZE_MAX);
+    std::vector<char> storage(
+        static_cast<std::size_t>(std::clamp<long>(suggested, 1'024, 1L << 20)));
+    passwd entry{};
+    passwd *result = nullptr;
+    const int error = ::getpwuid_r(::getuid(), &entry, storage.data(),
+                                   storage.size(), &result);
+    if (error != 0 || result == nullptr || result->pw_dir == nullptr
+        || result->pw_dir[0] == '\0') {
+        return std::nullopt;
+    }
+    return QByteArray(result->pw_dir);
+}
+
+std::optional<QByteArray> shellHomeDirectory()
+{
+    QProcess process;
+    process.setProgram(QStringLiteral("/bin/sh"));
+    process.setArguments({QStringLiteral("-c"), QStringLiteral("cd && pwd")});
+    process.setProcessChannelMode(QProcess::SeparateChannels);
+    process.start(QIODevice::ReadOnly);
+    if (!process.waitForStarted() || !process.waitForFinished()
+        || process.exitStatus() != QProcess::NormalExit
+        || process.exitCode() != 0) {
+        if (process.state() != QProcess::NotRunning) {
+            process.kill();
+            process.waitForFinished();
+        }
+        return std::nullopt;
+    }
+
+    const QByteArray output = process.readAllStandardOutput();
+    const QByteArrayView trimmed = trimAsciiWhitespace(output);
+    if (trimmed.isEmpty()) return std::nullopt;
+    return QByteArray(trimmed.data(), trimmed.size());
+}
+
+std::optional<QByteArray> expansionHomeDirectory()
+{
+    QByteArray home = qgetenv("HOME");
+    if (!home.isEmpty()) return home;
+    if (auto passwd = passwdHomeDirectory()) return passwd;
+    return shellHomeDirectory();
+}
+
+std::expected<void, QString> applyWorkingDirectoryValue(LaunchOptions &options,
+                                                        QByteArrayView encoded)
+{
+    encoded = trimAsciiWhitespace(encoded);
+    if (encoded.isEmpty()) {
+        return std::unexpected(
+            QStringLiteral("Working directory requires a value."));
+    }
+    if (encoded.size() >= 2 && encoded.front() == '"'
+        && encoded.back() == '"') {
+        encoded = encoded.sliced(1, encoded.size() - 2);
+    }
+
+    options.workingDirectoryExplicit = true;
+    if (encoded == QByteArrayView("inherit")) {
+        options.inheritWorkingDirectory = true;
+        return {};
+    }
+    if (encoded == QByteArrayView("home")) {
+        const std::optional<QByteArray> home = passwdHomeDirectory();
+        if (!home.has_value()) {
+            options.inheritWorkingDirectory = true;
+            return {};
+        }
+        options.workingDirectory = *home;
+        options.inheritWorkingDirectory = false;
+        return {};
+    }
+
+    QByteArray path(encoded.data(), encoded.size());
+    if (path.startsWith("~/")) {
+        if (const std::optional<QByteArray> home = expansionHomeDirectory()) {
+            path.replace(0, 1, *home);
+        }
+    }
+    options.workingDirectory = std::move(path);
+    options.inheritWorkingDirectory = false;
+    return {};
+}
+
+std::optional<QByteArrayView>
+rawWorkingDirectoryArgument(std::span<char *const> arguments)
+{
+    std::optional<QByteArrayView> result;
+    constexpr QByteArrayView prefix("--working-directory=");
+    for (std::size_t index = 1; index < arguments.size(); ++index) {
+        const char *const raw = arguments[index];
+        if (raw == nullptr) continue;
+        const QByteArrayView argument(raw,
+                                      static_cast<qsizetype>(std::strlen(raw)));
+        if (argument == QByteArrayView("--")
+            || argument == QByteArrayView("-e")) {
+            break;
+        }
+        if (argument.startsWith(prefix)) {
+            result = argument.sliced(prefix.size());
+            continue;
+        }
+        if (argument == QByteArrayView("--working-directory")
+            && index + 1 < arguments.size()
+            && arguments[index + 1] != nullptr) {
+            const char *const value = arguments[++index];
+            result = QByteArrayView(value,
+                                    static_cast<qsizetype>(std::strlen(value)));
+        }
+    }
+    return result;
+}
 
 std::optional<qsizetype> explicitCommandBoundary(const QStringList &arguments)
 {
@@ -141,8 +278,8 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         result.inheritWorkingDirectory = !config.workingDirectoryPath;
         if (config.workingDirectoryPath) {
             // The helper has already finalized home and tilde expansion.
-            // Preserve the remaining path byte-for-byte at the QString
-            // boundary: lexical cleanup changes `symlink/../...` lookup.
+            // Preserve the remaining path byte-for-byte: lexical cleanup
+            // changes `symlink/../...` lookup.
             result.workingDirectory = *config.workingDirectoryPath;
         }
     }
@@ -413,17 +550,12 @@ parseLaunchOptions(const QStringList &arguments)
     parsed.inheritWorkingDirectory = true;
 
     if (parser.isSet(workingDirectoryOption)) {
-        const QString directory = parser.value(workingDirectoryOption);
-        const QFileInfo directoryInfo(directory);
-        if (!directoryInfo.exists() || !directoryInfo.isDir()) {
-            return std::unexpected(
-                QStringLiteral(
-                    "Working directory does not exist or is not a directory: %1")
-                    .arg(directory));
+        if (auto applied = applyWorkingDirectoryValue(
+                parsed,
+                QFile::encodeName(parser.value(workingDirectoryOption)));
+            !applied) {
+            return std::unexpected(std::move(applied.error()));
         }
-        parsed.workingDirectory = directory;
-        parsed.inheritWorkingDirectory = false;
-        parsed.workingDirectoryExplicit = true;
     }
 
     if (parser.isSet(fontFamilyOption)) {
@@ -572,6 +704,27 @@ parseLaunchOptions(const QStringList &arguments)
         parsed.initialWindowExplicit = true;
     }
 
+    return parsed;
+}
+
+std::expected<LaunchOptions, QString>
+parseLaunchOptionsFromRaw(std::span<char *const> arguments)
+{
+    QStringList decoded;
+    decoded.reserve(static_cast<qsizetype>(arguments.size()));
+    for (char *const argument : arguments) {
+        decoded.append(
+            QString::fromLocal8Bit(argument != nullptr ? argument : ""));
+    }
+
+    auto parsed = parseLaunchOptions(decoded);
+    if (!parsed) return parsed;
+    if (const auto raw = rawWorkingDirectoryArgument(arguments)) {
+        if (auto applied = applyWorkingDirectoryValue(*parsed, *raw);
+            !applied) {
+            return std::unexpected(std::move(applied.error()));
+        }
+    }
     return parsed;
 }
 

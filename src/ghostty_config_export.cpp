@@ -1813,16 +1813,13 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
     }
     {
         constexpr QLatin1StringView name("working-directory");
-        auto parsed = readString(fieldValue(name), context(name));
-        if (!parsed) return std::unexpected(std::move(parsed.error()));
-        if (parsed->isEmpty() || *parsed == QLatin1StringView("home")) {
-            return std::unexpected(
-                QStringLiteral("%1 must be 'inherit' or a finalized path")
-                    .arg(context(name)));
-        }
-        if (*parsed == QLatin1StringView("inherit")) {
+        const QJsonValue encoded = fieldValue(name);
+        if (encoded.isString()
+            && encoded.toString() == QLatin1StringView("inherit")) {
             result.workingDirectoryPath.reset();
         } else {
+            auto parsed = readByteArray(encoded, context(name));
+            if (!parsed) return std::unexpected(std::move(parsed.error()));
             result.workingDirectoryPath = std::move(*parsed);
         }
     }

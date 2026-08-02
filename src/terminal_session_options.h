@@ -1,5 +1,7 @@
 #pragma once
 
+#include "terminal_path.h"
+
 #include "linux_cgroup_config.h"
 #include "terminal_appearance.h"
 #include "terminal_clipboard_codepoint_map.h"
@@ -241,7 +243,7 @@ struct TerminalSessionLaunchOptions {
     // can change the policy for future panes without changing that role.
     LinuxCgroupConfig linuxCgroup;
     bool processUsesSingleInstance = false;
-    QString workingDirectory;
+    TerminalPath workingDirectory;
     bool inheritWorkingDirectory = false;
     // GUI-owned initial base-title policy. TerminalController applies live
     // reloads directly so title-only changes never wake SessionWorker.

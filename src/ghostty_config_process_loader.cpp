@@ -30,6 +30,12 @@ QString colorSchemeArgument(TerminalColorScheme colorScheme)
     Q_UNREACHABLE_RETURN({});
 }
 
+QString probableCliArgument(bool probableCli)
+{
+    return probableCli ? QStringLiteral("--ghostty-qt-probable-cli=true")
+                       : QStringLiteral("--ghostty-qt-probable-cli=false");
+}
+
 struct ProcessResult {
     enum class Status {
         Completed,
@@ -73,6 +79,11 @@ ProcessResult runHelper(const GhosttyConfigProcessLoaderOptions &options,
 {
     QProcess process;
     QProcessEnvironment environment = options.environment;
+    if (!options.probableCli) {
+        // A false value means the original process had argc == 1 and an empty
+        // TERM_PROGRAM. Do not let a test/helper environment reclassify it.
+        environment.remove(QStringLiteral("TERM_PROGRAM"));
+    }
     environment.insert(QStringLiteral("XDG_CONFIG_HOME"), xdgConfigHome);
     process.setProcessEnvironment(environment);
     process.setProgram(options.helperPath);
@@ -359,6 +370,7 @@ makeGhosttyConfigProcessLoader(GhosttyConfigProcessLoaderOptions options)
         QStringList queryArguments{
             QStringLiteral("+show-config-json"),
             schemeArgument,
+            probableCliArgument(options.probableCli),
         };
         queryArguments.append(options.configurationArguments);
         auto config =

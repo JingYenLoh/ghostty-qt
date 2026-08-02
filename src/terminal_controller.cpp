@@ -182,7 +182,7 @@ TerminalController::TerminalController(
     , initialSessionCoordinator_(std::move(initialSessionCoordinator))
     , baseTitle_(options.configuredTitle)
     , currentDirectory_(options.inheritWorkingDirectory
-                            ? QString{}
+                            ? TerminalPath{}
                             : options.workingDirectory)
     , explicitProgram_(options.firstSessionCommandOverride.has_value()
                        || hasExplicitCommand(options))
@@ -233,10 +233,10 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
         Qt::QueuedConnection);
     connect(
         worker, &SessionWorker::currentDirectoryChanged, this,
-        [this](const QString &directory) {
-            if (currentDirectory_ == directory) return;
+        [this](const QByteArray &directory) {
+            if (currentDirectory_.bytes() == directory) return;
             currentDirectory_ = directory;
-            Q_EMIT currentDirectoryChanged(currentDirectory_);
+            Q_EMIT currentDirectoryChanged(currentDirectory());
         },
         Qt::QueuedConnection);
     connect(

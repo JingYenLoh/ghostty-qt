@@ -54,6 +54,7 @@ comptime {
 /// ghostty_string_free.
 export fn ghostty_qt_config_json(
     color_scheme: u8,
+    probable_cli: u8,
     error_message: *String,
 ) String {
     error_message.* = .empty;
@@ -65,7 +66,11 @@ export fn ghostty_qt_config_json(
             return .empty;
         },
     };
-    return configJson(theme, error_message) catch |err| {
+    if (probable_cli > 1) {
+        error_message.* = errorMessage("invalid probable CLI state") catch .empty;
+        return .empty;
+    }
+    return configJson(theme, probable_cli == 1, error_message) catch |err| {
         if (error_message.ptr == null)
             error_message.* = errorMessage(@errorName(err)) catch .empty;
         return .empty;
@@ -366,6 +371,7 @@ fn configDiagnostics(config: *const Config) !String {
 
 fn configJson(
     color_scheme: ConfigConditionalTheme,
+    probable_cli: bool,
     error_message: *String,
 ) !String {
     var output: std.Io.Writer.Allocating = .init(state.alloc);
@@ -377,7 +383,7 @@ fn configJson(
     try json.write(@as(u8, 1));
 
     {
-        var config = try loadSelectedConfig(color_scheme);
+        var config = try loadSelectedConfig(color_scheme, probable_cli);
         defer config.deinit();
         if (!config._diagnostics.empty()) {
             error_message.* = try configDiagnostics(&config);
@@ -408,7 +414,7 @@ fn configJson(
     return .fromSlice(try output.toOwnedSlice());
 }
 
-fn loadSelectedConfig(color_scheme: ConfigConditionalTheme) !Config {
+fn loadSelectedConfig(color_scheme: ConfigConditionalTheme, probable_cli: bool) !Config {
     // This is Config.load with the requested conditional state installed
     // before any file is parsed. Selecting afterward is insufficient when
     // the inactive theme contains diagnostics because pinned Ghostty
@@ -419,6 +425,9 @@ fn loadSelectedConfig(color_scheme: ConfigConditionalTheme) !Config {
     try config.loadDefaultFiles(state.alloc);
     try config.loadCliArgs(state.alloc);
     try config.loadRecursiveFiles(state.alloc);
+    const original_argv = std.os.argv;
+    defer std.os.argv = original_argv;
+    if (!probable_cli) std.os.argv = original_argv[0..1];
     try config.finalize();
     return config;
 }
@@ -1104,7 +1113,7 @@ fn writeKeybinds(json: *std.json.Stringify, keybinds: *const Config.Keybinds) !v
 fn writeWorkingDirectory(json: *std.json.Stringify, value: Config.WorkingDirectory) !void {
     switch (value) {
         .home, .inherit => try json.write(@tagName(value)),
-        .path => |path| try json.write(path),
+        .path => |path| try writeByteArray(json, path),
     }
 }
 

@@ -138,7 +138,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
              std::optional<quint64>(quint64{0}));
     QVERIFY(values.linuxCgroup.hardFail);
     QVERIFY(values.workingDirectoryPath.has_value());
-    QCOMPARE(*values.workingDirectoryPath, QStringLiteral("/work/ghostty"));
+    QCOMPARE(*values.workingDirectoryPath, QByteArrayLiteral("/work/ghostty"));
     QCOMPARE(values.title, std::optional<QString>(QString{}));
     QCOMPARE(values.applicationClass,
              std::optional(QByteArray::fromHex("636f6d2e6578616d706c652eff")));
@@ -557,6 +557,15 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
         withValue(object(), QStringLiteral("enquiry-response"), QJsonArray{})));
     QVERIFY2(emptyEnquiry.has_value(), qPrintable(errorMessage(emptyEnquiry)));
     QVERIFY(emptyEnquiry->values.enquiryResponse.isEmpty());
+
+    const QByteArray rawDirectory = QByteArray::fromHex("2f776f726b2fff80");
+    const auto rawWorkingDirectory = parseGhosttyConfigExportJson(
+        json(withValue(object(), QStringLiteral("working-directory"),
+                       bytes(rawDirectory))));
+    QVERIFY2(rawWorkingDirectory.has_value(),
+             qPrintable(errorMessage(rawWorkingDirectory)));
+    QCOMPARE(rawWorkingDirectory->values.workingDirectoryPath,
+             std::optional(rawDirectory));
 
     QJsonObject lowValues = object();
     lowValues =
@@ -2260,13 +2269,26 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
                "values.click-repeat-interval must be an unsigned integer");
     QTest::newRow("working-directory-empty")
         << withValue(object(), QStringLiteral("working-directory"), QString{})
-        << QStringLiteral(
-               "values.working-directory must be 'inherit' or a finalized path");
+        << QStringLiteral("values.working-directory must be an array");
     QTest::newRow("working-directory-unfinalized-home")
         << withValue(object(), QStringLiteral("working-directory"),
                      QStringLiteral("home"))
+        << QStringLiteral("values.working-directory must be an array");
+    QTest::newRow("working-directory-negative-byte")
+        << withValue(object(), QStringLiteral("working-directory"),
+                     QJsonArray{-1})
         << QStringLiteral(
-               "values.working-directory must be 'inherit' or a finalized path");
+               "values.working-directory[0] must be an unsigned integer");
+    QTest::newRow("working-directory-byte-overflow")
+        << withValue(object(), QStringLiteral("working-directory"),
+                     QJsonArray{256})
+        << QStringLiteral(
+               "values.working-directory[0] must be an unsigned integer");
+    QTest::newRow("working-directory-fractional-byte")
+        << withValue(object(), QStringLiteral("working-directory"),
+                     QJsonArray{1.5})
+        << QStringLiteral(
+               "values.working-directory[0] must be an unsigned integer");
     QTest::newRow("title-type")
         << withValue(object(), QStringLiteral("title"), true)
         << QStringLiteral("values.title must be a string");

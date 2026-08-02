@@ -774,6 +774,7 @@ add_library(ghostty-qt-config-export STATIC
     src/ghostty_keybind_config.h
     src/terminal_custom_shader_options.h
     src/terminal_command.h
+    src/terminal_path.h
 )
 target_include_directories(ghostty-qt-config-export PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
@@ -929,6 +930,7 @@ ghostty_qt_add_internal_library(ghostty-qt-launch-options
     src/terminal_clipboard_codepoint_map.h
     src/terminal_color_scheme.h
     src/terminal_custom_shader_options.h
+    src/terminal_path.h
     src/terminal_session_options.h
 )
 target_link_libraries(ghostty-qt-launch-options PUBLIC
@@ -952,6 +954,7 @@ ghostty_qt_add_internal_library(ghostty-qt-terminal-foundation
     src/terminal_font_resolver.h
     src/terminal_geometry.cpp
     src/terminal_geometry.h
+    src/terminal_path.h
     src/terminal_session_options.h
     src/terminal_text_grid_fit.cpp
     src/terminal_text_grid_fit.h
@@ -971,6 +974,7 @@ ghostty_qt_add_internal_library(ghostty-qt-session-worker
     src/terminal_action_result.h
     src/terminal_clipboard_codepoint_map.h
     src/terminal_osc8_index.h
+    src/terminal_path.h
     src/terminal_session_options.h
     src/terminal_types.h
     src/terminal_write_file_action.h
@@ -1133,6 +1137,7 @@ qt_add_executable(ghostty-qt
     src/terminal_pane.h
     src/terminal_pane_renderer.cpp
     src/terminal_pane_renderer.h
+    src/terminal_path.h
     src/terminal_session_options.h
     src/terminal_initial_input.h
     src/terminal_inspector_event_model.cpp

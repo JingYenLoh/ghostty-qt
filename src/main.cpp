@@ -1676,6 +1676,7 @@ int main(int argc, char *argv[])
 {
     const std::span<char *const> rawArguments(argv,
                                               static_cast<std::size_t>(argc));
+    const bool probableCli = argc > 1 || !qgetenv("TERM_PROGRAM").isEmpty();
     const GhosttyCliActionSelection cliAction =
         selectGhosttyCliAction(rawArguments);
     switch (cliAction.disposition) {
@@ -1744,13 +1745,7 @@ int main(int argc, char *argv[])
 #endif
     }
 
-    QStringList arguments;
-    arguments.reserve(argc);
-    for (int index = 0; index < argc; ++index) {
-        arguments.append(QString::fromLocal8Bit(argv[index]));
-    }
-
-    auto parsedOptions = parseLaunchOptions(arguments);
+    auto parsedOptions = parseLaunchOptionsFromRaw(rawArguments);
     if (!parsedOptions) {
         QTextStream(stderr) << "ghostty-qt: " << parsedOptions.error() << '\n'
                             << "Try 'ghostty-qt --help' for usage.\n";
@@ -1824,6 +1819,7 @@ int main(int argc, char *argv[])
     GhosttyConfigService configService(
         makeGhosttyConfigProcessLoader({
             .helperPath = configHelperPath,
+            .probableCli = probableCli,
             .configurationArguments = ghosttyConfigurationArguments(options),
         }),
         appearance.colorScheme(), options.configDefaultFiles);

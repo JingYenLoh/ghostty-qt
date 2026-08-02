@@ -118,7 +118,7 @@ GhosttyConfigSnapshot completeSnapshot()
         .processesLimit = quint64{0},
         .hardFail = true,
     };
-    values.workingDirectoryPath = QStringLiteral("/work/ghostty");
+    values.workingDirectoryPath = QByteArrayLiteral("/work/ghostty");
     values.typography = completeTypography();
     values.configDefaultFiles = false;
     values.title = QStringLiteral("Configured title");
@@ -295,8 +295,9 @@ private Q_SLOTS:
     void preservesDashEAfterDoubleDashAndInInlineValues();
     void rejectsInvalidDashEUsage();
     void preservesSymlinkSensitiveExplicitWorkingDirectory();
-    void rejectsInvalidWorkingDirectory();
-    void rejectsFileAsWorkingDirectory();
+    void preservesMissingWorkingDirectoryForSpawnFallback();
+    void preservesFileWorkingDirectoryForSpawnFallback();
+    void preservesRawWorkingDirectoryAndCommandBoundaries();
     void rejectsInvalidFontSize_data();
     void rejectsInvalidFontSize();
     void normalizesFontSizeToGhosttyPrecision();
@@ -912,23 +913,28 @@ void LaunchOptionsTest::preservesSymlinkSensitiveExplicitWorkingDirectory()
     QVERIFY(result->workingDirectoryExplicit);
 }
 
-void LaunchOptionsTest::rejectsInvalidWorkingDirectory()
+void LaunchOptionsTest::preservesMissingWorkingDirectoryForSpawnFallback()
 {
-    QTemporaryDir directory;
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/missing-working-directory-XXXXXX")));
     QVERIFY(directory.isValid());
     const QString missingPath = directory.filePath(QStringLiteral("missing"));
 
     const auto result = parseLaunchOptions(
         {QStringLiteral("ghostty-qt"), QStringLiteral("--working-directory"),
          missingPath});
-    QVERIFY(!result.has_value());
-    QVERIFY(result.error().contains(
-        QStringLiteral("does not exist or is not a directory")));
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->workingDirectory, missingPath);
+    QVERIFY(!result->inheritWorkingDirectory);
+    QVERIFY(result->workingDirectoryExplicit);
 }
 
-void LaunchOptionsTest::rejectsFileAsWorkingDirectory()
+void LaunchOptionsTest::preservesFileWorkingDirectoryForSpawnFallback()
 {
-    QTemporaryDir directory;
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/file-working-directory-XXXXXX")));
     QVERIFY(directory.isValid());
     const QString filePath = directory.filePath(QStringLiteral("regular-file"));
     QFile file(filePath);
@@ -938,9 +944,62 @@ void LaunchOptionsTest::rejectsFileAsWorkingDirectory()
     const auto result =
         parseLaunchOptions({QStringLiteral("ghostty-qt"),
                             QStringLiteral("--working-directory"), filePath});
-    QVERIFY(!result.has_value());
-    QVERIFY(result.error().contains(
-        QStringLiteral("does not exist or is not a directory")));
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->workingDirectory, filePath);
+    QVERIFY(!result->inheritWorkingDirectory);
+    QVERIFY(result->workingDirectoryExplicit);
+}
+
+void LaunchOptionsTest::preservesRawWorkingDirectoryAndCommandBoundaries()
+{
+    const auto parseRaw = [](QVector<QByteArray> storage) {
+        QVector<char *> arguments;
+        arguments.reserve(storage.size());
+        for (QByteArray &argument : storage) {
+            arguments.append(argument.data());
+        }
+        return parseLaunchOptionsFromRaw(
+            std::span<char *const>(arguments.data(), arguments.size()));
+    };
+
+    QByteArray rawPath = QByteArrayLiteral("/work/raw-");
+    rawPath.append(char(0x80));
+    rawPath.append(char(0xff));
+    const auto raw =
+        parseRaw({QByteArrayLiteral("ghostty-qt"),
+                  QByteArrayLiteral("--working-directory"), rawPath});
+    QVERIFY2(raw.has_value(), qPrintable(errorMessage(raw)));
+    QCOMPARE(raw->workingDirectory.bytes(), rawPath);
+    QVERIFY(raw->workingDirectoryExplicit);
+    QVERIFY(!raw->inheritWorkingDirectory);
+
+    const auto inherit = parseRaw({
+        QByteArrayLiteral("ghostty-qt"),
+        QByteArrayLiteral("--working-directory= inherit \t"),
+    });
+    QVERIFY2(inherit.has_value(), qPrintable(errorMessage(inherit)));
+    QVERIFY(inherit->inheritWorkingDirectory);
+
+    const auto doubleDash = parseRaw({
+        QByteArrayLiteral("ghostty-qt"),
+        QByteArrayLiteral("--working-directory=/before-double-dash"),
+        QByteArrayLiteral("--"),
+        QByteArrayLiteral("--working-directory=/after-double-dash"),
+    });
+    QVERIFY2(doubleDash.has_value(), qPrintable(errorMessage(doubleDash)));
+    QCOMPARE(doubleDash->workingDirectory.bytes(),
+             QByteArrayLiteral("/before-double-dash"));
+
+    const auto dashE = parseRaw({
+        QByteArrayLiteral("ghostty-qt"),
+        QByteArrayLiteral("--working-directory=/before-dash-e"),
+        QByteArrayLiteral("-e"),
+        QByteArrayLiteral("printf"),
+        QByteArrayLiteral("--working-directory=/after-dash-e"),
+    });
+    QVERIFY2(dashE.has_value(), qPrintable(errorMessage(dashE)));
+    QCOMPARE(dashE->workingDirectory.bytes(),
+             QByteArrayLiteral("/before-dash-e"));
 }
 
 void LaunchOptionsTest::rejectsInvalidFontSize_data()
@@ -1613,7 +1672,7 @@ void LaunchOptionsTest::mapsWorkingDirectoryAndSurfaceInheritance()
 
     GhosttyConfigSnapshot snapshot = completeSnapshot();
     snapshot.values.workingDirectoryPath =
-        QStringLiteral("/base/link/../target");
+        QByteArrayLiteral("/base/link/../target");
     snapshot.values.splitInheritWorkingDirectory = false;
     snapshot.values.tabInheritWorkingDirectory = false;
     snapshot.values.windowInheritWorkingDirectory = false;

@@ -1799,6 +1799,11 @@ QString TerminalPane::currentDirectory() const
     return controller_->currentDirectory();
 }
 
+const QByteArray &TerminalPane::currentDirectoryBytes() const
+{
+    return controller_->currentDirectoryBytes();
+}
+
 qreal TerminalPane::fontPointSize() const
 {
     QMutexLocker locker(&renderMutex_);
@@ -1882,7 +1887,7 @@ void TerminalPane::dismissAbnormalExit()
 LaunchOptions TerminalPane::splitLaunchOptions(const LaunchOptions &base) const
 {
     LaunchOptions result = base;
-    const QString directory = currentDirectory();
+    const QByteArray &directory = currentDirectoryBytes();
     if (base.splitInheritWorkingDirectory && !directory.isEmpty()) {
         result.workingDirectory = directory;
         result.inheritWorkingDirectory = false;
@@ -1899,7 +1904,7 @@ LaunchOptions TerminalPane::splitLaunchOptions(const LaunchOptions &base) const
 LaunchOptions TerminalPane::tabLaunchOptions(const LaunchOptions &base) const
 {
     LaunchOptions result = base;
-    const QString directory = currentDirectory();
+    const QByteArray &directory = currentDirectoryBytes();
     if (base.tabInheritWorkingDirectory && !directory.isEmpty()) {
         result.workingDirectory = directory;
         result.inheritWorkingDirectory = false;
@@ -1915,7 +1920,7 @@ LaunchOptions TerminalPane::tabLaunchOptions(const LaunchOptions &base) const
 LaunchOptions TerminalPane::windowLaunchOptions(const LaunchOptions &base) const
 {
     LaunchOptions result = base;
-    const QString directory = currentDirectory();
+    const QByteArray &directory = currentDirectoryBytes();
     if (base.windowInheritWorkingDirectory && !directory.isEmpty()) {
         result.workingDirectory = directory;
         result.inheritWorkingDirectory = false;

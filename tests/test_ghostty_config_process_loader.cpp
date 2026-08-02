@@ -18,7 +18,9 @@
 #include <array>
 #include <expected>
 #include <limits>
+#include <pwd.h>
 #include <ranges>
+#include <unistd.h>
 #include <utility>
 
 #ifndef GHOSTTY_QT_FAKE_CONFIG_HELPER_PATH
@@ -235,6 +237,7 @@ private Q_SLOTS:
     void realHelperAppliesSelectedConditionalThemeAndWindowAppearance();
     void realHelperRejectsDiagnosticsFromSelectedConditionalTheme();
     void realHelperFinalizesSurfaceValues();
+    void realHelperPreservesOriginalLaunchClassification();
     void realHelperFinalizesAppearanceAndUnbinds();
     void realHelperExportsBackdropConfiguration();
     void realHelperExportsCustomShaderConfiguration();
@@ -306,10 +309,11 @@ void GhosttyConfigProcessLoaderTest::invokesStableTwoQueryTransaction()
     const GhosttyConfigLoadResult result =
         makeGhosttyConfigProcessLoader(options)(fixture.request());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
-    QCOMPARE(invocationLog(logPath),
-             QByteArrayLiteral(
-                 "+show-config-json --ghostty-qt-color-scheme=light\n"
-                 "+show-config-json --ghostty-qt-color-scheme=light\n"));
+    QCOMPARE(
+        invocationLog(logPath),
+        QByteArrayLiteral(
+            "+show-config-json --ghostty-qt-color-scheme=light --ghostty-qt-probable-cli=true\n"
+            "+show-config-json --ghostty-qt-color-scheme=light --ghostty-qt-probable-cli=true\n"));
     QCOMPARE(result->values.typography.pointSize, 13.5);
     QCOMPARE(result->keybindings.root.size(), 1);
 }
@@ -327,10 +331,11 @@ void GhosttyConfigProcessLoaderTest::
     const GhosttyConfigLoadResult result = makeGhosttyConfigProcessLoader(
         options)(fixture.request(TerminalColorScheme::Dark));
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
-    QCOMPARE(invocationLog(logPath),
-             QByteArrayLiteral(
-                 "+show-config-json --ghostty-qt-color-scheme=dark\n"
-                 "+show-config-json --ghostty-qt-color-scheme=dark\n"));
+    QCOMPARE(
+        invocationLog(logPath),
+        QByteArrayLiteral(
+            "+show-config-json --ghostty-qt-color-scheme=dark --ghostty-qt-probable-cli=true\n"
+            "+show-config-json --ghostty-qt-color-scheme=dark --ghostty-qt-probable-cli=true\n"));
 }
 
 void GhosttyConfigProcessLoaderTest::
@@ -362,10 +367,11 @@ void GhosttyConfigProcessLoaderTest::
         + QByteArrayLiteral(" --config-default-files=false\n");
     QCOMPARE(
         invocationLog(logPath),
-        QByteArrayLiteral("+show-config-json --ghostty-qt-color-scheme=light")
+        QByteArrayLiteral(
+            "+show-config-json --ghostty-qt-color-scheme=light --ghostty-qt-probable-cli=true")
             + suffix
             + QByteArrayLiteral(
-                "+show-config-json --ghostty-qt-color-scheme=light")
+                "+show-config-json --ghostty-qt-color-scheme=light --ghostty-qt-probable-cli=true")
             + suffix);
 }
 
@@ -1140,7 +1146,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(result->values.term, QByteArrayLiteral("ghostty-qt-configured"));
     QVERIFY(result->values.workingDirectoryPath.has_value());
-    QCOMPARE(*result->values.workingDirectoryPath, directory);
+    QCOMPARE(*result->values.workingDirectoryPath,
+             QFile::encodeName(directory));
     QVERIFY(!result->values.splitInheritWorkingDirectory);
     QVERIFY(result->values.splitPreserveZoom);
     QVERIFY(!result->values.tabInheritWorkingDirectory);
@@ -1182,7 +1189,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(result->values.term, QByteArrayLiteral("xterm-ghostty"));
     QVERIFY(result->values.workingDirectoryPath.has_value());
-    QCOMPARE(*result->values.workingDirectoryPath, QDir::homePath());
+    QCOMPARE(*result->values.workingDirectoryPath,
+             QFile::encodeName(QDir::homePath()));
 
     ConfigFixture::writeFile(
         fixture.preferredPath,
@@ -1192,7 +1200,74 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
     QVERIFY(result->values.workingDirectoryPath.has_value());
     QCOMPARE(
         *result->values.workingDirectoryPath,
-        QDir(QDir::homePath()).filePath(QStringLiteral("ghostty-qt-test")));
+        QFile::encodeName(QDir(QDir::homePath())
+                              .filePath(QStringLiteral("ghostty-qt-test"))));
+
+    QByteArray rawDirectory = QByteArrayLiteral("/work/ghostty-");
+    rawDirectory.append(char(0x80));
+    rawDirectory.append(char(0xff));
+    QByteArray rawConfig = QByteArrayLiteral("working-directory = ");
+    rawConfig.append(rawDirectory);
+    rawConfig.append('\n');
+    ConfigFixture::writeFile(fixture.preferredPath, rawConfig);
+    result = load(fixture.request());
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.workingDirectoryPath, std::optional(rawDirectory));
+}
+
+void GhosttyConfigProcessLoaderTest::
+    realHelperPreservesOriginalLaunchClassification()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty())
+        QSKIP("The pinned Ghostty config helper is disabled");
+
+    const passwd *const account = ::getpwuid(::getuid());
+    if (account == nullptr || account->pw_dir == nullptr
+        || account->pw_dir[0] == '\0') {
+        QSKIP("The current account has no passwd home directory");
+    }
+    const QByteArray passwdHome(account->pw_dir);
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+
+    auto cliOptions = realOptions(helperPath);
+    cliOptions.probableCli = true;
+    cliOptions.environment.remove(QStringLiteral("TERM_PROGRAM"));
+    cliOptions.environment.insert(QStringLiteral("SHELL"),
+                                  QStringLiteral("/ghostty/cli-shell"));
+    const GhosttyConfigLoadResult cli = makeGhosttyConfigProcessLoader(
+        std::move(cliOptions))(fixture.request());
+    QVERIFY2(cli.has_value(), qPrintable(errorMessage(cli)));
+    QVERIFY(!cli->values.workingDirectoryPath.has_value());
+    QVERIFY(cli->values.ordinaryCommand.has_value());
+    QCOMPARE(cli->values.ordinaryCommand->shellCommand,
+             QByteArrayLiteral("/ghostty/cli-shell"));
+
+    auto desktopOptions = realOptions(helperPath);
+    desktopOptions.probableCli = false;
+    // The loader must remove this helper-only mismatch because false records
+    // that the original process had an empty TERM_PROGRAM.
+    desktopOptions.environment.insert(QStringLiteral("TERM_PROGRAM"),
+                                      QStringLiteral("helper-sentinel"));
+    desktopOptions.environment.insert(QStringLiteral("SHELL"),
+                                      QStringLiteral("/ghostty/cli-shell"));
+    const auto desktopLoader =
+        makeGhosttyConfigProcessLoader(std::move(desktopOptions));
+    const GhosttyConfigLoadResult desktop = desktopLoader(fixture.request());
+    QVERIFY2(desktop.has_value(), qPrintable(errorMessage(desktop)));
+    QCOMPARE(desktop->values.workingDirectoryPath, std::optional(passwdHome));
+    QVERIFY(desktop->values.ordinaryCommand.has_value());
+    QVERIFY(desktop->values.ordinaryCommand->shellCommand
+            != QByteArrayLiteral("/ghostty/cli-shell"));
+
+    // Reloading samples a new generation but must not reclassify the process.
+    const GhosttyConfigLoadResult reloaded = desktopLoader(fixture.request());
+    QVERIFY2(reloaded.has_value(), qPrintable(errorMessage(reloaded)));
+    QCOMPARE(reloaded->values.workingDirectoryPath, std::optional(passwdHome));
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()

@@ -773,16 +773,16 @@
       "note": "The exact pinned parser supplies the optional RGB override; existing and future exact-gap divider handles recolor live, while unset preserves the Qt frontend default without changing geometry, opacity, or focus."
     },
     "split-inherit-working-directory": {
-      "status": "partial",
-      "note": "The exact boolean defaults true and reloads for future splits only. True uses the explicit source pane's newest accepted local-host-validated OSC 7 directory and otherwise falls back to working-directory; false always uses that fallback. Font inheritance remains independent, nested splits consult the newest workspace base, and stale concrete directories fall back to process cwd while retaining pinned Ghostty's requested logical PWD. Full parity remains partial because the helper's CLI-shaped invocation cannot reproduce GTK's unset desktop-launch home default for the fallback setting."
+      "status": "supported",
+      "note": "The exact boolean defaults true and reloads for future splits only. True uses the explicit source pane's newest accepted local-host-validated OSC 7 directory and otherwise falls back to working-directory; false always uses that fallback. POSIX path bytes remain lossless through stable source routing, nested splits consult the newest workspace base, font inheritance remains independent, and stale concrete directories fall back to process cwd while retaining pinned Ghostty's requested logical PWD."
     },
     "split-preserve-zoom": {
       "status": "supported",
       "note": "The exact canonical no-navigation default clears zoom after a successful goto_split, while navigation atomically transfers the zoomed presentation to the destination for tree-order and spatial navigation. Reload affects subsequent navigation without mutating current state; failed navigation is inert, and direct activation or structural split changes retain their existing unzoom behavior."
     },
     "tab-inherit-working-directory": {
-      "status": "partial",
-      "note": "The exact default-true boolean reloads for future tabs only. True uses the explicit action-target pane, or the current tab's recorded active pane for an empty-context UI request, and inherits its newest accepted local OSC 7 directory; false or a cleared/unavailable report uses working-directory. Stable broad fanout retains each source independently. The shared unset desktop-launch fallback and lossless non-UTF-8 path transport remain incomplete."
+      "status": "supported",
+      "note": "The exact default-true boolean reloads for future tabs only. True uses the explicit action-target pane, or the current tab's recorded active pane for an empty-context UI request, and inherits its newest accepted local OSC 7 directory; false or a cleared/unavailable report uses working-directory. Stable broad fanout retains each source independently, including lossless non-UTF-8 POSIX path bytes."
     },
     "term": {
       "status": "supported",
@@ -1060,8 +1060,8 @@
           "note": "The exact default-true boolean controls new tabs and windows: true copies only the exact action source's current point size, including manual zoom, while false keeps the newest application font-size with CLI precedence. Composite workspace/PaneId identity distinguishes equal pane IDs in different windows; children remain unadjusted and follow later font-size reloads. This follows Ghostty's documented and embedded-runtime contract; pinned GTK currently ignores the false branch."
         },
         "window-inherit-working-directory": {
-          "status": "partial",
-          "note": "The exact default-true boolean reloads for future windows. True uses the explicit originating workspace and stable PaneId, or the process controller's focused/last-active pane for application actions, and inherits its newest accepted local OSC 7 directory; stale or zero-window sources safely use the newest application fallback. False always uses that fallback. The shared unset desktop-launch fallback and lossless non-UTF-8 path transport remain incomplete."
+          "status": "supported",
+          "note": "The exact default-true boolean reloads for future windows. True uses the explicit originating workspace and stable PaneId, or the process controller's focused/last-active pane for application actions, and inherits its newest accepted local OSC 7 directory; stale or zero-window sources safely use the newest application fallback. False always uses that fallback, and inherited POSIX path bytes remain lossless through the application launch handoff."
         },
         "window-new-tab-position": {
           "status": "supported",
@@ -1134,8 +1134,8 @@
           "note": "The finalized u32 cell count participates only when paired with nonzero window-height. Every future window derives hidden normal geometry from its resolved Qt terminal font, inherits the live source/focused screen when available, includes construction-time explicit padding and declared QML chrome, applies a screen-bounded 10x4 cell minimum, and clamps best-effort before one activation-aware presentation; reload leaves existing windows unchanged. A normal first pane starts immediately from that viewport. Initially maximized/fullscreen windows keep synchronous pane/controller registration but defer first-session initialization until an exposed compositor-assigned viewport remains stable across two presented frames; inactive first tabs derive current geometry from their logical split tree, pending runtime, read-only, focus, and typed input operations retain controller-owned order until initialization, duplicate readiness events cannot restart the session, and close-before-exposure launches no child or process-derived confirmation. The resulting one-shot geometry initializes libghostty and forkpty before child exec; immediate ioctl probes confirm matching rows, columns, and padding-excluded terminal PTY pixels. Tabs, splits, bare-QML fallback initialization, and normal windows remain immediate and cannot inherit the window seed."
         },
         "working-directory": {
-          "status": "partial",
-          "note": "The shared-config value supplies initial panes plus new-tab, split, and new-window fallback; explicit home/tilde paths, process-cwd and logical-PWD inherit behavior, symlink-sensitive concrete spelling, explicit Qt CLI precedence, live future-surface updates, composite source identity, and pinned stale-PWD/non-fatal-chdir fallback are tested. The helper always appears CLI-launched, so an unset GTK desktop default resolves to inherit rather than context-dependent home; lossless non-UTF-8 path transport remains incomplete."
+          "status": "supported",
+          "note": "The shared-config value supplies initial panes plus new-tab, split, and new-window fallback. Raw POSIX bytes remain lossless through strict schema-v1 export, CLI parsing, launch snapshots, worker chdir/PWD, OSC 7, controllers, and inheritance; QString is only the GUI display projection. Original-process classification preserves Ghostty's unset desktop-launch home default versus probable-CLI inherit behavior across reloads. Explicit home/tilde paths, symlink-sensitive spelling, live future-surface updates, composite source identity, NUL rejection, and pinned stale-PWD/non-fatal-chdir fallback are tested."
         },
         "x11-instance-name": {
           "status": "not_applicable",

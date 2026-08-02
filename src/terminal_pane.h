@@ -142,6 +142,7 @@ public:
         return surfaceTitleOverride_;
     }
     QString currentDirectory() const;
+    [[nodiscard]] const QByteArray &currentDirectoryBytes() const;
     qreal fontPointSize() const;
     QStringList activeKeyTables() const;
     QStringList pendingKeySequence() const;

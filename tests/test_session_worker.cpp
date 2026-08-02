@@ -259,6 +259,8 @@ private Q_SLOTS:
     void fallsBackFromUnavailableWorkingDirectory();
     void preservesInheritedLogicalPwd();
     void preservesSymlinkSensitiveWorkingDirectory();
+    void preservesNonUtf8WorkingDirectoryBytes();
+    void rejectsNulWorkingDirectoryBeforePosixCalls();
     void resolvesRelativePathEntriesFromChildWorkingDirectory_data();
     void resolvesRelativePathEntriesFromChildWorkingDirectory();
     void skipsEmptyPathEntries();
@@ -1296,7 +1298,7 @@ void SessionWorkerTest::reportsTerminalInitializationSeparatelyFromChildExec()
     TerminalSessionLaunchOptions options;
     options.workingDirectory =
         QDir::current().filePath(QStringLiteral("tmp"));
-    QVERIFY(QDir().mkpath(options.workingDirectory));
+    QVERIFY(QDir().mkpath(options.workingDirectory.displayString()));
     options.program = {
         QStringLiteral("/ghostty-qt-test/nonexistent-child"),
     };
@@ -2546,6 +2548,77 @@ void SessionWorkerTest::preservesSymlinkSensitiveWorkingDirectory()
              qPrintable(contents));
     QVERIFY2(!contents.contains(lexicallyCleanedTarget),
              qPrintable(contents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::preservesNonUtf8WorkingDirectoryBytes()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(320, 4, 8, 16, 2560, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+    QSignalSpy directorySpy(&worker, &SessionWorker::currentDirectoryChanged);
+
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir root(QDir::current().filePath(
+        QStringLiteral("tmp/raw-working-directory-XXXXXX")));
+    QVERIFY(root.isValid());
+    QByteArray directory = QFile::encodeName(root.path());
+    directory.append(QByteArrayLiteral("/bytes-"));
+    directory.append(char(0x80));
+    directory.append(char(0xff));
+    QVERIFY2(::mkdir(directory.constData(), 0700) == 0, std::strerror(errno));
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = directory;
+    options.command = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/sh"),
+        QByteArrayLiteral("-c"),
+        QByteArrayLiteral(
+            "printf 'pwd='; printf '%s' \"$PWD\" | /usr/bin/od -An -v -tx1 | /usr/bin/tr -d ' \\n'; printf '\\ncwd='; /bin/pwd | /usr/bin/od -An -v -tx1 | /usr/bin/tr -d ' \\n'"),
+    });
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(directorySpy.count(), 1);
+    QCOMPARE(directorySpy.constFirst().constFirst().toByteArray(), directory);
+    const QString contents = frameText(accumulatedFrame(updateSpy));
+    QVERIFY2(contents.contains(QStringLiteral("pwd=")
+                               + QString::fromLatin1(directory.toHex())),
+             qPrintable(contents));
+    QVERIFY2(
+        contents.contains(QStringLiteral("cwd=")
+                          + QString::fromLatin1((directory + '\n').toHex())),
+        qPrintable(contents));
+    worker.shutdown();
+    QCOMPARE(::rmdir(directory.constData()), 0);
+}
+
+void SessionWorkerTest::rejectsNulWorkingDirectoryBeforePosixCalls()
+{
+    SessionWorker worker;
+    worker.resizeTerminal(80, 4, 8, 16, 640, 64);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+    QSignalSpy directorySpy(&worker, &SessionWorker::currentDirectoryChanged);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QByteArray("/invalid\0suffix", 15);
+    options.command = TerminalCommand::direct({QByteArrayLiteral("/bin/true")});
+    QVERIFY(worker.initialize(options));
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 1000);
+    QCOMPARE(errorSpy.count(), 1);
+    QVERIFY(errorSpy.constFirst().constFirst().toString().contains(
+        QStringLiteral("contains a NUL byte")));
+    QVERIFY(directorySpy.isEmpty());
     worker.shutdown();
 }
 

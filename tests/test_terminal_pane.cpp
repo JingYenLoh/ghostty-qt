@@ -11751,9 +11751,9 @@ void TerminalPaneTest::resetPreservesSurfaceTitleAndClearsWorkingDirectory()
     options.program = {
         QStringLiteral("/bin/sh"),
         QStringLiteral("-c"),
-        QStringLiteral(
-            "printf '\\033]0;metadata-title\\007"
-            "\\033]7;file://localhost/\\007metadata-ready\\n'; sleep 5"),
+        QStringLiteral("printf '%b' '\\033]0;metadata-title\\007"
+                       "\\033]7;file://localhost/raw-%80-%ff\\007"
+                       "metadata-ready\\n'; sleep 5"),
     };
     options.hold = true;
 
@@ -11766,8 +11766,14 @@ void TerminalPaneTest::resetPreservesSurfaceTitleAndClearsWorkingDirectory()
         updatesContain(updates, QStringLiteral("metadata-ready")), 5000);
     QTRY_COMPARE_WITH_TIMEOUT(pane.title(), QStringLiteral("metadata-title"),
                               1000);
-    QTRY_COMPARE_WITH_TIMEOUT(pane.currentDirectory(), QStringLiteral("/"),
-                              1000);
+    const QByteArray rawDirectory = QByteArray::fromHex("2f7261772d802dff");
+    QTRY_COMPARE_WITH_TIMEOUT(pane.currentDirectoryBytes(), rawDirectory, 1000);
+    QCOMPARE(pane.splitLaunchOptions(options).workingDirectory.bytes(),
+             rawDirectory);
+    QCOMPARE(pane.tabLaunchOptions(options).workingDirectory.bytes(),
+             rawDirectory);
+    QCOMPARE(pane.windowLaunchOptions(options).workingDirectory.bytes(),
+             rawDirectory);
 
     QVERIFY(pane.executeConfiguredAction(QStringLiteral("reset")));
     QTRY_VERIFY_WITH_TIMEOUT(pane.currentDirectory().isEmpty(), 1000);
@@ -11775,7 +11781,7 @@ void TerminalPaneTest::resetPreservesSurfaceTitleAndClearsWorkingDirectory()
     QCOMPARE(pane.splitLaunchOptions(options).workingDirectory,
              QDir::tempPath());
 
-    // OSC and set_surface_title converge on the same apprt base-title layer.
+    // OSC and set_surface_title converge on the same base-title layer.
     // Reset publishes no title update, so either writer survives, including
     // an explicitly present empty action value.
     QVERIFY(pane.executeConfiguredAction(QStringLiteral("set_surface_title:")));

@@ -135,7 +135,9 @@ public Q_SLOTS:
 Q_SIGNALS:
     void terminalUpdated(const TerminalUpdate &update);
     void titleChanged(const QString &title);
-    void currentDirectoryChanged(const QString &directory);
+    // POSIX path bytes stay lossless across the worker/GUI queue. The
+    // controller owns the one-way display decoding for QML properties.
+    void currentDirectoryChanged(const QByteArray &directory);
     void mouseTrackingChanged(bool enabled);
     void keyboardActionModeChanged(bool enabled);
     void clipboardTextReady(const QString &text,

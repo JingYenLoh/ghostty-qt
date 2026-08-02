@@ -513,6 +513,7 @@ private Q_SLOTS:
     void dragsExactNestedSplitDividerAndPreservesFocus();
     void splitDividerColorReloadsWithoutRelayout();
     void dimsUnfocusedSplitPanesAcrossLifecycle();
+    void preservesRawWorkingDirectoryAcrossWorkspaceInheritance();
     void splitWorkingDirectoryPolicyReloadsForFutureNestedSplits();
     void newTabInheritanceUsesStableSourceAndReloadedPolicies();
     void splitDividerHitRegionPreservesTerminalInputAndZoom();
@@ -597,7 +598,7 @@ void TerminalWorkspaceTest::
     });
 
     LaunchOptions options = baseOptions();
-    const QString ordinaryDirectory = options.workingDirectory;
+    const QString ordinaryDirectory = options.workingDirectory.displayString();
     options.ordinaryCommand = ordinaryCommand;
     options.tabInheritWorkingDirectory = false;
     options.splitInheritWorkingDirectory = false;
@@ -12112,6 +12113,59 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     workspace.reset();
     secondWindow.close();
     window.close();
+}
+
+void TerminalWorkspaceTest::
+    preservesRawWorkingDirectoryAcrossWorkspaceInheritance()
+{
+    ShellEnvironment shell;
+    LaunchOptions options = baseOptions();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf '\\033]7;%s\\007' \"$1\"; sleep 5"),
+        QStringLiteral("ghostty-qt-osc7"),
+        QStringLiteral("file://localhost/workspace-%80-%ff"),
+    };
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId sourceTabId = workspace.tabModel()->idAt(0);
+    const PaneId sourcePaneId = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *const sourcePane = workspace.findChild<TerminalPane *>();
+    QVERIFY(sourcePane != nullptr);
+
+    const QByteArray rawDirectory =
+        QByteArray::fromHex("2f776f726b73706163652d802dff");
+    QTRY_COMPARE_WITH_TIMEOUT(sourcePane->currentDirectoryBytes(), rawDirectory,
+                              3000);
+
+    const std::optional<LaunchOptions> windowOptions =
+        workspace.newWindowLaunchOptions(options, sourcePaneId);
+    QVERIFY(windowOptions.has_value());
+    QCOMPARE(windowOptions->workingDirectory.bytes(), rawDirectory);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {sourceTabId, sourcePaneId, 0},
+    }));
+    const auto inheritedControllerCount = [&] {
+        return std::ranges::count_if(
+            workspace.findChildren<TerminalController *>(),
+            [&rawDirectory](const TerminalController *controller) {
+                return controller->launchWorkingDirectory().bytes()
+                    == rawDirectory;
+            });
+    };
+    QCOMPARE(inheritedControllerCount(), 1);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::NewTab,
+        {sourceTabId, sourcePaneId, 0},
+    }));
+    QCOMPARE(inheritedControllerCount(), 2);
 }
 
 void TerminalWorkspaceTest::splitWorkingDirectoryPolicyReloadsForFutureNestedSplits()

@@ -217,7 +217,7 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
                           "\007A\033[31mB\033[c"));
     const GhosttyVtAdapter::DeferredEffects effects = adapter->takeDeferredEffects();
     QCOMPARE(effects.title, QStringLiteral("adapter-title"));
-    QCOMPARE(effects.currentDirectory, QStringLiteral("/tmp"));
+    QCOMPARE(effects.currentDirectory, QByteArrayLiteral("/tmp"));
     QVERIFY(effects.bell);
     QCOMPARE(ptyWrites, QByteArrayLiteral("\033[?62;22;52c"));
 
@@ -236,7 +236,12 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     const GhosttyVtAdapter::DeferredEffects localEffects =
         adapter->takeDeferredEffects();
     QCOMPARE(localEffects.currentDirectory,
-             QStringLiteral("/tmp/encoded directory"));
+             QByteArrayLiteral("/tmp/encoded directory"));
+
+    adapter->writeVt(
+        QByteArrayLiteral("\033]7;file://localhost/tmp/raw-%80-%ff\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QByteArray::fromHex("2f746d702f7261772d802dff"));
 
     adapter->writeVt(QByteArrayLiteral(
         "\033]7;file://localhost/tmp/literal space/%zz/line%+Afeed\007"));
@@ -288,7 +293,7 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
 
     adapter->writeVt(
         QByteArrayLiteral("\033]7;file://localhost\007"));
-    const QString emptyPath =
+    const QByteArray emptyPath =
         adapter->takeDeferredEffects().currentDirectory;
     QVERIFY(!emptyPath.isNull());
     QVERIFY(emptyPath.isEmpty());
@@ -306,7 +311,7 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     adapter->writeVt(QByteArrayLiteral(
         "\033]7;\007"
         "\033]7;file://remote.invalid/ignored\007"));
-    const QString batchedClear =
+    const QByteArray batchedClear =
         adapter->takeDeferredEffects().currentDirectory;
     QVERIFY(!batchedClear.isNull());
     QVERIFY(batchedClear.isEmpty());

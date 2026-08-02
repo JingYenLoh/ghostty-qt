@@ -11,6 +11,10 @@
 
 struct GhosttyConfigProcessLoaderOptions {
     QString helperPath;
+    // Ghostty finalizes an unset working-directory differently for a likely
+    // CLI launch. Capture the original application process fact; the helper's
+    // own private action must not reclassify an argc-1 desktop launch.
+    bool probableCli = true;
     // Already-encoded Ghostty configuration CLI arguments. Both structured
     // queries receive their private action and selected color scheme first,
     // followed by these values in their original order. Each private query is

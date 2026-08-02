@@ -850,6 +850,9 @@ bool SessionWorker::createTerminal()
         .appearance = options_.runtime.appearance,
         .colorScheme = options_.runtime.colorScheme,
         .clipboardWriteAccess = options_.runtime.clipboardWrite,
+        .initialWorkingDirectory = options_.inheritWorkingDirectory
+            ? std::nullopt
+            : std::optional(options_.workingDirectory.bytes()),
         .enquiryResponse = options_.runtime.enquiryResponse,
     };
     GhosttyVtAdapter::Callbacks callbacks;
@@ -1010,22 +1013,28 @@ bool SessionWorker::spawnChild()
         return false;
     }
 
-    const QString processWorkingDirectory = QDir::currentPath();
-    const QString requestedWorkingDirectory = options_.workingDirectory;
-    QString childWorkingDirectory = processWorkingDirectory;
-    QByteArray requestedWorkingDirectoryBytes;
+    const QByteArray processWorkingDirectory =
+        QFile::encodeName(QDir::currentPath());
+    const QByteArray &requestedWorkingDirectory =
+        options_.workingDirectory.bytes();
+    QByteArray childWorkingDirectory = processWorkingDirectory;
     bool attemptWorkingDirectory = false;
     if (!options_.inheritWorkingDirectory) {
-        requestedWorkingDirectoryBytes =
-            QFile::encodeName(requestedWorkingDirectory);
+        if (requestedWorkingDirectory.contains('\0')) {
+            Q_EMIT errorOccurred(QStringLiteral(
+                "Configured working directory contains a NUL byte and cannot be passed to POSIX APIs."));
+            return false;
+        }
         // Pinned Ghostty drops a missing cwd but passes any existing path to
         // the child, where chdir failure is deliberately non-fatal.
         attemptWorkingDirectory = !requestedWorkingDirectory.isEmpty()
-            && ::access(requestedWorkingDirectoryBytes.constData(), F_OK) == 0;
+            && ::access(requestedWorkingDirectory.constData(), F_OK) == 0;
+        struct stat directoryStatus{};
         if (attemptWorkingDirectory
-            && QFileInfo(requestedWorkingDirectory).isDir()
-            && ::access(requestedWorkingDirectoryBytes.constData(), X_OK)
-                == 0) {
+            && ::stat(requestedWorkingDirectory.constData(), &directoryStatus)
+                == 0
+            && S_ISDIR(directoryStatus.st_mode)
+            && ::access(requestedWorkingDirectory.constData(), X_OK) == 0) {
             // This expected effective directory is used only to decide
             // whether the legacy SHELL fallback should apply. The child still
             // attempts the exact requested spelling below.
@@ -1201,7 +1210,7 @@ bool SessionWorker::spawnChild()
         // Pinned Ghostty applies concrete cwd-derived PWD after env overrides,
         // retaining the requested logical spelling even when chdir falls back.
         setEnvironmentEntry(childEnvironment, QByteArrayLiteral("PWD"),
-                            requestedWorkingDirectory.toLocal8Bit());
+                            requestedWorkingDirectory);
     }
 
     QVector<QByteArray> argumentStorage;
@@ -1238,8 +1247,8 @@ bool SessionWorker::spawnChild()
     // Do not preselect a candidate: the child attempts the complete ordered
     // list below. The availability probe exists only for the frontend's
     // legacy invalid-SHELL fallback.
-    const bool executableAvailable = hasExecutableCandidate(
-        executablePaths, QFile::encodeName(childWorkingDirectory));
+    const bool executableAvailable =
+        hasExecutableCandidate(executablePaths, childWorkingDirectory);
     if (legacyInteractiveFallback && !executableAvailable
         && requestedExecutable != QByteArrayLiteral("/bin/sh")) {
         requestedExecutable = QByteArrayLiteral("/bin/sh");
@@ -1364,7 +1373,7 @@ bool SessionWorker::spawnChild()
             // Ghostty treats the directory as a hint. An existing file,
             // permission failure, or post-preflight race must not prevent the
             // command from starting in the inherited process directory.
-            (void)::chdir(requestedWorkingDirectoryBytes.constData());
+            (void)::chdir(requestedWorkingDirectory.constData());
         }
         // Search after chdir, just like pinned Zig's execvpeZ. A stat-only
         // parent lookup cannot detect an executable whose interpreter is

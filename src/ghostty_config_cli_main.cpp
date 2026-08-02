@@ -15,7 +15,7 @@
 #include <vector>
 
 extern "C" ghostty_string_s
-ghostty_qt_config_json(std::uint8_t colorScheme,
+ghostty_qt_config_json(std::uint8_t colorScheme, std::uint8_t probableCli,
                        ghostty_string_s *errorMessage);
 extern "C" ghostty_string_s
 ghostty_qt_shell_integration_json(const std::uint8_t *request,
@@ -26,6 +26,7 @@ namespace {
 constexpr auto kShowConfigJsonAction = "+show-config-json";
 constexpr auto kShellIntegrationJsonAction = "+shell-integration-json";
 constexpr std::string_view kColorSchemeOption = "--ghostty-qt-color-scheme=";
+constexpr std::string_view kProbableCliOption = "--ghostty-qt-probable-cli=";
 constexpr std::size_t kMaximumShellIntegrationRequestBytes = 4U * 1024U * 1024U;
 constexpr auto kResourcesEnvironment = "GHOSTTY_RESOURCES_DIR";
 
@@ -83,6 +84,7 @@ bool isPublicShowConfigOption(std::string_view argument)
 int showConfigJson(std::span<char *const> arguments)
 {
     std::optional<ConfigColorScheme> colorScheme;
+    std::optional<bool> probableCli;
     std::vector<char *> configurationArguments;
     configurationArguments.reserve(arguments.size());
     configurationArguments.push_back(arguments.front());
@@ -111,6 +113,27 @@ int showConfigJson(std::span<char *const> arguments)
             std::fputs(
                 "ghostty-qt-config-helper: +show-config-json requires "
                 "exactly one --ghostty-qt-color-scheme=light|dark option\n",
+                stderr);
+            return 64;
+        }
+        if (value.starts_with(kProbableCliOption)) {
+            const std::string_view enabled =
+                value.substr(kProbableCliOption.size());
+            if (probableCli.has_value()
+                || (enabled != "true" && enabled != "false")) {
+                std::fputs(
+                    "ghostty-qt-config-helper: +show-config-json accepts at "
+                    "most one --ghostty-qt-probable-cli=true|false option\n",
+                    stderr);
+                return 64;
+            }
+            probableCli = enabled == "true";
+            continue;
+        }
+        if (value.starts_with("--ghostty-qt-probable-cli")) {
+            std::fputs(
+                "ghostty-qt-config-helper: +show-config-json accepts at most "
+                "one --ghostty-qt-probable-cli=true|false option\n",
                 stderr);
             return 64;
         }
@@ -144,7 +167,8 @@ int showConfigJson(std::span<char *const> arguments)
 
     ghostty_string_s errorMessage{};
     const ghostty_string_s json = ghostty_qt_config_json(
-        static_cast<std::uint8_t>(*colorScheme), &errorMessage);
+        static_cast<std::uint8_t>(*colorScheme),
+        static_cast<std::uint8_t>(probableCli.value_or(true)), &errorMessage);
     if (json.ptr == nullptr) {
         if (errorMessage.ptr != nullptr) {
             std::fwrite(errorMessage.ptr, 1, errorMessage.len, stderr);
