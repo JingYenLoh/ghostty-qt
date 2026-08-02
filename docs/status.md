@@ -71,7 +71,8 @@ for intentional upgrade procedure.
   queries, and several notification/reporting behaviors require public
   Ghostty APIs that do not yet exist.
 - User-defined `link` expressions are not implemented because the pinned
-  upstream parser does not implement their CLI grammar.
+  upstream parser does not implement their CLI grammar; the parity ledger
+  records this as blocked upstream rather than planned frontend work.
 - Renderer damage and text nodes are retained per row, as is cell-derived solid
   geometry on RHI backends; the software fallback uses pooled global nodes.
   Production GPU and compositor output still requires interactive qualification

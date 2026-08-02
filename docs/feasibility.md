@@ -88,7 +88,7 @@ advanced text/graphics support, and distribution:
   stable live-output handling, coalesced pointer queries, and mutation-safe
   activation. The `true`/`false`/`osc8` preview policy is implemented as a
   frontend-only overlay and reloads without querying the worker. User-defined
-  `link` expressions/actions remain separate work because the pinned parser's
+  `link` expressions/actions remain blocked because the pinned parser's
   `RepeatableLink.parseCLI` returns `error.NotImplemented`;
   pathological logical lines and regex searches deliberately fail closed at
   bounded cell/byte and Oniguruma retry limits. Exact OSC grouping by hyperlink

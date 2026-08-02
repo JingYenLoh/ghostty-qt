@@ -640,7 +640,8 @@ software rendering tests without changing the Qt layer or texture architecture.
 **Status:** the finalized typography configuration, Qt-owned face resolution,
 maximal compatible row shaping, and device-pixel-safe fallback are implemented.
 Exact Ghostty face selection, FreeType behavior, synthesis, run construction,
-and positioned glyph output require a public renderer-neutral font contract.
+positioned glyph output, generated box sprites, and icon classification require
+a public renderer-neutral font contract.
 
 The standalone public VT API exposes the authoritative row cells, styles,
 selection range, base codepoint, grapheme length, and complete grapheme bytes.
@@ -655,7 +656,11 @@ Ghostty's generic renderer:
   grapheme, spacer, and fallback boundaries;
 - `font.Shaper`, its feature application, and its shaping cache; or
 - each shaped cell's font index, glyph index, terminal-relative x position,
-  and x/y glyph offsets.
+  and x/y glyph offsets;
+- `font.sprite.Face` and its generated box-drawing geometry, including the
+  configured box thickness; or
+- Nerd Font/icon classification and the constrained glyph metrics that apply
+  the configured icon height.
 
 The broader `ghostty.h` application runtime owns a complete renderer and
 surface model, but adopting it would replace ghostty-qt's Qt scene graph,
@@ -733,6 +738,9 @@ remain upstream decisions, but an embedding renderer needs:
 5. A cache-generation identifier so a frontend can safely reuse rasterized
    glyphs and discard them after a font-grid reload without retaining dangling
    handles.
+6. Generated-glyph output or an exact renderer-neutral sprite plan that
+   identifies Ghostty-classified box and icon cells and applies the finalized
+   `adjust-box-thickness` and `adjust-icon-height` values.
 
 The shaping operation must use Ghostty's existing `RunIterator`, codepoint
 resolver, `Shaper`, synthesis policy, and backend load configuration rather
@@ -758,6 +766,8 @@ for:
   `fi`, `fl`, and `st` cases, and cursor-break enabled versus disabled;
 - ASCII ligatures, combining clusters, Arabic or other complex shaping,
   bidirectional codepoints on the physical terminal grid, and color glyphs;
+- representative box-drawing and Nerd Font cells across the full supported
+  box-thickness and icon-height modifier ranges;
 - one-shot and fragmented terminal input producing identical row shaping; and
 - font reload invalidating old face/glyph handles while a no-op reload
   preserves reusable cache generation.
@@ -784,6 +794,38 @@ Once this contract exists in an official, publicly reachable Ghostty commit:
 6. Compare screenshots and structured glyph records across DPRs, splits,
    cursor movement, selection, search, live reload, missing fonts, and complex
    scripts before promoting the affected parity entries to supported.
+
+The same upstream contract gates `adjust-box-thickness` and
+`adjust-icon-height`; keep both blocked until generated cells are part of the
+authoritative result rather than approximated from codepoint ranges in Qt.
+
+## User-defined link rule grammar
+
+**Status:** the pinned default `link-url` matcher and explicit OSC 8 links are
+implemented. Arbitrary `link` rules are blocked because official Ghostty's
+`RepeatableLink.parseCLI` returns `error.NotImplemented` before producing a
+configuration value.
+
+ghostty-qt intentionally does not invent a second regular-expression/action
+syntax for a configuration key whose upstream grammar, ordering, and error
+semantics are unfinished. The project-private configuration helper can export
+a finalized rule only after Ghostty itself can parse one.
+
+### Required upstream contract
+
+Official Ghostty must implement and document `RepeatableLink.parseCLI`,
+including escaping, matcher and action syntax, duplicate ordering, validation,
+and diagnostics. The finalized parsed value must retain enough structured data
+for an embedding frontend to execute the same match and action without
+reinterpreting the original text.
+
+### ghostty-qt follow-up after upstream support lands
+
+After an official pinned revision exposes the completed grammar, extend the
+schema-v1 configuration export with ordered structured link rules, route their
+typed actions through the existing stable-pane pipeline, add differential
+parser/matcher/action tests, and only then promote `link` from
+`blocked_upstream`.
 
 ## Exact clipboard selection formatting
 

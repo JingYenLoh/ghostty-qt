@@ -1772,7 +1772,8 @@ FreeType load and synthesis internals, or HarfBuzz positioned-glyph plan:
 those contracts are not part of public `libghostty-vt`, so final selection and
 shaping remain Qt-owned and the affected entries stay partial. Ghostty's
 private generated-box sprite and icon/Nerd Font classification paths also keep
-`adjust-box-thickness` and `adjust-icon-height` planned.
+`adjust-box-thickness` and `adjust-icon-height` blocked on the public font
+contract recorded in `REQUIRES_UPSTREAM.md`.
 
 The helper receives explicit `--font-family` and `--font-size` arguments before
 Ghostty finalizes configuration, rather than overlaying them afterward. This
@@ -2718,7 +2719,7 @@ synthesis, shaping-break, and FreeType settings stay partial because final
 face and glyph resolution is Qt-owned; font size and the eleven exposed metric
 keys are supported. Search actions remain partial because the
 public library artifact cannot expose Ghostty's `xev`-dependent search thread,
-while custom `link` rules and other upstream keys stay explicitly planned.
+while custom `link` rules stay blocked on Ghostty's unfinished parser.
 All bell features and both audio settings are supported through the public Qt
 platform and multimedia APIs; an actual system bell remains dependent on the
 Wayland platform/compositor, as Ghostty's system feature is itself conditional
