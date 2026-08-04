@@ -119,22 +119,29 @@ Zoom changes only presentation: the complete tree, ratios, PTYs, and logical
 geometry remain intact, while divider handles are absent. Only the current
 tab's panes and dividers are exposed. The active pane supplies the tab's base
 title and receives toolbar and directional-focus actions. Each controller
-stores that base as an optional value so absence selects the launch-program or
-`Terminal` fallback while `set_surface_title:` remains a present empty title.
-Each pane separately stores the optional manual override produced by
+stores that base as an optional value. A configured title initializes it and
+remains a live policy that masks later terminal metadata. Without that policy,
+the final selected direct command installs its exact `argv[0]` as a present
+base, including an explicit empty value, while a shell-form command leaves the
+base absent and selects the `Terminal` display fallback. `set_surface_title:`
+and later OSC title updates share the runtime base layer and likewise preserve
+an empty title as present. Each pane separately stores the optional manual
+override produced by
 `prompt_surface_title`; effective surface display is override, then base, then
 the Qt fallback. Raw surface consumers stop before the fallback, and a tab
 override remains a still-higher presentation layer.
 The parameterized action decodes the structured helper's canonical escaped
 UTF-8, requires the originating stable `PaneId`, and mutates only this
-GUI-thread cache. A later worker title event replaces it; comparing the full
-optional state ensures OSC can restore the exact string cached before the
-action. An empty OSC update returns to absence and the fallback. Reset
-preserves the current base title regardless of its latest writer because the
-pinned Ghostty action publishes no application title update. All/global fanout
-uses the existing stable pane snapshot and neither activates a pane nor touches
-terminal selection. The strict void `prompt_surface_title` snapshots the raw
-surface override or base by stable `PaneId`, excluding tab and fallback text.
+GUI-thread cache. A later worker title event replaces it only when no
+configured-title policy is active; comparing the full optional state preserves
+the distinction between absence and an explicit empty title. Reset preserves
+the current base title regardless of its latest writer because the pinned
+Ghostty action publishes no application title update. All/global fanout takes
+a fresh snapshot of the process-wide append-on-create/swap-remove surface
+registry for each chain entry, revalidates its stable workspace and `PaneId`
+targets, and neither activates a pane nor touches terminal selection. The
+strict void `prompt_surface_title` snapshots the raw surface override or base
+by stable `PaneId`, excluding tab and fallback text.
 Non-empty confirmation preserves the exact text as a persistent override;
 empty confirmation clears it, and Cancel is inert. Base updates remain cached
 while masked, so clearing reveals the newest OSC or action value. The strict
@@ -142,10 +149,10 @@ void `copy_title_to_clipboard` consumes the same raw effective surface value;
 absence and explicit empty return false, while non-empty Unicode is written
 exactly to the standard clipboard on the GUI thread. It never consumes the tab
 override, zoom/fallback presentation, primary selection, or terminal
-selection lifecycle. Broad fanout retains the existing stable tab/tree order,
-so its last non-empty pane is the final standard-clipboard writer. This
-frontend order differs from Ghostty's process-wide creation/swap-remove
-surface vector after reordering or deletion. A non-empty
+selection lifecycle. Broad fanout follows the process surface-registry
+snapshot and revalidates each stable target, so its last live non-empty pane is
+the final standard-clipboard writer in Ghostty's creation/swap-remove order
+across windows, splits, closure, and later creation. A non-empty
 `set_tab_title` payload installs a per-tab display-title override by stable tab
 identity; an empty payload clears it. Pane focus changes and OSC title updates
 continue to update the base title without replacing the override, so clearing
@@ -719,29 +726,51 @@ they may traverse and restore compressed pages.
 
 The same short-lived inspector model owns a separate `QAbstractListModel` event
 ring rather than adding event rows to the 250 ms snapshot. It retains at most
-256 copied summaries, newest first. Controller input requests, pane and session
-state transitions, and terminal frame publications enter one monotonic
-sequence; frame publications are reduced to scalar flags, dimensions, dirty-row
-counts, cursor position, and revisions, then coalesced over 50 ms. Terminal
-cells, palettes, Kitty image pointers, paste contents, and serialized CSI,
-escape, and raw-text payloads never enter the ring. Text diagnostics use bounded
-escaped previews, while every stored field and the filter query also have hard
-length limits. Key and input-method previews can contain typed secrets; their
-capture lifetime is therefore the explicitly open inspector window.
-Filtering rebuilds only the visible projection, pausing advances sequence IDs
-without retaining observations or publishing per-observation model updates,
-and clearing cannot publish an already pending frame batch. Closing the
-inspector clears the ring immediately; deferred QObject teardown then
-disconnects its sources and destroys the inactive model, so capture and copied
-payloads have no hidden-pane lifetime.
+256 copied summaries, newest first. Root application/global keybinding
+decisions, pane matcher decisions, controller input requests, bounded worker
+encoding outcomes, pane and session state transitions, and terminal frame
+publications enter one monotonic event sequence. A separate typed trace ID is
+allocated for each captured key event without overloading that event sequence.
+Root-consumed key events do not enter the worker key encoder and therefore have
+no worker key-encoding row, although their actions may invoke separate worker
+operations. Pane input that reaches the key encoder reuses its trace ID for
+direct encoding or per-key sequence staging. Matcher rows copy the selected
+action chain, active named tables, pending sequence, and raw binding flags;
+asynchronous local chains may decide their final input effect later. Worker
+rows report the exact byte count attributed to that key for the operation—zero
+when no bytes were encoded—and retain at most the first 64 bytes. Within one
+keyboard-trace generation, staged keys receive a second per-key row when
+resolved, retain their own bounded byte preview, and share a sequence token.
+When an allowed sequence is flushed, its combined PTY write remains atomic but
+never enters the ring.
+Frame publications are reduced to scalar flags, dimensions, dirty-row counts,
+cursor position, and revisions, then coalesced over 50 ms. Terminal cells,
+palettes, Kitty image pointers, paste contents, and serialized terminal-output
+CSI, escape, and raw-text payloads never enter the ring. Text diagnostics use
+bounded escaped previews, while every stored field and the filter query also
+have hard length limits. Key and input-method previews can contain typed
+secrets; their capture lifetime is therefore the explicitly open, unpaused
+inspector window.
+Filtering rebuilds only the visible projection. Pausing disables keyboard
+decision/result tracing at its sources; other still-connected observations
+advance the skipped count and event sequence without retaining payloads, and a
+pending frame batch is discarded. Clearing cannot publish an already pending
+frame batch. Closing the inspector clears the ring immediately; deferred
+QObject teardown then disconnects its sources and destroys the inactive model,
+so capture and copied payloads have no hidden-pane lifetime. Every open or
+resume allocates a fresh keyboard-trace generation. Pause or close immediately
+stops new trace allocation and event-ring retention, and the controller rejects
+any old result that races ahead of the ordered worker update. That update
+clears bounded metadata for staged keys without changing terminal input
+semantics, so a later sequence flush cannot expose or misattribute an older
+byte preview.
 
 This event ring is an intentionally incremental diagnostic projection, not yet
-Ghostty's complete inspector trace. It observes requests that reach the pane's
-controller but not root-consumed keybinding decisions, and it does not correlate
-those requests with the session worker's encoded bytes. Exact terminal-I/O rows
-also require a second, inspector-only parser stream built against the pinned
-Ghostty Zig module; the public C bridge exposes terminal effects, not its raw
-parser-action stream.
+Ghostty's complete inspector trace. Exact terminal-output parser-action rows
+must wait for an opt-in upstream raw-action observer that supplies coherent
+pre-application terminal state and stable copied inactive-screen/page data.
+Replaying PTY bytes through a second frontend parser would duplicate private
+Ghostty behavior while still lacking that state.
 
 The finalized `scroll-to-bottom.output` flag is evaluated at the frame
 boundary, before the visible value update is copied. When output scrolling is
@@ -2312,10 +2341,11 @@ the broad coordinator use the internal completion path for the authoritative
 performed value.
 
 Process-wide fanout adds an action-major barrier around the same protocol. For
-each worker-dependent entry it takes a fresh workspace/tab/tree snapshot,
-starts preparation on every target concurrently, and buffers the correlated
-results. Once all live targets have resolved, GUI effects commit in snapshot
-order before the next chain entry begins. Thus a later clipboard consumer sees
+each worker-dependent entry it takes a fresh snapshot of the process-wide
+append-on-create/swap-remove surface registry, starts preparation on every
+target concurrently, and buffers the correlated results. Once all live
+targets have resolved, GUI effects commit in that snapshot order before the
+next chain entry begins. Thus a later clipboard consumer sees
 the completed copy, and the last broad clipboard writer is deterministic even
 when pane workers finish in another order. A pane or workspace destroyed while
 preparation is pending resolves its target as unperformed and cannot redirect
@@ -2446,13 +2476,14 @@ the same stable process snapshot used by other surface actions.
 `GhosttyApplicationKeybindings` performs root app-scoped leaves before the
 focused pane lookup, matching Ghostty's app/surface split while leaving leaders
 and mixed-scope chains to the pane. A pane that matches `all` or `global`
-forwards the chain to the application controller. It executes app actions once and
-surface actions over a stable pane snapshot, action-major across the chain;
+forwards the chain to the application controller. It executes app actions once
+and surface actions over a fresh process surface-registry snapshot for each
+entry, action-major across the chain;
 `unconsumed` and `performable` do not alter broad-binding consumption. Split
 container actions resolve from each tab's current active pane during that
 fanout, matching the pinned GTK split-tree action boundary. Automatic split
 direction is resolved from each originating surface before that placement
-redirect. New-tab actions instead retain every pane in the stable fanout
+redirect. New-tab actions instead retain every surface in the registry
 snapshot as their creation source, so activating one new tab cannot redirect
 the next action's inherited directory or font size. Placement still resolves
 against the selected tab before each creation, matching Ghostty: in `current`
@@ -2509,10 +2540,10 @@ matching the independent GTK window-state flags. A root first mapped in a
 non-windowed state has no compositor-established normal geometry, so QML
 restores its retained hidden size on the first transition to windowed; Qt owns
 all later normal geometry restoration. In contrast, both title prompt actions
-preserve pinned per-surface invocation: every surface in the stable fanout snapshot contributes
-one independently captured request, including multiple leaves of the same
-split tab. Surface and tab requests share one modal FIFO and are shown without
-deduplication.
+preserve pinned per-surface invocation: every surface in the fresh process
+surface-registry snapshot contributes one independently captured request,
+including multiple leaves of the same split tab. Surface and tab requests
+share one modal FIFO and are shown without deduplication.
 
 On Linux, eligible root `global` bindings are registered asynchronously through
 the XDG Global Shortcuts portal using Qt D-Bus. Request response subscriptions

@@ -27,6 +27,7 @@ private Q_SLOTS:
     void exposesRolesAndNewestEventFirst();
     void evictsOldestEventsAtCapacity();
     void reentrantEvictionRemainsBounded();
+    void reentrantClearDropsPendingEvents();
     void preservesSequenceGapsWhilePaused();
     void clearRetainsSequenceProgress();
     void filtersByCategoryAndText();
@@ -41,9 +42,11 @@ void TerminalInspectorEventModelTest::exposesRolesAndNewestEventFirst()
         &model, QAbstractItemModelTester::FailureReportingMode::QtTest);
     const QHash<int, QByteArray> roles = model.roleNames();
 
-    QCOMPARE(roles.size(), 6);
+    QCOMPARE(roles.size(), 7);
     QCOMPARE(roles.value(TerminalInspectorEventModel::SequenceRole),
              QByteArrayLiteral("sequence"));
+    QCOMPARE(roles.value(TerminalInspectorEventModel::TraceIdRole),
+             QByteArrayLiteral("traceId"));
     QCOMPARE(roles.value(TerminalInspectorEventModel::ElapsedTextRole),
              QByteArrayLiteral("elapsedText"));
     QCOMPARE(roles.value(TerminalInspectorEventModel::CategoryRole),
@@ -57,7 +60,7 @@ void TerminalInspectorEventModelTest::exposesRolesAndNewestEventFirst()
 
     QCOMPARE(model.append(TerminalInspectorEventModel::Category::Input,
                           QStringLiteral("key"), QStringLiteral("pressed"),
-                          QStringLiteral("code=65")),
+                          QStringLiteral("code=65"), quint64{41}),
              quint64{1});
     QCOMPARE(model.append(TerminalInspectorEventModel::Category::Terminal,
                           QStringLiteral("title"), QStringLiteral("changed")),
@@ -68,6 +71,14 @@ void TerminalInspectorEventModelTest::exposesRolesAndNewestEventFirst()
     QCOMPARE(model.retainedCount(), 2);
     QCOMPARE(sequenceAt(model, 0), quint64{2});
     QCOMPARE(sequenceAt(model, 1), quint64{1});
+    QCOMPARE(
+        model.data(model.index(1, 0), TerminalInspectorEventModel::TraceIdRole)
+            .toULongLong(),
+        quint64{41});
+    QCOMPARE(
+        model.data(model.index(0, 0), TerminalInspectorEventModel::TraceIdRole)
+            .toULongLong(),
+        quint64{0});
     QCOMPARE(textAt(model, 0, TerminalInspectorEventModel::CategoryRole),
              QStringLiteral("Terminal"));
     QCOMPARE(textAt(model, 0, TerminalInspectorEventModel::KindRole),
@@ -154,6 +165,37 @@ void TerminalInspectorEventModelTest::reentrantEvictionRemainsBounded()
              QStringLiteral("nested"));
 }
 
+void TerminalInspectorEventModelTest::reentrantClearDropsPendingEvents()
+{
+    TerminalInspectorEventModel model(nullptr, 1);
+    QAbstractItemModelTester modelTester(
+        &model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    bool clearedReentrantly = false;
+    connect(&model, &TerminalInspectorEventModel::eventEvicted, &model,
+            [&model, &clearedReentrantly] {
+                if (clearedReentrantly) return;
+                clearedReentrantly = true;
+                model.append(TerminalInspectorEventModel::Category::Input,
+                             QStringLiteral("pending secret"),
+                             QStringLiteral("must be discarded"));
+                model.clear();
+            });
+    connect(&model, &TerminalInspectorEventModel::cleared, &model, [&model] {
+        model.append(TerminalInspectorEventModel::Category::Input,
+                     QStringLiteral("clear observer secret"),
+                     QStringLiteral("must also be discarded"));
+    });
+
+    model.append(TerminalInspectorEventModel::Category::Input,
+                 QStringLiteral("first"), QStringLiteral("retained"));
+    model.append(TerminalInspectorEventModel::Category::Terminal,
+                 QStringLiteral("outer"), QStringLiteral("replacement"));
+
+    QVERIFY(clearedReentrantly);
+    QCOMPARE(model.retainedCount(), 0);
+    QCOMPARE(model.count(), 0);
+}
+
 void TerminalInspectorEventModelTest::preservesSequenceGapsWhilePaused()
 {
     TerminalInspectorEventModel model;
@@ -207,7 +249,7 @@ void TerminalInspectorEventModelTest::filtersByCategoryAndText()
     TerminalInspectorEventModel model;
     model.append(TerminalInspectorEventModel::Category::Input,
                  QStringLiteral("KeyPress"), QStringLiteral("Ctrl+C"),
-                 QStringLiteral("bytes=03"));
+                 QStringLiteral("bytes=03"), quint64{77});
     model.append(TerminalInspectorEventModel::Category::Terminal,
                  QStringLiteral("Title"), QStringLiteral("Project Alpha"),
                  QStringLiteral("OSC 2"));
@@ -222,6 +264,9 @@ void TerminalInspectorEventModelTest::filtersByCategoryAndText()
     QCOMPARE(model.count(), 1);
     QCOMPARE(sequenceAt(model, 0), quint64{2});
     model.setFilterText(QStringLiteral("bytes=03"));
+    QCOMPARE(model.count(), 1);
+    QCOMPARE(sequenceAt(model, 0), quint64{1});
+    model.setFilterText(QStringLiteral("K#77"));
     QCOMPARE(model.count(), 1);
     QCOMPARE(sequenceAt(model, 0), quint64{1});
     model.setFilterText(QStringLiteral("state"));

@@ -11974,9 +11974,19 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
              TerminalSequenceResolution::FlushAndSendCurrent);
 
     // end_key_sequence flushes leaders but consumes the terminating key.
+    QVERIFY(
+        pane.controlInspector(WorkspaceFrontendActions::InspectorMode::Show));
     leader();
     press(Qt::Key_E, Qt::NoModifier, QStringLiteral("e"));
     QCOMPARE(resolution(), TerminalSequenceResolution::Flush);
+    QVERIFY(!resolved.constLast().at(2).toBool());
+    const TerminalKeyInput endSequenceTrace =
+        qvariant_cast<TerminalKeyInput>(resolved.constLast().at(3));
+    QVERIFY(endSequenceTrace.inspectorTraceGeneration != 0);
+    QVERIFY(endSequenceTrace.inspectorTraceId != 0);
+    QCOMPARE(endSequenceTrace.text, QStringLiteral("e"));
+    QVERIFY(
+        pane.controlInspector(WorkspaceFrontendActions::InspectorMode::Hide));
 
     // The action itself still flushes only the leaders when the binding is
     // unconsumed, but ordinary handling then encodes its terminating key.

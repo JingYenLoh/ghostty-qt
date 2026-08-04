@@ -9,6 +9,7 @@
 #include <QMetaType>
 #include <QPoint>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 #include <algorithm>
@@ -388,6 +389,89 @@ struct TerminalKeyInput {
     bool autoRepeat = false;
     bool composing = false;
     uint32_t unshiftedCodepoint = 0;
+    // Zero keeps ordinary input free of diagnostic work. A non-zero pair is
+    // allocated only while this pane's inspector is actively capturing; it is
+    // semantically inert to libghostty and lets the worker's bounded encoding
+    // outcome correlate with the frontend decision that produced this input.
+    quint64 inspectorTraceGeneration = 0;
+    quint64 inspectorTraceId = 0;
+};
+
+enum class TerminalKeyboardTraceDecisionKind : quint8 {
+    RootApplicationBinding,
+    RootGlobalBinding,
+    RootConsumedRelease,
+    PaneUnmatched,
+    PaneLeader,
+    PaneInvalidSequence,
+    PaneIgnoredSequence,
+    PaneLocalBinding,
+    PaneBroadBinding,
+    PaneFallbackConsumed,
+    PaneFallbackPassed,
+    PaneConsumedRelease,
+    PaneInspectorCancel,
+};
+
+// GUI-thread-only projection of one actual matcher decision. This is emitted
+// only while inspector capture is active; the model performs bounded escaping
+// after checking its pause state, and no trie traversal is repeated solely for
+// diagnostics.
+struct TerminalKeyboardTraceDecision {
+    TerminalKeyInput input;
+    TerminalKeyboardTraceDecisionKind kind =
+        TerminalKeyboardTraceDecisionKind::PaneUnmatched;
+    quint64 sequenceToken = 0;
+    QStringList actions;
+    QStringList activeTables;
+    QStringList pendingSequence;
+    bool consumed = false;
+    bool performable = false;
+    bool all = false;
+    bool global = false;
+    bool physical = false;
+};
+
+enum class TerminalKeyboardTraceOperation : quint8 {
+    Key,
+    SequenceStage,
+    SequenceResolution,
+};
+
+enum class TerminalKeyboardTraceDisposition : quint8 {
+    Queued,
+    EncoderFailed,
+    EncoderEmpty,
+    KeyboardActionMode,
+    ReadOnly,
+    TerminalUnavailable,
+    SessionUnavailable,
+    ExitWaitConsumed,
+    Staged,
+    Dropped,
+    Superseded,
+    StaleSequence,
+};
+
+// Worker-to-GUI diagnostic value. `encodedPrefix` is capped at its producer;
+// encodedByteCount always describes the complete output so the inspector never
+// needs to copy or hex-format an unbounded byte array.
+struct TerminalKeyboardTraceResult {
+    static constexpr qsizetype MaximumEncodedPrefix = 64;
+
+    quint64 generation = 0;
+    quint64 traceId = 0;
+    quint64 sequenceToken = 0;
+    TerminalKeyboardTraceOperation operation =
+        TerminalKeyboardTraceOperation::Key;
+    TerminalKeyboardTraceDisposition disposition =
+        TerminalKeyboardTraceDisposition::TerminalUnavailable;
+    qint64 encodedByteCount = 0;
+    QByteArray encodedPrefix;
+    bool prefixTruncated = false;
+
+    friend bool operator==(const TerminalKeyboardTraceResult &,
+                           const TerminalKeyboardTraceResult &) = default;
 };
 
 // One GUI input-method callback becomes one worker operation so committed
@@ -522,6 +606,11 @@ Q_DECLARE_METATYPE(TerminalSearchCell)
 Q_DECLARE_METATYPE(TerminalSearchRange)
 Q_DECLARE_METATYPE(TerminalSearchUpdate)
 Q_DECLARE_METATYPE(TerminalKeyInput)
+Q_DECLARE_METATYPE(TerminalKeyboardTraceDecisionKind)
+Q_DECLARE_METATYPE(TerminalKeyboardTraceDecision)
+Q_DECLARE_METATYPE(TerminalKeyboardTraceOperation)
+Q_DECLARE_METATYPE(TerminalKeyboardTraceDisposition)
+Q_DECLARE_METATYPE(TerminalKeyboardTraceResult)
 Q_DECLARE_METATYPE(TerminalInputMethodInput)
 Q_DECLARE_METATYPE(TerminalSequenceResolution)
 Q_DECLARE_METATYPE(TerminalMouseInput)

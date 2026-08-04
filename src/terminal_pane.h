@@ -267,6 +267,7 @@ Q_SIGNALS:
     void inspectorCellPickingChanged();
     void inspectorCellPicked(int viewportColumn, int viewportRow,
                              quint64 contentRevision);
+    void keyboardTraceDecision(const TerminalKeyboardTraceDecision &decision);
     void bellRang(TerminalPane *pane);
     void customShaderDiagnosticChanged(const QString &diagnostic);
     void requestNewTab();
@@ -363,6 +364,10 @@ private:
         bool startingAction = false;
         std::optional<TerminalActionExecutionResult> earlyResult;
     };
+    struct ExecutingSequence {
+        quint64 token = 0;
+        TerminalKeyInput traceInput;
+    };
     [[nodiscard]] bool updateMetrics();
     [[nodiscard]] bool updateMetrics(const TerminalTypography &typography,
                                      qreal pointSize);
@@ -401,17 +406,20 @@ private:
     KeyHandling handleShortcut(QKeyEvent *event,
                                const QPointer<TerminalPane> &guard,
                                quint64 pointerActivityEpoch,
-                               int consumedModifiers);
+                               int consumedModifiers,
+                               const TerminalKeyInput &currentInput);
     KeyHandling handleConfiguredShortcut(QKeyEvent *event,
                                          const QPointer<TerminalPane> &guard,
                                          quint64 pointerActivityEpoch,
-                                         int consumedModifiers);
+                                         int consumedModifiers,
+                                         const TerminalKeyInput &currentInput);
     [[nodiscard]] bool resolveActiveSequence(
         TerminalSequenceResolution resolution,
         std::optional<TerminalKeyInput> current = std::nullopt);
-    [[nodiscard]] bool resolveSequenceToken(
-        quint64 token, TerminalSequenceResolution resolution,
-        std::optional<TerminalKeyInput> current = std::nullopt);
+    [[nodiscard]] bool
+    resolveSequenceToken(quint64 token, TerminalSequenceResolution resolution,
+                         std::optional<TerminalKeyInput> current = std::nullopt,
+                         TerminalKeyInput traceInput = {});
     [[nodiscard]] bool resolveExecutingSequence(
         TerminalSequenceResolution resolution,
         std::optional<TerminalKeyInput> current = std::nullopt);
@@ -440,6 +448,17 @@ private:
     void revealMouseAfterActivity();
     void setMouseHiddenWhileTyping(bool hidden);
     void setInspectorCellPicking(bool picking);
+    void setInspectorKeyboardTraceCapture(bool enabled);
+    [[nodiscard]] bool inspectorKeyboardTraceCaptureActive() const noexcept
+    {
+        return inspectorKeyboardTraceGeneration_ != 0;
+    }
+    [[nodiscard]] TerminalKeyInput
+    beginInspectorKeyboardTrace(const QKeyEvent &event, bool pressed);
+    [[nodiscard]] TerminalKeyInput
+    beginInspectorKeyboardTrace(const QKeyEvent &event, bool pressed,
+                                int consumedModifiers);
+    void publishInspectorKeyboardTrace(TerminalKeyboardTraceDecision decision);
     void syncPointerCursor();
     [[nodiscard]] bool revealMouseForPointerPosition(const QPointF &position);
     [[nodiscard]] bool handlePointerMotion(const QPointF &position);
@@ -604,6 +623,9 @@ private:
         std::make_shared<TerminalBellPlayer>();
     bool bellRinging_ = false;
     QPointer<TerminalInspectorModel> inspectorModel_;
+    quint64 nextInspectorKeyboardTraceGeneration_ = 0;
+    quint64 inspectorKeyboardTraceGeneration_ = 0;
+    quint64 nextInspectorKeyboardTraceId_ = 0;
     bool inspectorCellPicking_ = false;
     Qt::MouseButton inspectorCellPickConsumedButton_ = Qt::NoButton;
     // Set for normal wait-after-command and abnormal quick exits. CLI --hold
@@ -641,7 +663,7 @@ private:
     const QKeyEvent *replayingDeferredKeyEvent_ = nullptr;
     std::optional<quint64> replayingDeferredPointerActivityEpoch_;
     quint64 activeSequenceToken_ = 0;
-    QVector<quint64> executingSequenceTokens_;
+    QVector<ExecutingSequence> executingSequences_;
     quint64 nextTerminalActionRequestId_ = 0;
     quint64 terminalActionEpoch_ = 1;
     bool terminalActionsAccepted_ = true;

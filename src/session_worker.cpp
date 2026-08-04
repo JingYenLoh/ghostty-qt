@@ -774,6 +774,7 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
     newestSequenceToken_ = 0;
     activeSequenceToken_ = 0;
     stagedSequencePotentialActivity_ = false;
+    stagedSequenceTraceResults_.clear();
     heldTerminalModifiers_ = Qt::NoModifier;
     terminalContentRevision_ = 1;
     searchContentRevision_ = 1;
@@ -1639,9 +1640,68 @@ void SessionWorker::queueInputWrite(const QByteArray &data)
     }
 }
 
+std::optional<TerminalKeyboardTraceResult>
+SessionWorker::makeKeyboardTraceResult(
+    const TerminalKeyInput &input, TerminalKeyboardTraceOperation operation,
+    TerminalKeyboardTraceDisposition disposition, const QByteArray &encoded,
+    quint64 sequenceToken) const
+{
+    if (input.inspectorTraceGeneration == 0 || input.inspectorTraceId == 0
+        || input.inspectorTraceGeneration != keyboardTraceGeneration_) {
+        return std::nullopt;
+    }
+
+    const qsizetype prefixLength = std::min(
+        encoded.size(), TerminalKeyboardTraceResult::MaximumEncodedPrefix);
+    return TerminalKeyboardTraceResult{
+        .generation = input.inspectorTraceGeneration,
+        .traceId = input.inspectorTraceId,
+        .sequenceToken = sequenceToken,
+        .operation = operation,
+        .disposition = disposition,
+        .encodedByteCount = encoded.size(),
+        .encodedPrefix = encoded.first(prefixLength),
+        .prefixTruncated = prefixLength != encoded.size(),
+    };
+}
+
+void SessionWorker::publishKeyboardTraceResult(
+    const TerminalKeyInput &input, TerminalKeyboardTraceOperation operation,
+    TerminalKeyboardTraceDisposition disposition, const QByteArray &encoded,
+    quint64 sequenceToken)
+{
+    const std::optional<TerminalKeyboardTraceResult> result =
+        makeKeyboardTraceResult(input, operation, disposition, encoded,
+                                sequenceToken);
+    if (result.has_value()) Q_EMIT keyboardTraceResult(*result);
+}
+
+void SessionWorker::finalizeStagedKeyboardTraceResults(
+    TerminalKeyboardTraceDisposition disposition)
+{
+    QVector<TerminalKeyboardTraceResult> results =
+        std::move(stagedSequenceTraceResults_);
+    stagedSequenceTraceResults_.clear();
+    for (TerminalKeyboardTraceResult &result : results) {
+        if (result.generation != keyboardTraceGeneration_) continue;
+        result.operation = TerminalKeyboardTraceOperation::SequenceResolution;
+        result.disposition = disposition;
+        Q_EMIT keyboardTraceResult(result);
+    }
+}
+
 void SessionWorker::setReadOnly(bool readOnly)
 {
     readOnly_ = readOnly;
+}
+
+void SessionWorker::setKeyboardTraceGeneration(quint64 generation)
+{
+    if (keyboardTraceGeneration_ == generation) return;
+    keyboardTraceGeneration_ = generation;
+    // Actual leader bytes remain part of terminal input semantics, but copied
+    // diagnostic metadata must never cross an inspector pause/close boundary.
+    stagedSequenceTraceResults_.clear();
 }
 
 void SessionWorker::flushPtyWrites()
@@ -1677,6 +1737,9 @@ void SessionWorker::flushPtyWrites()
 void SessionWorker::sendKey(const TerminalKeyInput &input)
 {
     if (keyboardInputSuppressed()) {
+        publishKeyboardTraceResult(
+            input, TerminalKeyboardTraceOperation::Key,
+            TerminalKeyboardTraceDisposition::KeyboardActionMode);
         Q_EMIT inputActivityReconciled(activeProcess_);
         return;
     }
@@ -1686,21 +1749,45 @@ void SessionWorker::sendKey(const TerminalKeyInput &input)
         notePotentialActivity();
     }
     if (vt_ == nullptr) {
+        publishKeyboardTraceResult(
+            input, TerminalKeyboardTraceOperation::Key,
+            TerminalKeyboardTraceDisposition::TerminalUnavailable);
         return;
     }
     const GhosttyVtAdapter::EncodedKey encoded = vt_->encodeKey(input);
+    if (!encoded.success) {
+        publishKeyboardTraceResult(
+            input, TerminalKeyboardTraceOperation::Key,
+            TerminalKeyboardTraceDisposition::EncoderFailed);
+        return;
+    }
     if (encoded.bytes.isEmpty()) {
+        publishKeyboardTraceResult(
+            input, TerminalKeyboardTraceOperation::Key,
+            TerminalKeyboardTraceDisposition::EncoderEmpty);
         return;
     }
     if (waitingForExitKey_ && input.pressed) {
+        publishKeyboardTraceResult(
+            input, TerminalKeyboardTraceOperation::Key,
+            TerminalKeyboardTraceDisposition::ExitWaitConsumed, encoded.bytes);
         waitingForExitKey_ = false;
         Q_EMIT exitKeyDismissed();
         return;
     }
     if (masterFd_ < 0) {
+        publishKeyboardTraceResult(
+            input, TerminalKeyboardTraceOperation::Key,
+            TerminalKeyboardTraceDisposition::SessionUnavailable,
+            encoded.bytes);
         return;
     }
     queueInputWrite(encoded.bytes);
+    publishKeyboardTraceResult(input, TerminalKeyboardTraceOperation::Key,
+                               readOnly_
+                                   ? TerminalKeyboardTraceDisposition::ReadOnly
+                                   : TerminalKeyboardTraceDisposition::Queued,
+                               encoded.bytes);
     if (!readOnly_) {
         heldTerminalModifiers_ = modifiersAfterTerminalKey(input);
     }
@@ -1712,14 +1799,22 @@ void SessionWorker::stageSequenceKey(quint64 token,
                                      const TerminalKeyInput &input)
 {
     if (token == 0) {
+        publishKeyboardTraceResult(
+            input, TerminalKeyboardTraceOperation::SequenceStage,
+            TerminalKeyboardTraceDisposition::StaleSequence, {}, token);
         return;
     }
     if (token != activeSequenceToken_) {
         if (!sequenceTokenIsNewer(token, newestSequenceToken_)) {
+            publishKeyboardTraceResult(
+                input, TerminalKeyboardTraceOperation::SequenceStage,
+                TerminalKeyboardTraceDisposition::StaleSequence, {}, token);
             return;
         }
         // A newer sequence supersedes an unresolved one. Its held bytes must
         // not leak into the new match attempt.
+        finalizeStagedKeyboardTraceResults(
+            TerminalKeyboardTraceDisposition::Superseded);
         newestSequenceToken_ = token;
         activeSequenceToken_ = token;
         stagedSequenceBytes_.clear();
@@ -1728,16 +1823,36 @@ void SessionWorker::stageSequenceKey(quint64 token,
     }
 
     if (vt_ == nullptr) {
+        publishKeyboardTraceResult(
+            input, TerminalKeyboardTraceOperation::SequenceStage,
+            TerminalKeyboardTraceDisposition::TerminalUnavailable, {}, token);
         return;
     }
-    const QByteArray encoded = vt_->encodeKey(input).bytes;
-    if (encoded.isEmpty()) {
+    const GhosttyVtAdapter::EncodedKey encoded = vt_->encodeKey(input);
+    if (!encoded.success) {
+        publishKeyboardTraceResult(
+            input, TerminalKeyboardTraceOperation::SequenceStage,
+            TerminalKeyboardTraceDisposition::EncoderFailed, {}, token);
         return;
     }
-    stagedSequenceBytes_.append(encoded);
+    if (encoded.bytes.isEmpty()) {
+        publishKeyboardTraceResult(
+            input, TerminalKeyboardTraceOperation::SequenceStage,
+            TerminalKeyboardTraceDisposition::EncoderEmpty, {}, token);
+        return;
+    }
+    stagedSequenceBytes_.append(encoded.bytes);
     stagedSequenceModifiers_ = modifiersAfterTerminalKey(input);
     stagedSequencePotentialActivity_ =
         stagedSequencePotentialActivity_ || keyMayStartProcess(input);
+    const std::optional<TerminalKeyboardTraceResult> result =
+        makeKeyboardTraceResult(
+            input, TerminalKeyboardTraceOperation::SequenceStage,
+            TerminalKeyboardTraceDisposition::Staged, encoded.bytes, token);
+    if (result.has_value()) {
+        stagedSequenceTraceResults_.append(*result);
+        Q_EMIT keyboardTraceResult(*result);
+    }
 }
 
 void SessionWorker::resolveSequence(quint64 token,
@@ -1746,6 +1861,9 @@ void SessionWorker::resolveSequence(quint64 token,
                                     const TerminalKeyInput &current)
 {
     if (token == 0 || token != activeSequenceToken_) {
+        publishKeyboardTraceResult(
+            current, TerminalKeyboardTraceOperation::SequenceResolution,
+            TerminalKeyboardTraceDisposition::StaleSequence, {}, token);
         return;
     }
 
@@ -1754,6 +1872,8 @@ void SessionWorker::resolveSequence(quint64 token,
     bool currentModifier = true;
     bool currentEscape = false;
     bool currentEncoded = false;
+    QByteArray currentBytes;
+    bool currentTracePublished = false;
     Qt::KeyboardModifiers modifiersAfterBytes = heldTerminalModifiers_;
     if (resolution == TerminalSequenceResolution::Flush
         || resolution == TerminalSequenceResolution::FlushAndSendCurrent) {
@@ -1765,19 +1885,40 @@ void SessionWorker::resolveSequence(quint64 token,
     if (resolution == TerminalSequenceResolution::FlushAndSendCurrent
         && hasCurrent) {
         if (keyboardInputSuppressed()) {
+            publishKeyboardTraceResult(
+                current, TerminalKeyboardTraceOperation::SequenceResolution,
+                TerminalKeyboardTraceDisposition::KeyboardActionMode, {},
+                token);
+            currentTracePublished = true;
             Q_EMIT inputActivityReconciled(activeProcess_);
+        } else if (vt_ == nullptr) {
+            publishKeyboardTraceResult(
+                current, TerminalKeyboardTraceOperation::SequenceResolution,
+                TerminalKeyboardTraceDisposition::TerminalUnavailable, {},
+                token);
+            currentTracePublished = true;
         } else {
-            const GhosttyVtAdapter::EncodedKey encodedCurrent = vt_ != nullptr
-                ? vt_->encodeKey(current)
-                : GhosttyVtAdapter::EncodedKey{};
-            if (!encodedCurrent.bytes.isEmpty()) {
+            const GhosttyVtAdapter::EncodedKey encodedCurrent =
+                vt_->encodeKey(current);
+            if (!encodedCurrent.success) {
+                publishKeyboardTraceResult(
+                    current, TerminalKeyboardTraceOperation::SequenceResolution,
+                    TerminalKeyboardTraceDisposition::EncoderFailed, {}, token);
+                currentTracePublished = true;
+            } else if (!encodedCurrent.bytes.isEmpty()) {
                 bytes.append(encodedCurrent.bytes);
+                currentBytes = encodedCurrent.bytes;
                 potentialActivity =
                     potentialActivity || keyMayStartProcess(current);
                 currentModifier = encodedCurrent.modifier;
                 currentEscape = encodedCurrent.escape;
                 currentEncoded = true;
                 modifiersAfterBytes = modifiersAfterTerminalKey(current);
+            } else {
+                publishKeyboardTraceResult(
+                    current, TerminalKeyboardTraceOperation::SequenceResolution,
+                    TerminalKeyboardTraceDisposition::EncoderEmpty, {}, token);
+                currentTracePublished = true;
             }
         }
     }
@@ -1787,7 +1928,24 @@ void SessionWorker::resolveSequence(quint64 token,
     stagedSequenceModifiers_ = heldTerminalModifiers_;
     stagedSequencePotentialActivity_ = false;
 
+    if (resolution == TerminalSequenceResolution::Drop) {
+        finalizeStagedKeyboardTraceResults(
+            TerminalKeyboardTraceDisposition::Dropped);
+        publishKeyboardTraceResult(
+            current, TerminalKeyboardTraceOperation::SequenceResolution,
+            TerminalKeyboardTraceDisposition::Dropped, {}, token);
+        currentTracePublished = true;
+    }
+
     if (!bytes.isEmpty() && waitingForExitKey_) {
+        finalizeStagedKeyboardTraceResults(
+            TerminalKeyboardTraceDisposition::ExitWaitConsumed);
+        if (currentEncoded && !currentTracePublished) {
+            publishKeyboardTraceResult(
+                current, TerminalKeyboardTraceOperation::SequenceResolution,
+                TerminalKeyboardTraceDisposition::ExitWaitConsumed,
+                currentBytes, token);
+        }
         waitingForExitKey_ = false;
         Q_EMIT exitKeyDismissed();
         return;
@@ -1800,6 +1958,15 @@ void SessionWorker::resolveSequence(quint64 token,
             notePotentialActivity();
         }
         queueInputWrite(bytes);
+        const TerminalKeyboardTraceDisposition disposition = readOnly_
+            ? TerminalKeyboardTraceDisposition::ReadOnly
+            : TerminalKeyboardTraceDisposition::Queued;
+        finalizeStagedKeyboardTraceResults(disposition);
+        if (currentEncoded && !currentTracePublished) {
+            publishKeyboardTraceResult(
+                current, TerminalKeyboardTraceOperation::SequenceResolution,
+                disposition, currentBytes, token);
+        }
         if (!readOnly_) {
             heldTerminalModifiers_ = modifiersAfterBytes;
         }
@@ -1807,6 +1974,20 @@ void SessionWorker::resolveSequence(quint64 token,
             clearSelectionAfterKey(currentModifier, currentEscape);
             scrollToBottomForKeystroke(currentModifier);
         }
+    } else if (!bytes.isEmpty()) {
+        finalizeStagedKeyboardTraceResults(
+            TerminalKeyboardTraceDisposition::SessionUnavailable);
+        if (currentEncoded && !currentTracePublished) {
+            publishKeyboardTraceResult(
+                current, TerminalKeyboardTraceOperation::SequenceResolution,
+                TerminalKeyboardTraceDisposition::SessionUnavailable,
+                currentBytes, token);
+        }
+    } else {
+        // Successfully encoded staged entries imply non-empty aggregate bytes,
+        // so this normally just releases an empty trace vector after an
+        // encoder/KAM outcome for the current key.
+        stagedSequenceTraceResults_.clear();
     }
 }
 
@@ -3997,6 +4178,12 @@ void SessionWorker::closePty()
     // lifecycle boundary. Drop/binding resolutions still consume it without
     // dismissing; every other close path clears it normally.
     if (!waitingForExitKey_) {
+        if (shuttingDown_) {
+            stagedSequenceTraceResults_.clear();
+        } else {
+            finalizeStagedKeyboardTraceResults(
+                TerminalKeyboardTraceDisposition::SessionUnavailable);
+        }
         stagedSequenceBytes_.clear();
         stagedSequenceModifiers_ = Qt::NoModifier;
         activeSequenceToken_ = 0;

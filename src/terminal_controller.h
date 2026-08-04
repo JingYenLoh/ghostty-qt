@@ -248,6 +248,7 @@ Q_SIGNALS:
     void
     terminalInspectorCellReady(quint64 requestId,
                                const TerminalInspectorCellSnapshot &snapshot);
+    void keyboardTraceResult(const TerminalKeyboardTraceResult &result);
     void unsafePasteConfirmationRequested(quint64 requestId,
                                           const QString &text);
     void terminalClipboardWriteRequested(
@@ -320,6 +321,7 @@ Q_SIGNALS:
     void terminalInspectorCellRequested(quint64 requestId,
                                         quint64 contentRevision,
                                         int viewportColumn, int viewportRow);
+    void keyboardTraceGenerationRequested(quint64 generation);
     void runtimeOptionsRequested(const TerminalSessionRuntimeOptions &options);
     void readOnlyRequested(bool readOnly);
     void shutdownRequested();
@@ -363,7 +365,9 @@ private:
                                         const TerminalKeyInput &input);
     void resolveSequence(
         quint64 token, TerminalSequenceResolution resolution,
-        const std::optional<TerminalKeyInput> &current = std::nullopt);
+        const std::optional<TerminalKeyInput> &current = std::nullopt,
+        TerminalKeyInput traceInput = {});
+    void setKeyboardTraceGeneration(quint64 generation);
     quint64 nextRightClickRequestId();
     quint64 nextHyperlinkRequestId();
     quint64 nextSearchGeneration();
@@ -402,4 +406,5 @@ private:
     quint64 activeTerminalInspectorRequestId_ = 0;
     quint64 nextTerminalInspectorCellRequestId_ = 0;
     quint64 activeTerminalInspectorCellRequestId_ = 0;
+    quint64 keyboardTraceGeneration_ = 0;
 };

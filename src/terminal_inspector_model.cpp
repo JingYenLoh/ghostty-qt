@@ -291,6 +291,131 @@ QString sequenceResolutionName(TerminalSequenceResolution resolution)
     return QStringLiteral("Unknown");
 }
 
+QString keyboardDecisionName(TerminalKeyboardTraceDecisionKind kind)
+{
+    switch (kind) {
+    case TerminalKeyboardTraceDecisionKind::RootApplicationBinding:
+        return QStringLiteral("Root application binding");
+    case TerminalKeyboardTraceDecisionKind::RootGlobalBinding:
+        return QStringLiteral("Root global binding");
+    case TerminalKeyboardTraceDecisionKind::RootConsumedRelease:
+        return QStringLiteral("Root consumed release");
+    case TerminalKeyboardTraceDecisionKind::PaneUnmatched:
+        return QStringLiteral("Pane pass-through");
+    case TerminalKeyboardTraceDecisionKind::PaneLeader:
+        return QStringLiteral("Pane sequence leader");
+    case TerminalKeyboardTraceDecisionKind::PaneInvalidSequence:
+        return QStringLiteral("Pane invalid sequence");
+    case TerminalKeyboardTraceDecisionKind::PaneIgnoredSequence:
+        return QStringLiteral("Pane ignored sequence");
+    case TerminalKeyboardTraceDecisionKind::PaneLocalBinding:
+        return QStringLiteral("Pane local binding");
+    case TerminalKeyboardTraceDecisionKind::PaneBroadBinding:
+        return QStringLiteral("Pane broad binding");
+    case TerminalKeyboardTraceDecisionKind::PaneFallbackConsumed:
+        return QStringLiteral("Pane fallback consumed");
+    case TerminalKeyboardTraceDecisionKind::PaneFallbackPassed:
+        return QStringLiteral("Pane fallback pass-through");
+    case TerminalKeyboardTraceDecisionKind::PaneConsumedRelease:
+        return QStringLiteral("Pane consumed release");
+    case TerminalKeyboardTraceDecisionKind::PaneInspectorCancel:
+        return QStringLiteral("Pane inspector cancellation");
+    }
+    return QStringLiteral("Unknown decision");
+}
+
+QString keyboardTraceOperationName(TerminalKeyboardTraceOperation operation)
+{
+    switch (operation) {
+    case TerminalKeyboardTraceOperation::Key: return QStringLiteral("Key");
+    case TerminalKeyboardTraceOperation::SequenceStage:
+        return QStringLiteral("Sequence stage");
+    case TerminalKeyboardTraceOperation::SequenceResolution:
+        return QStringLiteral("Sequence resolution");
+    }
+    return QStringLiteral("Unknown operation");
+}
+
+QString
+keyboardTraceDispositionName(TerminalKeyboardTraceDisposition disposition)
+{
+    switch (disposition) {
+    case TerminalKeyboardTraceDisposition::Queued:
+        return QStringLiteral("Queued for PTY");
+    case TerminalKeyboardTraceDisposition::EncoderFailed:
+        return QStringLiteral("Encoder failed");
+    case TerminalKeyboardTraceDisposition::EncoderEmpty:
+        return QStringLiteral("Encoder produced no bytes");
+    case TerminalKeyboardTraceDisposition::KeyboardActionMode:
+        return QStringLiteral("Suppressed by KAM");
+    case TerminalKeyboardTraceDisposition::ReadOnly:
+        return QStringLiteral("Discarded by read-only mode");
+    case TerminalKeyboardTraceDisposition::TerminalUnavailable:
+        return QStringLiteral("Terminal unavailable");
+    case TerminalKeyboardTraceDisposition::SessionUnavailable:
+        return QStringLiteral("PTY unavailable");
+    case TerminalKeyboardTraceDisposition::ExitWaitConsumed:
+        return QStringLiteral("Consumed by exit wait");
+    case TerminalKeyboardTraceDisposition::Staged:
+        return QStringLiteral("Encoded and staged");
+    case TerminalKeyboardTraceDisposition::Dropped:
+        return QStringLiteral("Sequence dropped");
+    case TerminalKeyboardTraceDisposition::Superseded:
+        return QStringLiteral("Sequence superseded");
+    case TerminalKeyboardTraceDisposition::StaleSequence:
+        return QStringLiteral("Stale sequence token");
+    }
+    return QStringLiteral("Unknown disposition");
+}
+
+QString keyboardDecisionDetails(const TerminalKeyboardTraceDecision &decision)
+{
+    QStringList fields;
+    if (decision.sequenceToken != 0) {
+        fields.append(
+            QStringLiteral("sequence token %1").arg(decision.sequenceToken));
+    }
+    if (!decision.actions.isEmpty()) {
+        fields.append(QStringLiteral("actions %1")
+                          .arg(decision.actions.join(QStringLiteral(" → "))));
+    }
+    if (!decision.activeTables.isEmpty()) {
+        fields.append(
+            QStringLiteral("tables %1")
+                .arg(decision.activeTables.join(QStringLiteral(", "))));
+    }
+    if (!decision.pendingSequence.isEmpty()) {
+        fields.append(QStringLiteral("pending %1")
+                          .arg(decision.pendingSequence.join(u' ')));
+    }
+    QStringList flags;
+    if (decision.consumed) flags.append(QStringLiteral("consumed"));
+    if (decision.performable) flags.append(QStringLiteral("performable"));
+    if (decision.all) flags.append(QStringLiteral("all"));
+    if (decision.global) flags.append(QStringLiteral("global"));
+    if (decision.physical) flags.append(QStringLiteral("physical"));
+    if (!flags.isEmpty()) {
+        fields.append(QStringLiteral("flags %1").arg(flags.join(u',')));
+    }
+    fields.append(keyDetails(decision.input));
+    return fields.join(QStringLiteral(" · "));
+}
+
+QString keyboardTraceResultDetails(const TerminalKeyboardTraceResult &result)
+{
+    QStringList fields;
+    if (result.sequenceToken != 0) {
+        fields.append(
+            QStringLiteral("sequence token %1").arg(result.sequenceToken));
+    }
+    if (!result.encodedPrefix.isEmpty()) {
+        QString preview = QString::fromLatin1(result.encodedPrefix.toHex(' '));
+        if (result.prefixTruncated) preview.append(QStringLiteral(" …"));
+        fields.append(QStringLiteral("hex %1").arg(preview));
+    }
+    return fields.join(QStringLiteral(" · "));
+}
+
 QString mouseActionName(TerminalMouseInput::Action action)
 {
     switch (action) {
@@ -324,15 +449,21 @@ TerminalInspectorModel::TerminalInspectorModel(TerminalPane *pane)
     terminalEventTimer_->setTimerType(Qt::CoarseTimer);
     connect(terminalEventTimer_, &QTimer::timeout, this,
             &TerminalInspectorModel::flushPendingTerminalEvent);
-    connect(eventModel_, &TerminalInspectorEventModel::pausedChanged, this,
-            [this] {
-                if (!eventModel_->paused()) return;
-                const bool hadPendingFrame = pendingTerminalEvent_.updates != 0;
-                clearPendingTerminalEvent();
-                if (hadPendingFrame) {
-                    eventModel_->skipObservation();
-                }
-            });
+    connect(
+        eventModel_, &TerminalInspectorEventModel::pausedChanged, this, [this] {
+            if (!active_) return;
+            const QPointer<TerminalInspectorModel> guard(this);
+            if (pane_ != nullptr) {
+                pane_->setInspectorKeyboardTraceCapture(!eventModel_->paused());
+            }
+            if (guard == nullptr || !guard->active_) return;
+            if (!eventModel_->paused()) return;
+            const bool hadPendingFrame = pendingTerminalEvent_.updates != 0;
+            clearPendingTerminalEvent();
+            if (hadPendingFrame) {
+                eventModel_->skipObservation();
+            }
+        });
     connect(eventModel_, &TerminalInspectorEventModel::cleared, this,
             &TerminalInspectorModel::clearPendingTerminalEvent);
     if (pane != nullptr && pane->controller_ != nullptr) {
@@ -341,25 +472,29 @@ TerminalInspectorModel::TerminalInspectorModel(TerminalPane *pane)
                 &TerminalInspectorModel::recordTerminalUpdate);
         connect(controller, &TerminalController::keyRequested, this,
                 [this](const TerminalKeyInput &input) {
+                    if (!acceptsKeyboardTraceInput(input)) return;
                     if (skipEventWhilePaused()) return;
                     appendEvent(TerminalInspectorEventModel::Category::Input,
                                 QStringLiteral("Forwarded key request"),
-                                keySummary(input), keyDetails(input));
+                                keySummary(input), keyDetails(input),
+                                input.inspectorTraceId);
                 });
         connect(controller, &TerminalController::sequenceKeyStagingRequested,
                 this, [this](quint64 token, const TerminalKeyInput &input) {
+                    if (!acceptsKeyboardTraceInput(input)) return;
                     if (skipEventWhilePaused()) return;
                     appendEvent(TerminalInspectorEventModel::Category::Input,
                                 QStringLiteral("Sequence key staged"),
                                 QStringLiteral("Token %1 · %2")
                                     .arg(token)
                                     .arg(keySummary(input)),
-                                keyDetails(input));
+                                keyDetails(input), input.inspectorTraceId);
                 });
         connect(controller, &TerminalController::sequenceResolutionRequested,
                 this,
                 [this](quint64 token, TerminalSequenceResolution resolution,
                        bool hasCurrent, const TerminalKeyInput &current) {
+                    if (!acceptsKeyboardTraceInput(current)) return;
                     if (skipEventWhilePaused()) return;
                     QString details;
                     if (hasCurrent) {
@@ -371,8 +506,24 @@ TerminalInspectorModel::TerminalInspectorModel(TerminalPane *pane)
                                 QStringLiteral("Token %1 · %2")
                                     .arg(token)
                                     .arg(sequenceResolutionName(resolution)),
-                                details);
+                                details, current.inspectorTraceId);
                 });
+        connect(
+            controller, &TerminalController::keyboardTraceResult, this,
+            [this](const TerminalKeyboardTraceResult &result) {
+                if (skipEventWhilePaused()) return;
+                appendEvent(
+                    TerminalInspectorEventModel::Category::Input,
+                    QStringLiteral("Worker key encoding"),
+                    QStringLiteral("%1 · %2 · %3 encoded byte%4")
+                        .arg(keyboardTraceOperationName(result.operation),
+                             keyboardTraceDispositionName(result.disposition))
+                        .arg(result.encodedByteCount)
+                        .arg(result.encodedByteCount == 1
+                                 ? QString{}
+                                 : QStringLiteral("s")),
+                    keyboardTraceResultDetails(result), result.traceId);
+            });
         connect(
             controller, &TerminalController::inputMethodRequested, this,
             [this](const TerminalInputMethodInput &input) {
@@ -586,6 +737,17 @@ TerminalInspectorModel::TerminalInspectorModel(TerminalPane *pane)
                         tables.isEmpty() ? QStringLiteral("None")
                                          : tables.join(QStringLiteral(", ")));
         });
+        connect(pane, &TerminalPane::keyboardTraceDecision, this,
+                [this](const TerminalKeyboardTraceDecision &decision) {
+                    if (skipEventWhilePaused()) return;
+                    appendEvent(TerminalInspectorEventModel::Category::Input,
+                                QStringLiteral("Keybinding decision"),
+                                QStringLiteral("%1 · %2").arg(
+                                    keyboardDecisionName(decision.kind),
+                                    keySummary(decision.input)),
+                                keyboardDecisionDetails(decision),
+                                decision.input.inspectorTraceId);
+                });
         connect(pane, &TerminalPane::pendingKeySequenceChanged, this, [this] {
             if (skipEventWhilePaused()) return;
             const QStringList sequence =
@@ -668,14 +830,14 @@ TerminalInspectorModel::TerminalInspectorModel(TerminalPane *pane)
 
 void TerminalInspectorModel::appendEvent(
     TerminalInspectorEventModel::Category category, QString kind,
-    QString summary, QString details)
+    QString summary, QString details, quint64 traceId)
 {
     if (!active_) return;
     const QPointer<TerminalInspectorModel> guard(this);
     flushPendingTerminalEvent();
     if (guard == nullptr || !guard->active_) return;
     guard->eventModel_->append(category, std::move(kind), std::move(summary),
-                               std::move(details));
+                               std::move(details), traceId);
 }
 
 bool TerminalInspectorModel::skipEventWhilePaused()
@@ -684,6 +846,15 @@ bool TerminalInspectorModel::skipEventWhilePaused()
     if (!eventModel_->paused()) return false;
     eventModel_->skipObservation();
     return true;
+}
+
+bool TerminalInspectorModel::acceptsKeyboardTraceInput(
+    const TerminalKeyInput &input) const
+{
+    return input.inspectorTraceGeneration != 0 && input.inspectorTraceId != 0
+        && pane_ != nullptr
+        && input.inspectorTraceGeneration
+        == pane_->inspectorKeyboardTraceGeneration_;
 }
 
 void TerminalInspectorModel::recordTerminalUpdate(const TerminalUpdate &update)
@@ -1212,6 +1383,10 @@ void TerminalInspectorModel::deactivate()
     pendingTerminalRequestId_ = 0;
     pendingCellRequestId_ = 0;
     const QPointer<TerminalInspectorModel> guard(this);
-    if (pane_ != nullptr) pane_->setInspectorCellPicking(false);
+    if (pane_ != nullptr) {
+        pane_->setInspectorKeyboardTraceCapture(false);
+        if (guard == nullptr) return;
+        pane_->setInspectorCellPicking(false);
+    }
     if (guard != nullptr) guard->eventModel_->clear();
 }

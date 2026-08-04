@@ -34,6 +34,7 @@ QVariant TerminalInspectorEventModel::data(const QModelIndex &index,
 
     switch (role) {
     case SequenceRole: return QVariant::fromValue(event->sequence);
+    case TraceIdRole: return QVariant::fromValue(event->traceId);
     case ElapsedTextRole: return elapsedName(event->elapsedMilliseconds);
     case CategoryRole: return categoryName(event->category);
     case KindRole: return event->kind;
@@ -47,6 +48,7 @@ QHash<int, QByteArray> TerminalInspectorEventModel::roleNames() const
 {
     return {
         {SequenceRole, QByteArrayLiteral("sequence")},
+        {TraceIdRole, QByteArrayLiteral("traceId")},
         {ElapsedTextRole, QByteArrayLiteral("elapsedText")},
         {CategoryRole, QByteArrayLiteral("category")},
         {KindRole, QByteArrayLiteral("kind")},
@@ -56,13 +58,15 @@ QHash<int, QByteArray> TerminalInspectorEventModel::roleNames() const
 }
 
 quint64 TerminalInspectorEventModel::append(Category category, QString kind,
-                                            QString summary, QString details)
+                                            QString summary, QString details,
+                                            quint64 traceId)
 {
     if (paused_) return skipObservation();
     const quint64 sequence = nextSequence();
 
     Event event{
         .sequence = sequence,
+        .traceId = traceId,
         .elapsedMilliseconds = elapsed_.elapsed(),
         .category = category,
         .kind = bounded(std::move(kind), maximumSummaryLength),
@@ -75,13 +79,15 @@ quint64 TerminalInspectorEventModel::append(Category category, QString kind,
         return sequence;
     }
 
+    const quint64 clearEpoch = clearEpoch_;
     appending_ = true;
     appendEvent(std::move(event));
-    while (!pendingEvents_.empty()) {
+    while (clearEpoch_ == clearEpoch && !pendingEvents_.empty()) {
         Event pending = std::move(pendingEvents_.front());
         pendingEvents_.pop_front();
         appendEvent(std::move(pending));
     }
+    if (clearEpoch_ != clearEpoch) pendingEvents_.clear();
     appending_ = false;
     return sequence;
 }
@@ -138,6 +144,8 @@ quint64 TerminalInspectorEventModel::skipObservation()
 
 void TerminalInspectorEventModel::clear()
 {
+    ++clearEpoch_;
+    pendingEvents_.clear();
     if (!events_.empty()) {
         beginResetModel();
         events_.clear();
@@ -196,7 +204,11 @@ bool TerminalInspectorEventModel::matches(const Event &event) const
     const auto containsFilter = [this](QStringView value) {
         return value.contains(filterText_, Qt::CaseInsensitive);
     };
-    return containsFilter(categoryName(event.category))
+    return (event.traceId != 0
+            && QStringLiteral("K#%1")
+                   .arg(event.traceId)
+                   .contains(filterText_, Qt::CaseInsensitive))
+        || containsFilter(categoryName(event.category))
         || containsFilter(event.kind) || containsFilter(event.summary)
         || containsFilter(event.details);
 }

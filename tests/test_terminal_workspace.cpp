@@ -4489,6 +4489,23 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
         firstController, &TerminalController::terminalInspectorCellRequested);
     QVERIFY(!firstPane->inspectorVisible());
 
+    // Capture activation is externally observable. A reentrant close must see
+    // a fully assigned model and leave no half-constructed inspector behind.
+    bool closedDuringCaptureActivation = false;
+    const QMetaObject::Connection activationClose = connect(
+        firstController, &TerminalController::keyboardTraceGenerationRequested,
+        firstController, [&](quint64 generation) {
+            if (generation == 0 || closedDuringCaptureActivation) return;
+            closedDuringCaptureActivation = true;
+            QVERIFY(workspace.controlInspector(
+                firstId, WorkspaceFrontendActions::InspectorMode::Hide));
+        });
+    QVERIFY(workspace.controlInspector(
+        firstId, WorkspaceFrontendActions::InspectorMode::Show));
+    QVERIFY(closedDuringCaptureActivation);
+    QVERIFY(!firstPane->inspectorVisible());
+    disconnect(activationClose);
+
     quint64 reentrantRequestId = std::numeric_limits<quint64>::max();
     const QMetaObject::Connection reentrantConnection = connect(
         firstController,
@@ -4525,25 +4542,32 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
     };
     QSignalSpy skippedChanged(
         firstEvents, &TerminalInspectorEventModel::skippedWhilePausedChanged);
+    QSignalSpy traceGenerations(
+        firstController, &TerminalController::keyboardTraceGenerationRequested);
     firstController->terminalUpdated(diagnosticUpdate);
     firstEvents->setPaused(true);
+    QCOMPARE(traceGenerations.count(), 1);
+    QCOMPARE(traceGenerations.constFirst().constFirst().toULongLong(),
+             quint64{0});
     QCOMPARE(firstEvents->count(), 0);
     QCOMPARE(firstEvents->skippedWhilePaused(), quint64{1});
     QCOMPARE(skippedChanged.count(), 0);
-    firstController->sendKey({.key = Qt::Key_B, .text = QStringLiteral("b")});
+    QKeyEvent pausedGenerationPress(QEvent::KeyPress, Qt::Key_B, Qt::NoModifier,
+                                    QStringLiteral("paused-generation-secret"));
+    QCoreApplication::sendEvent(firstPane, &pausedGenerationPress);
     QCOMPARE(firstEvents->count(), 0);
-    QCOMPARE(firstEvents->skippedWhilePaused(), quint64{2});
+    QCOMPARE(firstEvents->skippedWhilePaused(), quint64{1});
     QCOMPARE(skippedChanged.count(), 0);
     firstEvents->setPaused(false);
+    QCOMPARE(traceGenerations.count(), 2);
+    QVERIFY(traceGenerations.at(1).constFirst().toULongLong() != 0);
     QCOMPARE(skippedChanged.count(), 1);
 
-    firstController->sendKey({
-        .key = Qt::Key_A,
-        .modifiers = Qt::ControlModifier,
-        .text = QStringLiteral("a\t\u202e"),
-        .nativeScanCode = 0x26,
-    });
-    QCOMPARE(firstEvents->count(), 1);
+    QKeyEvent forwardedDiagnostic(QEvent::KeyPress, Qt::Key_A,
+                                  Qt::ControlModifier, 0x26, 0, 0,
+                                  QStringLiteral("a\t\u202e"));
+    QCoreApplication::sendEvent(firstPane, &forwardedDiagnostic);
+    QCOMPARE(firstEvents->count(), 2);
     const QModelIndex forwardedKey = firstEvents->index(0, 0);
     QCOMPARE(firstEvents
                  ->data(forwardedKey, TerminalInspectorEventModel::SequenceRole)
@@ -4565,6 +4589,53 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
     QVERIFY(forwardedSummary.contains(QStringLiteral("\\t")));
     QVERIFY(forwardedSummary.contains(QStringLiteral("\\u{202e}")));
     QVERIFY(!forwardedSummary.contains(QChar(0x202e)));
+
+    QKeyEvent resumedGenerationPress(
+        QEvent::KeyPress, Qt::Key_G, Qt::NoModifier,
+        QStringLiteral("resumed-generation-sentinel"));
+    QCoreApplication::sendEvent(firstPane, &resumedGenerationPress);
+    quint64 resumedGenerationTrace = 0;
+    const auto resumedSentinelCompleted = [&] {
+        bool workerResult = false;
+        for (int row = 0; row < firstEvents->rowCount(); ++row) {
+            const QModelIndex index = firstEvents->index(row, 0);
+            const QString kind =
+                firstEvents->data(index, TerminalInspectorEventModel::KindRole)
+                    .toString();
+            const quint64 trace =
+                firstEvents
+                    ->data(index, TerminalInspectorEventModel::TraceIdRole)
+                    .toULongLong();
+            if (kind == QStringLiteral("Keybinding decision")
+                && firstEvents
+                       ->data(index, TerminalInspectorEventModel::SummaryRole)
+                       .toString()
+                       .contains(
+                           QStringLiteral("resumed-generation-sentinel"))) {
+                resumedGenerationTrace = trace;
+            }
+            workerResult = workerResult
+                || (resumedGenerationTrace != 0
+                    && trace == resumedGenerationTrace
+                    && kind == QStringLiteral("Worker key encoding"));
+        }
+        return resumedGenerationTrace != 0 && workerResult;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(resumedSentinelCompleted(), 5000);
+    const QString pausedGenerationHex = QString::fromLatin1(
+        QByteArrayLiteral("paused-generation-secret").toHex(' '));
+    for (int row = 0; row < firstEvents->rowCount(); ++row) {
+        const QModelIndex index = firstEvents->index(row, 0);
+        const QString retainedText =
+            firstEvents->data(index, TerminalInspectorEventModel::SummaryRole)
+                .toString()
+            + u' '
+            + firstEvents->data(index, TerminalInspectorEventModel::DetailsRole)
+                  .toString();
+        QVERIFY(
+            !retainedText.contains(QStringLiteral("paused-generation-secret")));
+        QVERIFY(!retainedText.contains(pausedGenerationHex));
+    }
 
     firstEvents->setCategoryFilter(
         static_cast<int>(TerminalInspectorEventModel::Category::Terminal));
@@ -4590,8 +4661,10 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
     firstEvents->clear();
     firstEvents->setCategoryFilter(-1);
     firstController->terminalUpdated(diagnosticUpdate);
-    firstController->sendKey({.key = Qt::Key_C, .text = QStringLiteral("c")});
-    QCOMPARE(firstEvents->count(), 2);
+    QKeyEvent coalescingPress(QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
+                              QStringLiteral("c"));
+    QCoreApplication::sendEvent(firstPane, &coalescingPress);
+    QCOMPARE(firstEvents->count(), 3);
     QCOMPARE(firstEvents
                  ->data(firstEvents->index(0, 0),
                         TerminalInspectorEventModel::KindRole)
@@ -4599,6 +4672,11 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
              QStringLiteral("Forwarded key request"));
     QCOMPARE(firstEvents
                  ->data(firstEvents->index(1, 0),
+                        TerminalInspectorEventModel::KindRole)
+                 .toString(),
+             QStringLiteral("Keybinding decision"));
+    QCOMPARE(firstEvents
+                 ->data(firstEvents->index(2, 0),
                         TerminalInspectorEventModel::KindRole)
                  .toString(),
              QStringLiteral("Frame update"));
@@ -4777,8 +4855,10 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
     QVERIFY(secondEvents != nullptr);
     reopenedFirstEvents->clear();
     secondEvents->clear();
-    firstController->sendKey({.key = Qt::Key_C, .text = QStringLiteral("c")});
-    QCOMPARE(reopenedFirstEvents->count(), 1);
+    QKeyEvent paneLocalPress(QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
+                             QStringLiteral("c"));
+    QCoreApplication::sendEvent(firstPane, &paneLocalPress);
+    QCOMPARE(reopenedFirstEvents->count(), 2);
     QCOMPARE(secondEvents->count(), 0);
     QCOMPARE(firstPane->inspectorModel()
                  ->snapshot()
@@ -4811,10 +4891,9 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
 
 void TerminalWorkspaceTest::inspectorQmlWindowTracksPaneLifetime()
 {
-    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    ShellEnvironment shell(QByteArrayLiteral("/bin/cat"));
     LaunchOptions options = baseOptions();
-    options.program = {QStringLiteral("/bin/true")};
-    options.hold = true;
+    options.program = {QStringLiteral("/bin/cat")};
     options.confirmCloseMode = ConfirmCloseMode::Never;
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
@@ -4888,8 +4967,61 @@ void TerminalWorkspaceTest::inspectorQmlWindowTracksPaneLifetime()
     QVERIFY(eventDetails != nullptr);
     QVERIFY(eventDetailsText != nullptr);
     eventModel->clear();
-    controller->sendKey({.key = Qt::Key_D, .text = QStringLiteral("d")});
-    QTRY_COMPARE_WITH_TIMEOUT(eventList->property("count").toInt(), 1, 1000);
+    QKeyEvent initialEventPress(QEvent::KeyPress, Qt::Key_D, Qt::NoModifier,
+                                QStringLiteral("d"));
+    QCoreApplication::sendEvent(pane, &initialEventPress);
+    QTRY_VERIFY_WITH_TIMEOUT(eventList->property("count").toInt() >= 2, 1000);
+
+    eventModel->clear();
+    QKeyEvent correlatedPress(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+                              QStringLiteral("x"));
+    QCoreApplication::sendEvent(pane, &correlatedPress);
+    quint64 correlatedTrace = 0;
+    const auto hasCorrelatedKind =
+        [&eventModel, &correlatedTrace](QStringView expectedKind) {
+            for (int row = 0; row < eventModel->rowCount(); ++row) {
+                const QModelIndex index = eventModel->index(row, 0);
+                const quint64 trace =
+                    eventModel
+                        ->data(index, TerminalInspectorEventModel::TraceIdRole)
+                        .toULongLong();
+                if (trace == 0) continue;
+                if (correlatedTrace == 0) correlatedTrace = trace;
+                if (trace == correlatedTrace
+                    && eventModel
+                            ->data(index, TerminalInspectorEventModel::KindRole)
+                            .toString()
+                        == expectedKind) {
+                    return true;
+                }
+            }
+            return false;
+        };
+    QVERIFY(hasCorrelatedKind(QStringLiteral("Keybinding decision")));
+    QVERIFY(correlatedTrace != 0);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        hasCorrelatedKind(QStringLiteral("Forwarded key request")), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        hasCorrelatedKind(QStringLiteral("Worker key encoding")), 5000);
+    for (int row = 0; row < eventModel->rowCount(); ++row) {
+        const QModelIndex index = eventModel->index(row, 0);
+        if (eventModel->data(index, TerminalInspectorEventModel::TraceIdRole)
+                    .toULongLong()
+                != correlatedTrace
+            || eventModel->data(index, TerminalInspectorEventModel::KindRole)
+                    .toString()
+                != QStringLiteral("Keybinding decision")) {
+            continue;
+        }
+        QVERIFY(
+            eventModel->data(index, TerminalInspectorEventModel::SummaryRole)
+                .toString()
+                .contains(QStringLiteral("pass-through")));
+        QVERIFY(
+            !eventModel->data(index, TerminalInspectorEventModel::DetailsRole)
+                 .toString()
+                 .contains(QStringLiteral("flags consumed")));
+    }
 
     // The detail view copies selected input text out of the bounded model.
     // Replacing that model at close/reopen is therefore also a privacy
@@ -4898,6 +5030,7 @@ void TerminalWorkspaceTest::inspectorQmlWindowTracksPaneLifetime()
     const QString secretDetails = QStringLiteral("typed secret details");
     QVERIFY(eventsPage->setProperty("eventSelected", true));
     QVERIFY(eventsPage->setProperty("selectedSequence", QStringLiteral("1")));
+    QVERIFY(eventsPage->setProperty("selectedTrace", QStringLiteral("41")));
     QVERIFY(eventsPage->setProperty("selectedSummary", secretSummary));
     QVERIFY(eventsPage->setProperty("selectedDetails", secretDetails));
     QVERIFY(eventsPage->property("eventSelected").toBool());
@@ -4905,14 +5038,43 @@ void TerminalWorkspaceTest::inspectorQmlWindowTracksPaneLifetime()
         eventDetailsText->property("text").toString(),
         secretSummary + QStringLiteral("\n\n") + secretDetails, 1000);
 
+    // A worker response already queued for the old capture generation must
+    // never be retained by the model created after a close/reopen boundary.
+    eventModel->clear();
+    QSignalSpy oldGenerationRequests(controller,
+                                     &TerminalController::keyRequested);
+    QKeyEvent oldGenerationPress(QEvent::KeyPress, Qt::Key_S, Qt::NoModifier,
+                                 QStringLiteral("generation-secret"));
+    QCoreApplication::sendEvent(pane, &oldGenerationPress);
+    QCOMPARE(oldGenerationRequests.count(), 1);
+    const TerminalKeyInput delayedOldGenerationInput =
+        qvariant_cast<TerminalKeyInput>(
+            oldGenerationRequests.constFirst().constFirst());
+    const QModelIndex oldDecision = eventModel->index(0, 0);
+    const quint64 oldGenerationTrace =
+        eventModel->data(oldDecision, TerminalInspectorEventModel::TraceIdRole)
+            .toULongLong();
+    QVERIFY(oldGenerationTrace != 0);
+
     QPointer<TerminalInspectorEventModel> closedEvents(eventModel);
+    QSignalSpy closeReopenGenerations(
+        controller, &TerminalController::keyboardTraceGenerationRequested);
     QVERIFY(workspace->controlInspector(
         paneId, WorkspaceFrontendActions::InspectorMode::Hide));
+    QVERIFY(closedEvents != nullptr);
+    QVERIFY(closeReopenGenerations.count() >= 1);
+    QCOMPARE(closeReopenGenerations.constLast().constFirst().toULongLong(),
+             quint64{0});
+    const int generationsAfterClose = closeReopenGenerations.count();
+    closedEvents->setPaused(true);
+    closedEvents->setPaused(false);
+    QCOMPARE(closeReopenGenerations.count(), generationsAfterClose);
     QTRY_VERIFY_WITH_TIMEOUT(!inspectorWindow->isVisible(), 1000);
     QVERIFY(closedEvents == nullptr || closedEvents->retainedCount() == 0);
     QTRY_VERIFY_WITH_TIMEOUT(!eventsPage->property("eventSelected").toBool(),
                              1000);
     QCOMPARE(eventsPage->property("selectedSequence").toString(), QString{});
+    QCOMPARE(eventsPage->property("selectedTrace").toString(), QString{});
     QCOMPARE(eventsPage->property("selectedSummary").toString(), QString{});
     QCOMPARE(eventsPage->property("selectedDetails").toString(), QString{});
     QCOMPARE(eventList->property("currentIndex").toInt(), -1);
@@ -4920,12 +5082,74 @@ void TerminalWorkspaceTest::inspectorQmlWindowTracksPaneLifetime()
 
     QVERIFY(workspace->controlInspector(
         paneId, WorkspaceFrontendActions::InspectorMode::Show));
+    QCOMPARE(closeReopenGenerations.count(), generationsAfterClose + 1);
+    QVERIFY(closeReopenGenerations.constLast().constFirst().toULongLong() != 0);
     QTRY_VERIFY_WITH_TIMEOUT(inspectorWindow->isVisible(), 1000);
     eventModel = qobject_cast<TerminalInspectorEventModel *>(
         pane->inspectorModel()->eventModel());
     QVERIFY(eventModel != nullptr);
     QCOMPARE(eventModel->retainedCount(), 0);
     QVERIFY(!eventsPage->property("eventSelected").toBool());
+
+    // Model a delayed asynchronous local-action fallback carrying the old
+    // input object. The reopened model must apply the same generation gate as
+    // the worker-result path rather than retaining this request synchronously.
+    controller->sendKey(delayedOldGenerationInput);
+
+    // A worker result for a new-generation sentinel is ordered after every
+    // old-generation key operation. Waiting for it avoids a timing-only
+    // privacy assertion while the controller's generation gate rejects any
+    // late result from the closed inspector.
+    QKeyEvent reopenedGenerationPress(
+        QEvent::KeyPress, Qt::Key_Z, Qt::NoModifier,
+        QStringLiteral("reopen-generation-sentinel"));
+    QCoreApplication::sendEvent(pane, &reopenedGenerationPress);
+    quint64 reopenedGenerationTrace = 0;
+    const auto reopenedSentinelCompleted = [&] {
+        bool workerResult = false;
+        for (int row = 0; row < eventModel->rowCount(); ++row) {
+            const QModelIndex index = eventModel->index(row, 0);
+            const QString kind =
+                eventModel->data(index, TerminalInspectorEventModel::KindRole)
+                    .toString();
+            const quint64 trace =
+                eventModel
+                    ->data(index, TerminalInspectorEventModel::TraceIdRole)
+                    .toULongLong();
+            if (kind == QStringLiteral("Keybinding decision")
+                && eventModel
+                       ->data(index, TerminalInspectorEventModel::SummaryRole)
+                       .toString()
+                       .contains(
+                           QStringLiteral("reopen-generation-sentinel"))) {
+                reopenedGenerationTrace = trace;
+            }
+            workerResult = workerResult
+                || (reopenedGenerationTrace != 0
+                    && trace == reopenedGenerationTrace
+                    && kind == QStringLiteral("Worker key encoding"));
+        }
+        return reopenedGenerationTrace != 0 && workerResult;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(reopenedSentinelCompleted(), 5000);
+    QVERIFY(reopenedGenerationTrace != oldGenerationTrace);
+    const QString oldGenerationHex =
+        QString::fromLatin1(QByteArrayLiteral("generation-secret").toHex(' '));
+    for (int row = 0; row < eventModel->rowCount(); ++row) {
+        const QModelIndex index = eventModel->index(row, 0);
+        QVERIFY(
+            eventModel->data(index, TerminalInspectorEventModel::TraceIdRole)
+                .toULongLong()
+            != oldGenerationTrace);
+        const QString retainedText =
+            eventModel->data(index, TerminalInspectorEventModel::SummaryRole)
+                .toString()
+            + u' '
+            + eventModel->data(index, TerminalInspectorEventModel::DetailsRole)
+                  .toString();
+        QVERIFY(!retainedText.contains(QStringLiteral("generation-secret")));
+        QVERIFY(!retainedText.contains(oldGenerationHex));
+    }
 
     pane->inspectorModel()->beginCellPick();
     QVERIFY(pane->inspectorCellPicking());
@@ -7353,6 +7577,39 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
         pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    const TabListEntry *const entry = workspace.tabModel()->entryAt(0);
+    QVERIFY(entry != nullptr);
+    QVERIFY(workspace.controlInspector(
+        entry->activePaneId, WorkspaceFrontendActions::InspectorMode::Show));
+    TerminalInspectorModel *const inspector = pane->inspectorModel();
+    QVERIFY(inspector != nullptr);
+    auto *const events =
+        qobject_cast<TerminalInspectorEventModel *>(inspector->eventModel());
+    QVERIFY(events != nullptr);
+    events->clear();
+
+    const auto decisionContaining = [events](QStringView text) {
+        for (int row = 0; row < events->rowCount(); ++row) {
+            const QModelIndex index = events->index(row, 0);
+            if (events->data(index, TerminalInspectorEventModel::SummaryRole)
+                    .toString()
+                    .contains(text)) {
+                return index;
+            }
+        }
+        return QModelIndex{};
+    };
+    const auto decisionDetailsContaining = [events](QStringView text) {
+        for (int row = 0; row < events->rowCount(); ++row) {
+            const QModelIndex index = events->index(row, 0);
+            if (events->data(index, TerminalInspectorEventModel::DetailsRole)
+                    .toString()
+                    .contains(text)) {
+                return index;
+            }
+        }
+        return QModelIndex{};
+    };
 
     QKeyEvent activate(QEvent::KeyPress, Qt::Key_M,
                        Qt::ControlModifier, QString(QChar(0x0d)));
@@ -7371,6 +7628,25 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
     QCOMPARE(workspace.tabCount(), 1);
     QCOMPARE(pane->activeKeyTables(),
              QStringList({QStringLiteral("modal")}));
+    const QModelIndex rootApplication =
+        decisionContaining(QStringLiteral("Root application binding"));
+    const QModelIndex rootRelease =
+        decisionContaining(QStringLiteral("Root consumed release"));
+    QVERIFY(rootApplication.isValid());
+    QVERIFY(rootRelease.isValid());
+    const quint64 rootApplicationTrace =
+        events->data(rootApplication, TerminalInspectorEventModel::TraceIdRole)
+            .toULongLong();
+    const quint64 rootReleaseTrace =
+        events->data(rootRelease, TerminalInspectorEventModel::TraceIdRole)
+            .toULongLong();
+    QVERIFY(rootApplicationTrace != 0);
+    QVERIFY(rootReleaseTrace != 0);
+    QVERIFY(rootApplicationTrace != rootReleaseTrace);
+    QVERIFY(
+        events->data(rootApplication, TerminalInspectorEventModel::DetailsRole)
+            .toString()
+            .contains(QStringLiteral("reload_config")));
 
     const auto exerciseIgnore = [&](Qt::Key key, QChar text,
                                     int expectedActionCount) {
@@ -7395,6 +7671,25 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
     exerciseIgnore(Qt::Key_I, QChar(0x09), 2);
     exerciseIgnore(Qt::Key_G, QChar(0x07), 3);
     exerciseIgnore(Qt::Key_A, QChar(0x01), 4);
+
+    const QModelIndex rootGlobal =
+        decisionContaining(QStringLiteral("Root global binding"));
+    const QModelIndex allDecision =
+        decisionDetailsContaining(QStringLiteral(",all"));
+    QVERIFY(rootGlobal.isValid());
+    QVERIFY(allDecision.isValid());
+    QVERIFY(events->data(rootGlobal, TerminalInspectorEventModel::TraceIdRole)
+                .toULongLong()
+            != 0);
+    QVERIFY(events->data(allDecision, TerminalInspectorEventModel::TraceIdRole)
+                .toULongLong()
+            != 0);
+    QVERIFY(events->data(rootGlobal, TerminalInspectorEventModel::DetailsRole)
+                .toString()
+                .contains(QStringLiteral("global")));
+    QVERIFY(events->data(allDecision, TerminalInspectorEventModel::DetailsRole)
+                .toString()
+                .contains(QStringLiteral("all")));
 }
 
 void TerminalWorkspaceTest::

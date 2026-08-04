@@ -698,6 +698,7 @@ TerminalPane::TerminalPane(
 
 TerminalPane::~TerminalPane()
 {
+    inspectorKeyboardTraceGeneration_ = 0;
     QObject::disconnect(itemWindowConnection_);
     if (observedWindow_ != nullptr) {
         observedWindow_->removeEventFilter(this);
@@ -1855,7 +1856,15 @@ bool TerminalPane::controlInspector(
     if (show) {
         if (inspectorModel_ != nullptr) return true;
         const QPointer<TerminalPane> guard(this);
-        inspectorModel_ = new TerminalInspectorModel(this);
+        TerminalInspectorModel *const created =
+            new TerminalInspectorModel(this);
+        inspectorModel_ = created;
+        // Publish the child pointer before capture activation. The generation
+        // signal is externally observable and may close or destroy this pane;
+        // reentrant close can now deactivate the fully constructed model.
+        setInspectorKeyboardTraceCapture(true);
+        if (guard == nullptr) return false;
+        if (inspectorModel_.data() != created) return true;
         Q_EMIT inspectorModelChanged();
         return guard != nullptr;
     }
@@ -1870,6 +1879,57 @@ bool TerminalPane::controlInspector(
     Q_EMIT inspectorModelChanged();
     if (closing != nullptr) closing->deleteLater();
     return guard != nullptr;
+}
+
+void TerminalPane::setInspectorKeyboardTraceCapture(bool enabled)
+{
+    if (enabled == (inspectorKeyboardTraceGeneration_ != 0)) return;
+
+    if (enabled) {
+        do {
+            ++nextInspectorKeyboardTraceGeneration_;
+        } while (nextInspectorKeyboardTraceGeneration_ == 0);
+        inspectorKeyboardTraceGeneration_ =
+            nextInspectorKeyboardTraceGeneration_;
+    } else {
+        inspectorKeyboardTraceGeneration_ = 0;
+    }
+    controller_->setKeyboardTraceGeneration(inspectorKeyboardTraceGeneration_);
+}
+
+TerminalKeyInput
+TerminalPane::beginInspectorKeyboardTrace(const QKeyEvent &event, bool pressed)
+{
+    return beginInspectorKeyboardTrace(
+        event, pressed, static_cast<int>(consumedModifiersForText(event)));
+}
+
+TerminalKeyInput
+TerminalPane::beginInspectorKeyboardTrace(const QKeyEvent &event, bool pressed,
+                                          int consumedModifiers)
+{
+    TerminalKeyInput input =
+        terminalKeyInput(&event, pressed, consumedModifiers);
+    if (inspectorKeyboardTraceGeneration_ == 0) return input;
+
+    do {
+        ++nextInspectorKeyboardTraceId_;
+    } while (nextInspectorKeyboardTraceId_ == 0);
+    input.inspectorTraceGeneration = inspectorKeyboardTraceGeneration_;
+    input.inspectorTraceId = nextInspectorKeyboardTraceId_;
+    return input;
+}
+
+void TerminalPane::publishInspectorKeyboardTrace(
+    TerminalKeyboardTraceDecision decision)
+{
+    if (decision.input.inspectorTraceGeneration == 0
+        || decision.input.inspectorTraceId == 0
+        || decision.input.inspectorTraceGeneration
+            != inspectorKeyboardTraceGeneration_) {
+        return;
+    }
+    Q_EMIT keyboardTraceDecision(decision);
 }
 
 void TerminalPane::closeInspector()
@@ -2948,6 +3008,21 @@ void TerminalPane::drainDeferredKeyEvents()
 void TerminalPane::keyPressEvent(QKeyEvent *event)
 {
     if (inspectorCellPicking_ && event->key() == Qt::Key_Escape) {
+        const QPointer<TerminalPane> guard(this);
+        if (inspectorKeyboardTraceCaptureActive()) {
+            TerminalKeyboardTraceDecision decision;
+            decision.input = beginInspectorKeyboardTrace(
+                *event, true,
+                static_cast<int>(consumedModifiersForText(*event)));
+            decision.kind =
+                TerminalKeyboardTraceDecisionKind::PaneInspectorCancel;
+            decision.consumed = true;
+            publishInspectorKeyboardTrace(std::move(decision));
+            if (guard == nullptr) {
+                event->accept();
+                return;
+            }
+        }
         consumedKeys_.insert(keyEventIdentity(event));
         setInspectorCellPicking(false);
         event->accept();
@@ -2980,14 +3055,35 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
     const KeyEventSnapshot remappedSnapshot =
         modifierRemaps_.remapEvent(KeyEventSnapshot::capture(*event));
     QKeyEvent remappedEvent = remappedSnapshot.replay();
-    const KeyHandling handling = handleShortcut(
-        &remappedEvent, guard, pointerActivityEpoch, consumedModifiers);
+    const bool configuredKeybinds = keybinds_.program().isAvailable();
+    const bool traceCapture = inspectorKeyboardTraceCaptureActive();
+    TerminalKeyInput currentInput;
+    if (configuredKeybinds || traceCapture) {
+        currentInput =
+            beginInspectorKeyboardTrace(remappedEvent, true, consumedModifiers);
+    }
+    const KeyHandling handling =
+        handleShortcut(&remappedEvent, guard, pointerActivityEpoch,
+                       consumedModifiers, currentInput);
     // Lifecycle actions are owner-deferred, but an embedding application may
     // still attach a destructive direct observer to another pane signal.
     // Never resume ordinary key handling through a deleted QObject.
     if (guard == nullptr) {
         event->accept();
         return;
+    }
+    if (!configuredKeybinds && traceCapture) {
+        TerminalKeyboardTraceDecision decision;
+        decision.input = currentInput;
+        decision.kind = handling == KeyHandling::PassThrough
+            ? TerminalKeyboardTraceDecisionKind::PaneFallbackPassed
+            : TerminalKeyboardTraceDecisionKind::PaneFallbackConsumed;
+        decision.consumed = handling != KeyHandling::PassThrough;
+        publishInspectorKeyboardTrace(std::move(decision));
+        if (guard == nullptr) {
+            event->accept();
+            return;
+        }
     }
     // Run configured actions against the previously accepted hover before a
     // chord's non-modifier key refreshes link eligibility. This keeps
@@ -3008,14 +3104,16 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
         return;
     }
 
-    const TerminalKeyInput input =
-        terminalKeyInput(&remappedEvent, true, consumedModifiers);
-    hideMouseForTerminalKey(input, pointerActivityEpoch);
+    if (!configuredKeybinds && !traceCapture) {
+        currentInput =
+            terminalKeyInput(&remappedEvent, true, consumedModifiers);
+    }
+    hideMouseForTerminalKey(currentInput, pointerActivityEpoch);
     if (guard == nullptr) {
         event->accept();
         return;
     }
-    controller_->sendKey(input);
+    controller_->sendKey(currentInput);
     event->accept();
 }
 
@@ -3035,6 +3133,12 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
     const KeyEventSnapshot remappedSnapshot =
         modifierRemaps_.remapEvent(KeyEventSnapshot::capture(*event));
     QKeyEvent remappedEvent = remappedSnapshot.replay();
+    const bool traceCapture = inspectorKeyboardTraceCaptureActive();
+    TerminalKeyInput currentInput;
+    if (traceCapture) {
+        currentInput = beginInspectorKeyboardTrace(remappedEvent, false,
+                                                   consumedModifiers);
+    }
     if (!controller_->keyboardInputSuppressed()) {
         updateHyperlinkModifiers(modifiersAfterKeyEvent(event, false));
     }
@@ -3043,21 +3147,42 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
         return;
     }
     if (consumedKeys_.remove(keyEventIdentity(event))) {
+        if (traceCapture) {
+            TerminalKeyboardTraceDecision decision;
+            decision.input = currentInput;
+            decision.kind =
+                TerminalKeyboardTraceDecisionKind::PaneConsumedRelease;
+            decision.consumed = true;
+            publishInspectorKeyboardTrace(std::move(decision));
+        }
         event->accept();
         return;
     }
-    controller_->sendKey(
-        terminalKeyInput(&remappedEvent, false, consumedModifiers));
+    if (traceCapture) {
+        TerminalKeyboardTraceDecision decision;
+        decision.input = currentInput;
+        decision.kind = TerminalKeyboardTraceDecisionKind::PaneUnmatched;
+        publishInspectorKeyboardTrace(std::move(decision));
+        if (guard == nullptr) {
+            event->accept();
+            return;
+        }
+    } else {
+        currentInput =
+            terminalKeyInput(&remappedEvent, false, consumedModifiers);
+    }
+    controller_->sendKey(currentInput);
     event->accept();
 }
 
 TerminalPane::KeyHandling TerminalPane::handleShortcut(
     QKeyEvent *event, const QPointer<TerminalPane> &guard,
-    quint64 pointerActivityEpoch, int consumedModifiers)
+    quint64 pointerActivityEpoch, int consumedModifiers,
+    const TerminalKeyInput &currentInput)
 {
     if (keybinds_.program().isAvailable()) {
         return handleConfiguredShortcut(event, guard, pointerActivityEpoch,
-                                        consumedModifiers);
+                                        consumedModifiers, currentInput);
     }
 
     const Qt::KeyboardModifiers modifiers =
@@ -3171,11 +3296,13 @@ bool TerminalPane::resolveActiveSequence(
 
 bool TerminalPane::resolveSequenceToken(quint64 token,
                                         TerminalSequenceResolution resolution,
-                                        std::optional<TerminalKeyInput> current)
+                                        std::optional<TerminalKeyInput> current,
+                                        TerminalKeyInput traceInput)
 {
     if (token == 0) return false;
 
-    controller_->resolveSequence(token, resolution, current);
+    controller_->resolveSequence(token, resolution, current,
+                                 std::move(traceInput));
     return true;
 }
 
@@ -3183,18 +3310,20 @@ bool TerminalPane::resolveExecutingSequence(
     TerminalSequenceResolution resolution,
     std::optional<TerminalKeyInput> current)
 {
-    if (executingSequenceTokens_.isEmpty()) {
+    if (executingSequences_.isEmpty()) {
         return resolveActiveSequence(resolution, std::move(current));
     }
-    return resolveSequenceToken(
-        std::exchange(executingSequenceTokens_.last(), 0), resolution,
-        std::move(current));
+    ExecutingSequence &sequence = executingSequences_.last();
+    return resolveSequenceToken(std::exchange(sequence.token, 0), resolution,
+                                std::move(current), sequence.traceInput);
 }
 
 TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     QKeyEvent *event, const QPointer<TerminalPane> &guard,
-    quint64 pointerActivityEpoch, int consumedModifiers)
+    quint64 pointerActivityEpoch, int consumedModifiers,
+    const TerminalKeyInput &currentInput)
 {
+    Q_UNUSED(consumedModifiers);
     const GhosttyKeybindEvent bindingEvent{
         .qtKey = event->key(),
         .modifiers = event->modifiers(),
@@ -3202,10 +3331,32 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
         .nativeScanCode = event->nativeScanCode(),
         .unshiftedCodepoint = unshiftedCodepoint(event->key()),
     };
-    const TerminalKeyInput currentInput =
-        terminalKeyInput(event, true, consumedModifiers);
     const bool sequenceWasActive = keybinds_.sequenceActive();
     const GhosttyKeybindStep step = keybinds_.advance(bindingEvent);
+
+    const auto publishStep = [this, &currentInput,
+                              &step](TerminalKeyboardTraceDecisionKind kind,
+                                     quint64 sequenceToken = 0) {
+        if (!inspectorKeyboardTraceCaptureActive()) return;
+        publishInspectorKeyboardTrace({
+            .input = currentInput,
+            .kind = kind,
+            .sequenceToken = sequenceToken,
+            .actions = step.match.actionChain.serializedActions(),
+            .activeTables = keybinds_.activeTableNames(),
+            .pendingSequence = keybinds_.activeSequenceLabels(),
+            // Ghostty's default match value retains consumed=true even for an
+            // unmatched event. Do not display that raw sentinel alongside an
+            // actual pass-through decision.
+            .consumed = kind == TerminalKeyboardTraceDecisionKind::PaneUnmatched
+                ? false
+                : step.match.consumed,
+            .performable = step.match.performable,
+            .all = step.match.all,
+            .global = step.match.global,
+            .physical = step.match.physical,
+        });
+    };
 
     if (step.kind == GhosttyKeybindStepKind::Leader) {
         const GhosttyKeybindProgram matchedProgram = keybinds_.program();
@@ -3213,6 +3364,8 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
             activeSequenceToken_ = controller_->beginSequence();
         }
         const quint64 token = activeSequenceToken_;
+        publishStep(TerminalKeyboardTraceDecisionKind::PaneLeader, token);
+        if (guard == nullptr) return KeyHandling::ConsumePress;
         const bool tokenStillOwned =
             controller_->stageSequenceKey(token, currentInput);
         if (guard == nullptr) return KeyHandling::ConsumePress;
@@ -3271,10 +3424,15 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     }
 
     switch (step.kind) {
-    case GhosttyKeybindStepKind::Unmatched: return KeyHandling::PassThrough;
+    case GhosttyKeybindStepKind::Unmatched:
+        publishStep(TerminalKeyboardTraceDecisionKind::PaneUnmatched);
+        return KeyHandling::PassThrough;
     case GhosttyKeybindStepKind::Leader:
         Q_UNREACHABLE_RETURN(KeyHandling::PassThrough);
     case GhosttyKeybindStepKind::InvalidSequence:
+        publishStep(TerminalKeyboardTraceDecisionKind::PaneInvalidSequence,
+                    matchedSequenceToken);
+        if (guard == nullptr) return KeyHandling::ConsumePress;
         if (matchedSequenceToken != 0) {
             hideMouseForTerminalKey(currentInput, pointerActivityEpoch);
             if (guard == nullptr) return KeyHandling::ConsumePress;
@@ -3287,8 +3445,12 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
         }
         return KeyHandling::PassThrough;
     case GhosttyKeybindStepKind::IgnoredSequence:
+        publishStep(TerminalKeyboardTraceDecisionKind::PaneIgnoredSequence,
+                    matchedSequenceToken);
+        if (guard == nullptr) return KeyHandling::ConsumePress;
         (void)resolveSequenceToken(matchedSequenceToken,
-                                   TerminalSequenceResolution::Drop);
+                                   TerminalSequenceResolution::Drop,
+                                   std::nullopt, currentInput);
         return KeyHandling::ConsumePress;
     case GhosttyKeybindStepKind::Binding: break;
     }
@@ -3297,6 +3459,9 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     // flags independently. Broad bindings ignore unconsumed/performable and
     // are considered performed even when no target changes state.
     if (step.match.all || step.match.global) {
+        publishStep(TerminalKeyboardTraceDecisionKind::PaneBroadBinding,
+                    matchedSequenceToken);
+        if (guard == nullptr) return KeyHandling::ConsumePressAndRelease;
         const GhosttyActionInputEffect effect =
             step.match.actionChain.inputEffect;
         // Closing takes priority over ignore so the corresponding release can
@@ -3305,7 +3470,8 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
             ? KeyHandling::ConsumePress
             : KeyHandling::ConsumePressAndRelease;
         (void)resolveSequenceToken(matchedSequenceToken,
-                                   TerminalSequenceResolution::Drop);
+                                   TerminalSequenceResolution::Drop,
+                                   std::nullopt, currentInput);
         if (guard == nullptr) return handling;
         // Emit last: a close action may synchronously destroy the originating
         // workspace, and therefore this pane, through an approval observer.
@@ -3314,6 +3480,9 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
         return handling;
     }
 
+    publishStep(TerminalKeyboardTraceDecisionKind::PaneLocalBinding,
+                matchedSequenceToken);
+    if (guard == nullptr) return KeyHandling::ConsumePressAndRelease;
     auto chain =
         std::make_shared<PendingLocalActionChain>(PendingLocalActionChain{
             .chain = step.match.actionChain,
@@ -3365,14 +3534,14 @@ std::optional<TerminalPane::KeyHandling> TerminalPane::continueLocalActionChain(
     const std::shared_ptr<PendingLocalActionChain> &chain)
 {
     const QPointer<TerminalPane> guard(this);
-    executingSequenceTokens_.append(chain->sequenceToken);
+    executingSequences_.append({chain->sequenceToken, chain->currentInput});
     bool sequenceAttached = true;
     const auto sequenceGuard = qScopeGuard([guard, chain, &sequenceAttached] {
         if (!sequenceAttached) return;
-        if (guard == nullptr || guard->executingSequenceTokens_.isEmpty()) {
+        if (guard == nullptr || guard->executingSequences_.isEmpty()) {
             return;
         }
-        chain->sequenceToken = guard->executingSequenceTokens_.takeLast();
+        chain->sequenceToken = guard->executingSequences_.takeLast().token;
     });
 
     while (chain->nextEntry < chain->chain.entries.size()) {
@@ -3426,7 +3595,7 @@ std::optional<TerminalPane::KeyHandling> TerminalPane::continueLocalActionChain(
         }
     }
 
-    chain->sequenceToken = executingSequenceTokens_.takeLast();
+    chain->sequenceToken = executingSequences_.takeLast().token;
     sequenceAttached = false;
     const KeyHandling handling =
         finishLocalActionChain(*chain, chain->ownsKeyDeferral);
@@ -3467,7 +3636,8 @@ TerminalPane::finishLocalActionChain(PendingLocalActionChain &chain,
         return resolveSequenceToken(
             std::exchange(chain.sequenceToken, 0), resolution,
             withCurrent ? std::optional<TerminalKeyInput>(chain.currentInput)
-                        : std::nullopt);
+                        : std::nullopt,
+            chain.currentInput);
     };
 
     // Ghostty executes the complete chain, then applies this precedence to
@@ -3957,7 +4127,7 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                 return true;
             },
             [this](const PaneAction::EndKeySequence &) {
-                if (executingSequenceTokens_.isEmpty()) {
+                if (executingSequences_.isEmpty()) {
                     const bool sequenceWasActive = keybinds_.sequenceActive();
                     keybinds_.resetSequence();
                     if (sequenceWasActive) {

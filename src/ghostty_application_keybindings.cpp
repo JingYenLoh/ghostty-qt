@@ -788,8 +788,43 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched, QEvent *event)
     }
     const KeyEventSnapshot remapped =
         modifierRemaps_.remapEvent(KeyEventSnapshot::capture(*keyEvent));
+    const auto publishRootTrace = [pane, &remapped](
+                                      TerminalKeyboardTraceDecisionKind kind,
+                                      const GhosttyKeybindMatch *match =
+                                          nullptr) {
+        if (pane == nullptr || !pane->inspectorKeyboardTraceCaptureActive()) {
+            return true;
+        }
+        const QPointer<TerminalPane> paneGuard(pane);
+        QKeyEvent tracedEvent = remapped.replay();
+        TerminalKeyInput input =
+            pane->beginInspectorKeyboardTrace(tracedEvent, remapped.pressed);
+        TerminalKeyboardTraceDecision decision;
+        decision.input = std::move(input);
+        decision.kind = kind;
+        if (match != nullptr) {
+            decision.actions = match->actionChain.serializedActions();
+            decision.activeTables = pane->activeKeyTables();
+            decision.pendingSequence = pane->pendingKeySequence();
+            // Root application and global matches are consumed before
+            // surface lookup regardless of their raw unconsumed flag.
+            decision.consumed = true;
+            decision.performable = match->performable;
+            decision.all = match->all;
+            decision.global = match->global;
+            decision.physical = match->physical;
+        } else {
+            decision.consumed = true;
+        }
+        pane->publishInspectorKeyboardTrace(std::move(decision));
+        return paneGuard != nullptr;
+    };
     if (keyRelease) {
         if (consumedKeys_.remove(keyEventIdentity(keyEvent))) {
+            if (!publishRootTrace(
+                    TerminalKeyboardTraceDecisionKind::RootConsumedRelease)) {
+                return true;
+            }
             return true;
         }
         return QObject::eventFilter(watched, event);
@@ -806,6 +841,11 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched, QEvent *event)
     }
 
     if (match->global) {
+        if (!publishRootTrace(
+                TerminalKeyboardTraceDecisionKind::RootGlobalBinding, &*match)
+            || dispatchGuard == nullptr) {
+            return true;
+        }
         const QPointer<GhosttyApplicationKeybindings> guard(this);
         const QPointer<QObject> watchedGuard(watched);
         dispatchCompiledBroadActions(match->actionChain);
@@ -823,6 +863,11 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched, QEvent *event)
 
     // App.keyEvent consumes a root app binding before surface/table lookup,
     // independently of its unconsumed/performable flags.
+    if (!publishRootTrace(
+            TerminalKeyboardTraceDecisionKind::RootApplicationBinding, &*match)
+        || dispatchGuard == nullptr) {
+        return true;
+    }
     const QPointer<GhosttyApplicationKeybindings> guard(this);
     const QPointer<QObject> watchedGuard(watched);
     (void)executeApplicationActions(match->actionChain);

@@ -241,6 +241,7 @@ private Q_SLOTS:
     void reportsTerminalInitializationFailure();
     void publishesCorrelatedInspectorSnapshots();
     void publishesCorrelatedInspectorCells();
+    void publishesBoundedKeyboardTraceResults();
     void initializesGeometryBeforeSpawningChild();
     void resizesPtyWithPaddingExcludedPixels();
     void injectsInitialInputAtomicallyInOrder();
@@ -511,6 +512,232 @@ void SessionWorkerTest::publishesCorrelatedInspectorCells()
         cells.constLast().at(1).value<TerminalInspectorCellSnapshot>();
     QCOMPARE(resetReady.status, TerminalInspectorCellStatus::Ready);
     worker.shutdown();
+}
+
+void SessionWorkerTest::publishesBoundedKeyboardTraceResults()
+{
+    qRegisterMetaType<TerminalKeyboardTraceResult>();
+
+    SessionWorker worker;
+    QSignalSpy traces(&worker, &SessionWorker::keyboardTraceResult);
+    QSignalSpy updates(&worker, &SessionWorker::terminalUpdated);
+    const auto key = [](QChar character, quint64 generation, quint64 traceId) {
+        TerminalKeyInput input;
+        input.key = character.toUpper().unicode();
+        input.text = QString(character);
+        input.unshiftedCodepoint = character.toLower().unicode();
+        input.pressed = true;
+        input.inspectorTraceGeneration = generation;
+        input.inspectorTraceId = traceId;
+        return input;
+    };
+    const auto resultAt = [&traces](qsizetype index) {
+        return qvariant_cast<TerminalKeyboardTraceResult>(
+            traces.at(index).constFirst());
+    };
+
+    constexpr quint64 generation = 17;
+    TerminalKeyInput ordinary = key(u'a', generation, 41);
+
+    // Supplying correlation metadata alone must not activate tracing. The
+    // default generation is zero so closed inspectors impose no result or
+    // bounded-preview work on ordinary input.
+    worker.sendKey(ordinary);
+    QCOMPARE(traces.count(), 0);
+
+    worker.setKeyboardTraceGeneration(generation);
+    worker.sendKey(ordinary);
+    QCOMPARE(traces.count(), 1);
+    TerminalKeyboardTraceResult result = resultAt(0);
+    QCOMPARE(result.generation, generation);
+    QCOMPARE(result.traceId, quint64{41});
+    QCOMPARE(result.sequenceToken, quint64{0});
+    QCOMPARE(result.operation, TerminalKeyboardTraceOperation::Key);
+    QCOMPARE(result.disposition,
+             TerminalKeyboardTraceDisposition::TerminalUnavailable);
+    QCOMPARE(result.encodedByteCount, qint64{0});
+    QVERIFY(result.encodedPrefix.isEmpty());
+    QVERIFY(!result.prefixTruncated);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/cat")};
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+
+    traces.clear();
+    worker.sendKey(ordinary);
+    QCOMPARE(traces.count(), 1);
+    result = resultAt(0);
+    QCOMPARE(result.generation, generation);
+    QCOMPARE(result.traceId, quint64{41});
+    QCOMPARE(result.sequenceToken, quint64{0});
+    QCOMPARE(result.operation, TerminalKeyboardTraceOperation::Key);
+    QCOMPARE(result.disposition, TerminalKeyboardTraceDisposition::Queued);
+    QCOMPARE(result.encodedByteCount, qint64{1});
+    QCOMPARE(result.encodedPrefix, QByteArrayLiteral("a"));
+    QVERIFY(!result.prefixTruncated);
+
+    // A different or disabled capture generation may still deliver terminal
+    // input, but it must never publish diagnostic results into this capture.
+    ordinary.inspectorTraceGeneration = generation + 1;
+    ordinary.inspectorTraceId = 42;
+    worker.sendKey(ordinary);
+    QCOMPARE(traces.count(), 1);
+    worker.setKeyboardTraceGeneration(0);
+    ordinary.inspectorTraceGeneration = generation;
+    ordinary.inspectorTraceId = 43;
+    worker.sendKey(ordinary);
+    QCOMPARE(traces.count(), 1);
+
+    // One key can encode more than the retained diagnostic prefix. Preserve
+    // its exact byte count without asking any queued GUI consumer to copy the
+    // complete payload.
+    worker.setKeyboardTraceGeneration(generation);
+    traces.clear();
+    TerminalKeyInput longText = key(u'x', generation, 50);
+    constexpr qsizetype longByteCount =
+        TerminalKeyboardTraceResult::MaximumEncodedPrefix * 3;
+    longText.text = QString(longByteCount, u'x');
+    constexpr quint64 longToken = 22;
+    worker.stageSequenceKey(longToken, longText);
+    QCOMPARE(traces.count(), 1);
+    result = resultAt(0);
+    QCOMPARE(result.traceId, quint64{50});
+    QCOMPARE(result.operation, TerminalKeyboardTraceOperation::SequenceStage);
+    QCOMPARE(result.disposition, TerminalKeyboardTraceDisposition::Staged);
+    QCOMPARE(result.encodedByteCount, static_cast<qint64>(longByteCount));
+    QCOMPARE(
+        result.encodedPrefix,
+        QByteArray(TerminalKeyboardTraceResult::MaximumEncodedPrefix, 'x'));
+    QVERIFY(result.prefixTruncated);
+    traces.clear();
+    worker.resolveSequence(longToken, TerminalSequenceResolution::Flush, false,
+                           {});
+    QCOMPARE(traces.count(), 1);
+    result = resultAt(0);
+    QCOMPARE(result.traceId, quint64{50});
+    QCOMPARE(result.operation,
+             TerminalKeyboardTraceOperation::SequenceResolution);
+    QCOMPARE(result.disposition, TerminalKeyboardTraceDisposition::Queued);
+    QCOMPARE(result.encodedByteCount, static_cast<qint64>(longByteCount));
+    QCOMPARE(
+        result.encodedPrefix,
+        QByteArray(TerminalKeyboardTraceResult::MaximumEncodedPrefix, 'x'));
+    QVERIFY(result.prefixTruncated);
+
+    // Sequence leaders receive both an immediate staging result and their own
+    // final fate. The resolving key is attributed only its own encoded bytes,
+    // even though the worker writes the combined payload atomically.
+    traces.clear();
+    constexpr quint64 token = 23;
+    worker.stageSequenceKey(token, key(u'x', generation, 100));
+    QCOMPARE(traces.count(), 1);
+    result = resultAt(0);
+    QCOMPARE(result.traceId, quint64{100});
+    QCOMPARE(result.operation, TerminalKeyboardTraceOperation::SequenceStage);
+    QCOMPARE(result.disposition, TerminalKeyboardTraceDisposition::Staged);
+    worker.stageSequenceKey(token, key(u'w', generation, 101));
+    QCOMPARE(traces.count(), 2);
+    result = resultAt(1);
+    QCOMPARE(result.traceId, quint64{101});
+    QCOMPARE(result.operation, TerminalKeyboardTraceOperation::SequenceStage);
+    QCOMPARE(result.disposition, TerminalKeyboardTraceDisposition::Staged);
+    traces.clear();
+
+    const TerminalKeyInput current = key(u'y', generation, 999);
+    worker.resolveSequence(
+        token, TerminalSequenceResolution::FlushAndSendCurrent, true, current);
+    QCOMPARE(traces.count(), 3);
+    result = resultAt(0);
+    QCOMPARE(result.generation, generation);
+    QCOMPARE(result.traceId, quint64{100});
+    QCOMPARE(result.sequenceToken, token);
+    QCOMPARE(result.operation,
+             TerminalKeyboardTraceOperation::SequenceResolution);
+    QCOMPARE(result.disposition, TerminalKeyboardTraceDisposition::Queued);
+    QCOMPARE(result.encodedByteCount, qint64{1});
+    QCOMPARE(result.encodedPrefix, QByteArrayLiteral("x"));
+    QVERIFY(!result.prefixTruncated);
+    result = resultAt(1);
+    QCOMPARE(result.traceId, quint64{101});
+    QCOMPARE(result.operation,
+             TerminalKeyboardTraceOperation::SequenceResolution);
+    QCOMPARE(result.disposition, TerminalKeyboardTraceDisposition::Queued);
+    QCOMPARE(result.encodedByteCount, qint64{1});
+    QCOMPARE(result.encodedPrefix, QByteArrayLiteral("w"));
+    result = resultAt(2);
+    QCOMPARE(result.traceId, quint64{999});
+    QCOMPARE(result.operation,
+             TerminalKeyboardTraceOperation::SequenceResolution);
+    QCOMPARE(result.disposition, TerminalKeyboardTraceDisposition::Queued);
+    QCOMPARE(result.encodedByteCount, qint64{1});
+    QCOMPARE(result.encodedPrefix, QByteArrayLiteral("y"));
+
+    // Disabling capture discards only copied trace metadata. Terminal input
+    // semantics retain a staged leader, but reopening with a fresh generation
+    // cannot reveal or misattribute its bytes to the resolving key.
+    constexpr quint64 privateToken = 24;
+    traces.clear();
+    worker.stageSequenceKey(privateToken, key(u's', generation, 200));
+    QCOMPARE(traces.count(), 1);
+    worker.setKeyboardTraceGeneration(0);
+    worker.setKeyboardTraceGeneration(generation + 1);
+    traces.clear();
+    worker.resolveSequence(privateToken,
+                           TerminalSequenceResolution::FlushAndSendCurrent,
+                           true, key(u'z', generation + 1, 201));
+    QCOMPARE(traces.count(), 1);
+    result = resultAt(0);
+    QCOMPARE(result.generation, generation + 1);
+    QCOMPARE(result.traceId, quint64{201});
+    QCOMPARE(result.encodedByteCount, qint64{1});
+    QCOMPARE(result.encodedPrefix, QByteArrayLiteral("z"));
+    QTRY_VERIFY_WITH_TIMEOUT(updatesContain(updates, QStringLiteral("sz")),
+                             1000);
+
+    // Replacing an unresolved token gives every retained leader an explicit
+    // final disposition before staging the new sequence.
+    constexpr quint64 supersededToken = 25;
+    constexpr quint64 replacementToken = 26;
+    traces.clear();
+    worker.stageSequenceKey(supersededToken, key(u'a', generation + 1, 300));
+    traces.clear();
+    worker.stageSequenceKey(replacementToken, key(u'b', generation + 1, 301));
+    QCOMPARE(traces.count(), 2);
+    result = resultAt(0);
+    QCOMPARE(result.traceId, quint64{300});
+    QCOMPARE(result.sequenceToken, supersededToken);
+    QCOMPARE(result.operation,
+             TerminalKeyboardTraceOperation::SequenceResolution);
+    QCOMPARE(result.disposition, TerminalKeyboardTraceDisposition::Superseded);
+    result = resultAt(1);
+    QCOMPARE(result.traceId, quint64{301});
+    QCOMPARE(result.sequenceToken, replacementToken);
+    QCOMPARE(result.operation, TerminalKeyboardTraceOperation::SequenceStage);
+    QCOMPARE(result.disposition, TerminalKeyboardTraceDisposition::Staged);
+
+    traces.clear();
+    worker.resolveSequence(replacementToken, TerminalSequenceResolution::Drop,
+                           false, key(u'c', generation + 1, 302));
+    QCOMPARE(traces.count(), 2);
+    result = resultAt(0);
+    QCOMPARE(result.traceId, quint64{301});
+    QCOMPARE(result.disposition, TerminalKeyboardTraceDisposition::Dropped);
+    result = resultAt(1);
+    QCOMPARE(result.traceId, quint64{302});
+    QCOMPARE(result.encodedByteCount, qint64{0});
+    QCOMPARE(result.disposition, TerminalKeyboardTraceDisposition::Dropped);
+
+    // Destruction is not a sequence resolution and must not enqueue a final
+    // diagnostic event while the worker is tearing down.
+    constexpr quint64 shutdownToken = 27;
+    traces.clear();
+    worker.stageSequenceKey(shutdownToken, key(u'd', generation + 1, 400));
+    QCOMPARE(traces.count(), 1);
+    traces.clear();
+    worker.shutdown();
+    QCOMPARE(traces.count(), 0);
 }
 
 void SessionWorkerTest::appliesLiveAbnormalExitPolicy()

@@ -668,7 +668,7 @@ Item {
                     Label {
                         Layout.fillWidth: true
                         Layout.topMargin: 14
-                        text: qsTr("The Events tab records requests forwarded by this pane. Root-consumed binding decisions and the worker's encoded key bytes are not retained yet.")
+                        text: qsTr("The Events tab records root and pane keybinding decisions. Pane input that reaches the key encoder reuses its trace ID for bounded per-key outcomes; sequence tokens group staged keys. Root-consumed key events skip worker key encoding, although their actions may invoke other worker operations. Exact raw VT actions and inactive-screen internals still require upstream diagnostic APIs.")
                         wrapMode: Text.WordWrap
                         opacity: 0.68
                     }
@@ -679,6 +679,7 @@ Item {
 
                     property bool eventSelected: false
                     property string selectedSequence: ""
+                    property string selectedTrace: ""
                     property string selectedSummary: ""
                     property string selectedDetails: ""
 
@@ -687,6 +688,7 @@ Item {
                     function clearEventSelection() {
                         eventSelected = false
                         selectedSequence = ""
+                        selectedTrace = ""
                         selectedSummary = ""
                         selectedDetails = ""
                         eventList.currentIndex = -1
@@ -815,7 +817,7 @@ Item {
 
                         Label {
                             Layout.fillWidth: true
-                            text: qsTr("This stream contains frontend requests, coalesced terminal frame updates, and pane state changes. Input rows retain bounded, escaped key or input-method text previews that can include typed secrets; paste contents are omitted, and capture stops when the inspector closes. It does not yet retain root-consumed binding decisions, worker-encoded key bytes, or a separately parsed raw VT action stream.")
+                            text: qsTr("This stream contains keybinding decisions, pane input and worker outcomes, coalesced terminal frames, and pane state changes. K# identifies one captured key event; sequence tokens group staged keys. Within one capture generation, successfully staged keys receive per-key final rows; when an allowed sequence is flushed, its combined PTY write remains atomic. Input previews may contain typed secrets; worker rows retain the byte count attributed to the key operation—zero when no bytes were encoded—and at most a 64-byte prefix. Pausing immediately stops new keyboard traces and event payload retention; an ordered worker update clears staged diagnostic metadata, while other skipped observations may still increase the skipped count. Paste contents are omitted. Raw VT actions and private terminal-page internals are not available through public libghostty-vt.")
                             wrapMode: Text.WordWrap
                             opacity: 0.68
                         }
@@ -849,6 +851,7 @@ Item {
 
                                     required property int index
                                     required property var sequence
+                                    required property var traceId
                                     required property string elapsedText
                                     required property string category
                                     required property string kind
@@ -864,6 +867,8 @@ Item {
                                         eventList.currentIndex = index
                                         eventsPage.eventSelected = true
                                         eventsPage.selectedSequence = String(sequence)
+                                        eventsPage.selectedTrace = traceId !== 0
+                                                ? String(traceId) : ""
                                         eventsPage.selectedSummary = summary
                                         eventsPage.selectedDetails = details
                                     }
@@ -877,6 +882,12 @@ Item {
 
                                             Label {
                                                 text: "#" + eventDelegate.sequence
+                                                font.family: "monospace"
+                                                opacity: 0.68
+                                            }
+                                            Label {
+                                                visible: eventDelegate.traceId !== 0
+                                                text: "K#" + eventDelegate.traceId
                                                 font.family: "monospace"
                                                 opacity: 0.68
                                             }
@@ -929,10 +940,16 @@ Item {
 
                                 Label {
                                     Layout.fillWidth: true
-                                    text: eventsPage.eventSelected
-                                          ? qsTr("Event #%1 details")
-                                              .arg(eventsPage.selectedSequence)
-                                          : ""
+                                    text: {
+                                        if (!eventsPage.eventSelected)
+                                            return ""
+                                        let heading = qsTr("Event #%1 details")
+                                            .arg(eventsPage.selectedSequence)
+                                        if (eventsPage.selectedTrace.length > 0)
+                                            heading += qsTr(" · key trace #%1")
+                                                .arg(eventsPage.selectedTrace)
+                                        return heading
+                                    }
                                     font.bold: true
                                     elide: Text.ElideRight
                                 }

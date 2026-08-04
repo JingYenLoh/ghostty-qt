@@ -130,6 +130,7 @@ public Q_SLOTS:
     void inspectTerminal(quint64 requestId);
     void inspectTerminalCell(quint64 requestId, quint64 contentRevision,
                              int viewportColumn, int viewportRow);
+    void setKeyboardTraceGeneration(quint64 generation);
     void shutdown();
 
 Q_SIGNALS:
@@ -180,6 +181,7 @@ Q_SIGNALS:
     void
     terminalInspectorCellReady(quint64 requestId,
                                const TerminalInspectorCellSnapshot &snapshot);
+    void keyboardTraceResult(const TerminalKeyboardTraceResult &result);
     void sessionExited(int exitCode, int signalNumber, bool hold,
                        bool waitForKey, quint64 runtimeMilliseconds,
                        bool abnormal);
@@ -242,6 +244,18 @@ private:
     modifiersAfterTerminalKey(const TerminalKeyInput &input) const;
     void releaseHeldTerminalModifiers();
     void syncKeyboardActionMode();
+    void publishKeyboardTraceResult(
+        const TerminalKeyInput &input, TerminalKeyboardTraceOperation operation,
+        TerminalKeyboardTraceDisposition disposition,
+        const QByteArray &encoded = {}, quint64 sequenceToken = 0);
+    [[nodiscard]] std::optional<TerminalKeyboardTraceResult>
+    makeKeyboardTraceResult(const TerminalKeyInput &input,
+                            TerminalKeyboardTraceOperation operation,
+                            TerminalKeyboardTraceDisposition disposition,
+                            const QByteArray &encoded = {},
+                            quint64 sequenceToken = 0) const;
+    void finalizeStagedKeyboardTraceResults(
+        TerminalKeyboardTraceDisposition disposition);
     [[nodiscard]] QString clipboardSelectionText();
     void copySelectionTo(TerminalClipboardDestination destination,
                          bool clearAfterCopy);
@@ -275,6 +289,8 @@ private:
     quint64 newestSequenceToken_ = 0;
     quint64 activeSequenceToken_ = 0;
     bool stagedSequencePotentialActivity_ = false;
+    quint64 keyboardTraceGeneration_ = 0;
+    QVector<TerminalKeyboardTraceResult> stagedSequenceTraceResults_;
 
     TerminalSessionGeometry geometry_;
     bool running_ = false;

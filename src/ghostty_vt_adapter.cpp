@@ -1583,6 +1583,7 @@ public:
         }
         return {
             .bytes = std::move(encoded),
+            .success = result == GHOSTTY_SUCCESS,
             .modifier = isModifierKey(key),
             .escape = key == GHOSTTY_KEY_ESCAPE,
         };

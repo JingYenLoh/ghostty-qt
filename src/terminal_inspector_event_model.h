@@ -36,6 +36,7 @@ public:
 
     enum Role {
         SequenceRole = Qt::UserRole + 1,
+        TraceIdRole,
         ElapsedTextRole,
         CategoryRole,
         KindRole,
@@ -76,7 +77,7 @@ public:
     // Returns the sequence allocated to this observation. Sequence numbers
     // advance even while paused so resumed capture visibly preserves gaps.
     quint64 append(Category category, QString kind, QString summary,
-                   QString details = {});
+                   QString details = {}, quint64 traceId = 0);
     // Records only a sequence gap and aggregate count. Callers use this to
     // stop payload projection and model notifications at the pause boundary.
     quint64 skipObservation();
@@ -98,6 +99,7 @@ Q_SIGNALS:
 private:
     struct Event {
         quint64 sequence = 0;
+        quint64 traceId = 0;
         qint64 elapsedMilliseconds = 0;
         Category category = Category::State;
         QString kind;
@@ -124,6 +126,7 @@ private:
     quint64 nextSequence_ = 1;
     quint64 evictedCount_ = 0;
     quint64 skippedWhilePaused_ = 0;
+    quint64 clearEpoch_ = 0;
     bool skippedNotificationPending_ = false;
     bool paused_ = false;
     bool appending_ = false;

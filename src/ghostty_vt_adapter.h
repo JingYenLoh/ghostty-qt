@@ -26,6 +26,7 @@ class GhosttyVtAdapter final {
 public:
     struct EncodedKey {
         QByteArray bytes;
+        bool success = false;
         bool modifier = false;
         bool escape = false;
 

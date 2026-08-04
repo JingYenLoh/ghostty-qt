@@ -1210,9 +1210,12 @@ for fragmented print/control/CSI/OSC/DCS/APC streams, filtering-independent
 sequence gaps, cancellation, reset, and malformed input. Snapshot tests should
 cover both screens, compressed and restored pages, page reuse generations,
 styles, hyperlinks, graphemes, prompt metadata, and safe teardown during
-capture. ghostty-qt can keep its dependency-free Qt UI and bounded rings, add
-its own root-binding/key-encoding correlation locally, and consume only copied
-upstream diagnostic values on `SessionWorker`.
+capture. ghostty-qt already records root and pane keybinding decisions and
+correlates pane-forwarded key events with bounded worker encoding/staging
+outcomes. Root-consumed key events do not enter the worker key encoder and
+therefore have no worker key-encoding row, although their actions may invoke
+other worker operations. It can keep that dependency-free Qt UI and consume
+only copied upstream diagnostic values on `SessionWorker`.
 
 ## Explicit cursor-blink policy
 

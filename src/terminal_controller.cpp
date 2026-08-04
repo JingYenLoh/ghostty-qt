@@ -165,6 +165,8 @@ void TerminalController::connectWorkerRequestRelays()
                        &SessionWorker::inspectTerminal);
     relayWorkerRequest(&TerminalController::terminalInspectorCellRequested,
                        &SessionWorker::inspectTerminalCell);
+    relayWorkerRequest(&TerminalController::keyboardTraceGenerationRequested,
+                       &SessionWorker::setKeyboardTraceGeneration);
     relayWorkerRequest(&TerminalController::runtimeOptionsRequested,
                        &SessionWorker::applyRuntimeOptions);
     relayWorkerRequest(&TerminalController::readOnlyRequested,
@@ -196,7 +198,8 @@ TerminalController::TerminalController(
         QVector<QPoint>, TerminalSessionRuntimeOptions,
         TerminalClipboardDestination, TerminalClipboardWriteRequest,
         TerminalActionResult, TerminalWriteFileAction,
-        TerminalInspectorSnapshot, TerminalInspectorCellSnapshot>();
+        TerminalInspectorSnapshot, TerminalInspectorCellSnapshot,
+        TerminalKeyboardTraceDecision, TerminalKeyboardTraceResult>();
 
     if (initialSessionCoordinator_ != nullptr) {
         launchOptions_.program.clear();
@@ -368,6 +371,16 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
             }
             activeTerminalInspectorCellRequestId_ = 0;
             Q_EMIT terminalInspectorCellReady(requestId, snapshot);
+        },
+        Qt::QueuedConnection);
+    connect(
+        worker, &SessionWorker::keyboardTraceResult, this,
+        [this](const TerminalKeyboardTraceResult &result) {
+            if (result.generation == 0
+                || result.generation != keyboardTraceGeneration_) {
+                return;
+            }
+            Q_EMIT keyboardTraceResult(result);
         },
         Qt::QueuedConnection);
     connect(
@@ -745,6 +758,7 @@ void TerminalController::applyRuntimeOptions(
 
 void TerminalController::beginShutdown()
 {
+    setKeyboardTraceGeneration(0);
     pendingRightClickRequestIds_.clear();
     activeTerminalInspectorRequestId_ = 0;
     activeTerminalInspectorCellRequestId_ = 0;
@@ -780,6 +794,13 @@ void TerminalController::setReadOnly(bool readOnly)
     readOnly_ = readOnly;
     Q_EMIT readOnlyChanged(readOnly_);
     Q_EMIT readOnlyRequested(readOnly_);
+}
+
+void TerminalController::setKeyboardTraceGeneration(quint64 generation)
+{
+    if (keyboardTraceGeneration_ == generation) return;
+    keyboardTraceGeneration_ = generation;
+    Q_EMIT keyboardTraceGenerationRequested(generation);
 }
 
 void TerminalController::sendKey(const TerminalKeyInput &input)
@@ -821,7 +842,7 @@ bool TerminalController::stageSequenceKey(quint64 token,
 
 void TerminalController::resolveSequence(
     quint64 token, TerminalSequenceResolution resolution,
-    const std::optional<TerminalKeyInput> &current)
+    const std::optional<TerminalKeyInput> &current, TerminalKeyInput traceInput)
 {
     if (token == 0 || token != activeSequenceToken_) {
         return;
@@ -839,8 +860,9 @@ void TerminalController::resolveSequence(
     activeSequenceToken_ = 0;
     stagedSequencePotentialActivity_ = false;
     const QPointer<TerminalController> guard(this);
+    if (current.has_value()) traceInput = *current;
     Q_EMIT sequenceResolutionRequested(token, resolution, current.has_value(),
-                                       current.value_or(TerminalKeyInput{}));
+                                       traceInput);
     if (guard == nullptr) return;
 
     if (!readOnly_ && potentialActivity) {

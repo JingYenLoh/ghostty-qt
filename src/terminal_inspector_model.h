@@ -11,6 +11,7 @@
 
 class QTimer;
 class TerminalPane;
+struct TerminalKeyInput;
 struct TerminalUpdate;
 
 // A short-lived, GUI-thread view of one terminal surface. The model exists
@@ -57,7 +58,10 @@ private:
 
     void rebuildSnapshot();
     void appendEvent(TerminalInspectorEventModel::Category category,
-                     QString kind, QString summary, QString details = {});
+                     QString kind, QString summary, QString details = {},
+                     quint64 traceId = 0);
+    [[nodiscard]]
+    bool acceptsKeyboardTraceInput(const TerminalKeyInput &input) const;
     [[nodiscard]] bool skipEventWhilePaused();
     void recordTerminalUpdate(const TerminalUpdate &update);
     void flushPendingTerminalEvent();
