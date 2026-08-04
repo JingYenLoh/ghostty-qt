@@ -27,7 +27,7 @@ SPEC.loader.exec_module(PARITY)
 class ParityManifestTest(unittest.TestCase):
     def test_manifest_matches_pinned_source(self) -> None:
         summaries = PARITY.check_repository(ROOT, source_path=GHOSTTY_SOURCE)
-        self.assertEqual(205, sum(summaries["config_keys"].values()))
+        self.assertEqual(206, sum(summaries["config_keys"].values()))
         self.assertEqual(85, sum(summaries["keybinding_actions"].values()))
         self.assertEqual(18, sum(summaries["cli_actions"].values()))
 

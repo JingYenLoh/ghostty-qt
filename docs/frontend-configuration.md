@@ -119,9 +119,9 @@ source-labelled Retry/Ignore diagnostics in every window. Successful
 post-startup generations enqueue the window-local reload toast when the shared
 `app-notifications` setting enables `config-reload`.
 
-The pinned private JSON schema-v1 export carries the upstream
+The pinned private JSON schema-v2 export carries the upstream
 `gtk-single-instance` value for source fidelity, but the Qt launch-option
-resolver deliberately ignores it. The decoder accepts schema v1 only; this is
+resolver deliberately ignores it. The decoder accepts schema v2 only; this is
 not a backwards-compatibility branch for an older frontend schema.
 
 The pre-GUI `+new-window` and `+toggle-quick-terminal` clients do not load the

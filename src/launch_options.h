@@ -114,8 +114,10 @@ struct LaunchOptions {
     // Padding dimensions are captured per pane; balance and color are
     // frontend-owned policies that can be repainted/relaid out live.
     TerminalPaddingOptions padding;
-    ScrollbackLimit scrollbackLimit;
-    bool scrollbackLimitExplicit = false;
+    ScrollbackLimits scrollbackLimits;
+    // The Qt compatibility CLI exposes only a line-axis override. The byte
+    // axis still comes from finalized Ghostty configuration.
+    bool scrollbackLinesExplicit = false;
     // Live per-screen Kitty image storage budget. Unlike scrollback, the
     // public libghostty API can resize this allocation for existing screens.
     quint32 kittyImageStorageLimitBytes = 320'000'000;
@@ -215,7 +217,7 @@ struct LaunchOptions {
         return workingDirectoryExplicit || fontFamilyExplicit
             || fontSizeExplicit || applicationClassExplicit
             || configDefaultFilesExplicit || configuredTitleExplicit
-            || waitAfterCommandExplicit || scrollbackLimitExplicit || hold
+            || waitAfterCommandExplicit || scrollbackLinesExplicit || hold
             || !program.isEmpty();
     }
     // Detect additionally excludes launches from a terminal advertising
@@ -288,13 +290,9 @@ TerminalSessionRuntimeOptions
 toTerminalSessionRuntimeOptions(const LaunchOptions &options);
 
 // Project one complete, validated, CLI-aware Ghostty snapshot onto a launch
-// request. A byte-valued Ghostty
-// scrollback-limit is marked as Bytes and passed unchanged to the pinned
-// libghostty max_scrollback field:
-// despite that C field's legacy "lines" wording, the pinned implementation
-// forwards it to PageList's byte-sized logical history cap. The legacy
-// --scrollback-lines option is converted through the documented
-// column-aware capacity estimate in scrollbackLimitInBytes().
+// request. Ghostty's byte and physical-line scrollback limits remain
+// independent and are both projected into libghostty. The compatibility
+// --scrollback-lines option overrides only the line axis.
 LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
                                          const GhosttyConfigSnapshot &snapshot);
 // Apply the independent Qt frontend generation after shared Ghostty settings.

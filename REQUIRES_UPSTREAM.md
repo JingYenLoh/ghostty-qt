@@ -18,7 +18,7 @@ limited to finalized configuration and launch preparation.
 
 Unless a section records a newer comparison, the contracts below were checked
 against official pinned Ghostty commit
-`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`.
+`48d85eaeb06ac9fc49073815bda5bac97de655ca` on 2026-08-05.
 
 ## Terminal XTSHIFTESCAPE state query
 
@@ -43,7 +43,7 @@ parser consumes valid `CSI > s`, `CSI > 0 s`, and `CSI > 1 s` input into the
 private flag, so the information already exists at the correct terminal-model
 boundary. It is unavailable to an embedding frontend after parsing. This was
 last verified against official upstream commit
-`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3` on 2026-07-26.
+`48d85eaeb06ac9fc49073815bda5bac97de655ca` on 2026-08-05.
 
 ghostty-qt therefore transports and reloads all four configuration values and
 implements the capture-routing branches of `always` and `never` exactly. Its
@@ -161,7 +161,8 @@ Its private `Terminal.mouse_shape` receives recognized OSC 22 values, but
 API does not expose the parsed name. The similarly named enum and action in
 `ghostty.h` belong to Ghostty's full application-runtime API, not the
 `ghostty/vt.h` embedding API used here. This was last verified against official
-upstream commit `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3` on 2026-07-26.
+upstream commit `48d85eaeb06ac9fc49073815bda5bac97de655ca` on
+2026-08-05.
 
 There is an additional contract gap: the standalone VT stream handler stores
 OSC 22 values but does not mirror full Ghostty's mouse-mode and RIS shape
@@ -273,8 +274,8 @@ the required internal prompt traversal:
 The public `GhosttyTerminalScrollViewportTag` currently exposes top, bottom,
 row-delta, and absolute-row scrolling, but not prompt-delta scrolling. This was
 last verified against official upstream commit
-`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3` on 2026-07-23. The ghostty-qt
-submodule remains at that official revision.
+`48d85eaeb06ac9fc49073815bda5bac97de655ca` on 2026-08-05. The
+ghostty-qt submodule remains at that official revision.
 
 ### Why ghostty-qt does not scan prompts itself
 
@@ -376,7 +377,7 @@ movement calculation, or a composite prompt-click operation. Reconstructing
 those decisions from a public grid would duplicate terminal-owned navigation
 and could race terminal mutation or diverge as the shell protocol evolves.
 This was verified against official upstream commit
-`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3` on 2026-07-29.
+`48d85eaeb06ac9fc49073815bda5bac97de655ca` on 2026-08-05.
 
 ### Required upstream contract
 
@@ -508,7 +509,7 @@ stable primitives to reproduce it exactly. In particular, an embedder cannot
 invoke the private prompt test, erase the precise internal ranges, or apply
 the operation's Kitty-image and selection policy through the public API. This
 was verified against official upstream commit
-`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3` on 2026-07-23.
+`48d85eaeb06ac9fc49073815bda5bac97de655ca` on 2026-08-05.
 
 ### Why ghostty-qt does not send an escape sequence
 
@@ -596,11 +597,9 @@ ghostty-qt's snapshot bridge safely avoids copying fully hidden opaque frames
 into Qt CPU images and textures, but it must not send synthetic delete commands
 or edit libghostty-owned placement state: doing so would change protocol
 semantics, and a later application delete is allowed to reveal a lower
-placement in renderer order. This lifetime bug was verified at the pinned
-official revision
-`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3` and again at local official
-`origin/main` revision `6ad1fe7d8cbda36c77b337a96c9bea8a77883699` on
-2026-07-31.
+placement in renderer order. This lifetime bug remains present in the pinned
+official revision `48d85eaeb06ac9fc49073815bda5bac97de655ca`, verified
+on 2026-08-05.
 
 ### Required upstream correction
 
@@ -702,10 +701,10 @@ surface model, but adopting it would replace ghostty-qt's Qt scene graph,
 session worker, pane, split, and PTY ownership. It is not an incremental public
 font API for the standalone terminal.
 
-At official revision `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`,
+At official revision `48d85eaeb06ac9fc49073815bda5bac97de655ca`,
 ghostty-qt therefore implements the largest safe frontend-owned subset:
 
-- schema v1 transports Ghostty's finalized ordered feature list, four ordered
+- schema v2 transports Ghostty's finalized ordered feature list, four ordered
   variation lists as exact f64 bit patterns, u21 codepoint maps, three
   synthesis booleans, cursor shaping-break policy, and five FreeType flags;
 - a weak-cached immutable GUI-thread font program shares its metric and
@@ -871,7 +870,7 @@ reinterpreting the original text.
 ### ghostty-qt follow-up after upstream support lands
 
 After an official pinned revision exposes the completed grammar, extend the
-schema-v1 configuration export with ordered structured link rules, route their
+schema-v2 configuration export with ordered structured link rules, route their
 typed actions through the existing stable-pane pipeline, add differential
 parser/matcher/action tests, and only then promote `link` from
 `blocked_upstream`.
@@ -980,7 +979,7 @@ of its formatter paths can express that clipboard contract:
   `ghostty_terminal_get`, but the public formatter cannot consume them.
 
 This was verified against the official pinned submodule commit
-`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3` on 2026-07-29.
+`48d85eaeb06ac9fc49073815bda5bac97de655ca` on 2026-08-05.
 
 ### Why ghostty-qt does not approximate styled copies
 
@@ -1186,6 +1185,14 @@ correlation between a frontend key event and bytes produced by the public key
 encoder are ghostty-qt-owned instrumentation; they do not justify an upstream
 terminal API.
 
+The current pin also exposes terminal snapshot encode/decode APIs and the
+informational `GHOSTTY_TERMINAL_DATA_VT_PROCESSING_ERROR` query. Snapshot data
+is a persistence and restoration format, not a structured live diagnostic
+view, and does not expose the action ordering or page internals above. The
+error bit records only whether a non-gracefully handled processing failure has
+ever occurred. These additions are useful independently but do not satisfy the
+inspector contract described here.
+
 ### Required upstream contract
 
 For exact terminal-data parity, upstream needs two opt-in diagnostic contracts:
@@ -1242,8 +1249,8 @@ unset, explicit false, and explicit true and is enforced inside the standalone
 stream handler. It must update the DECSCUSR reset default, apply immediately
 only when `default_cursor` is true, ignore DEC mode 12 only for explicit values,
 continue to honor explicit DECSCUSR styles, and restore the configured default
-on `CSI 0 q` and RIS. A new terminal option enum/value is ABI-safe; expanding
-the unversioned constructor options struct is not.
+on `CSI 0 q` and RIS. A new append-only terminal option enum/value fits the
+current public setter contract.
 
 Public tests should cover all three policies against mode 12 set/reset,
 blinking and steady DECSCUSR variants, `CSI 0 q`, RIS, alternate-screen
@@ -1254,9 +1261,10 @@ and promote `cursor-style-blink` without changing renderer timers.
 ## Normalized standalone VT effects and policy controls
 
 **Status:** dynamic light/dark scheme reporting is implemented through the
-existing public callbacks and mode helpers. Title-report policy, desktop
-notifications, progress reports, command-finished notifications, color-report
-format, and initial grapheme-width policy remain blocked on standalone public
+existing public callbacks and mode helpers. Desktop-notification and progress
+effects are public at the current pin and are now frontend implementation work.
+Title-report policy, command-finished notifications, color-report format, and
+initial grapheme-width policy remain blocked on standalone public
 `libghostty-vt` contracts.
 
 ghostty-qt links the public standalone terminal library described by
@@ -1265,13 +1273,9 @@ ghostty-qt links the public standalone terminal library described by
 adopting that runtime would replace the project's terminal/session ownership
 model rather than extend the standalone terminal it already uses.
 
-At official revision `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`, the
-standalone stream has the following gaps:
+At official revision `48d85eaeb06ac9fc49073815bda5bac97de655ca`, the
+standalone stream still has the following gaps:
 
-- It parses OSC 9 and OSC 777 desktop notifications, then discards the
-  normalized `show_desktop_notification` action without a host callback.
-- It parses ConEmu OSC 9;4 progress reports, then discards the normalized
-  progress action without exposing its state or percentage.
 - It records OSC 133 semantic prompt rows, but does not publish Ghostty's exact
   ordered command-start/command-finished lifecycle. In full Ghostty the stream
   emits start/stop messages; `Surface`, not the parser, owns the clock and
@@ -1281,29 +1285,42 @@ standalone stream has the following gaps:
   substitute the configured base title that full Ghostty reports.
 - It answers OSC 4, OSC 10, and OSC 11 color queries internally without a host
   option for Ghostty's `none`, `8-bit`, or `16-bit` report formats.
-- Its construction options do not accept Ghostty's `legacy` versus `unicode`
+- The public terminal API does not accept Ghostty's `legacy` versus `unicode`
   grapheme-width policy for a new terminal. Mode 2027 remains terminal-owned,
   so resolving widths later in Qt would not be equivalent.
 
 The affected configuration keys are:
 
 - `title-report`;
-- `desktop-notifications`;
-- `progress-style`;
 - `notify-on-command-finish`;
 - `notify-on-command-finish-action`;
 - `notify-on-command-finish-after`;
 - `osc-color-report-format`; and
 - `grapheme-width-method`.
 
+### Newly unblocked frontend work
+
+The current header exposes
+`GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION`, whose callback receives a sized
+`GhosttyTerminalDesktopNotification` with borrowed, explicit-length title and
+body strings. It also exposes `GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT`, whose
+sized value carries remove, set, error, indeterminate, and pause states plus a
+0-through-100 percentage or `-1` when omitted. Both callbacks are synchronous
+during `ghostty_terminal_vt_write` and use the terminal's shared userdata.
+
+No further upstream work is required for `desktop-notifications` or
+`progress-style`. ghostty-qt still needs to copy callback data on the worker,
+route it by stable `PaneId`, apply its configured notification and progress
+presentation policy on the GUI side, and test callback ordering and pane
+lifetime. These entries are planned rather than upstream-blocked.
+
 ### Why ghostty-qt does not inspect PTY bytes
 
 A second parser in `SessionWorker` would need to duplicate Ghostty's fragmented
-OSC/CSI parsing, BEL and ST termination, cancellation, malformed-input
-handling, raw notification-byte capture, OSC 133 metadata, reset behavior,
-query reply ordering, and mode interactions. It could emit a duplicate reply
-after libghostty-vt already handled the same sequence, and it would silently
-diverge as Ghostty's parser evolves.
+OSC/CSI parsing, cancellation, malformed-input handling, OSC 133 metadata,
+reset behavior, query reply ordering, and mode interactions. It could emit a
+duplicate reply after libghostty-vt already handled the same sequence, and it
+would silently diver as Ghostty's parser evolves.
 
 Inferring command completion from rendered semantic rows is also insufficient.
 Rows do not preserve the exact ordered C/D events, missing-marker behavior, or
@@ -1315,29 +1332,18 @@ than installing a parallel byte observer.
 ### Required upstream contracts
 
 Official standalone `libghostty-vt` should add append-only, synchronous host
-effects for:
-
-1. A desktop notification with borrowed, explicit-length title and body bytes.
-2. A progress report with Ghostty's normalized remove, set, error,
-   indeterminate, and pause states plus an optional clamped percentage.
-3. Command started and command finished, with the finished effect carrying the
-   normalized exit status, including Ghostty's pinned fallback for an absent or
-   out-of-range value. Exposing these two ordered effects is narrower and more
-   stable than exposing all OSC 133 syntax. The embedding surface owns elapsed
-   timing, as full Ghostty does. If upstream instead adds duration to the
-   terminal effect, that would be a new ownership model and must document its
-   clock source, reset, missing-marker, and suspension semantics rather than
-   being described as pinned parity.
+effects for command started and command finished, with the finished effect
+carrying the normalized exit status, including Ghostty's pinned fallback for an
+absent or out-of-range value. Exposing these two ordered effects is narrower
+and more stable than exposing all OSC 133 syntax. The embedding surface owns
+elapsed timing, as full Ghostty does. If upstream instead adds duration to the
+terminal effect, that would be a new ownership model and must document its
+clock source, reset, missing-marker, and suspension semantics rather than being
+described as pinned parity.
 
 These effects should follow the existing callback contract: they occur during
 `ghostty_terminal_vt_write`, are non-reentrant, retain borrowed data only for
 the callback, and preserve terminal input order.
-
-Notification strings are captured protocol bytes, not validated Unicode. A
-standalone callback may expose the complete captured slices; a frontend seeking
-exact full-application behavior must then apply the pinned Surface message's
-63-byte title and 255-byte body capacities at raw byte boundaries. Neither
-layer should silently promise UTF-8 normalization.
 
 Title reporting additionally needs either:
 
@@ -1349,14 +1355,13 @@ Title reporting additionally needs either:
 Color reporting needs a construction/runtime option matching Ghostty's
 `none`, `8-bit`, and `16-bit` enum before the internal OSC query path emits a
 reply. Grapheme width needs an ABI-safe way to initialize both the current mode
-2027 value and the terminal's reset-default value from `legacy`/`unicode`. The
-current `GhosttyTerminalOptions` has no size field or reserved expansion space
-and is passed by value, so appending a field would break ABI. Suitable
-alternatives include a new size-versioned constructor/options entry point, an
-option that is guaranteed to run before any VT write and updates current plus
-reset-default mode state, or an explicit default-mode initialization API. The
-existing public mode setter is only a partial workaround because it changes the
-current bit but RIS restores the construction default.
+2027 value and the terminal's reset-default value from `legacy`/`unicode`.
+`ghostty_terminal_new` now takes only allocator, output handle, columns, and
+rows, and directs callers to set options before use. An append-only terminal
+option that updates both current and reset-default mode state before the first
+VT write, or an explicit default-mode initialization API, would fit that
+contract. The existing public mode setter is only a partial workaround because
+it changes the current bit but RIS restores the construction default.
 
 Every new enum member, terminal option, callback, and value struct must follow
 the library's existing append-only ABI rules.
@@ -1365,15 +1370,6 @@ the library's existing append-only ABI rules.
 
 Public C tests should cover:
 
-- OSC 9 and OSC 777 with empty and non-empty fields, arbitrary captured bytes,
-  embedded NUL behavior, BEL/ST termination, fragmentation, cancellation, and
-  multiple ordered notifications in one write. Exact full-runtime parity must
-  preserve byte-boundary behavior: the pinned application message stores at
-  most 63 title bytes and 255 body bytes plus sentinels, with no Unicode-aware
-  truncation. Any UTF-8 repair would be an intentional new safety policy, not
-  the pinned behavior;
-- every OSC 9;4 progress state, absent and overflowing percentages, removal,
-  fragmentation, and ordered replacement;
 - OSC 133 C/D ordering, repeated C, D without C, missing/malformed/out-of-range
   exit status, reset, and interleaved terminal output, plus a full-runtime test
   proving that the embedding Surface starts/stops the duration clock;
@@ -1391,17 +1387,13 @@ Once the required contracts are present in an official, publicly reachable
 Ghostty commit:
 
 1. Update `GHOSTTY_REVISION` and the official submodule gitlink together.
-2. Copy effect payloads immediately on `SessionWorker` and associate them with
-   stable `PaneId` values; never expose a terminal handle or borrowed pointer
-   to the GUI thread.
-3. Start and stop the command clock on the ordered worker effects. Keep focus,
-   live configuration, duration thresholds, bell decisions, and progress expiry
-   atomic on the worker. Perform desktop notification and presentation calls on
-   the GUI thread.
-4. Resolve a notification click through the current `PaneId`, no-op after
-   closure, and otherwise select the correct tab/split, focus it, and activate
-   its existing window.
-5. Pass title-report, color-report, and grapheme-width policy through typed
+2. Start and stop the command clock on ordered worker effects. Keep focus, live
+   configuration, duration thresholds, and bell decisions atomic on the
+   worker, and copy every borrowed payload before returning from its callback.
+3. Resolve a command-finished notification click through the current `PaneId`,
+   no-op after closure, and otherwise select the correct tab/split, focus it,
+   and activate its existing window.
+4. Pass title-report, color-report, and grapheme-width policy through typed
    adapter options rather than parsing terminal bytes.
-6. Add adapter, worker-ordering, pane-lifetime, live-reload, focus, rate-limit,
+5. Add adapter, worker-ordering, pane-lifetime, live-reload, focus, rate-limit,
    and activation tests before promoting the affected parity entries.

@@ -153,8 +153,11 @@ public:
 
     struct Options {
         Geometry geometry;
-        // libghostty's max_scrollback initialization option is byte-valued.
-        quint64 scrollbackBytes = 10'000'000;
+        // Both limits are independent. std::nullopt maps to libghostty's
+        // unlimited sentinel while zero remains an explicit finite limit.
+        // Byte zero disables history; the line limit remains page-granular.
+        std::optional<quint64> scrollbackBytes = 50'000'000;
+        std::optional<quint64> scrollbackLines;
         quint64 kittyImageStorageLimitBytes = 320'000'000;
         TerminalAppearance appearance;
         TerminalColorScheme colorScheme = TerminalColorScheme::Light;

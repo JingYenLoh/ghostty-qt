@@ -159,8 +159,11 @@ int showConfigJson(std::span<char *const> arguments)
     // Keep every configuration argument byte-for-byte while stripping the
     // helper-only color-scheme selector so this query has the same explicit
     // CLI precedence as the terminal surfaces.
+    const bool launchIsProbableCli = probableCli.value_or(true);
+    const std::size_t initializationArgumentCount =
+        launchIsProbableCli ? configurationArguments.size() : 1U;
     const int initializationResult = ghostty_init(
-        configurationArguments.size(), configurationArguments.data());
+        initializationArgumentCount, configurationArguments.data());
     if (initializationResult != 0) {
         return initializationResult;
     }
@@ -168,7 +171,7 @@ int showConfigJson(std::span<char *const> arguments)
     ghostty_string_s errorMessage{};
     const ghostty_string_s json = ghostty_qt_config_json(
         static_cast<std::uint8_t>(*colorScheme),
-        static_cast<std::uint8_t>(probableCli.value_or(true)), &errorMessage);
+        static_cast<std::uint8_t>(launchIsProbableCli), &errorMessage);
     if (json.ptr == nullptr) {
         if (errorMessage.ptr != nullptr) {
             std::fwrite(errorMessage.ptr, 1, errorMessage.len, stderr);

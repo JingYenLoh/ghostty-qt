@@ -844,8 +844,8 @@ bool SessionWorker::createTerminal()
 {
     const GhosttyVtAdapter::Options options{
         .geometry = geometry_,
-        .scrollbackBytes =
-            scrollbackLimitInBytes(options_.scrollbackLimit, geometry_.columns),
+        .scrollbackBytes = options_.scrollbackLimits.bytes,
+        .scrollbackLines = options_.scrollbackLimits.lines,
         .kittyImageStorageLimitBytes =
             options_.runtime.kittyImageStorageLimitBytes,
         .appearance = options_.runtime.appearance,

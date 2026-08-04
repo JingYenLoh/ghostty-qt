@@ -3,6 +3,8 @@
 #include <ghostty/vt.h>
 
 #include <QBuffer>
+#include <QDir>
+#include <QFile>
 #include <QHash>
 #include <QImageReader>
 #include <QScopeGuard>
@@ -611,6 +613,7 @@ const std::array inspectorModeSpecs{
     InspectorModeSpec{GHOSTTY_MODE_SYNC_OUTPUT, "Synchronized output"},
     InspectorModeSpec{GHOSTTY_MODE_GRAPHEME_CLUSTER, "Grapheme clusters"},
     InspectorModeSpec{GHOSTTY_MODE_COLOR_SCHEME_REPORT, "Color-scheme reports"},
+    InspectorModeSpec{GHOSTTY_MODE_VISIBILITY_REPORT, "Visibility reports"},
     InspectorModeSpec{GHOSTTY_MODE_IN_BAND_RESIZE, "In-band resize"},
 };
 
@@ -1073,21 +1076,41 @@ public:
         colorScheme_ = adapterOptions.colorScheme;
         clipboardWriteAccess_ = adapterOptions.clipboardWriteAccess;
         enquiryResponse_ = adapterOptions.enquiryResponse;
-        const quint64 maximum =
-            static_cast<quint64>(std::numeric_limits<size_t>::max());
-        const GhosttyTerminalOptions options{
-            .cols = boundedU16(geometry_.columns),
-            .rows = boundedU16(geometry_.rows),
-            .max_scrollback = static_cast<size_t>(
-                std::min(adapterOptions.scrollbackBytes, maximum)),
+        const auto boundedLimit = [](std::optional<quint64> value) {
+            if (!value.has_value()) return std::optional<size_t>{};
+            const quint64 maximum =
+                static_cast<quint64>(std::numeric_limits<size_t>::max());
+            return std::optional<size_t>{
+                static_cast<size_t>(std::min(*value, maximum))};
         };
-        if (ghostty_terminal_new(nullptr, &terminal_, options)
+        const std::optional<size_t> scrollbackBytes =
+            boundedLimit(adapterOptions.scrollbackBytes);
+        const std::optional<size_t> scrollbackLines =
+            boundedLimit(adapterOptions.scrollbackLines);
+        if (ghostty_terminal_new(nullptr, &terminal_,
+                                 boundedU16(geometry_.columns),
+                                 boundedU16(geometry_.rows))
+                != GHOSTTY_SUCCESS
+            || ghostty_terminal_set(
+                   terminal_, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES,
+                   scrollbackBytes ? &*scrollbackBytes : nullptr)
+                != GHOSTTY_SUCCESS
+            || ghostty_terminal_set(
+                   terminal_, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES,
+                   scrollbackLines ? &*scrollbackLines : nullptr)
                 != GHOSTTY_SUCCESS
             || !resize(geometry_)) {
             return false;
         }
 
         const bool imageMediumEnabled = true;
+        const QByteArray temporaryDirectory =
+            QFile::encodeName(QDir::tempPath());
+        const GhosttyString temporaryDirectoryString{
+            .ptr = reinterpret_cast<const uint8_t *>(
+                temporaryDirectory.constData()),
+            .len = static_cast<size_t>(temporaryDirectory.size()),
+        };
         if (!setKittyImageStorageLimit(
                 adapterOptions.kittyImageStorageLimitBytes)
             || ghostty_terminal_set(
@@ -1096,7 +1119,8 @@ public:
                 != GHOSTTY_SUCCESS
             || ghostty_terminal_set(
                    terminal_, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE,
-                   &imageMediumEnabled)
+                   temporaryDirectory.isEmpty() ? nullptr
+                                                : &temporaryDirectoryString)
                 != GHOSTTY_SUCCESS
             || ghostty_terminal_set(
                    terminal_,
@@ -2152,6 +2176,7 @@ public:
         if (kittyResult == GHOSTTY_SUCCESS) {
             snapshot.kittyGraphicsAvailable = true;
             snapshot.kittyImageStorageLimitBytes = kittyStorageLimit;
+            GhosttyString kittyTemporaryDirectory{};
             if (ghostty_terminal_get(
                     terminal_, GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_FILE,
                     &snapshot.kittyFileMedium)
@@ -2159,7 +2184,7 @@ public:
                 || ghostty_terminal_get(
                        terminal_,
                        GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_TEMP_FILE,
-                       &snapshot.kittyTemporaryFileMedium)
+                       &kittyTemporaryDirectory)
                     != GHOSTTY_SUCCESS
                 || ghostty_terminal_get(
                        terminal_,
@@ -2168,6 +2193,9 @@ public:
                     != GHOSTTY_SUCCESS) {
                 return snapshot;
             }
+            snapshot.kittyTemporaryFileMedium =
+                kittyTemporaryDirectory.ptr != nullptr
+                && kittyTemporaryDirectory.len != 0;
         } else if (kittyResult != GHOSTTY_NO_VALUE) {
             return snapshot;
         }

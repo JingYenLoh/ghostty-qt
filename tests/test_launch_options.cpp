@@ -214,6 +214,7 @@ GhosttyConfigSnapshot completeSnapshot()
     };
 
     values.scrollbackLimitBytes = 50'000'000;
+    values.scrollbackLimitLines = 75'000;
     values.kittyImageStorageLimitBytes = 123'456'789;
     values.scrollbackCompression = false;
     values.bellAudioPath = GhosttyConfigPath{
@@ -337,7 +338,7 @@ private Q_SLOTS:
     void removesOnlyTheInitialCommand();
     void materializesMissingFinalizedCommandFallback();
     void projectsTerminalSessionOptions();
-    void convertsLegacyLineCapacityToLibghosttyBytes();
+    void preservesIndependentScrollbackLimits();
     void mapsCloseConfirmationModes();
     void keepsBackdropGuiOwned();
 };
@@ -442,9 +443,10 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.padding.vertical.trailingPoints, quint32(0));
     QCOMPARE(options.padding.balance, TerminalPaddingBalance::Disabled);
     QCOMPARE(options.padding.color, TerminalPaddingColor::Background);
-    QCOMPARE(options.scrollbackLimit.value, quint64(10'000));
-    QCOMPARE(options.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
-    QVERIFY(!options.scrollbackLimitExplicit);
+    QCOMPARE(options.scrollbackLimits.bytes,
+             std::optional<quint64>(quint64{50'000'000}));
+    QVERIFY(!options.scrollbackLimits.lines.has_value());
+    QVERIFY(!options.scrollbackLinesExplicit);
     QVERIFY(options.scrollbackCompression);
     QCOMPARE(options.scrollbar, ScrollbarPolicy::System);
     QVERIFY(!options.bellFeatures.system);
@@ -675,9 +677,11 @@ void LaunchOptionsTest::parsesEveryOptionAndProgramArguments()
         QString::fromUtf8("--class=com.example.\xE5\xAE\xB6\xF0\x9F\x91\xBB")));
     QVERIFY(!options.configDefaultFiles);
     QVERIFY(options.configDefaultFilesExplicit);
-    QCOMPARE(options.scrollbackLimit.value, quint64(250'000));
-    QCOMPARE(options.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
-    QVERIFY(options.scrollbackLimitExplicit);
+    QCOMPARE(options.scrollbackLimits.bytes,
+             std::optional<quint64>(quint64{50'000'000}));
+    QCOMPARE(options.scrollbackLimits.lines,
+             std::optional<quint64>(quint64{250'000}));
+    QVERIFY(options.scrollbackLinesExplicit);
     QVERIFY(options.hold);
     QVERIFY(options.hasUnforwardedLaunchPayload());
     QCOMPARE(options.program,
@@ -1187,9 +1191,11 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
         TerminalMetricModifiers::Absolute{99};
     base.fontFamilyExplicit = true;
     base.fontSizeExplicit = true;
-    base.scrollbackLimit = {.value = 25'000,
-                            .unit = ScrollbackLimitUnit::Lines};
-    base.scrollbackLimitExplicit = true;
+    base.scrollbackLimits = {
+        .bytes = 99'000'000,
+        .lines = 25'000,
+    };
+    base.scrollbackLinesExplicit = true;
     base.processUsesSingleInstance = true;
     base.environment = {{
         .key = QByteArrayLiteral("STALE"),
@@ -1282,8 +1288,10 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
              QColor(QStringLiteral("#abcdef")));
     QCOMPARE(cliResult.appearance.faintOpacity, 0.375);
     QCOMPARE(cliResult.appearance.minimumContrast, 4.25);
-    QCOMPARE(cliResult.scrollbackLimit.value, quint64(25'000));
-    QCOMPARE(cliResult.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
+    QCOMPARE(cliResult.scrollbackLimits.bytes,
+             std::optional<quint64>(quint64{50'000'000}));
+    QCOMPARE(cliResult.scrollbackLimits.lines,
+             std::optional<quint64>(quint64{25'000}));
     QVERIFY(!cliResult.scrollbackCompression);
     QCOMPARE(cliResult.confirmCloseMode, ConfirmCloseMode::Always);
     QVERIFY(!cliResult.selectionClipboard.trimTrailingSpaces);
@@ -1315,12 +1323,14 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QVERIFY(cliResult.keybindSource.structured() != nullptr);
     QCOMPARE(*cliResult.keybindSource.structured(), snapshot.keybindings);
 
-    base.scrollbackLimitExplicit = false;
+    base.scrollbackLinesExplicit = false;
     const LaunchOptions configResult =
         applyGhosttyConfigSnapshot(base, snapshot);
     QVERIFY(configResult.typography == completeTypography());
-    QCOMPARE(configResult.scrollbackLimit.value, quint64(50'000'000));
-    QCOMPARE(configResult.scrollbackLimit.unit, ScrollbackLimitUnit::Bytes);
+    QCOMPARE(configResult.scrollbackLimits.bytes,
+             std::optional<quint64>(quint64{50'000'000}));
+    QCOMPARE(configResult.scrollbackLimits.lines,
+             std::optional<quint64>(quint64{75'000}));
     QCOMPARE(configResult.kittyImageStorageLimitBytes, quint32{123'456'789});
 
     for (const double unusableSize : {0.0, -2.0}) {
@@ -2134,9 +2144,9 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         std::numeric_limits<quint32>::max();
     options.waitAfterCommand = true;
     options.program = {QStringLiteral("/bin/program"), QStringLiteral("arg")};
-    options.scrollbackLimit = {
-        .value = 42'000,
-        .unit = ScrollbackLimitUnit::Bytes,
+    options.scrollbackLimits = {
+        .bytes = 42'000,
+        .lines = 314,
     };
     options.scrollbackCompression = false;
     options.hold = true;
@@ -2214,7 +2224,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(launch.configuredTitle, options.configuredTitle);
     QVERIFY(launch.command == options.ordinaryCommand);
     QCOMPARE(launch.program, options.program);
-    QCOMPARE(launch.scrollbackLimit, options.scrollbackLimit);
+    QCOMPARE(launch.scrollbackLimits, options.scrollbackLimits);
     QCOMPARE(launch.hold, options.hold);
     QVERIFY(!launch.initialGeometry.has_value());
     QCOMPARE(launch.runtime, runtime);
@@ -2377,7 +2387,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.waitAfterCommand = false;
     options.environment.clear();
     options.program.clear();
-    options.scrollbackLimit = {};
+    options.scrollbackLimits = {};
     options.scrollbackCompression = true;
     options.hold = false;
     options.appearance = {};
@@ -2413,7 +2423,10 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
                      .value = QByteArray::fromHex("fe817f"),
                  },
              }));
-    QCOMPARE(launch.scrollbackLimit.value, quint64(42'000));
+    QCOMPARE(launch.scrollbackLimits.bytes,
+             std::optional<quint64>(quint64{42'000}));
+    QCOMPARE(launch.scrollbackLimits.lines,
+             std::optional<quint64>(quint64{314}));
     QVERIFY(!launch.runtime.scrollbackCompression);
     QCOMPARE(launch.runtime.appearance.foregroundColor,
              QColor(QStringLiteral("#123456")));
@@ -2445,19 +2458,22 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QVERIFY(!launch.runtime.linkUrl);
 }
 
-void LaunchOptionsTest::convertsLegacyLineCapacityToLibghosttyBytes()
+void LaunchOptionsTest::preservesIndependentScrollbackLimits()
 {
-    QCOMPARE(scrollbackLimitInBytes(
-                 {.value = 10'000, .unit = ScrollbackLimitUnit::Lines}, 80),
-             quint64(12'800'000));
-    QCOMPARE(scrollbackLimitInBytes(
-                 {.value = 123, .unit = ScrollbackLimitUnit::Bytes}, 240),
-             quint64(123));
-    QCOMPARE(
-        scrollbackLimitInBytes({.value = std::numeric_limits<quint64>::max(),
-                                .unit = ScrollbackLimitUnit::Lines},
-                               80),
-        std::numeric_limits<quint64>::max());
+    const ScrollbackLimits defaults;
+    QCOMPARE(defaults.bytes, std::optional<quint64>(quint64{50'000'000}));
+    QVERIFY(!defaults.lines.has_value());
+
+    LaunchOptions options;
+    options.scrollbackLimits = {
+        .bytes = std::nullopt,
+        .lines = std::numeric_limits<quint64>::max(),
+    };
+    const TerminalSessionLaunchOptions launch =
+        toTerminalSessionLaunchOptions(options);
+    QVERIFY(!launch.scrollbackLimits.bytes.has_value());
+    QCOMPARE(launch.scrollbackLimits.lines,
+             std::optional<quint64>(std::numeric_limits<quint64>::max()));
 }
 
 void LaunchOptionsTest::removesOnlyTheInitialCommand()

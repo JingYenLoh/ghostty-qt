@@ -236,7 +236,8 @@ struct GhosttyConfigValues {
     GhosttyFullscreenMode fullscreen = GhosttyFullscreenMode::Disabled;
     ResizeOverlayOptions resizeOverlay;
 
-    quint64 scrollbackLimitBytes = 0;
+    std::optional<quint64> scrollbackLimitBytes = 50'000'000;
+    std::optional<quint64> scrollbackLimitLines;
     quint32 kittyImageStorageLimitBytes = 320'000'000;
     bool scrollbackCompression = true;
     ScrollbarPolicy scrollbar = ScrollbarPolicy::System;

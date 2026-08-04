@@ -406,7 +406,9 @@ void GhosttyConfigProcessLoaderTest::publishesTypedSnapshotAndSourcePaths()
     QCOMPARE(result->values.configFiles.at(2).path, included);
     QVERIFY(!result->values.configFiles.at(2).optional);
     QCOMPARE(result->values.scrollbackLimitBytes,
-             std::numeric_limits<quint64>::max());
+             std::optional<quint64>(std::numeric_limits<quint64>::max()));
+    QCOMPARE(result->values.scrollbackLimitLines,
+             std::optional<quint64>(quint64{9'876'543'210}));
     QCOMPARE(result->values.kittyImageStorageLimitBytes, quint32{123456789});
     QVERIFY(result->values.background.image.path.has_value());
     QCOMPARE(result->values.background.image.path->path,
@@ -1134,7 +1136,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
                        "window-height = 1\n"
                        "maximize = true\n"
                        "fullscreen = non-native-visible-menu\n"
-                       "scrollback-limit = 18446744073709551615\n"
+                       "scrollback-limit-bytes = unlimited\n"
+                       "scrollback-limit-lines = 7654321\n"
                        "image-storage-limit = 987654321\n")
             .arg(directory)
             .toUtf8());
@@ -1161,8 +1164,9 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
     QVERIFY(result->values.maximize);
     QCOMPARE(result->values.fullscreen,
              GhosttyFullscreenMode::NonNativeVisibleMenu);
-    QCOMPARE(result->values.scrollbackLimitBytes,
-             std::numeric_limits<quint64>::max());
+    QVERIFY(!result->values.scrollbackLimitBytes.has_value());
+    QCOMPARE(result->values.scrollbackLimitLines,
+             std::optional<quint64>(quint64{7'654'321}));
     QCOMPARE(result->values.kittyImageStorageLimitBytes, quint32{987654321});
 
     ConfigFixture::writeFile(fixture.preferredPath,
@@ -1171,6 +1175,9 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(result->values.term, QByteArrayLiteral("xterm-ghostty"));
     QVERIFY(!result->values.workingDirectoryPath.has_value());
+    QCOMPARE(result->values.scrollbackLimitBytes,
+             std::optional<quint64>(quint64{50'000'000}));
+    QVERIFY(!result->values.scrollbackLimitLines.has_value());
 
     QByteArray byteTerm = QByteArrayLiteral("ghostty-");
     byteTerm.append(char(0x80));

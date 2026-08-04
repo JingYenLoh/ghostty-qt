@@ -242,7 +242,7 @@ toTerminalSessionLaunchOptions(const LaunchOptions &options)
         .program = options.program,
         .firstSessionCommandOverride = std::nullopt,
         .initialInput = options.initialInput,
-        .scrollbackLimit = options.scrollbackLimit,
+        .scrollbackLimits = options.scrollbackLimits,
         .hold = options.hold,
         .initialGeometry = std::nullopt,
         .runtime = toTerminalSessionRuntimeOptions(options),
@@ -330,11 +330,9 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         result.initialWindow = config.initialWindow;
     }
 
-    if (!base.scrollbackLimitExplicit) {
-        result.scrollbackLimit = {
-            .value = config.scrollbackLimitBytes,
-            .unit = ScrollbackLimitUnit::Bytes,
-        };
+    result.scrollbackLimits.bytes = config.scrollbackLimitBytes;
+    if (!base.scrollbackLinesExplicit) {
+        result.scrollbackLimits.lines = config.scrollbackLimitLines;
     }
     result.scrollbackCompression = config.scrollbackCompression;
     result.kittyImageStorageLimitBytes = config.kittyImageStorageLimitBytes;
@@ -638,11 +636,8 @@ parseLaunchOptions(const QStringList &arguments)
                     .arg(value)
                     .arg(kMaximumScrollbackLines));
         }
-        parsed.scrollbackLimit = {
-            .value = static_cast<quint64>(scrollbackLines),
-            .unit = ScrollbackLimitUnit::Lines,
-        };
-        parsed.scrollbackLimitExplicit = true;
+        parsed.scrollbackLimits.lines = static_cast<quint64>(scrollbackLines);
+        parsed.scrollbackLinesExplicit = true;
     }
 
     parsed.hold = parser.isSet(holdOption);

@@ -356,7 +356,10 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(values.resizeOverlay.position, ResizeOverlayPosition::BottomRight);
     QCOMPARE(values.resizeOverlay.duration, std::chrono::milliseconds{1250});
 
-    QCOMPARE(values.scrollbackLimitBytes, std::numeric_limits<quint64>::max());
+    QCOMPARE(values.scrollbackLimitBytes,
+             std::optional<quint64>(std::numeric_limits<quint64>::max()));
+    QCOMPARE(values.scrollbackLimitLines,
+             std::optional<quint64>(quint64{9'876'543'210}));
     QCOMPARE(values.kittyImageStorageLimitBytes, quint32{123456789});
     QVERIFY(!values.scrollbackCompression);
     QCOMPARE(values.scrollbar, ScrollbarPolicy::Never);
@@ -589,6 +592,12 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
                           QStringLiteral("linux-cgroup-processes-limit"),
                           QJsonValue::Null);
     lowValues =
+        withValue(std::move(lowValues),
+                  QStringLiteral("scrollback-limit-bytes"), QJsonValue::Null);
+    lowValues =
+        withValue(std::move(lowValues),
+                  QStringLiteral("scrollback-limit-lines"), QJsonValue::Null);
+    lowValues =
         withValue(std::move(lowValues), QStringLiteral("env"), QJsonArray{});
 
     const auto low = parseGhosttyConfigExportJson(json(lowValues));
@@ -603,6 +612,8 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     QCOMPARE(low->values.mouseScrollMultiplier.discrete, 0.01);
     QVERIFY(!low->values.linuxCgroup.memoryLimitBytes.has_value());
     QVERIFY(!low->values.linuxCgroup.processesLimit.has_value());
+    QVERIFY(!low->values.scrollbackLimitBytes.has_value());
+    QVERIFY(!low->values.scrollbackLimitLines.has_value());
     QVERIFY(low->values.environment.isEmpty());
 
     for (const qint16 value : std::to_array<qint16>({-1, 0, 20, 255})) {
@@ -1253,7 +1264,7 @@ void GhosttyConfigExportTest::rejectsMalformedEnvelope()
                  "Ghostty structured config JSON root must be an object"));
 
     QJsonObject malformed = object();
-    malformed.insert(QStringLiteral("version"), 2);
+    malformed.insert(QStringLiteral("version"), 3);
     parsed = parseGhosttyConfigExportJson(json(malformed));
     QVERIFY(!parsed);
     QCOMPARE(parsed.error(),
@@ -2001,6 +2012,12 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-scrollbar")
         << withoutValue(object(), QStringLiteral("scrollbar"))
         << QStringLiteral("values is missing field 'scrollbar'");
+    QTest::newRow("missing-scrollback-limit-bytes")
+        << withoutValue(object(), QStringLiteral("scrollback-limit-bytes"))
+        << QStringLiteral("values is missing field 'scrollback-limit-bytes'");
+    QTest::newRow("missing-scrollback-limit-lines")
+        << withoutValue(object(), QStringLiteral("scrollback-limit-lines"))
+        << QStringLiteral("values is missing field 'scrollback-limit-lines'");
     QTest::newRow("missing-scrollback-compression")
         << withoutValue(object(), QStringLiteral("scrollback-compression"))
         << QStringLiteral("values is missing field 'scrollback-compression'");
@@ -2882,15 +2899,27 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
                      4294967296.0)
         << QStringLiteral(
                "values.resize-overlay-duration must be an unsigned integer");
-    QTest::newRow("scrollback-number")
-        << withValue(object(), QStringLiteral("scrollback-limit"), 50000000)
-        << QStringLiteral("values.scrollback-limit must be a string");
-    QTest::newRow("scrollback-leading-zero")
-        << withValue(object(), QStringLiteral("scrollback-limit"),
+    QTest::newRow("scrollback-bytes-number")
+        << withValue(object(), QStringLiteral("scrollback-limit-bytes"),
+                     50000000)
+        << QStringLiteral("values.scrollback-limit-bytes must be a string");
+    QTest::newRow("scrollback-lines-number")
+        << withValue(object(), QStringLiteral("scrollback-limit-lines"), 1000)
+        << QStringLiteral("values.scrollback-limit-lines must be a string");
+    QTest::newRow("scrollback-bytes-leading-zero")
+        << withValue(object(), QStringLiteral("scrollback-limit-bytes"),
                      QStringLiteral("01"))
         << QStringLiteral("canonical unsigned decimal string");
-    QTest::newRow("scrollback-overflow")
-        << withValue(object(), QStringLiteral("scrollback-limit"),
+    QTest::newRow("scrollback-lines-leading-zero")
+        << withValue(object(), QStringLiteral("scrollback-limit-lines"),
+                     QStringLiteral("01"))
+        << QStringLiteral("canonical unsigned decimal string");
+    QTest::newRow("scrollback-bytes-overflow")
+        << withValue(object(), QStringLiteral("scrollback-limit-bytes"),
+                     QStringLiteral("18446744073709551616"))
+        << QStringLiteral("exceeds the uint64 range");
+    QTest::newRow("scrollback-lines-overflow")
+        << withValue(object(), QStringLiteral("scrollback-limit-lines"),
                      QStringLiteral("18446744073709551616"))
         << QStringLiteral("exceeds the uint64 range");
     QTest::newRow("image-storage-limit-negative")

@@ -19,7 +19,7 @@ Bootstrap the exact Zig version required by the pinned Ghostty revision with:
 ./scripts/bootstrap-zig.sh
 ```
 
-The script supports x86-64 and AArch64 Linux. It downloads Zig 0.15.2 from the
+The script supports x86-64 and AArch64 Linux. It downloads Zig 0.16.0 from the
 official Zig release directory, verifies the architecture-specific SHA-256
 published in Zig's release index, extracts it under `.local/toolchains`, and
 creates `.local/bin/zig`. A downloaded archive is cached under `.cache/zig` and
@@ -395,7 +395,7 @@ Configuration is enabled by default with
 parser is outside `libghostty-vt`, the build produces a private
 `ghostty-internal` shared library and links it only into
 `ghostty-qt-config-helper`. Each load is a four-process transaction: validate,
-request the private schema-v1 `+show-config-json` projection with the concrete
+request the private schema-v2 `+show-config-json` projection with the concrete
 light/dark scheme, validate again, and request the same scheme and projection
 again. The two JSON byte streams must match, so each document carries one
 finalized current configuration together with its platform-default keybinding
@@ -451,7 +451,7 @@ path. Tests must always remove inherited editor variables or install a
 deterministic fake editor; invoking this action with a developer's environment
 can intentionally replace the test process with their interactive editor.
 
-The schema-v1 projection includes the finalized non-empty raw-byte `term`
+The schema-v2 projection includes the finalized non-empty raw-byte `term`
 child identity, the finalized ordered raw-byte `env` override map, the
 finalized binary-safe `enquiry-response`, finalized working-directory,
 split/tab/window directory inheritance policies, new-window/tab font-size policy,
@@ -546,7 +546,7 @@ The five focused config tests have distinct boundaries:
 - `ghostty-config-service` exercises filesystem discovery/watch/debounce,
   missing optional includes, generation-safe asynchronous reload, and last-good
   snapshot behavior with an injected loader.
-- `ghostty-config-export` exercises the strict schema-v1 decoder independently
+- `ghostty-config-export` exercises the strict schema-v2 decoder independently
   of process execution, including finalized non-empty byte-valued `term`, the
   ordered raw-byte `env` key/value pairs and their duplicate/empty/equals/NUL
   rejection, empty and binary `enquiry-response` values, the exact cgroup
@@ -917,13 +917,12 @@ and the software renderer remain covered by the sanitizer suite. With X or
 Xvfb available, Debug and Release CTest runs still require and verify the real
 OpenGL RHI path.
 
-The clean step is required when another preset has already populated the shared
-`ghostty/zig-out` directory. Ghostty's CMake wrapper does not encode Zig
-optimization flags in that output path, so an existing `ReleaseFast` archive
-would otherwise satisfy the sanitizer build without being regenerated as
-`ReleaseSafe`. Likewise, clean the destination preset before switching back to
-a different Zig configuration. This is another reason never to build the
-presets concurrently in one checkout.
+Ghostty's CMake wrapper does not encode the revision, Zig version, target, or
+optimization flags in its shared `ghostty/zig-out` path. The top-level build
+therefore records that complete contract and verifies it before any consumer;
+switching presets sequentially rebuilds the archive and headers automatically
+when the contract differs. A manual clean is not required. The shared output
+still makes concurrent preset builds unsupported.
 
 ## Continuous integration
 

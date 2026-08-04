@@ -21,11 +21,11 @@ const Matcher = struct {
     regex: oni.Regex,
 };
 
-var initialization_mutex: std.Thread.Mutex = .{};
+var initialization_mutex: std.atomic.Mutex = .unlocked;
 var oniguruma_initialized = false;
 
 fn ensureOnigurumaInitialized() !void {
-    initialization_mutex.lock();
+    while (!initialization_mutex.tryLock()) std.atomic.spinLoopHint();
     defer initialization_mutex.unlock();
 
     if (oniguruma_initialized) return;

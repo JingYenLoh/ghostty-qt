@@ -91,8 +91,7 @@ private Q_SLOTS:
 void GhosttySmokeTest::parsesAndRendersText()
 {
     GhosttyTerminal terminal = nullptr;
-    const GhosttyTerminalOptions options{.cols = 10, .rows = 2, .max_scrollback = 100};
-    QCOMPARE(ghostty_terminal_new(nullptr, &terminal, options), GHOSTTY_SUCCESS);
+    QCOMPARE(ghostty_terminal_new(nullptr, &terminal, 10, 2), GHOSTTY_SUCCESS);
     QVERIFY(terminal != nullptr);
 
     const char content[] = "\x1b[31mhello\x1b[0m";
@@ -135,8 +134,7 @@ void GhosttySmokeTest::parsesAndRendersText()
 void GhosttySmokeTest::exposesWideCjkCellMetadata()
 {
     GhosttyTerminal terminal = nullptr;
-    const GhosttyTerminalOptions options{.cols = 6, .rows = 1, .max_scrollback = 0};
-    QCOMPARE(ghostty_terminal_new(nullptr, &terminal, options), GHOSTTY_SUCCESS);
+    QCOMPARE(ghostty_terminal_new(nullptr, &terminal, 6, 1), GHOSTTY_SUCCESS);
 
     // U+754C (界) has an East Asian width of two cells, followed by ASCII x.
     const QByteArray content = QByteArray::fromHex("e7958c78");
@@ -184,9 +182,7 @@ void GhosttySmokeTest::encodesInputAndPasteSafety()
                                    static_cast<size_t>(fenceInjection.size())));
 
     GhosttyTerminal terminal = nullptr;
-    const GhosttyTerminalOptions terminalOptions{
-        .cols = 10, .rows = 2, .max_scrollback = 0};
-    QCOMPARE(ghostty_terminal_new(nullptr, &terminal, terminalOptions), GHOSTTY_SUCCESS);
+    QCOMPARE(ghostty_terminal_new(nullptr, &terminal, 10, 2), GHOSTTY_SUCCESS);
     const char enableBracketedPaste[] = "\x1b[?2004h";
     ghostty_terminal_vt_write(
         terminal, reinterpret_cast<const uint8_t *>(enableBracketedPaste),
@@ -235,8 +231,7 @@ void GhosttySmokeTest::encodesInputAndPasteSafety()
 void GhosttySmokeTest::answersTerminalQueriesThroughWriteCallback()
 {
     GhosttyTerminal terminal = nullptr;
-    const GhosttyTerminalOptions options{.cols = 80, .rows = 24, .max_scrollback = 0};
-    QCOMPARE(ghostty_terminal_new(nullptr, &terminal, options), GHOSTTY_SUCCESS);
+    QCOMPARE(ghostty_terminal_new(nullptr, &terminal, 80, 24), GHOSTTY_SUCCESS);
 
     EffectCapture capture;
     QCOMPARE(ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_USERDATA, &capture),
@@ -266,8 +261,7 @@ void GhosttySmokeTest::answersTerminalQueriesThroughWriteCallback()
 void GhosttySmokeTest::encodesButtonDragMouseReporting()
 {
     GhosttyTerminal terminal = nullptr;
-    const GhosttyTerminalOptions options{.cols = 80, .rows = 24, .max_scrollback = 0};
-    QCOMPARE(ghostty_terminal_new(nullptr, &terminal, options), GHOSTTY_SUCCESS);
+    QCOMPARE(ghostty_terminal_new(nullptr, &terminal, 80, 24), GHOSTTY_SUCCESS);
     const char enable[] = "\x1b[?1002;1006h";
     ghostty_terminal_vt_write(terminal,
                               reinterpret_cast<const uint8_t *>(enable),

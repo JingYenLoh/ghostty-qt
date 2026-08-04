@@ -13,7 +13,7 @@ const shell_integration = @import("../termio/shell_integration.zig");
 const terminal_color = @import("../terminal/color.zig");
 const conditional = @import("conditional.zig");
 const themepkg = @import("theme.zig");
-const state = &@import("../global.zig").state;
+const global = @import("../global.zig");
 const String = @import("../main_c.zig").String;
 
 const Config = @import("Config.zig");
@@ -231,7 +231,7 @@ fn shellIntegrationEnvironmentLessThan(
 fn writeShellIntegrationEnvironment(
     json: *std.json.Stringify,
     alloc: std.mem.Allocator,
-    environment: *const std.process.EnvMap,
+    environment: *const std.process.Environ.Map,
 ) !void {
     var entries: std.ArrayList(ShellIntegrationEnvironmentEntry) = .empty;
     defer entries.deinit(alloc);
@@ -262,7 +262,7 @@ fn writeShellIntegrationEnvironment(
 }
 
 fn shellIntegrationJson(request_json: []const u8) !String {
-    var arena = std.heap.ArenaAllocator.init(state.alloc);
+    var arena = std.heap.ArenaAllocator.init(global.alloc());
     defer arena.deinit();
     const alloc = arena.allocator();
 
@@ -274,7 +274,7 @@ fn shellIntegrationJson(request_json: []const u8) !String {
     );
     if (request.version != 1) return error.UnsupportedSchemaVersion;
 
-    var environment = std.process.EnvMap.init(alloc);
+    var environment = std.process.Environ.Map.init(alloc);
     defer environment.deinit();
     for (request.environment) |entry| {
         const key = try decodeBase64(alloc, entry.key);
@@ -330,7 +330,7 @@ fn shellIntegrationJson(request_json: []const u8) !String {
         return error.UnexpectedResourceDirectory;
     }
 
-    var output: std.Io.Writer.Allocating = .init(state.alloc);
+    var output: std.Io.Writer.Allocating = .init(global.alloc());
     errdefer output.deinit();
     var json: std.json.Stringify = .{ .writer = &output.writer };
     try json.beginObject();
@@ -356,11 +356,11 @@ fn shellIntegrationJson(request_json: []const u8) !String {
 }
 
 fn errorMessage(message: []const u8) !String {
-    return .fromSlice(try state.alloc.dupe(u8, message));
+    return .fromSlice(try global.alloc().dupe(u8, message));
 }
 
 fn configDiagnostics(config: *const Config) !String {
-    var output: std.Io.Writer.Allocating = .init(state.alloc);
+    var output: std.Io.Writer.Allocating = .init(global.alloc());
     errdefer output.deinit();
     for (config._diagnostics.items(), 0..) |diagnostic, index| {
         if (index > 0) try output.writer.writeByte('\n');
@@ -374,13 +374,13 @@ fn configJson(
     probable_cli: bool,
     error_message: *String,
 ) !String {
-    var output: std.Io.Writer.Allocating = .init(state.alloc);
+    var output: std.Io.Writer.Allocating = .init(global.alloc());
     errdefer output.deinit();
 
     var json: std.json.Stringify = .{ .writer = &output.writer };
     try json.beginObject();
     try json.objectField("version");
-    try json.write(@as(u8, 1));
+    try json.write(@as(u8, 2));
 
     {
         var config = try loadSelectedConfig(color_scheme, probable_cli);
@@ -403,7 +403,7 @@ fn configJson(
     // bindings from unsupported built-ins. Load them only after releasing the
     // current generation so the short-lived helper does not retain both.
     {
-        var defaults = try Config.default(state.alloc);
+        var defaults = try Config.default(global.alloc());
         defer defaults.deinit();
 
         try json.objectField("default-keybindings");
@@ -419,15 +419,16 @@ fn loadSelectedConfig(color_scheme: ConfigConditionalTheme, probable_cli: bool) 
     // before any file is parsed. Selecting afterward is insufficient when
     // the inactive theme contains diagnostics because pinned Ghostty
     // deliberately replays diagnostic steps unconditionally.
-    var config = try Config.default(state.alloc);
+    var config = try Config.default(global.alloc());
     errdefer config.deinit();
     config._conditional_state.theme = color_scheme;
-    try config.loadDefaultFiles(state.alloc);
-    try config.loadCliArgs(state.alloc);
-    try config.loadRecursiveFiles(state.alloc);
-    const original_argv = std.os.argv;
-    defer std.os.argv = original_argv;
-    if (!probable_cli) std.os.argv = original_argv[0..1];
+    try config.loadDefaultFiles(global.alloc());
+    try config.loadCliArgs(global.alloc());
+    try config.loadRecursiveFiles(global.alloc());
+
+    // The helper initializes Ghostty with argc=1 for a known desktop launch,
+    // so the upstream finalizer observes the original launch classification.
+    _ = probable_cli;
     try config.finalize();
     return config;
 }
@@ -726,9 +727,16 @@ fn writeValues(
     try json.write(config.@"minimum-contrast");
     try json.objectField("vt-kam-allowed");
     try json.write(config.@"vt-kam-allowed");
-    try json.objectField("scrollback-limit");
-    var scrollback_buf: [32]u8 = undefined;
-    try json.write(try std.fmt.bufPrint(&scrollback_buf, "{d}", .{config.@"scrollback-limit"}));
+    try json.objectField("scrollback-limit-bytes");
+    if (config.@"scrollback-limit-bytes".optional()) |value|
+        try writeDecimalUint64(json, @intCast(value))
+    else
+        try json.write(null);
+    try json.objectField("scrollback-limit-lines");
+    if (config.@"scrollback-limit-lines".optional()) |value|
+        try writeDecimalUint64(json, @intCast(value))
+    else
+        try json.write(null);
     try json.objectField("image-storage-limit");
     try json.write(config.@"image-storage-limit");
     try json.objectField("scrollback-compression");
@@ -867,7 +875,7 @@ fn writeThemeFiles(
         return;
     };
 
-    var arena = std.heap.ArenaAllocator.init(state.alloc);
+    var arena = std.heap.ArenaAllocator.init(global.alloc());
     defer arena.deinit();
     const alloc = arena.allocator();
     var paths: std.ArrayList([]const u8) = .empty;
@@ -910,7 +918,7 @@ fn appendThemeFile(
 
 fn writeDecimalUint64(json: *std.json.Stringify, number: u64) !void {
     // Qt's JSON representation is double-valued. Use canonical decimal text
-    // so every u64, including maxInt(u64), crosses schema v1 exactly.
+    // so every u64, including maxInt(u64), crosses the private schema exactly.
     var buffer: [32]u8 = undefined;
     try json.write(try std.fmt.bufPrint(&buffer, "{d}", .{number}));
 }
@@ -954,7 +962,7 @@ fn writeOptionalCommand(
 }
 
 fn writeInitialInput(json: *std.json.Stringify, value: anytype) !void {
-    var arena = std.heap.ArenaAllocator.init(state.alloc);
+    var arena = std.heap.ArenaAllocator.init(global.alloc());
     defer arena.deinit();
     const alloc = arena.allocator();
 
@@ -1045,7 +1053,7 @@ fn writeQuickTerminalSize(
 fn writeCommandPalette(json: *std.json.Stringify, value: anytype) !void {
     try json.beginArray();
     for (value.value.items) |command| {
-        var formatted: std.Io.Writer.Allocating = .init(state.alloc);
+        var formatted: std.Io.Writer.Allocating = .init(global.alloc());
         defer formatted.deinit();
         try command.action.format(&formatted.writer);
 
@@ -1085,12 +1093,12 @@ fn writeByteArray(json: *std.json.Stringify, value: []const u8) !void {
 
 fn writeKeybinds(json: *std.json.Stringify, keybinds: *const Config.Keybinds) !void {
     var sequence: std.ArrayList(Binding.Trigger) = .empty;
-    defer sequence.deinit(state.alloc);
+    defer sequence.deinit(global.alloc());
 
     try json.beginObject();
     try json.objectField("root");
     try json.beginArray();
-    try writeSet(json, state.alloc, &keybinds.set, &sequence);
+    try writeSet(json, global.alloc(), &keybinds.set, &sequence);
     try json.endArray();
 
     try json.objectField("tables");
@@ -1102,7 +1110,7 @@ fn writeKeybinds(json: *std.json.Stringify, keybinds: *const Config.Keybinds) !v
         try json.write(table.key_ptr.*);
         try json.objectField("bindings");
         try json.beginArray();
-        try writeSet(json, state.alloc, table.value_ptr, &sequence);
+        try writeSet(json, global.alloc(), table.value_ptr, &sequence);
         try json.endArray();
         try json.endObject();
     }
@@ -1163,10 +1171,10 @@ fn writeFontFeatures(
     configured: *const Config.RepeatableString,
 ) !void {
     var features: font_feature.FeatureList = .{};
-    defer features.deinit(state.alloc);
-    try features.features.appendSlice(state.alloc, &font_feature.default_features);
+    defer features.deinit(global.alloc());
+    try features.features.appendSlice(global.alloc(), &font_feature.default_features);
     for (configured.list.items) |value|
-        try features.appendFromString(state.alloc, value);
+        try features.appendFromString(global.alloc(), value);
 
     try json.beginArray();
     for (features.features.items) |feature|
@@ -1264,10 +1272,10 @@ fn writeOptionalMetricModifier(json: *std.json.Stringify, modifier: anytype) !vo
 
 fn writeMetricModifierOrder(json: *std.json.Stringify, config: *const Config) !void {
     var modifiers: Metrics.ModifierSet = .{};
-    defer modifiers.deinit(state.alloc);
+    defer modifiers.deinit(global.alloc());
     inline for (metric_config_descriptors) |descriptor| {
         if (@field(config, descriptor.name)) |modifier| {
-            try modifiers.put(state.alloc, descriptor.key, modifier);
+            try modifiers.put(global.alloc(), descriptor.key, modifier);
         }
     }
 

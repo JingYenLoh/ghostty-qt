@@ -2,7 +2,7 @@
 
 set -eu
 
-ZIG_VERSION=0.15.2
+ZIG_VERSION=0.16.0
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
@@ -19,11 +19,11 @@ fi
 case "$(uname -m)" in
     x86_64|amd64)
         zig_arch=x86_64
-        archive_sha256=02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239
+        archive_sha256=70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
         ;;
     aarch64|arm64)
         zig_arch=aarch64
-        archive_sha256=958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b0ff26498f667f
+        archive_sha256=ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a48b38e1534f17
         ;;
     *)
         echo "error: unsupported Linux architecture: $(uname -m)" >&2

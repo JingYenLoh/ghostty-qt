@@ -17,7 +17,7 @@ the Qt application and Ghostty's terminal engine small enough to evolve.
 | Configuration | Qt file-watching service plus a helper process | Uses the exact pinned Ghostty application parser, then exposes only selected typed values to the Qt application. |
 | Application keybindings | C++23 plus Qt D-Bus | Routes app-scoped and all-surface actions, and owns the Linux XDG Global Shortcuts portal session. |
 | Process boundary | Linux `forkpty`, nonblocking file descriptors, `QSocketNotifier` | Shell or command execution and byte transport. |
-| Build | CMake/Ninja plus Zig 0.15.2 | Qt application build, pinned Ghostty build, generated terminfo, and tests. |
+| Build | CMake/Ninja plus Zig 0.16.0 | Qt application build, pinned Ghostty build, generated terminfo, and tests. |
 
 C++ is the host language because Qt's native API and QML type system are C++,
 while `libghostty-vt` already exposes a C ABI. Zig remains responsible for
@@ -566,7 +566,7 @@ fire-and-forget normal activation.
 
 The private structured config export retains Ghostty's boolean
 `initial-window` value and raw `gtk-single-instance` false/true/detect enum.
-The latter is an unused field in the sole accepted schema-v1 contract: process
+The latter is an unused field in the sole accepted schema-v2 contract: process
 uniqueness belongs to the independent frontend `single-instance` setting. The
 GUI process resolves frontend `detect` from its real invocation and
 `TERM_PROGRAM`. Parsing
@@ -707,7 +707,7 @@ other serialized operations and stamps the result with the terminal-content
 revision. `GhosttyVtAdapter` copies active-screen geometry, cursor position,
 DEC visibility and pending wrap, viewport and scrollback metadata, raw mouse
 tracking, effective and default colors and palettes, Kitty keyboard/storage
-state, and all 41 public ANSI/DEC modes into one owned value. The controller
+state, and all 42 public ANSI/DEC modes into one owned value. The controller
 discards superseded IDs, and the model accepts only its pending ID. Closing the
 inspector stops its timers and capture immediately, clears retained event
 payloads, and schedules the short-lived model for deletion, so hidden panes
@@ -1584,7 +1584,7 @@ explicit CLI and recursive `config-file` sources, and the successful snapshot
 omits those candidates from the service's watcher set. A setting encountered
 inside a config file remains intentionally inert, matching Ghostty's own load
 order.
-Each JSON document is one exact schema-v1 frontend projection containing all
+Each JSON document is one exact schema-v2 frontend projection containing all
 consumed values plus the finalized current and platform-default binding sets.
 The two JSON byte streams must match, preventing a valid A-to-B edit from
 publishing a mixed snapshot. The adapter strictly decodes the verified
@@ -1681,7 +1681,7 @@ lifetime, typography and terminal appearance, scrollback,
 selection/clipboard/mouse/link behavior, resize-overlay presentation, default
 and included config-file policy, and the finalized keybinding sets. The README
 and machine-checked parity ledger describe the individual keys. One strict
-schema-v1 document carries the whole slice, including nullable command
+schema-v2 document carries the whole slice, including nullable command
 objects, nullable values such as `quit-after-last-window-closed-delay`, the
 ordered clipboard replacement list, and both cgroup limits; there is no
 version fallback, separate defaults merge, or partially populated snapshot.
@@ -1752,7 +1752,7 @@ f32-derived point size, the complete ordered feature list, four ordered
 variation lists, u21 codepoint-to-family ranges, three synthesis permissions,
 the cursor shaping-break flag, five FreeType load booleans, and eleven optional
 metric modifiers. Variation values retain their finalized f64 bit pattern in
-schema v1, including negative zero and non-finite values, instead of relying on
+schema v2, including negative zero and non-finite values, instead of relying on
 non-standard JSON numbers.
 
 `terminalFontProgram` takes one GUI-thread font-database snapshot for each
@@ -2099,10 +2099,13 @@ finalized Ghostty snapshot for the selected branch; the serialized
 last-known-good service applies it without replacing windows, panes,
 terminals, PTYs, or scene roots.
 
-Because the pinned terminal API cannot resize an existing scrollback
-allocation, the byte-valued Ghostty limit applies when a pane is created; a
-reload affects later panes. `config-file` contributes parser input and watcher
-paths rather than a direct renderer setting.
+Ghostty exposes independent optional byte and physical-line scrollback limits.
+Both are applied when a pane is created; when both are finite, libghostty
+prunes history at whichever limit is reached first. `unlimited` maps to an
+absent limit, while zero remains a real limit. Configuration reload therefore
+affects later panes rather than resizing existing history. `config-file`
+contributes parser input and watcher paths rather than a direct renderer
+setting.
 
 Resize presentation is likewise frontend-only. Each `TerminalPane` owns the
 latest accepted terminal grid, a single-shot `QChronoTimer`, and three QML
@@ -2120,19 +2123,20 @@ alter PTY geometry, rebuild rendered rows, or couple split panes. The QML item
 is a 120-by-40 logical-pixel disabled rectangle, so Qt scales it for DPR while
 it remains input-transparent and local to its leaf pane.
 
-The pinned terminal allocation limit is byte-valued. Ghostty's
-`scrollback-limit` therefore passes through exactly. The older
-`--scrollback-lines` CLI remains accepted through an explicit estimate of
-`max(256, columns * 16)` bytes per requested row, using the initial terminal
-width and saturating arithmetic; it is a capacity estimate, not an exact row
-guarantee because Ghostty pages also store styles and grapheme metadata.
-`scrollback-compression` is independent of that capacity: its exact finalized
-Boolean is worker-owned live state, while a reloaded capacity still applies
-only to panes created afterward.
+The private helper preserves `scrollback-limit-bytes` and
+`scrollback-limit-lines` independently, including each `unlimited` sentinel.
+The compatibility `--scrollback-lines` frontend option overrides only the
+line axis, so the configured byte ceiling continues to apply. The line limit
+counts physical rows, with soft-wrapped logical lines occupying multiple rows.
+The byte ceiling includes complete page contents and is rounded down to whole
+pages; the line ceiling is a page-granular estimate and can retain up to one
+page beyond its target. `scrollback-compression` is independent of either capacity:
+its exact finalized Boolean is worker-owned live state, while reloaded limits
+still apply only to panes created afterward.
 
 ## Keybinding compatibility boundary
 
-The config helper exposes a project-private JSON v1 envelope containing
+The config helper exposes a project-private JSON v2 envelope containing
 application lifetime, `initial-window`, the unused raw `gtk-single-instance`
 compatibility field, the finalized non-empty raw-byte child terminal identity,
 the CLI-only default-config-file policy, the finalized ordered tagged
@@ -2562,7 +2566,7 @@ has Git metadata and rejects a mismatch unless upgrade work explicitly enables
 `GHOSTTY_QT_ALLOW_UNPINNED_GHOSTTY`.
 
 Ghostty's CMake wrapper invokes Zig and exports `ghostty-vt-static`. The project
-checks `zig version` at configure time and accepts only `0.15.2`, matching the
+checks `zig version` at configure time and accepts only `0.16.0`, matching the
 pinned Ghostty source. One internal `ghostty-qt-vt-adapter` target privately
 links that engine and contains its C API; the application and focused tests
 reuse the compiled adapter. The executable separately links Linux `libutil`.
@@ -2708,8 +2712,10 @@ path bytewise, then applies the finalized `env` map, which may replace either
 one before `exec`. This preserves non-UTF-8 configured values independently of
 the process locale.
 
-Ghostty places generated artifacts in its source-tree `zig-out`, shared by the
-developer and release CMake trees. Those presets must not build concurrently.
+Ghostty places generated artifacts in its source-tree `zig-out`, shared by all
+CMake preset trees. A hashed revision, Zig, target, and effective-build-flags
+contract repairs sequential preset switches before any consumer can compile or
+link against the output. Presets must still not build concurrently.
 The staged relocation test installs into a temporary prefix, moves the prefix,
 runs the moved main executable through its sibling helper, and runs a Qt
 Core-only probe from the moved `bin` directory to verify that it selects the
@@ -2972,7 +2978,7 @@ The default CTest suite has focused layers for each ownership boundary:
   while pane wheel tests cover precision threshold, timeout, direction,
   simultaneous-axis, reload-reset, and discrete-horizontal pass-through
   behavior.
-- `ghostty-config-export` verifies strict decoding of the complete schema-v1
+- `ghostty-config-export` verifies strict decoding of the complete schema-v2
   frontend projection, including tagged nullable command objects and their raw
   bytes, finalized non-empty byte-valued `term`, ordered tagged raw/path input,
   the ordered raw-byte `env` pairs and their closed validity rules,

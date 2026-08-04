@@ -3420,9 +3420,9 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
         QStringLiteral("Monospace"),
     };
     reloaded.appearance.foregroundColor = QColor(QStringLiteral("#123456"));
-    reloaded.scrollbackLimit = {
-        .value = 321,
-        .unit = ScrollbackLimitUnit::Bytes,
+    reloaded.scrollbackLimits = {
+        .bytes = 321,
+        .lines = 654,
     };
     reloaded.selectionClipboard = {
         .trimTrailingSpaces = false,
@@ -3456,7 +3456,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     QCOMPARE(splitOptions.workingDirectory, QDir::tempPath());
     QVERIFY(splitOptions.program.isEmpty());
     QVERIFY(!splitOptions.hold);
-    QCOMPARE(splitOptions.scrollbackLimit, reloaded.scrollbackLimit);
+    QCOMPARE(splitOptions.scrollbackLimits, reloaded.scrollbackLimits);
     QCOMPARE(splitOptions.appearance, reloaded.appearance);
     QCOMPARE(splitOptions.selectionClipboard, reloaded.selectionClipboard);
     QCOMPARE(splitOptions.selectionWordChars, reloaded.selectionWordChars);

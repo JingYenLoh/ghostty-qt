@@ -178,6 +178,7 @@ private Q_SLOTS:
     void tracksOsc8HyperlinksAcrossViewportAndScreenChanges();
     void invalidatesTrackedOsc8HyperlinksAfterReplacementAndReset();
     void invalidatesTrackedOsc8HyperlinksAfterScrollbackPruning();
+    void invalidatesTrackedOsc8HyperlinksAfterLineScrollbackPruning();
     void snapshotsLogicalLineBytesAcrossGraphemesAndWideWraps();
     void snapshotsPhysicalSearchRowsAcrossHistoryAndScreens();
     void searchSnapshotsFollowLiveDeccolmDimensions();
@@ -1589,6 +1590,43 @@ void GhosttyVtAdapterTest::invalidatesTrackedOsc8HyperlinksAfterScrollbackPrunin
     QVERIFY(!adapter->trackedHyperlinkValid(*tracked));
 }
 
+void GhosttyVtAdapterTest::
+    invalidatesTrackedOsc8HyperlinksAfterLineScrollbackPruning()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 8;
+    options.geometry.rows = 2;
+    options.scrollbackBytes = std::nullopt;
+    // A zero line target still retains libghostty's minimum page allocation,
+    // but writing multiple pages must prune the tracked first page. With no
+    // byte ceiling, this specifically exercises the independent line setter.
+    options.scrollbackLines = 0;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    QByteArray linked = QByteArrayLiteral(
+        "\033]8;;https://example.test/line-pruned\033\\P\033]8;;\033\\");
+    adapter->writeVt(linked);
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+    auto tracked = adapter->trackHyperlinkAt(0, 0);
+    QVERIFY(tracked.has_value());
+
+    QByteArray history;
+    history.reserve(20'000 * 7);
+    for (int row = 0; row < 20'000; ++row) {
+        history += QByteArrayLiteral("\r\nline");
+    }
+    adapter->writeVt(history);
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Top,
+    }));
+    renderInto(adapter.get(), &frame);
+    QVERIFY(!adapter->resolveHyperlink(*tracked, hyperlinkCandidates(frame))
+                 .has_value());
+    QVERIFY(!adapter->trackedHyperlinkValid(*tracked));
+}
+
 void GhosttyVtAdapterTest::snapshotsLogicalLineBytesAcrossGraphemesAndWideWraps()
 {
     GhosttyVtAdapter::Options options;
@@ -2223,7 +2261,7 @@ void GhosttyVtAdapterTest::snapshotsAuthoritativeInspectorState()
     QVERIFY(!initial.defaultCursor.isValid());
     QCOMPARE(initial.effectivePalette.size(), 256);
     QCOMPARE(initial.defaultPalette.size(), 256);
-    QCOMPARE(initial.modes.size(), 41);
+    QCOMPARE(initial.modes.size(), 42);
     QCOMPARE(initial.kittyKeyboardFlags, quint8{0});
     QVERIFY(initial.kittyGraphicsAvailable);
     QCOMPARE(initial.kittyImageStorageLimitBytes, quint64{123'456});
@@ -2242,7 +2280,7 @@ void GhosttyVtAdapterTest::snapshotsAuthoritativeInspectorState()
         {false, 1016}, {false, 1035}, {false, 1036}, {false, 1039},
         {false, 1045}, {false, 1047}, {false, 1048}, {false, 1049},
         {false, 2004}, {false, 2026}, {false, 2027}, {false, 2031},
-        {false, 2048},
+        {false, 2033}, {false, 2048},
     };
     std::set<std::pair<bool, quint16>> actualModes;
     for (const TerminalInspectorModeState &mode : initial.modes) {

@@ -3,7 +3,7 @@
 ## Decision
 
 The practical stack for this Linux-only project is **C++23 + Qt Quick/QML**, with
-Ghostty built by **Zig 0.15.2** and consumed through the stable C-shaped
+Ghostty built by **Zig 0.16.0** and consumed through the stable C-shaped
 `libghostty-vt` API.
 
 This division follows the native boundary of both dependencies: Qt's object,

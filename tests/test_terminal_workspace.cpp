@@ -4719,7 +4719,7 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
         QStringLiteral("Primary"));
     QCOMPARE(
         authoritativeTerminal.value(QStringLiteral("modes")).toList().size(),
-        41);
+        42);
     QVERIFY(authoritativeTerminal.value(QStringLiteral("workerContentRevision"))
                 .toULongLong()
             > 0);

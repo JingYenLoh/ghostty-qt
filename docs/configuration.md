@@ -56,7 +56,7 @@ The supported slice includes common settings across these areas:
 | Area | Examples |
 | --- | --- |
 | Process and session | `command`, `initial-command`, `input`, `env`, `term`, `working-directory`, `wait-after-command` |
-| Terminal history and input | `scrollback-limit`, `scrollback-compression`, `mouse-reporting`, `vt-kam-allowed`, `enquiry-response` |
+| Terminal history and input | `scrollback-limit-bytes`, `scrollback-limit-lines`, `scrollback-compression`, `mouse-reporting`, `vt-kam-allowed`, `enquiry-response` |
 | Appearance | `theme`, `window-theme`, `palette`, `foreground`, `background`, cursor and selection colors, cell metrics |
 | Window and layout | padding, initial size/state, tab placement and visibility, split inheritance and zoom policy |
 | Background and images | opacity, per-cell opacity, background images, and Kitty image storage limits |
@@ -80,7 +80,8 @@ font-size = 12
 theme = light:light-theme,dark:dark-theme
 window-theme = auto
 
-scrollback-limit = 10000000
+scrollback-limit-bytes = 50000000
+scrollback-limit-lines = unlimited
 clipboard-write = ask
 link-previews = true
 
@@ -88,6 +89,14 @@ quick-terminal-position = top
 quick-terminal-size = 40%,100%
 quick-terminal-autohide = true
 ```
+
+The two scrollback limits are independent and active at the same time. History
+is pruned when either finite limit is reached; the line limit counts physical
+rows, so soft wraps count more than once. `unlimited` removes only that axis,
+while a byte limit of zero disables history. A line limit of zero requests the
+minimum page-granular history target and can retain one standard page. As in
+Ghostty, reloading either setting affects newly created panes rather than
+resizing existing history.
 
 Use the pinned CLI implementations to inspect or validate the standard
 configuration:

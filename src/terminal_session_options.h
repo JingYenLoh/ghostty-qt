@@ -20,16 +20,14 @@
 #include <limits>
 #include <optional>
 
-enum class ScrollbackLimitUnit {
-    Lines,
-    Bytes,
-};
+struct ScrollbackLimits {
+    // Ghostty applies both axes simultaneously and evicts history when either
+    // limit is reached. A missing value means unlimited; zero remains a real
+    // limit and must not be collapsed into the missing state.
+    std::optional<quint64> bytes = 50'000'000;
+    std::optional<quint64> lines;
 
-struct ScrollbackLimit {
-    quint64 value = 10'000;
-    ScrollbackLimitUnit unit = ScrollbackLimitUnit::Lines;
-
-    bool operator==(const ScrollbackLimit &) const = default;
+    bool operator==(const ScrollbackLimits &) const = default;
 };
 
 struct TerminalEnvironmentEntry {
@@ -264,7 +262,7 @@ struct TerminalSessionLaunchOptions {
     // Raw entries preserve arbitrary bytes; path entries are read relative to
     // the frontend process working directory, matching pinned Ghostty.
     QVector<TerminalInitialInput> initialInput;
-    ScrollbackLimit scrollbackLimit;
+    ScrollbackLimits scrollbackLimits;
     // Initial-only frontend override. Shared wait-after-command remains in the
     // live runtime options so a reload can affect an existing child.
     bool hold = false;
@@ -276,25 +274,6 @@ struct TerminalSessionLaunchOptions {
 
     bool operator==(const TerminalSessionLaunchOptions &) const = default;
 };
-
-// libghostty's max_scrollback is byte-valued. Preserve Ghostty config bytes
-// exactly; convert the legacy line CLI using a conservative storage estimate
-// of max(256, columns * 16) bytes per row, with saturating arithmetic.
-inline quint64 scrollbackLimitInBytes(ScrollbackLimit limit, int columns)
-{
-    if (limit.unit == ScrollbackLimitUnit::Bytes) {
-        return limit.value;
-    }
-    const quint64 boundedColumns = static_cast<quint64>(std::max(1, columns));
-    constexpr quint64 EstimatedBytesPerCell = 16;
-    constexpr quint64 MinimumEstimatedRowBytes = 256;
-    const quint64 rowBytes = std::max(MinimumEstimatedRowBytes,
-                                      boundedColumns * EstimatedBytesPerCell);
-    if (limit.value > std::numeric_limits<quint64>::max() / rowBytes) {
-        return std::numeric_limits<quint64>::max();
-    }
-    return limit.value * rowBytes;
-}
 
 Q_DECLARE_METATYPE(TerminalSessionLaunchOptions)
 Q_DECLARE_METATYPE(TerminalSessionRuntimeOptions)

@@ -38,7 +38,7 @@ pub fn build(b: *std.Build) void {
     // not otherwise provide. Keep the static ABI self-contained in every
     // configured optimization mode, matching Ghostty's own lib-vt build.
     library.bundle_compiler_rt = true;
-    library.linkLibrary(oniguruma.artifact("oniguruma"));
+    library.root_module.linkLibrary(oniguruma.artifact("oniguruma"));
     b.installArtifact(library);
     // Zig does not fold a linked static archive into another static archive.
     // Stage the pinned engine beside the matcher so CMake can preserve link
@@ -57,14 +57,14 @@ pub fn build(b: *std.Build) void {
         .name = "ghostty-qt-link-matcher-tests",
         .root_module = test_module,
     });
-    tests.linkLibrary(oniguruma.artifact("oniguruma"));
+    tests.root_module.linkLibrary(oniguruma.artifact("oniguruma"));
 
     const run_tests = b.addRunArtifact(tests);
     const corpus_tests = b.addTest(.{
         .name = "ghostty-url-corpus-tests",
         .root_module = url_module,
     });
-    corpus_tests.linkLibrary(oniguruma.artifact("oniguruma"));
+    corpus_tests.root_module.linkLibrary(oniguruma.artifact("oniguruma"));
     const run_corpus_tests = b.addRunArtifact(corpus_tests);
     const test_step = b.step(
         "test",

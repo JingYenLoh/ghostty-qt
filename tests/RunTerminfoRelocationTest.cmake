@@ -57,13 +57,13 @@ if(CONFIG_HELPER_NAME)
         LIST_DIRECTORIES FALSE
         "${relocated_themes}/*")
     list(LENGTH relocated_theme_files relocated_theme_count)
-    if(NOT relocated_theme_count EQUAL 574
+    if(NOT relocated_theme_count EQUAL 592
        OR NOT EXISTS "${relocated_themes}/3024 Day"
        OR NOT EXISTS "${relocated_themes}/3024 Night"
        OR NOT EXISTS "${relocated_themes}/Dracula")
         message(FATAL_ERROR
             "Relocated pinned theme inventory is incomplete: "
-            "expected 574 files, found ${relocated_theme_count}")
+            "expected 592 files, found ${relocated_theme_count}")
     endif()
 
     set(relocated_application
@@ -207,7 +207,7 @@ if(CONFIG_HELPER_NAME)
        OR initial_window_json_error
        OR initial_window_value_json_error
        OR palette_json_error
-       OR NOT structured_schema EQUAL 1
+       OR NOT structured_schema EQUAL 2
        OR NOT values_type STREQUAL "OBJECT"
        OR NOT lifetime_type STREQUAL "BOOLEAN"
        OR NOT initial_window_type STREQUAL "BOOLEAN"

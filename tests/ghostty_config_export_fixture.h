@@ -552,8 +552,10 @@ inline QJsonObject values()
         {QStringLiteral("faint-opacity"), 0.375},
         {QStringLiteral("minimum-contrast"), 4.25},
         {QStringLiteral("vt-kam-allowed"), true},
-        {QStringLiteral("scrollback-limit"),
+        {QStringLiteral("scrollback-limit-bytes"),
          QStringLiteral("18446744073709551615")},
+        {QStringLiteral("scrollback-limit-lines"),
+         QStringLiteral("9876543210")},
         {QStringLiteral("image-storage-limit"), 123456789},
         {QStringLiteral("scrollback-compression"), false},
         {QStringLiteral("scrollbar"), QStringLiteral("never")},
@@ -641,7 +643,7 @@ inline QJsonObject object()
 {
     const QJsonObject baseline = keybindings();
     return {
-        {QStringLiteral("version"), 1},
+        {QStringLiteral("version"), 2},
         {QStringLiteral("values"), values()},
         {QStringLiteral("keybindings"), baseline},
         {QStringLiteral("default-keybindings"), baseline},

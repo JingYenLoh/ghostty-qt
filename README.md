@@ -42,7 +42,7 @@ current compatibility boundary.
 - KF6 WindowSystem is optional; when present, it enables `background-blur` on
   KDE Plasma Wayland.
 - A C++23 compiler and standard library, CMake 3.24 or newer, and Ninja.
-- Zig exactly 0.15.2.
+- Zig exactly 0.16.0.
 - `pkg-config`, libxkbcommon and Fontconfig development files, Git, `patch`,
   Python 3.10 or newer, `tic`, Linux PTY headers, and `libutil`.
 
