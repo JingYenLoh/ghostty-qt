@@ -3,6 +3,9 @@
 The build tree is directly runnable, but installing the release preset provides
 relocatable helper binaries, desktop activation and AppStream metadata, a
 scalable application icon, terminfo, and shell integration and theme resources.
+Direct build-tree runs keep their configuration-specific Wayland identity, but
+skip Qt 6.11 host-registry registration when the matching desktop entry is not
+installed; ghostty-qt's own portal clients remain available.
 
 ## Install
 

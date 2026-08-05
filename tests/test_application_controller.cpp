@@ -354,6 +354,7 @@ private Q_SLOTS:
     void windowGeometryReloadAffectsOnlyFutureWindows();
     void integratesQuickTerminalLifecycleAndLiveShellReload();
     void quickTerminalAutohideRequiresActivationAndReloadsLive();
+    void retiringQuickTerminalIsNeverReshown();
     void routesWindowUiActionsAndNotificationPolicy();
     void routesCrashActionsByStablePaneAndTypedTarget();
     void configurationFailuresReachExistingAndFutureWindows();
@@ -387,6 +388,7 @@ private Q_SLOTS:
     void reverseExposureGrantsInitialSessionToFirstStarter();
     void ordinaryInheritanceDoesNotWaitForFirstSession();
     void deferredRequestsRemainOrderedAcrossStart();
+    void approvedCloseUnmapsBeforeDestroyingWindow();
     void ordinaryCloseUsesOnlyTheFinalWindowForLifetimePolicy();
     void successfulReplacementCancelsDelayedQuit();
     void navigatesLiveWindowsInRegistrationOrder();
@@ -399,6 +401,7 @@ private Q_SLOTS:
     void controllerMayBeDestroyedDuringWindowCreation();
     void showDestructionCannotLeaveHalfRegisteredWindow();
     void failedInitialPresentationPreservesFirstSession();
+    void explicitQuitWaitsForWindowRetirement();
     void explicitQuitAggregatesEveryWindowIntoOneConfirmation();
     void reentrantQuitDuringClosePublicationDoesNotLoseApproval();
     void pendingQuitRehostsAfterItsWindowDisappears();
@@ -646,6 +649,45 @@ void ApplicationControllerTest::
     QTRY_VERIFY_WITH_TIMEOUT(!quick->window->isVisible(), 1000);
     QCOMPARE(controller.windowCount(), 2);
     QCOMPARE(harness.calls, 2);
+}
+
+void ApplicationControllerTest::retiringQuickTerminalIsNeverReshown()
+{
+    WindowFactoryHarness harness;
+    ApplicationController controller(baseOptions(QDir::currentPath()),
+                                     harness.factory(), false);
+    QVERIFY(controller.createInitialWindow().has_value());
+    QVERIFY(controller.dispatch(ApplicationAction::ToggleQuickTerminal));
+    const std::optional<ApplicationWindow> quick =
+        quickTerminalWindow(controller);
+    QVERIFY(quick.has_value());
+    QCOMPARE(harness.calls, 2);
+
+    const QPointer<QQuickWindow> retiringWindow(quick->window);
+    bool toggleAcceptedDuringUnmap = false;
+    bool retiringWindowStayedHidden = false;
+    connect(
+        quick->window, &QWindow::visibleChanged, quick->window,
+        [&controller, retiringWindow, &toggleAcceptedDuringUnmap,
+         &retiringWindowStayedHidden](bool visible) {
+            if (visible) return;
+            toggleAcceptedDuringUnmap =
+                controller.dispatch(ApplicationAction::ToggleQuickTerminal);
+            retiringWindowStayedHidden =
+                retiringWindow != nullptr && !retiringWindow->isVisible();
+        },
+        Qt::SingleShotConnection);
+
+    closeWorkspace(quick->workspace);
+
+    QTRY_VERIFY_WITH_TIMEOUT(toggleAcceptedDuringUnmap, 1000);
+    QVERIFY(retiringWindowStayedHidden);
+    QCOMPARE(harness.calls, 3);
+    QTRY_VERIFY_WITH_TIMEOUT(retiringWindow.isNull(), 1000);
+    const std::optional<ApplicationWindow> replacement =
+        quickTerminalWindow(controller);
+    QVERIFY(replacement.has_value());
+    QVERIFY(replacement->window != retiringWindow);
 }
 
 void ApplicationControllerTest::routesWindowUiActionsAndNotificationPolicy()
@@ -3386,7 +3428,45 @@ void ApplicationControllerTest::deferredRequestsRemainOrderedAcrossStart()
     QVERIFY(terminal->findChild<QThread *>() != nullptr);
 }
 
-void ApplicationControllerTest::ordinaryCloseUsesOnlyTheFinalWindowForLifetimePolicy()
+void ApplicationControllerTest::approvedCloseUnmapsBeforeDestroyingWindow()
+{
+    WindowFactoryHarness harness;
+    ApplicationController controller(baseOptions(QDir::currentPath()),
+                                     harness.factory(), false);
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    QTRY_VERIFY_WITH_TIMEOUT(initial->window->isVisible(), 1000);
+    QVERIFY(initial->window->handle() != nullptr);
+
+    QPointer<QQuickWindow> transient = new QQuickWindow;
+    transient->setTransientParent(initial->window);
+    transient->show();
+    QTRY_VERIFY_WITH_TIMEOUT(transient->isVisible(), 1000);
+
+    bool observedUnmap = false;
+    bool nativeSurfaceSurvivedUnmap = false;
+    connect(initial->window, &QWindow::visibleChanged, initial->window,
+            [window = initial->window, &observedUnmap,
+             &nativeSurfaceSurvivedUnmap](bool visible) {
+                if (visible) return;
+                observedUnmap = true;
+                nativeSurfaceSurvivedUnmap = window->handle() != nullptr;
+            });
+    const QPointer<QQuickWindow> guardedWindow(initial->window);
+
+    closeWorkspace(initial->workspace);
+
+    QTRY_VERIFY_WITH_TIMEOUT(observedUnmap, 1000);
+    QVERIFY(nativeSurfaceSurvivedUnmap);
+    QVERIFY(transient != nullptr);
+    QVERIFY(!transient->isVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(guardedWindow.isNull(), 1000);
+    QCOMPARE(controller.windowCount(), 0);
+    delete transient.data();
+}
+
+void ApplicationControllerTest::
+    ordinaryCloseUsesOnlyTheFinalWindowForLifetimePolicy()
 {
     WindowFactoryHarness harness;
     LaunchOptions options = baseOptions(QDir::currentPath());
@@ -3981,7 +4061,33 @@ void ApplicationControllerTest::failedInitialPresentationPreservesFirstSession()
     QVERIFY(terminal->launchHold());
 }
 
-void ApplicationControllerTest::explicitQuitAggregatesEveryWindowIntoOneConfirmation()
+void ApplicationControllerTest::explicitQuitWaitsForWindowRetirement()
+{
+    WindowFactoryHarness harness;
+    ApplicationController controller(baseOptions(QDir::currentPath()),
+                                     harness.factory(), false);
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+
+    int windowsAtCommit = -1;
+    connect(&controller, &ApplicationController::applicationQuitCommitted,
+            &controller, [&controller, &windowsAtCommit] {
+                windowsAtCommit = controller.windowCount();
+            });
+    QSignalSpy committed(&controller,
+                         &ApplicationController::applicationQuitCommitted);
+    QSignalSpy quit(&controller, &ApplicationController::quitRequested);
+
+    QVERIFY(controller.dispatch(ApplicationAction::Quit));
+
+    QTRY_COMPARE_WITH_TIMEOUT(committed.count(), 1, 1000);
+    QCOMPARE(windowsAtCommit, 0);
+    QCOMPARE(controller.windowCount(), 0);
+    QCOMPARE(quit.count(), 1);
+}
+
+void ApplicationControllerTest::
+    explicitQuitAggregatesEveryWindowIntoOneConfirmation()
 {
     WindowFactoryHarness harness;
     LaunchOptions options = baseOptions(QDir::currentPath());
@@ -4062,7 +4168,8 @@ reentrantQuitDuringClosePublicationDoesNotLoseApproval()
     const QPointer<TerminalWorkspace> publishingWorkspace(first->workspace);
 
     bool reentrantQuitAccepted = false;
-    bool publishingWorkspaceAliveAtCommit = false;
+    bool publishingWorkspaceRetiredAtCommit = false;
+    int windowsAtCommit = -1;
     connect(first->workspace, &TerminalWorkspace::windowCloseApproved,
             &controller, [&] {
                 reentrantQuitAccepted =
@@ -4073,8 +4180,9 @@ reentrantQuitDuringClosePublicationDoesNotLoseApproval()
     QSignalSpy quit(&controller, &ApplicationController::quitRequested);
     connect(&controller, &ApplicationController::applicationQuitCommitted,
             &controller, [&] {
-                publishingWorkspaceAliveAtCommit =
-                    publishingWorkspace != nullptr;
+                publishingWorkspaceRetiredAtCommit =
+                    publishingWorkspace == nullptr;
+                windowsAtCommit = controller.windowCount();
             });
 
     // The active host publishes first. While the other workspace is inside
@@ -4086,7 +4194,8 @@ reentrantQuitDuringClosePublicationDoesNotLoseApproval()
 
     QTRY_VERIFY_WITH_TIMEOUT(reentrantQuitAccepted, 1000);
     QTRY_COMPARE_WITH_TIMEOUT(committed.count(), 1, 1000);
-    QVERIFY(publishingWorkspaceAliveAtCommit);
+    QVERIFY(publishingWorkspaceRetiredAtCommit);
+    QCOMPARE(windowsAtCommit, 0);
     QTRY_COMPARE_WITH_TIMEOUT(quit.count(), 1, 1000);
     QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
 }

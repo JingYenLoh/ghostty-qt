@@ -340,8 +340,14 @@ root either keeps the process resident, queues an immediate exit for the next
 event turn, or starts one single-shot `QChronoTimer`. Successfully presenting a
 replacement cancels an active timer, while factory failure leaves it armed.
 Transient dialogs are not registered. Each approved root and its workspace are
-deleted after closing, so delayed or resident operation retains no dead panes
-or controller threads.
+marked as retiring immediately so process actions, notification activation,
+and quick-terminal toggles cannot target it again. On Wayland every transient
+descendant is hidden before the root is unmapped; the native root survives
+until Qt reports focus outside that transient tree, with a bounded 500 ms
+fallback, and is then deleted. This lets queued text-input leave events drain
+before destruction of their `wl_surface`. Other platforms use the same
+tree-wide unmap but can delete on the next event turn. Delayed or resident
+operation therefore retains no dead panes or controller threads.
 
 `new_window`, `open_config`, `reload_config`, and `quit` use a typed
 process-action vocabulary that remains available with zero workspaces. Window
@@ -463,6 +469,20 @@ is functional. Standard `ActivateAction(s,av,a{sv})` and a sibling exact
 `new-window-command`, and `toggle-quick-terminal` requests. Unknown names and
 malformed parameter variants are rejected before entering the queue.
 `Open(as,a{sv})` remains exported with a stable `NotSupported` error.
+
+Qt 6.11 also registers `QGuiApplication::desktopFileName` with the host portal
+from its Wayland platform-services constructor. The effective Ghostty `class`
+is therefore loaded and resolved before `QApplication`; the normal
+appearance-aware load later verifies that the immutable identity did not
+change before any endpoint or surface is created. When the matching desktop
+entry is installed, Qt's registration precedes ghostty-qt's own portal calls.
+A direct build-tree run or an arbitrary custom `class` can legitimately lack
+discoverable desktop metadata; in that case startup suppresses Qt's
+portal-backed Unix-service initialization during `QApplication` construction,
+then restores the environment before configuration services, ghostty-qt's
+explicit portal clients, or terminal children start. The Wayland app ID
+retains the resolved identity, and those explicit clients remain available
+with the caller's environment.
 
 The launching process's typed `initial-window` decision determines what
 happens when another owner exists: true sends standard source-less activation,
@@ -656,7 +676,10 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    avoiding the traversal cost of hundreds of empty row nodes where there is
    no GPU upload to save. Each batch's two CPU vectors exchange storage instead
    of copying, identical batches do not dirty the scene graph, and RHI geometry
-   grows only when its retained capacity is insufficient. Each nonempty
+   grows only when its retained capacity is insufficient. Rewritten dynamic
+   vertex storage is explicitly invalidated, and an empty-to-nonempty
+   transition also forces Qt to rebuild the RHI batch; this is required for a
+   blinking cursor layer to reappear after its zero-vertex phase. Each nonempty
    compatible text run in a rebuilt row is shaped with `QTextLayout` and
    anchored to an explicit grid coordinate. Physical grid validation prevents
    fallback-font, wide-cell, or unsafe shaping advances from shifting later

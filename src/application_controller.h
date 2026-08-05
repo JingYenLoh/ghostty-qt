@@ -146,6 +146,7 @@ private:
         std::unique_ptr<QuickTerminalSurface> quickTerminalSurface;
         QPointer<QTimer> quickTerminalAutohideTimer;
         bool quickTerminalActivationAcknowledged = false;
+        bool retiring = false;
     };
 
     enum class QuitState {
@@ -202,6 +203,7 @@ private:
     void syncWindowDecoration(QQuickWindow *window,
                               TerminalWorkspace *workspace);
     void noteWorkspaceActivated(TerminalWorkspace *workspace);
+    void unmapAndRetireWindow(QQuickWindow *window);
     void retireWindow(QQuickWindow *window);
     void workspaceDestroyed(TerminalWorkspace *workspace, QQuickWindow *window);
     void requestApplicationQuit();

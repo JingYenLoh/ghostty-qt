@@ -44,6 +44,44 @@ template <typename... Visitor> struct Overloaded : Visitor... {
 
 constexpr QByteArrayView QuickTerminalEnvironmentKey("GHOSTTY_QUICK_TERMINAL");
 constexpr std::chrono::milliseconds QuickTerminalAutohideDelay{50};
+constexpr std::chrono::milliseconds WaylandFocusDrainTimeout{500};
+
+bool isWaylandPlatform()
+{
+    return QGuiApplication::platformName().startsWith(QStringLiteral("wayland"),
+                                                      Qt::CaseInsensitive);
+}
+
+bool belongsToWindowTree(const QWindow *candidate, const QWindow *root) noexcept
+{
+    for (const QWindow *window = candidate; window != nullptr;
+         window = window->transientParent()) {
+        if (window == root) return true;
+    }
+    return false;
+}
+
+void hideWindowTree(QWindow *root)
+{
+    if (root == nullptr) return;
+
+    const QPointer<QWindow> guardedRoot(root);
+    QVector<QPointer<QWindow>> transients;
+    for (QWindow *const candidate : QGuiApplication::topLevelWindows()) {
+        if (candidate != root && belongsToWindowTree(candidate, root)) {
+            transients.append(candidate);
+        }
+    }
+    for (const QPointer<QWindow> &transient : std::as_const(transients)) {
+        if (transient != nullptr) transient->hide();
+    }
+    if (guardedRoot != nullptr) guardedRoot->hide();
+}
+
+struct PendingWindowRetirement {
+    QMetaObject::Connection focusChanged;
+    bool finished = false;
+};
 
 bool dispatchIntentionalCrash(QQuickWindow *window,
                               TerminalWorkspace *workspace, PaneId paneId,
@@ -909,7 +947,8 @@ bool ApplicationController::dispatch(WindowNavigationAction action)
     std::optional<std::size_t> activeIndex;
     for (std::size_t index = 0; index < windows_.size(); ++index) {
         const WindowRecord &record = windows_[index];
-        if (record.window != nullptr && record.window->isActive()) {
+        if (!record.retiring && record.window != nullptr
+            && record.window->isActive()) {
             activeIndex = index;
             break;
         }
@@ -923,7 +962,8 @@ bool ApplicationController::dispatch(WindowNavigationAction action)
     for (std::size_t visited = 0; visited < windows_.size(); ++visited) {
         const QPointer<QQuickWindow> window = windows_[index].window;
         const QPointer<TerminalWorkspace> workspace = windows_[index].workspace;
-        if (isValidWindowPair(window.data(), workspace.data())
+        if (!windows_[index].retiring
+            && isValidWindowPair(window.data(), workspace.data())
             && window->isVisible() && !window->isActive()
             && workspace->canHostApplicationQuitConfirmation()
             && workspace->hasActivePane()) {
@@ -1408,7 +1448,8 @@ TerminalWorkspace *ApplicationController::activeWorkspace() const
     }
     for (auto record = windows_.crbegin(); record != windows_.crend();
          ++record) {
-        if (record->window != nullptr && record->workspace != nullptr) {
+        if (!record->retiring && record->window != nullptr
+            && record->workspace != nullptr) {
             return record->workspace;
         }
     }
@@ -1420,7 +1461,8 @@ TerminalWorkspace *ApplicationController::focusedWorkspace() const
     QWindow *const focusWindow = QGuiApplication::focusWindow();
     if (focusWindow != nullptr) {
         for (const WindowRecord &record : windows_) {
-            if (record.window == focusWindow && record.workspace != nullptr) {
+            if (!record.retiring && record.window == focusWindow
+                && record.workspace != nullptr) {
                 return record.workspace;
             }
         }
@@ -1479,7 +1521,8 @@ ApplicationController::recordForWorkspace(TerminalWorkspace *workspace)
     if (workspace == nullptr) return nullptr;
     const auto record = std::ranges::find_if(
         windows_, [workspace](const WindowRecord &candidate) {
-            return candidate.workspace.data() == workspace;
+            return !candidate.retiring
+                && candidate.workspace.data() == workspace;
         });
     return record == windows_.end() ? nullptr : std::addressof(*record);
 }
@@ -1488,7 +1531,10 @@ ApplicationController::WindowRecord *
 ApplicationController::recordForWindowId(WindowId id)
 {
     if (!id.isValid()) return nullptr;
-    const auto record = std::ranges::find(windows_, id, &WindowRecord::id);
+    const auto record =
+        std::ranges::find_if(windows_, [id](const WindowRecord &candidate) {
+            return !candidate.retiring && candidate.id == id;
+        });
     return record == windows_.end() ? nullptr : std::addressof(*record);
 }
 
@@ -1498,7 +1544,7 @@ ApplicationController::quickTerminalRecord()
     const auto record =
         std::ranges::find_if(windows_, [](const WindowRecord &candidate) {
             return candidate.role == WindowRole::QuickTerminal
-                && candidate.window != nullptr
+                && !candidate.retiring && candidate.window != nullptr
                 && candidate.workspace != nullptr;
         });
     return record == windows_.end() ? nullptr : std::addressof(*record);
@@ -1513,11 +1559,11 @@ bool ApplicationController::containsWorkspace(
     const TerminalWorkspace *workspace) const
 {
     return workspace != nullptr
-        && std::ranges::any_of(windows_,
-                               [workspace](const WindowRecord &record) {
-                                   return record.workspace == workspace
-                                       && record.window != nullptr;
-                               });
+        && std::ranges::any_of(
+               windows_, [workspace](const WindowRecord &record) {
+                   return !record.retiring && record.workspace == workspace
+                       && record.window != nullptr;
+               });
 }
 
 std::vector<QPointer<TerminalWorkspace>>
@@ -1720,20 +1766,17 @@ void ApplicationController::registerWindow(
          guardedWorkspace = QPointer(workspace)] {
             workspaceShutdownApproved(guardedWorkspace);
             if (guardedWindow == nullptr) return;
+            if (WindowRecord *const record =
+                    recordForWindow(guardedWindow.data())) {
+                record->retiring = true;
+                if (record->quickTerminalAutohideTimer != nullptr) {
+                    record->quickTerminalAutohideTimer->stop();
+                }
+            }
             guardedWindow->setProperty("closeApproved", true);
-            connect(
-                guardedWindow, &QWindow::visibleChanged, guardedWindow,
-                [guardedWindow](bool visible) {
-                    if (!visible && guardedWindow != nullptr) {
-                        guardedWindow->deleteLater();
-                    }
-                },
-                Qt::SingleShotConnection);
-            QTimer::singleShot(0, guardedWindow, [guardedWindow] {
-                if (guardedWindow == nullptr) return;
-                guardedWindow->close();
-                if (!guardedWindow->isVisible()) {
-                    guardedWindow->deleteLater();
+            QTimer::singleShot(0, this, [this, guardedWindow] {
+                if (guardedWindow != nullptr) {
+                    unmapAndRetireWindow(guardedWindow);
                 }
             });
         },
@@ -1819,6 +1862,62 @@ void ApplicationController::noteWorkspaceActivated(TerminalWorkspace *workspace)
     if (containsWorkspace(workspace)) lastActiveWorkspace_ = workspace;
 }
 
+void ApplicationController::unmapAndRetireWindow(QQuickWindow *window)
+{
+    WindowRecord *const record = recordForWindow(window);
+    if (window == nullptr || record == nullptr) return;
+    record->retiring = true;
+    if (record->quickTerminalAutohideTimer != nullptr) {
+        record->quickTerminalAutohideTimer->stop();
+    }
+
+    const QPointer<QQuickWindow> guardedWindow(window);
+
+    if (!isWaylandPlatform()) {
+        hideWindowTree(window);
+        if (guardedWindow != nullptr) guardedWindow->deleteLater();
+        return;
+    }
+
+    // QWindow::close() destroys the wl_surface immediately. A compositor may
+    // already have queued text-input leave for that surface, in which case Qt
+    // receives a null protocol argument and diagnoses a mismatched focus
+    // surface. Hiding only unmaps the surface, so keep the root alive until
+    // Qt has published focus outside it and all of its transient windows.
+    const auto retirement = std::make_shared<PendingWindowRetirement>();
+    const auto finish = [guardedWindow, retirement] {
+        if (retirement->finished) return;
+        retirement->finished = true;
+        QObject::disconnect(retirement->focusChanged);
+        if (guardedWindow != nullptr) guardedWindow->deleteLater();
+    };
+
+    retirement->focusChanged =
+        connect(qGuiApp, &QGuiApplication::focusWindowChanged, window,
+                [guardedWindow, retirement, finish](QWindow *focusedWindow) {
+                    if (guardedWindow == nullptr || retirement->finished)
+                        return;
+                    if (!belongsToWindowTree(focusedWindow, guardedWindow)) {
+                        finish();
+                        return;
+                    }
+
+                    // A nested ApplicationWindow (notably the inspector) can
+                    // own the protocol focus. Unmap each focused transient
+                    // while waiting for the compositor to move focus outside
+                    // the complete root tree.
+                    if (focusedWindow != guardedWindow) focusedWindow->hide();
+                });
+    QTimer::singleShot(WaylandFocusDrainTimeout, window, finish);
+
+    hideWindowTree(window);
+    if (guardedWindow != nullptr
+        && !belongsToWindowTree(QGuiApplication::focusWindow(),
+                                guardedWindow)) {
+        finish();
+    }
+}
+
 void ApplicationController::retireWindow(QQuickWindow *window)
 {
     const auto previousSize = windows_.size();
@@ -1831,7 +1930,9 @@ void ApplicationController::retireWindow(QQuickWindow *window)
     });
     if (previousSize == windows_.size()) return;
     if (windows_.empty()) lifetime_.lastWindowClosed();
+    const QPointer<ApplicationController> guardedController(this);
     Q_EMIT windowRetired();
+    if (guardedController != nullptr) finishApplicationQuitIfReady();
 }
 
 void ApplicationController::workspaceDestroyed(TerminalWorkspace *workspace,
@@ -1968,7 +2069,8 @@ void ApplicationController::finishApplicationQuitIfReady()
 {
     if (destroying_ || startingApplicationShutdown_
         || quitState_ != QuitState::ClosingWindows
-        || !awaitingShutdown_.isEmpty() || lifetime_.hasRequestedQuit()) {
+        || !awaitingShutdown_.isEmpty() || !windows_.empty()
+        || lifetime_.hasRequestedQuit()) {
         return;
     }
     Q_EMIT applicationQuitCommitted();

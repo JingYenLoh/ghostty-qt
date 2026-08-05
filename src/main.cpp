@@ -22,6 +22,8 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QMetaEnum>
 #include <QMetaProperty>
 #include <QPointer>
@@ -29,6 +31,7 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QScopeGuard>
+#include <QStandardPaths>
 #include <QStyleHints>
 #include <QTextStream>
 #include <QTimer>
@@ -43,6 +46,35 @@
 #include <utility>
 
 namespace {
+
+#if GHOSTTY_QT_CONFIG_ENABLED
+std::expected<QString, QString> siblingExecutablePath(QStringView filename)
+{
+    const QString executable =
+        QFile::symLinkTarget(QStringLiteral("/proc/self/exe"));
+    if (executable.isEmpty()) {
+        return std::unexpected(QStringLiteral(
+            "Could not resolve the executable through /proc/self/exe"));
+    }
+    const QFileInfo executableInfo(executable);
+    if (!executableInfo.isAbsolute()) {
+        return std::unexpected(QStringLiteral(
+            "/proc/self/exe did not resolve to an absolute executable path"));
+    }
+    return executableInfo.dir().filePath(filename.toString());
+}
+#endif
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 11, 0)
+bool hasDiscoverableDesktopEntry(QStringView applicationId)
+{
+    return !QStandardPaths::locate(QStandardPaths::ApplicationsLocation,
+                                   applicationId.toString()
+                                       + QStringLiteral(".desktop"),
+                                   QStandardPaths::LocateFile)
+                .isEmpty();
+}
+#endif
 
 void printHelp()
 {
@@ -1772,18 +1804,97 @@ int main(int argc, char *argv[])
     DesktopActivationContext startupActivation =
         DesktopActivationContext::takeFromEnvironment();
 
+#if GHOSTTY_QT_CONFIG_ENABLED
+    QString configHelperPath;
+    std::optional<QString> identityConfigFailure;
+    const auto siblingHelper =
+        siblingExecutablePath(QStringLiteral(GHOSTTY_QT_CONFIG_HELPER_NAME));
+    if (!siblingHelper.has_value()) {
+        QTextStream(stderr) << "ghostty-qt: " << siblingHelper.error() << '\n';
+        return 1;
+    }
+    configHelperPath = *siblingHelper;
+#endif
+    std::optional<QByteArray> preGuiApplicationClass = options.applicationClass;
+#if GHOSTTY_QT_CONFIG_ENABLED
+    {
+        const GhosttyConfigLoader identityLoader =
+            makeGhosttyConfigProcessLoader({
+                .helperPath = configHelperPath,
+                .probableCli = probableCli,
+                .configurationArguments =
+                    ghosttyConfigurationArguments(options),
+            });
+        GhosttyConfigLoadResult loadedIdentityConfig = identityLoader({
+            .candidatePaths = GhosttyConfigService::standardConfigPaths(),
+            // `class` is startup identity rather than appearance. The normal
+            // post-QApplication load below verifies it is identical under the
+            // actual Qt color scheme before any surface or D-Bus endpoint is
+            // created.
+            .colorScheme = TerminalColorScheme::Light,
+        });
+        if (loadedIdentityConfig.has_value()) {
+            preGuiApplicationClass =
+                std::move(loadedIdentityConfig->values.applicationClass);
+        } else {
+            identityConfigFailure = std::move(loadedIdentityConfig.error());
+        }
+    }
+#endif
+    const auto preGuiIdentity = resolveApplicationIdentity(
+        preGuiApplicationClass, QStringLiteral(GHOSTTY_QT_APPLICATION_ID));
+    if (!preGuiIdentity.has_value()) {
+        QTextStream(stderr) << "ghostty-qt: " << preGuiIdentity.error() << '\n';
+        return 1;
+    }
+
+    // Qt's Unix platform services can issue portal calls from QApplication's
+    // constructor. The host registry permits identity registration only
+    // before the connection's first portal method, so all process and desktop
+    // identity must be published before constructing the GUI application.
+    QCoreApplication::setApplicationName(QStringLiteral("ghostty-qt"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(GHOSTTY_QT_VERSION));
+    QCoreApplication::setOrganizationName(QStringLiteral("ghostty-qt"));
+    QGuiApplication::setDesktopFileName(preGuiIdentity->applicationId);
+
+    // Qt 6.11 registers desktopFileName with the host portal from the Wayland
+    // platform-services constructor. Host registration intentionally rejects
+    // IDs without an installed desktop entry, which is normal for direct
+    // build-tree runs and arbitrary `class` overrides. Suppress only that Qt
+    // platform-service initialization when metadata is not discoverable; the
+    // override is removed immediately so terminal children and ghostty-qt's
+    // own portal clients retain the caller's environment.
+    constexpr auto NoDesktopPortal = "QT_NO_XDG_DESKTOP_PORTAL";
+#if QT_VERSION >= QT_VERSION_CHECK(6, 11, 0)
+    const bool suppressUnavailableHostRegistration =
+        !qEnvironmentVariableIsSet(NoDesktopPortal)
+        && !hasDiscoverableDesktopEntry(preGuiIdentity->applicationId);
+#else
+    constexpr bool suppressUnavailableHostRegistration = false;
+#endif
+    if (suppressUnavailableHostRegistration) {
+        (void)qputenv(NoDesktopPortal, QByteArrayLiteral("1"));
+    }
+
     // An alpha channel is a native-surface capability and cannot be added by
     // live reload after the first QQuickWindow has been created. Request it
     // unconditionally so an initially opaque terminal can become translucent
     // without recreating its window, scene graph, panes, or PTYs.
     QQuickWindow::setDefaultAlphaBuffer(true);
     QApplication application(argc, argv);
+    if (suppressUnavailableHostRegistration) {
+        (void)qunsetenv(NoDesktopPortal);
+    }
     // Ghostty owns last-window process lifetime, including disabled and
     // delayed modes. Qt's implicit auto-quit would bypass that policy.
     application.setQuitOnLastWindowClosed(false);
-    QCoreApplication::setApplicationName(QStringLiteral("ghostty-qt"));
-    QCoreApplication::setApplicationVersion(QStringLiteral(GHOSTTY_QT_VERSION));
-    QCoreApplication::setOrganizationName(QStringLiteral("ghostty-qt"));
+#if GHOSTTY_QT_CONFIG_ENABLED
+    if (identityConfigFailure.has_value()) {
+        qWarning().noquote()
+            << "Ghostty configuration was unavailable while resolving the pre-GUI application identity; using command-line or build identity:"
+            << *identityConfigFailure;
+    }
+#endif
     QStyleHints *const styleHints = QGuiApplication::styleHints();
     ApplicationAppearance appearance(
         ApplicationAppearance::fromQtColorScheme(styleHints->colorScheme()));
@@ -1813,9 +1924,6 @@ int main(int argc, char *argv[])
         });
 
 #if GHOSTTY_QT_CONFIG_ENABLED
-    const QString configHelperPath =
-        QDir(QCoreApplication::applicationDirPath())
-            .filePath(QStringLiteral(GHOSTTY_QT_CONFIG_HELPER_NAME));
     GhosttyConfigService configService(
         makeGhosttyConfigProcessLoader({
             .helperPath = configHelperPath,
@@ -1898,9 +2006,14 @@ int main(int argc, char *argv[])
     if (identity->diagnostic.has_value()) {
         qWarning().noquote() << *identity->diagnostic;
     }
-    // Both identities are startup-only and must be fixed before the first
-    // QML/native surface or org.freedesktop.Application endpoint is created.
-    QGuiApplication::setDesktopFileName(identity->applicationId);
+    if (identity->applicationId != preGuiIdentity->applicationId) {
+        qCritical().noquote()
+            << QStringLiteral(
+                   "Ghostty application identity changed during GUI startup "
+                   "(%1 -> %2); restart after the configuration is stable")
+                   .arg(preGuiIdentity->applicationId, identity->applicationId);
+        return 1;
+    }
 
     std::unique_ptr<SingleInstanceActivation> activationEndpoint;
     if (shouldUseSingleInstance(effectiveApplicationOptions,

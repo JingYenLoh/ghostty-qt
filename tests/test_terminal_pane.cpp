@@ -2,12 +2,14 @@
 #include "terminal_cell_metrics.h"
 #include "terminal_clipboard.h"
 #include "terminal_controller.h"
+#include "terminal_custom_shader_pipeline.h"
 #include "terminal_drop.h"
 #include "terminal_geometry.h"
 #include "terminal_inspector_model.h"
 #include "terminal_pane.h"
 #include "terminal_pane_render_probe_p.h"
 #include "terminal_types.h"
+#include "terminal_workspace.h"
 
 #include <QChronoTimer>
 #include <QClipboard>
@@ -28,6 +30,8 @@
 #include <QMetaMethod>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QQmlComponent>
+#include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
@@ -41,6 +45,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QWheelEvent>
+#include <qqml.h>
 
 #include <linux/input-event-codes.h>
 
@@ -475,6 +480,7 @@ private Q_SLOTS:
     void retainsBackgroundImageAcrossOptionReloadAndDecodeFailure();
     void rendersMinimumContrastAndReloadsLive();
     void runsCursorBlinkTimerOnlyWhenNeeded();
+    void defaultCursorBlinkPublishesBothRenderPhases();
     void retainsMainTextRowsAcrossIncrementalUpdates();
     void rendersAndRetainsKittyGraphics();
     void reloadsShapingAndTracksLogicalCursorRows();
@@ -1634,6 +1640,114 @@ void TerminalPaneTest::runsCursorBlinkTimerOnlyWhenNeeded()
 
     window.close();
     delete pane;
+}
+
+void TerminalPaneTest::defaultCursorBlinkPublishesBothRenderPhases()
+{
+    static const int shaderPipelineQmlType =
+        qmlRegisterType<TerminalCustomShaderPipelineEffect>(
+            "GhosttyQtPaneTest", 1, 0, "TerminalCustomShaderPipelineEffect");
+    QVERIFY(shaderPipelineQmlType >= 0);
+
+    QQmlEngine engine;
+    QQmlComponent shaderStage(&engine);
+    shaderStage.setData(
+        R"qml(
+import QtQuick
+import GhosttyQtPaneTest 1.0
+
+Item {
+    id: root
+    required property bool retainedPipeline
+    required property var uniformProvider
+    required property real sourceDevicePixelRatio
+    required property bool linearBlending
+    property var shaderStages: []
+
+    layer.enabled: true
+    layer.live: true
+    layer.smooth: true
+    layer.textureMirroring: ShaderEffectSource.NoMirroring
+    layer.format: linearBlending ? ShaderEffectSource.RGBA16F
+                                 : ShaderEffectSource.RGBA8
+    layer.textureSize: Qt.size(
+        Math.max(1, Math.round(width * sourceDevicePixelRatio)),
+        Math.max(1, Math.round(height * sourceDevicePixelRatio)))
+    layer.effect: Component {
+        TerminalCustomShaderPipelineEffect {
+            shaderStages: root.shaderStages
+            uniformProvider: root.uniformProvider
+            linearBlending: root.linearBlending
+        }
+    }
+}
+)qml",
+        QUrl(QStringLiteral("qrc:/test/terminal-pane-shader-stage.qml")));
+    QVERIFY2(shaderStage.isReady(), qPrintable(shaderStage.errorString()));
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("sleep 5"),
+    };
+    options.hold = true;
+    useSystemFixedFont(options);
+    options.appearance.foregroundColor = Qt::white;
+    options.appearance.backgroundColor = Qt::black;
+    options.appearance.cursorColor =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#ff00ff")));
+    QVERIFY(!options.appearance.cursorBlink.has_value());
+
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(320, 160);
+    auto *workspace = new TerminalWorkspace(window.contentItem());
+    workspace->setSize(window.size());
+    workspace->setCustomShaderStageComponent(&shaderStage);
+    QVERIFY(workspace->initialize(options));
+    auto *pane = workspace->findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    auto *cursorTimer =
+        pane->findChild<QTimer *>(QString(), Qt::FindDirectChildrenOnly);
+    QVERIFY(cursorTimer != nullptr);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    pane->forceActiveFocus();
+    QTRY_VERIFY_WITH_TIMEOUT(pane->hasActiveFocus(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->sessionStarted(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(cursorTimer->isActive(), 3000);
+
+    const auto presentedCursorVisible = [&window] {
+        const QImage image = window.grabWindow();
+        if (image.isNull()) return false;
+        for (int y = 0; y < image.height(); ++y) {
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor pixel = image.pixelColor(x, y);
+                if (pixel.red() >= 220 && pixel.green() <= 40
+                    && pixel.blue() >= 220) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    // A scene-graph probe only proves that updatePaintNode constructed the
+    // next cursor geometry. Verify repeated presented frames as well: a
+    // retained hardware batch must recover after its vertex count reaches
+    // zero during every hidden phase.
+    QTRY_VERIFY_WITH_TIMEOUT(presentedCursorVisible(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(!presentedCursorVisible(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(presentedCursorVisible(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(!presentedCursorVisible(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(presentedCursorVisible(), 3000);
+
+    window.close();
 }
 
 void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()

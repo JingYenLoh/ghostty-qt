@@ -46,6 +46,15 @@ const QSGGeometry::ColoredPoint2D *hardwareVertices(TerminalRectBatch &batch)
         : nullptr;
 }
 
+int hardwareVertexCount(TerminalRectBatch &batch)
+{
+    const auto *node =
+        dynamic_cast<const QSGGeometryNode *>(batch.firstChild());
+    return node != nullptr && node->geometry() != nullptr
+        ? node->geometry()->vertexCount()
+        : -1;
+}
+
 } // namespace
 
 class TerminalRectBatchTest final : public QObject {
@@ -53,6 +62,7 @@ class TerminalRectBatchTest final : public QObject {
 
 private Q_SLOTS:
     void reusesHardwareGeometry();
+    void restoresHardwareGeometryAfterEmptyCommit();
     void reusesSoftwareNodePool();
     void linearizesHardwareColorsAndInvalidatesRetainedGeometry();
 };
@@ -96,6 +106,33 @@ void TerminalRectBatchTest::reusesHardwareGeometry()
     QCOMPARE(batch.size(), qsizetype{0});
     QCOMPARE(batch.allocationGeneration(), quint64{2});
     QCOMPARE(batch.commitGeneration(), quint64{4});
+}
+
+void TerminalRectBatchTest::restoresHardwareGeometryAfterEmptyCommit()
+{
+    TerminalRectBatch batch;
+    QVector<TerminalColoredRect> &first = batch.beginUpdate();
+    appendRect(first, 0);
+    batch.commit(false);
+    QCOMPARE(hardwareVertexCount(batch), 6);
+    QCOMPARE(batch.allocationGeneration(), quint64{1});
+
+    (void)batch.beginUpdate();
+    batch.commit(false);
+    QCOMPARE(hardwareVertexCount(batch), 0);
+
+    QVector<TerminalColoredRect> &restored = batch.beginUpdate();
+    appendRect(restored, 7);
+    batch.commit(false);
+    QCOMPARE(hardwareVertexCount(batch), 6);
+    QCOMPARE(batch.allocationGeneration(), quint64{1});
+    QCOMPARE(batch.commitGeneration(), quint64{3});
+    const QSGGeometry::ColoredPoint2D *vertices = hardwareVertices(batch);
+    QVERIFY(vertices != nullptr);
+    QCOMPARE(vertices[0].x, 28.0F);
+    QCOMPARE(vertices[0].y, 14.0F);
+    QCOMPARE(vertices[5].x, 31.0F);
+    QCOMPARE(vertices[5].y, 15.0F);
 }
 
 void TerminalRectBatchTest::reusesSoftwareNodePool()

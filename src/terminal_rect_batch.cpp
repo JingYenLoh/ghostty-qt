@@ -122,6 +122,7 @@ void TerminalRectBatch::commitHardware()
         return;
     }
     const qsizetype required = pending_.size() * verticesPerRectangle;
+    const bool wasEmpty = hardwareGeometry_->vertexCount() == 0;
     if (required > vertexCapacity_) {
         vertexCapacity_ = grownCapacity(vertexCapacity_, required);
         hardwareGeometry_->allocate(static_cast<int>(vertexCapacity_));
@@ -134,7 +135,18 @@ void TerminalRectBatch::commitHardware()
         setRectangleVertices(vertices, rect, committedAlphaBlending_);
         vertices += verticesPerRectangle;
     }
-    hardwareNode_->markDirty(QSGNode::DirtyGeometry);
+    // DynamicPattern stops Qt Quick from uploading unchanged client data on
+    // every frame. Explicitly invalidate it after rewriting retained storage;
+    // DirtyGeometry alone only invalidates the scene-graph batch metadata.
+    if (required > 0) hardwareGeometry_->markVertexDataDirty();
+    QSGNode::DirtyState dirty = QSGNode::DirtyGeometry;
+    if (wasEmpty && required > 0) {
+        // Qt's RHI batch renderer detaches zero-vertex alpha geometry. A
+        // geometry-only update cannot reinsert that orphaned element, while a
+        // material invalidation asks the renderer to rebuild its batch.
+        dirty |= QSGNode::DirtyMaterial;
+    }
+    hardwareNode_->markDirty(dirty);
 }
 
 void TerminalRectBatch::commitSoftware()

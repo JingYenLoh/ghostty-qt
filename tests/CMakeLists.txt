@@ -785,6 +785,19 @@ set_tests_properties(terminal-custom-shader-linear-xcb-rhi PROPERTIES
         "GHOSTTY_QT_ASAN_BUILD=${ghostty_qt_test_asan_build};LIBGL_ALWAYS_SOFTWARE=1;QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;QT_SCALE_FACTOR=1"
 )
 add_test(
+    NAME terminal-retained-rect-batch-xcb-rhi
+    COMMAND
+        "${CMAKE_CURRENT_SOURCE_DIR}/run_xcb_rhi_test.sh"
+        "$<TARGET_FILE:test-terminal-custom-shader-rhi>"
+        retainedRectBatchRecoversAfterEmptyFrames
+)
+set_tests_properties(terminal-retained-rect-batch-xcb-rhi PROPERTIES
+    TIMEOUT 30
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT
+        "GHOSTTY_QT_ASAN_BUILD=${ghostty_qt_test_asan_build};LIBGL_ALWAYS_SOFTWARE=1;QT_QPA_PLATFORM=xcb;QSG_RHI_BACKEND=opengl;QT_SCALE_FACTOR=1"
+)
+add_test(
     NAME terminal-pane-kitty-rhi
     COMMAND
         "${CMAKE_CURRENT_SOURCE_DIR}/run_xcb_rhi_test.sh"

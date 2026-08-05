@@ -1,6 +1,7 @@
 #include "terminal_custom_shader_compiler.h"
 #include "terminal_custom_shader_pipeline.h"
 #include "terminal_custom_shader_qsg.h"
+#include "terminal_rect_batch.h"
 
 #include <QColor>
 #include <QDir>
@@ -26,6 +27,58 @@ namespace {
 
 QSGRendererInterface::GraphicsApi requestedGraphicsApi =
     QSGRendererInterface::OpenGL;
+
+class TestRectBatchItem : public QQuickItem {
+    Q_OBJECT
+    Q_PROPERTY(bool rectVisible READ rectVisible WRITE setRectVisible NOTIFY
+                   rectVisibleChanged)
+
+public:
+    explicit TestRectBatchItem(QQuickItem *parent = nullptr)
+        : QQuickItem(parent)
+    {
+        setFlag(QQuickItem::ItemHasContents);
+    }
+
+    [[nodiscard]] bool rectVisible() const noexcept { return rectVisible_; }
+
+    void setRectVisible(bool visible)
+    {
+        if (rectVisible_ == visible) return;
+        rectVisible_ = visible;
+        update();
+        Q_EMIT rectVisibleChanged();
+    }
+
+Q_SIGNALS:
+    void rectVisibleChanged();
+
+protected:
+    QSGNode *updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *) override
+    {
+        auto *batch = static_cast<TerminalRectBatch *>(oldNode);
+        if (batch == nullptr) batch = new TerminalRectBatch;
+        QVector<TerminalColoredRect> &rects = batch->beginUpdate();
+        if (rectVisible_) {
+            rects.append({
+                .rect = boundingRect(),
+                .color = QColor(QStringLiteral("#ff00ff")),
+            });
+        }
+        batch->commit(false);
+        return batch;
+    }
+
+    void geometryChange(const QRectF &newGeometry,
+                        const QRectF &oldGeometry) override
+    {
+        QQuickItem::geometryChange(newGeometry, oldGeometry);
+        if (newGeometry.size() != oldGeometry.size()) update();
+    }
+
+private:
+    bool rectVisible_ = true;
+};
 
 class TestUniformProvider final : public QObject,
                                   public TerminalCustomShaderUniformProvider {
@@ -236,6 +289,7 @@ private Q_SLOTS:
     void retainedOrderedMultipass();
     void retainedStageSpecificUniformsRemainDistinct();
     void retainedSourceFramesAreFresh();
+    void retainedRectBatchRecoversAfterEmptyFrames();
     void retainedSourceTextureSwapReusesBindings();
     void retainedSharedProgramKeepsPerProviderUniformsIsolated();
     void retainedTargetsAreBoundedAndReused_data();
@@ -274,6 +328,8 @@ void TerminalCustomShaderRhiTest::initTestCase()
                                                 "TerminalCustomShaderEffect");
     qmlRegisterType<TerminalCustomShaderPipelineEffect>(
         "GhosttyQtShaderRhiTest", 1, 0, "TerminalCustomShaderPipelineEffect");
+    qmlRegisterType<TestRectBatchItem>("GhosttyQtShaderRhiTest", 1, 0,
+                                       "TestRectBatchItem");
 
     shaderRoot_ = std::make_unique<QTemporaryDir>();
     QVERIFY(shaderRoot_->isValid());
@@ -911,6 +967,103 @@ Item {
     QCOMPARE(after.targetCreateCount, before.targetCreateCount);
     QCOMPARE(after.resourceGeneration, before.resourceGeneration);
 
+    root.reset();
+}
+
+void TerminalCustomShaderRhiTest::retainedRectBatchRecoversAfterEmptyFrames()
+{
+    TestUniformProvider provider(Qt::white);
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("pipelineStages"),
+        terminalCustomShaderStagesToVariantList({identityStage_}));
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("testUniformProvider"), &provider);
+
+    QQmlComponent component(&engine);
+    component.setData(
+        R"qml(
+import QtQuick
+import GhosttyQtShaderRhiTest 1.0
+
+Item {
+    width: 32
+    height: 32
+    layer.enabled: true
+    layer.live: true
+    layer.smooth: false
+    layer.textureMirroring: ShaderEffectSource.NoMirroring
+    layer.textureSize: Qt.size(width, height)
+    layer.effect: Component {
+        TerminalCustomShaderPipelineEffect {
+            objectName: "pipeline"
+            shaderStages: pipelineStages
+            uniformProvider: testUniformProvider
+        }
+    }
+    TestRectBatchItem {
+        objectName: "sourceBatch"
+        anchors.fill: parent
+    }
+}
+)qml",
+        QUrl(
+            QStringLiteral("qrc:/test/custom-shader-retained-rect-batch.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QQuickItem> root(
+        qobject_cast<QQuickItem *>(component.create()));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(32, 32);
+    root->setParentItem(window.contentItem());
+    QImage frame = renderWindow(window);
+    QVERIFY2(!frame.isNull(),
+             "Retained RHI pipeline produced no first batch frame.");
+    if (window.rendererInterface()->graphicsApi() != requestedGraphicsApi) {
+        QSKIP("The platform cannot initialize the requested RHI context.");
+    }
+
+    auto *const sourceBatch =
+        root->findChild<TestRectBatchItem *>(QStringLiteral("sourceBatch"));
+    QVERIFY(sourceBatch != nullptr);
+    const auto sample = [&window] {
+        const QImage image = window.grabWindow();
+        return image.isNull()
+            ? QColor{}
+            : image.pixelColor(image.width() / 2, image.height() / 2);
+    };
+    QVERIFY2(isMostly(frame.pixelColor(frame.width() / 2, frame.height() / 2),
+                      QColor(QStringLiteral("#ff00ff"))),
+             "Retained RHI pipeline dropped the initial rectangle batch.");
+
+    for (int cycle = 0; cycle < 2; ++cycle) {
+        sourceBatch->setRectVisible(false);
+        window.update();
+        const QColor hidden = sample();
+        QVERIFY2(
+            isMostly(hidden, Qt::black),
+            qPrintable(
+                QStringLiteral("stale visible rectangle in hidden cycle %1: %2")
+                    .arg(cycle + 1)
+                    .arg(colorDescription(hidden))));
+
+        sourceBatch->setRectVisible(true);
+        window.update();
+        const QColor visible = sample();
+        QVERIFY2(
+            isMostly(visible, QColor(QStringLiteral("#ff00ff"))),
+            qPrintable(QStringLiteral(
+                           "rectangle batch did not recover in cycle %1: %2")
+                           .arg(cycle + 1)
+                           .arg(colorDescription(visible))));
+    }
+
+    TerminalCustomShaderPipelineEffect *const pipeline = provider.pipeline();
+    QVERIFY(pipeline != nullptr);
+    QVERIFY2(pipeline->renderDiagnostic().isEmpty(),
+             qPrintable(pipeline->renderDiagnostic()));
     root.reset();
 }
 

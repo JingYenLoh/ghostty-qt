@@ -3,10 +3,14 @@
 #include <QDBusConnectionInterface>
 #include <QDBusError>
 #include <QDBusMessage>
+#include <QDBusObjectPath>
 #include <QDBusReply>
+#include <QDBusVirtualObject>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
+#include <QHash>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QScopeGuard>
@@ -16,6 +20,7 @@
 #include <QVariantMap>
 
 #include <algorithm>
+#include <optional>
 
 #ifndef GHOSTTY_QT_TEST_CONFIG_ENABLED
 #define GHOSTTY_QT_TEST_CONFIG_ENABLED 0
@@ -71,6 +76,36 @@ bool writeFrontendConfig(const QString &configHome, const QByteArray &contents)
         && config.write(contents) == contents.size();
 }
 
+bool writeDesktopEntry(const QString &dataHome, const QString &applicationId)
+{
+    const QString applicationsDirectory =
+        QDir(dataHome).filePath(QStringLiteral("applications"));
+    if (!QDir().mkpath(applicationsDirectory)) return false;
+    const QByteArray contents =
+        QByteArrayLiteral("[Desktop Entry]\n"
+                          "Type=Application\n"
+                          "Name=Ghostty Qt portal test\n"
+                          "Exec=/bin/true\n");
+    QFile entry(QDir(applicationsDirectory)
+                    .filePath(applicationId + QStringLiteral(".desktop")));
+    return entry.open(QIODevice::WriteOnly | QIODevice::Truncate)
+        && entry.write(contents) == contents.size();
+}
+
+bool writeEnvironmentProbe(const QString &path)
+{
+    const QByteArray contents = QByteArrayLiteral(
+        "if test \"${QT_NO_XDG_DESKTOP_PORTAL+x}\" = x; then\n"
+        "  printf set > \"$1\"\n"
+        "else\n"
+        "  printf unset > \"$1\"\n"
+        "fi\n"
+        "exec /bin/sleep 5\n");
+    QFile script(path);
+    return script.open(QIODevice::WriteOnly | QIODevice::Truncate)
+        && script.write(contents) == contents.size();
+}
+
 QProcessEnvironment headlessApplicationEnvironment(const QString &configHome)
 {
     QProcessEnvironment environment =
@@ -93,6 +128,28 @@ QProcessEnvironment applicationEnvironment(
         = headlessApplicationEnvironment(configHome);
     environment.insert(
         QStringLiteral("DBUS_SESSION_BUS_ADDRESS"), bus.address());
+    return environment;
+}
+
+std::optional<QProcessEnvironment>
+portalApplicationEnvironment(const PrivateSessionBus &bus,
+                             const QString &configHome)
+{
+    const QString runtimeDirectory = qEnvironmentVariable("XDG_RUNTIME_DIR");
+    const QString display = qEnvironmentVariable("WAYLAND_DISPLAY");
+    if (runtimeDirectory.isEmpty() || display.isEmpty()) return std::nullopt;
+
+    const QString socketPath = QFileInfo(display).isAbsolute()
+        ? display
+        : QDir(runtimeDirectory).filePath(display);
+    const QFileInfo socket(socketPath);
+    if (!socket.exists() || !socket.isOther()) return std::nullopt;
+
+    QProcessEnvironment environment = applicationEnvironment(bus, configHome);
+    environment.insert(QStringLiteral("QT_QPA_PLATFORM"),
+                       QStringLiteral("wayland"));
+    environment.remove(QStringLiteral("QT_NO_XDG_DESKTOP_PORTAL"));
+    environment.remove(QStringLiteral("SNAP"));
     return environment;
 }
 
@@ -127,6 +184,106 @@ public Q_SLOTS:
 
 Q_SIGNALS:
     void activated();
+};
+
+class PortalOrderingEndpoint final : public QDBusVirtualObject {
+public:
+    explicit PortalOrderingEndpoint(const QDBusConnection &connection)
+        : connection_(connection)
+    {}
+
+    QString introspect(const QString &path) const override
+    {
+        Q_UNUSED(path);
+        return {};
+    }
+
+    bool handleMessage(const QDBusMessage &message,
+                       const QDBusConnection &connection) override
+    {
+        Q_UNUSED(connection);
+        const QString sender = message.service();
+        if (message.interface()
+                == QLatin1StringView("org.freedesktop.host.portal.Registry")
+            && message.member() == QLatin1StringView("Register")) {
+            ++registerCount;
+            calls.append(QStringLiteral("Register"));
+            registerSender = sender;
+            registerSignature = message.signature();
+
+            if (associatedApplicationIds_.contains(sender)) {
+                ++duplicateAssociationCount;
+                connection_.send(message.createErrorReply(
+                    QStringLiteral("org.freedesktop.portal.Error.Failed"),
+                    QStringLiteral(
+                        "Could not register app ID: Connection already associated with an application ID")));
+                return true;
+            }
+
+            const QString requestedApplicationId =
+                message.arguments().value(0).toString();
+            registeredApplicationId = requestedApplicationId;
+            if (rejectRegistrationAsMissing) {
+                connection_.send(message.createErrorReply(
+                    QStringLiteral("org.freedesktop.portal.Error.Failed"),
+                    QStringLiteral(
+                        "Could not register app ID: App info not found for '%1'")
+                        .arg(requestedApplicationId)));
+                return true;
+            }
+            associatedApplicationIds_.insert(sender, requestedApplicationId);
+            connection_.send(message.createReply());
+            return true;
+        }
+
+        const bool applicationPortalMethod =
+            message.interface().startsWith(
+                QLatin1StringView("org.freedesktop.portal."))
+            && message.interface()
+                != QLatin1StringView("org.freedesktop.DBus.Properties")
+            && message.interface()
+                != QLatin1StringView("org.freedesktop.DBus.Introspectable");
+        if (applicationPortalMethod
+            && !associatedApplicationIds_.contains(sender)) {
+            ++implicitAssociationCount;
+            implicitAssociationCall =
+                message.interface() + u'.' + message.member();
+            associatedApplicationIds_.insert(sender,
+                                             QStringLiteral("<implicit>"));
+        }
+
+        if (message.interface()
+                == QLatin1StringView("org.freedesktop.portal.GlobalShortcuts")
+            && message.member() == QLatin1StringView("CreateSession")) {
+            ++createSessionCount;
+            calls.append(QStringLiteral("CreateSession"));
+            createSessionSender = sender;
+            createSessionSignature = message.signature();
+
+            connection_.send(message.createReply(
+                QVariant::fromValue(QDBusObjectPath(QStringLiteral(
+                    "/org/freedesktop/portal/desktop/request/ghostty_qt_test/create")))));
+            return true;
+        }
+        return false;
+    }
+
+    int registerCount = 0;
+    int createSessionCount = 0;
+    int implicitAssociationCount = 0;
+    int duplicateAssociationCount = 0;
+    bool rejectRegistrationAsMissing = false;
+    QString registerSender;
+    QString createSessionSender;
+    QString registeredApplicationId;
+    QString registerSignature;
+    QString createSessionSignature;
+    QString implicitAssociationCall;
+    QStringList calls;
+
+private:
+    QDBusConnection connection_;
+    QHash<QString, QString> associatedApplicationIds_;
 };
 
 QDBusMessage activateApplication(QDBusConnection &connection)
@@ -180,6 +337,8 @@ private Q_SLOTS:
     void warmHostAcceptsGhosttyCliApplicationActions();
     void ghosttyCliActionColdStartsService_data();
     void ghosttyCliActionColdStartsService();
+    void hostPortalRegistrationPrecedesGlobalShortcutSession_data();
+    void hostPortalRegistrationPrecedesGlobalShortcutSession();
 #if GHOSTTY_QT_TEST_CONFIG_ENABLED
     void residentPrimaryIsReactivatedByBareSecondLaunch();
     void falseLauncherLeavesPrimaryAtZeroUntilTrueLauncherActivates();
@@ -485,6 +644,147 @@ void ApplicationSingleInstanceTest::ghosttyCliActionColdStartsService()
     QCOMPARE(client.exitStatus(), QProcess::NormalExit);
     QCOMPARE(client.exitCode(), 0);
     QTRY_VERIFY_WITH_TIMEOUT(!serviceHasOwner(bus), 10'000);
+}
+
+void ApplicationSingleInstanceTest::
+    hostPortalRegistrationPrecedesGlobalShortcutSession_data()
+{
+    QTest::addColumn<bool>("installDesktopEntry");
+#if QT_VERSION >= QT_VERSION_CHECK(6, 11, 0)
+    QTest::newRow("discoverable-metadata") << true;
+#endif
+    QTest::newRow("missing-metadata") << false;
+}
+
+void ApplicationSingleInstanceTest::
+    hostPortalRegistrationPrecedesGlobalShortcutSession()
+{
+    QFETCH(bool, installDesktopEntry);
+#if !GHOSTTY_QT_TEST_CONFIG_ENABLED
+    Q_UNUSED(installDesktopEntry);
+    QSKIP("the real Ghostty config helper is unavailable");
+#else
+    const QString customApplicationId =
+        QStringLiteral("org.example.GhosttyQtPortalOrdering");
+    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon"))
+            .isEmpty()) {
+        QSKIP("dbus-daemon is unavailable");
+    }
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir configHome(QDir::current().filePath(
+        QStringLiteral("tmp/application-portal-ordering-XXXXXX")));
+    QVERIFY(configHome.isValid());
+    QVERIFY(writeGhosttyConfig(
+        configHome.path(),
+        QByteArrayLiteral("initial-window = false\n"
+                          "quit-after-last-window-closed = false\n"
+                          "confirm-close-surface = false\n"
+                          "class = org.example.GhosttyQtPortalOrdering\n"
+                          "keybind = global:ctrl+g=new_tab\n")));
+    QVERIFY(writeFrontendConfig(
+        configHome.path(), QByteArrayLiteral("single-instance = false\n")));
+
+    const QDir root(configHome.path());
+    const QString dataHome = root.filePath(QStringLiteral("data-home"));
+    const QString dataDirectory = root.filePath(QStringLiteral("data-dirs"));
+    const QString probeScript =
+        root.filePath(QStringLiteral("environment-probe.sh"));
+    const QString probeOutput =
+        root.filePath(QStringLiteral("environment-probe.txt"));
+    QVERIFY(QDir().mkpath(dataHome));
+    QVERIFY(QDir().mkpath(dataDirectory));
+    QVERIFY(writeEnvironmentProbe(probeScript));
+    if (installDesktopEntry) {
+        QVERIFY(writeDesktopEntry(dataHome, customApplicationId));
+    }
+
+    PrivateSessionBus bus;
+    QVERIFY2(bus.start(), qPrintable(bus.errorString()));
+    auto environment = portalApplicationEnvironment(bus, configHome.path());
+    if (!environment.has_value()) {
+        QSKIP(
+            "a host Wayland compositor is required to instantiate Qt's Unix portal services");
+    }
+    environment->insert(QStringLiteral("XDG_DATA_HOME"), dataHome);
+    environment->insert(QStringLiteral("XDG_DATA_DIRS"), dataDirectory);
+
+    PortalOrderingEndpoint portal(bus.server());
+    portal.rejectRegistrationAsMissing = !installDesktopEntry;
+    QVERIFY(bus.server().registerService(
+        QStringLiteral("org.freedesktop.portal.Desktop")));
+    QVERIFY(bus.server().registerVirtualObject(
+        QStringLiteral("/org/freedesktop/portal/desktop"), &portal,
+        QDBusConnection::SubPath));
+
+    QProcess primary;
+    primary.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
+    primary.setArguments({QStringLiteral("--single-instance=true"),
+                          QStringLiteral("--initial-window=true"),
+                          QStringLiteral("-e"), QStringLiteral("/bin/sh"),
+                          probeScript, probeOutput});
+    primary.setProcessEnvironment(*environment);
+    primary.start();
+    QVERIFY(primary.waitForStarted(3000));
+    const auto cleanup = qScopeGuard([&primary] {
+        if (primary.state() == QProcess::NotRunning) return;
+        primary.kill();
+        primary.waitForFinished(3000);
+    });
+
+    QTRY_VERIFY_WITH_TIMEOUT(portal.createSessionCount > 0
+                                 || primary.state() == QProcess::NotRunning,
+                             15'000);
+    QByteArray output = primary.readAllStandardOutput();
+    QVERIFY2(portal.createSessionCount > 0,
+             qPrintable(processFailure(primary, output)));
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(probeOutput)
+                                 || primary.state() == QProcess::NotRunning,
+                             10'000);
+    QFile probe(probeOutput);
+    QVERIFY2(probe.open(QIODevice::ReadOnly),
+             qPrintable(processFailure(primary, output)));
+    QCOMPARE(probe.readAll(), QByteArrayLiteral("unset"));
+
+    // Leave one event-loop turn for a wrongly queued late registration. The
+    // fake models the host registry's per-connection association rule, so the
+    // old ordering records both an implicit and a duplicate association.
+    QTest::qWait(100);
+    const QByteArray errorOutput = primary.readAllStandardError();
+    QCOMPARE(primary.state(), QProcess::Running);
+    QCOMPARE(portal.createSessionCount, 1);
+    QCOMPARE(portal.duplicateAssociationCount, 0);
+    QCOMPARE(portal.createSessionSignature, QStringLiteral("a{sv}"));
+    QVERIFY(!portal.createSessionSender.isEmpty());
+    if (installDesktopEntry) {
+        QCOMPARE(portal.registerCount, 1);
+        QVERIFY2(portal.implicitAssociationCount == 0,
+                 qPrintable(QStringLiteral("implicit association via %1")
+                                .arg(portal.implicitAssociationCall)));
+        QCOMPARE(portal.calls,
+                 QStringList({QStringLiteral("Register"),
+                              QStringLiteral("CreateSession")}));
+        QVERIFY(!portal.registerSender.isEmpty());
+        QCOMPARE(portal.createSessionSender, portal.registerSender);
+        QCOMPARE(portal.registeredApplicationId, customApplicationId);
+        QCOMPARE(portal.registerSignature, QStringLiteral("sa{sv}"));
+    } else {
+        QCOMPARE(portal.registerCount, 0);
+        QCOMPARE(portal.implicitAssociationCount, 1);
+        QVERIFY2(portal.implicitAssociationCall.startsWith(
+                     QStringLiteral("org.freedesktop.portal.")),
+                 qPrintable(portal.implicitAssociationCall));
+        QCOMPARE(portal.calls, QStringList({QStringLiteral("CreateSession")}));
+        QVERIFY(portal.registerSender.isEmpty());
+        QVERIFY(portal.registeredApplicationId.isEmpty());
+        QVERIFY(portal.registerSignature.isEmpty());
+    }
+    QVERIFY2(!errorOutput.contains("Failed to register with host portal"),
+             errorOutput.constData());
+    QVERIFY2(!errorOutput.contains("Connection already associated"),
+             errorOutput.constData());
+    QVERIFY2(!errorOutput.contains("App info not found"),
+             errorOutput.constData());
+#endif
 }
 
 #if GHOSTTY_QT_TEST_CONFIG_ENABLED

@@ -752,6 +752,12 @@ owner and a cold D-Bus service. Focused protocol tests cover exact
 last-value and command grammar, the sibling standard action interface,
 malformed-request rejection, FIFO queuing, and GTK-versus-standard failure
 acknowledgement.
+On a host Wayland compositor, the suite also substitutes a private portal and
+launches the real application as a child. It checks the child's standard error,
+proves host registration precedes global-shortcut session creation when a
+matching desktop entry is discoverable, and proves a missing entry skips only
+that registration without leaking `QT_NO_XDG_DESKTOP_PORTAL` into the terminal
+child.
 With shared Ghostty configuration enabled, the same suite forces the exact
 service bootstrap flags over a contradictory frontend file; the config-off
 build proves that activation does not depend on the parser helper. Both call
