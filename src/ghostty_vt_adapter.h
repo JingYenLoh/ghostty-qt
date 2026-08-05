@@ -1,6 +1,7 @@
 #pragma once
 
 #include "terminal_appearance.h"
+#include "terminal_desktop_notification.h"
 #include "terminal_inspector_snapshot.h"
 #include "terminal_session_options.h"
 #include "terminal_types.h"
@@ -220,6 +221,7 @@ public:
         QByteArray currentDirectory;
         bool bell = false;
         QVector<TerminalClipboardWriteRequest> clipboardWrites;
+        QVector<TerminalDesktopNotification> desktopNotifications;
     };
 
     struct HyperlinkMatch {

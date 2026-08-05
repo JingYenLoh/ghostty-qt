@@ -704,7 +704,7 @@ font API for the standalone terminal.
 At official revision `48d85eaeb06ac9fc49073815bda5bac97de655ca`,
 ghostty-qt therefore implements the largest safe frontend-owned subset:
 
-- schema v2 transports Ghostty's finalized ordered feature list, four ordered
+- schema v3 transports Ghostty's finalized ordered feature list, four ordered
   variation lists as exact f64 bit patterns, u21 codepoint maps, three
   synthesis booleans, cursor shaping-break policy, and five FreeType flags;
 - a weak-cached immutable GUI-thread font program shares its metric and
@@ -870,7 +870,7 @@ reinterpreting the original text.
 ### ghostty-qt follow-up after upstream support lands
 
 After an official pinned revision exposes the completed grammar, extend the
-schema-v2 configuration export with ordered structured link rules, route their
+schema-v3 configuration export with ordered structured link rules, route their
 typed actions through the existing stable-pane pipeline, add differential
 parser/matcher/action tests, and only then promote `link` from
 `blocked_upstream`.
@@ -1309,10 +1309,13 @@ sized value carries remove, set, error, indeterminate, and pause states plus a
 during `ghostty_terminal_vt_write` and use the terminal's shared userdata.
 
 No further upstream work is required for `desktop-notifications` or
-`progress-style`. ghostty-qt still needs to copy callback data on the worker,
-route it by stable `PaneId`, apply its configured notification and progress
-presentation policy on the GUI side, and test callback ordering and pane
-lifetime. These entries are planned rather than upstream-blocked.
+`progress-style`. The finalized `desktop-notifications` boolean crosses the
+strict schema-v3 boundary into live application policy. ghostty-qt now copies
+the sized callback data into a bounded ordered worker effect, routes it by
+stable `PaneId`, presents it through the standard Linux notification D-Bus
+interface, and revalidates its surface target on activation. Progress
+presentation and expiry remain frontend work; `progress-style` is planned
+rather than upstream-blocked.
 
 ### Why ghostty-qt does not inspect PTY bytes
 

@@ -251,6 +251,7 @@ private Q_SLOTS:
     void realHelperExportsCommands();
     void realHelperExportsAbnormalCommandExitRuntime();
     void realHelperExportsScrollbackCompression();
+    void realHelperExportsDesktopNotifications();
     void realHelperExportsBellFeatures();
     void realHelperExportsMouseHideWhileTyping();
     void realHelperExportsFocusFollowsMouse();
@@ -2269,6 +2270,40 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsScrollbackCompression()
     result = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QVERIFY(result->values.scrollbackCompression);
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsDesktopNotifications()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.desktopNotifications);
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("desktop-notifications = false\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(!result->values.desktopNotifications);
+
+    result = queryRealConfigExport(
+        helperPath, fixture, {QStringLiteral("--desktop-notifications=true")});
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.desktopNotifications);
+
+    result = queryRealConfigExport(
+        helperPath, fixture, {QStringLiteral("--desktop-notifications=")});
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.desktopNotifications);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsBellFeatures()

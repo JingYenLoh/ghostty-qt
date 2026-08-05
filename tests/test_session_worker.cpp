@@ -229,6 +229,7 @@ class SessionWorkerTest : public QObject {
 
 private Q_SLOTS:
     void runsCommandThroughPty();
+    void publishesDesktopNotificationsInParserOrder();
     void runsTaggedShellAndDirectCommands();
     void appliesPinnedShellIntegrationLaunchOrdering();
     void classifiesAbnormalCommandExitBoundaries();
@@ -1239,6 +1240,54 @@ void SessionWorkerTest::runsCommandThroughPty()
     QVERIFY2(finalContents.contains(QStringLiteral("ghostty-qt-final")),
              qPrintable(finalContents));
     QVERIFY(containsCursorBlinkReset(updateSpy));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::publishesDesktopNotificationsInParserOrder()
+{
+    qRegisterMetaType<TerminalDesktopNotification>();
+    SessionWorker worker;
+    QSignalSpy notificationSpy(&worker,
+                               &SessionWorker::desktopNotificationRequested);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.command = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/printf"),
+        QByteArrayLiteral("\033]9;worker-first\033\\"
+                          "\033]777;notify;Worker;second\007"),
+    });
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+
+    QTRY_COMPARE_WITH_TIMEOUT(notificationSpy.count(), 2, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QCOMPARE(notificationSpy.at(0)
+                 .constFirst()
+                 .value<TerminalDesktopNotification>()
+                 .title,
+             QString{});
+    QCOMPARE(notificationSpy.at(0)
+                 .constFirst()
+                 .value<TerminalDesktopNotification>()
+                 .body,
+             QStringLiteral("worker-first"));
+    QCOMPARE(notificationSpy.at(1)
+                 .constFirst()
+                 .value<TerminalDesktopNotification>()
+                 .title,
+             QStringLiteral("Worker"));
+    QCOMPARE(notificationSpy.at(1)
+                 .constFirst()
+                 .value<TerminalDesktopNotification>()
+                 .body,
+             QStringLiteral("second"));
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 

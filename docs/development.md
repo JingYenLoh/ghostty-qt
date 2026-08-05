@@ -395,7 +395,7 @@ Configuration is enabled by default with
 parser is outside `libghostty-vt`, the build produces a private
 `ghostty-internal` shared library and links it only into
 `ghostty-qt-config-helper`. Each load is a four-process transaction: validate,
-request the private schema-v2 `+show-config-json` projection with the concrete
+request the private schema-v3 `+show-config-json` projection with the concrete
 light/dark scheme, validate again, and request the same scheme and projection
 again. The two JSON byte streams must match, so each document carries one
 finalized current configuration together with its platform-default keybinding
@@ -451,7 +451,7 @@ path. Tests must always remove inherited editor variables or install a
 deterministic fake editor; invoking this action with a developer's environment
 can intentionally replace the test process with their interactive editor.
 
-The schema-v2 projection includes the finalized non-empty raw-byte `term`
+The schema-v3 projection includes the finalized non-empty raw-byte `term`
 child identity, the finalized ordered raw-byte `env` override map, the
 finalized binary-safe `enquiry-response`, finalized working-directory,
 split/tab/window directory inheritance policies, new-window/tab font-size policy,
@@ -471,7 +471,8 @@ minimum-contrast threshold, the nullable
 frontend-only unfocused-split fill, finalized unfocused-split opacity,
 split-divider color, the boolean `link-url` setting plus the three-state
 `link-previews` policy, the exact `system`/`never` scrollbar policy, the five
-finalized `bell-features` booleans, nullable finalized bell-audio path and its
+finalized `bell-features` booleans, the live default-true
+`desktop-notifications` policy, nullable finalized bell-audio path and its
 required/optional provenance, raw finite bell-audio volume, independently
 finalized finite precision/discrete mouse-scroll multipliers, the finalized
 four-state `mouse-shift-capture` value, the exact `mouse-hide-while-typing`
@@ -489,8 +490,9 @@ application lifetime policy. The
 export and process-loader tests verify exact wire validation, typed semantic
 values, nullable alternatives, Unicode scalar range/surrogate rejection,
 transaction consistency, and default-aware keybinding diagnostics;
-launch-option and process-loader tests verify that
-binary `enquiry-response` values reach runtime options unchanged and explicit
+launch-option and process-loader tests verify live desktop-notification policy
+and that binary `enquiry-response` values reach runtime options unchanged and
+explicit
 font CLI arguments enter both structured queries before Ghostty finalization,
 preserving f32 and styled-role defaults while the public
 `+validate-config` action retains its exact action-specific grammar.
@@ -546,7 +548,7 @@ The five focused config tests have distinct boundaries:
 - `ghostty-config-service` exercises filesystem discovery/watch/debounce,
   missing optional includes, generation-safe asynchronous reload, and last-good
   snapshot behavior with an injected loader.
-- `ghostty-config-export` exercises the strict schema-v2 decoder independently
+- `ghostty-config-export` exercises the strict schema-v3 decoder independently
   of process execution, including finalized non-empty byte-valued `term`, the
   ordered raw-byte `env` key/value pairs and their duplicate/empty/equals/NUL
   rejection, empty and binary `enquiry-response` values, the exact cgroup

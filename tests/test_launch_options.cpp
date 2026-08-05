@@ -309,6 +309,7 @@ private Q_SLOTS:
     void rejectsMissingApplicationName();
     void appliesFinalizedGhosttyTypography();
     void mapsScrollbarPolicy();
+    void mapsDesktopNotifications();
     void mapsBellFeatures();
     void mapsBellAudio();
     void mapsBackdropAndPaddingSnapshots();
@@ -449,6 +450,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(!options.scrollbackLinesExplicit);
     QVERIFY(options.scrollbackCompression);
     QCOMPARE(options.scrollbar, ScrollbarPolicy::System);
+    QVERIFY(options.desktopNotifications);
     QVERIFY(!options.bellFeatures.system);
     QVERIFY(!options.bellFeatures.audio);
     QVERIFY(options.bellFeatures.attention);
@@ -1358,6 +1360,20 @@ void LaunchOptionsTest::mapsScrollbarPolicy()
 
         QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).scrollbar,
                  configured);
+    }
+}
+
+void LaunchOptionsTest::mapsDesktopNotifications()
+{
+    for (const bool configured : {false, true}) {
+        LaunchOptions base;
+        base.desktopNotifications = !configured;
+        GhosttyConfigSnapshot snapshot = completeSnapshot();
+        snapshot.values.desktopNotifications = configured;
+
+        QCOMPARE(
+            applyGhosttyConfigSnapshot(base, snapshot).desktopNotifications,
+            configured);
     }
 }
 

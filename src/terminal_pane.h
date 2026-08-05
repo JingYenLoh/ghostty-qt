@@ -13,6 +13,7 @@
 #include "terminal_custom_shader_compiler.h"
 #include "terminal_custom_shader_pipeline.h"
 #include "terminal_custom_shader_qsg.h"
+#include "terminal_desktop_notification.h"
 #include "terminal_geometry.h"
 #include "terminal_inspector_model.h"
 #include "terminal_types.h"
@@ -287,6 +288,8 @@ Q_SIGNALS:
                               TerminalPane *pane);
     void terminalClipboardWriteRequested(
         const TerminalClipboardWriteRequest &request, TerminalPane *pane);
+    void desktopNotificationRequested(
+        const TerminalDesktopNotification &notification, TerminalPane *pane);
     void
     selectionClipboardWriteRequested(const QString &text,
                                      TerminalClipboardDestination destination,

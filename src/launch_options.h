@@ -128,6 +128,9 @@ struct LaunchOptions {
     // affects only that frontend affordance; scrolling remains available when
     // the control is hidden.
     ScrollbarPolicy scrollbar = ScrollbarPolicy::System;
+    // Live GUI policy for terminal-originated OSC 9/777 desktop notification
+    // requests. The terminal parser remains active when presentation is off.
+    bool desktopNotifications = true;
     // BEL presentation is frontend-owned. The worker publishes the event,
     // while panes, tabs, and host windows apply these finalized features.
     BellFeatures bellFeatures;

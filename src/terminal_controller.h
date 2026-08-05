@@ -2,6 +2,7 @@
 
 #include "initial_session_coordinator.h"
 #include "terminal_action_result.h"
+#include "terminal_desktop_notification.h"
 #include "terminal_inspector_snapshot.h"
 #include "terminal_session_options.h"
 #include "terminal_types.h"
@@ -253,6 +254,8 @@ Q_SIGNALS:
                                           const QString &text);
     void terminalClipboardWriteRequested(
         const TerminalClipboardWriteRequest &request);
+    void desktopNotificationRequested(
+        const TerminalDesktopNotification &notification);
     // Carries only the worker-prepared value. The stable owning workspace
     // revalidates the PaneId before its GUI thread accesses QClipboard.
     void

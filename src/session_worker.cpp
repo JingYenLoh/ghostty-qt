@@ -3970,6 +3970,10 @@ void SessionWorker::processDeferredEffects()
          effects.clipboardWrites) {
         Q_EMIT terminalClipboardWriteRequested(request);
     }
+    for (const TerminalDesktopNotification &notification :
+         effects.desktopNotifications) {
+        Q_EMIT desktopNotificationRequested(notification);
+    }
 }
 
 void SessionWorker::checkChild()

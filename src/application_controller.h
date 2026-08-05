@@ -21,6 +21,7 @@
 
 class GhosttyApplicationKeybindings;
 class GhosttyKeybindProgram;
+class DesktopNotificationService;
 class InitialSessionCoordinator;
 class QQmlEngine;
 class QQuickWindow;
@@ -217,6 +218,7 @@ private:
     RevisionCounter launchOptionsRevision_;
     std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator_;
     ApplicationLifetimeController lifetime_;
+    std::unique_ptr<DesktopNotificationService> desktopNotifications_;
     std::unique_ptr<GhosttyApplicationKeybindings> keybindings_;
     std::vector<WindowRecord> windows_;
     QPointer<TerminalWorkspace> lastActiveWorkspace_;

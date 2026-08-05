@@ -199,6 +199,12 @@ if(CONFIG_HELPER_NAME)
         TYPE "${structured_helper_output}" values initial-window)
     string(JSON initial_window ERROR_VARIABLE initial_window_value_json_error
         GET "${structured_helper_output}" values initial-window)
+    string(JSON desktop_notifications_type
+        ERROR_VARIABLE desktop_notifications_json_error
+        TYPE "${structured_helper_output}" values desktop-notifications)
+    string(JSON desktop_notifications
+        ERROR_VARIABLE desktop_notifications_value_json_error
+        GET "${structured_helper_output}" values desktop-notifications)
     string(JSON palette_length ERROR_VARIABLE palette_json_error
         LENGTH "${structured_helper_output}" values palette)
     if(structured_json_error OR values_json_error OR lifetime_json_error
@@ -206,12 +212,16 @@ if(CONFIG_HELPER_NAME)
        OR single_instance_json_error
        OR initial_window_json_error
        OR initial_window_value_json_error
+       OR desktop_notifications_json_error
+       OR desktop_notifications_value_json_error
        OR palette_json_error
-       OR NOT structured_schema EQUAL 2
+       OR NOT structured_schema EQUAL 3
        OR NOT values_type STREQUAL "OBJECT"
        OR NOT lifetime_type STREQUAL "BOOLEAN"
        OR NOT initial_window_type STREQUAL "BOOLEAN"
        OR NOT initial_window
+       OR NOT desktop_notifications_type STREQUAL "BOOLEAN"
+       OR NOT desktop_notifications
        OR NOT single_instance STREQUAL "detect"
        OR NOT keybind_root_type STREQUAL "ARRAY"
        OR NOT default_keybind_root_type STREQUAL "ARRAY"
@@ -222,6 +232,8 @@ if(CONFIG_HELPER_NAME)
             "${lifetime_json_error};${keybind_json_error};"
             "${default_keybind_json_error};${single_instance_json_error};"
             "${initial_window_json_error};${initial_window_value_json_error};"
+            "${desktop_notifications_json_error};"
+            "${desktop_notifications_value_json_error};"
             "${palette_json_error}\n"
             "${structured_helper_output}")
     endif()

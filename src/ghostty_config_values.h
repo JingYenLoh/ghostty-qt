@@ -241,6 +241,9 @@ struct GhosttyConfigValues {
     quint32 kittyImageStorageLimitBytes = 320'000'000;
     bool scrollbackCompression = true;
     ScrollbarPolicy scrollbar = ScrollbarPolicy::System;
+    // Application-originated OSC 9/777 notifications are enabled by default
+    // and remain live frontend policy rather than terminal worker state.
+    bool desktopNotifications = true;
     BellFeatures bellFeatures;
     std::optional<GhosttyConfigPath> bellAudioPath;
     double bellAudioVolume = 0.5;

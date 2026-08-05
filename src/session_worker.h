@@ -2,6 +2,7 @@
 
 #include "pty_write_buffer.h"
 #include "terminal_action_result.h"
+#include "terminal_desktop_notification.h"
 #include "terminal_inspector_snapshot.h"
 #include "terminal_session_options.h"
 #include "terminal_types.h"
@@ -148,6 +149,8 @@ Q_SIGNALS:
     // boundary; the workspace owns confirmation and the actual clipboard.
     void terminalClipboardWriteRequested(
         const TerminalClipboardWriteRequest &request);
+    void desktopNotificationRequested(
+        const TerminalDesktopNotification &notification);
     void terminalActionFinished(const TerminalActionResult &result);
     void unsafePasteConfirmationRequested(quint64 requestId,
                                           const QString &text);

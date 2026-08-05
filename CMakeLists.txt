@@ -1006,6 +1006,7 @@ qt_add_shaders(
 add_library(ghostty-qt-vt-adapter STATIC
     src/ghostty_vt_adapter.cpp
     src/ghostty_vt_adapter.h
+    src/terminal_desktop_notification.h
     src/terminal_inspector_snapshot.h
 )
 target_include_directories(ghostty-qt-vt-adapter PUBLIC
@@ -1074,6 +1075,7 @@ ghostty_qt_add_internal_library(ghostty-qt-session-worker
     src/session_worker.h
     src/terminal_action_result.h
     src/terminal_clipboard_codepoint_map.h
+    src/terminal_desktop_notification.h
     src/terminal_osc8_index.h
     src/terminal_path.h
     src/terminal_session_options.h
@@ -1104,6 +1106,7 @@ target_link_libraries(ghostty-qt-session-worker
 ghostty_qt_add_internal_library(ghostty-qt-terminal-controller
     src/terminal_controller.cpp
     src/terminal_controller.h
+    src/terminal_desktop_notification.h
 )
 target_link_libraries(ghostty-qt-terminal-controller
     PUBLIC
@@ -1133,6 +1136,20 @@ target_link_libraries(ghostty-qt-application-lifetime PUBLIC
 ghostty_qt_add_internal_library(ghostty-qt-global-shortcut-portal
     src/ghostty_global_shortcut_portal.cpp
     src/ghostty_global_shortcut_portal.h
+)
+
+ghostty_qt_add_internal_library(ghostty-qt-desktop-notification
+    src/desktop_notification_service.cpp
+    src/desktop_notification_service.h
+    src/terminal_desktop_notification.h
+    src/workspace_ids.h
+)
+target_compile_definitions(ghostty-qt-desktop-notification PRIVATE
+    GHOSTTY_QT_APPLICATION_ID="${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}"
+)
+target_link_libraries(ghostty-qt-desktop-notification PUBLIC
+    Qt6::Core
+    Qt6::DBus
 )
 target_link_libraries(ghostty-qt-global-shortcut-portal
     PUBLIC
@@ -1177,6 +1194,7 @@ target_link_libraries(ghostty-qt-application-controller
         Qt6::Quick
         ghostty-qt-application-ipc
         ghostty-qt-application-keybindings
+        ghostty-qt-desktop-notification
         ghostty-qt-quick-terminal
         ghostty-qt-terminal-foundation
         ghostty-qt-window-ui

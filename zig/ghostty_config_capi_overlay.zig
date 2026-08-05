@@ -49,7 +49,7 @@ comptime {
 }
 
 /// Export one complete, finalized configuration generation as the
-/// project-private JSON v1 schema. The returned JSON or companion diagnostic
+/// project-private JSON v3 schema. The returned JSON or companion diagnostic
 /// allocation follows ghostty_string_s ownership and is released by
 /// ghostty_string_free.
 export fn ghostty_qt_config_json(
@@ -380,7 +380,7 @@ fn configJson(
     var json: std.json.Stringify = .{ .writer = &output.writer };
     try json.beginObject();
     try json.objectField("version");
-    try json.write(@as(u8, 2));
+    try json.write(@as(u8, 3));
 
     {
         var config = try loadSelectedConfig(color_scheme, probable_cli);
@@ -743,6 +743,8 @@ fn writeValues(
     try json.write(config.@"scrollback-compression");
     try json.objectField("scrollbar");
     try json.write(@tagName(config.scrollbar));
+    try json.objectField("desktop-notifications");
+    try json.write(config.@"desktop-notifications");
     try json.objectField("bell-features");
     try json.beginObject();
     inline for (.{

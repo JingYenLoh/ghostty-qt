@@ -150,6 +150,7 @@ class GhosttyVtAdapterTest : public QObject {
 
 private Q_SLOTS:
     void rendersTerminalValuesAndEffects();
+    void normalizesDesktopNotificationEffects();
     void publishesKittyGraphicsSnapshots();
     void publishesMpvShapedKittyFrames();
     void cullsOpaqueKittyGraphicsWithoutDeletingHistory();
@@ -397,6 +398,63 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.columns, 10);
     QCOMPARE(frame.rows, 4);
+}
+
+void GhosttyVtAdapterTest::normalizesDesktopNotificationEffects()
+{
+    GhosttyVtAdapter::Options options;
+    auto adapter = GhosttyVtAdapter::create(options, {});
+    QVERIFY(adapter != nullptr);
+
+    // Fragmentation exercises libghostty's persistent OSC parser. Retaining
+    // several requests before draining also proves that the callback copied
+    // its borrowed slices instead of aliasing the parser's reused storage.
+    writeFragmented(
+        adapter.get(),
+        QByteArrayLiteral("\033]9;Build complete\033\\"
+                          "\033]777;notify;Codex;Needs attention\007"
+                          "\033]777;notify;;\033\\"));
+    GhosttyVtAdapter::DeferredEffects effects = adapter->takeDeferredEffects();
+    QCOMPARE(effects.desktopNotifications.size(), 3);
+    QCOMPARE(effects.desktopNotifications.at(0),
+             (TerminalDesktopNotification{
+                 .title = {},
+                 .body = QStringLiteral("Build complete"),
+             }));
+    QCOMPARE(effects.desktopNotifications.at(1),
+             (TerminalDesktopNotification{
+                 .title = QStringLiteral("Codex"),
+                 .body = QStringLiteral("Needs attention"),
+             }));
+    QCOMPARE(effects.desktopNotifications.at(2),
+             (TerminalDesktopNotification{
+                 .title = {},
+                 .body = {},
+             }));
+    QVERIFY(adapter->takeDeferredEffects().desktopNotifications.isEmpty());
+
+    // One VT batch has a bounded FIFO. Requests beyond the bound are dropped
+    // without disturbing the retained prefix, and draining restores capacity
+    // for later parser effects.
+    QByteArray burst;
+    for (int index = 0; index < 70; ++index) {
+        burst.append(QByteArrayLiteral("\033]9;notice-"));
+        burst.append(QByteArray::number(index));
+        burst.append('\007');
+    }
+    adapter->writeVt(burst);
+    effects = adapter->takeDeferredEffects();
+    QCOMPARE(effects.desktopNotifications.size(), 64);
+    QCOMPARE(effects.desktopNotifications.constFirst().body,
+             QStringLiteral("notice-0"));
+    QCOMPARE(effects.desktopNotifications.constLast().body,
+             QStringLiteral("notice-63"));
+
+    adapter->writeVt(QByteArrayLiteral("\033]9;after-drain\007"));
+    effects = adapter->takeDeferredEffects();
+    QCOMPARE(effects.desktopNotifications.size(), 1);
+    QCOMPARE(effects.desktopNotifications.constFirst().body,
+             QStringLiteral("after-drain"));
 }
 
 void GhosttyVtAdapterTest::publishesKittyGraphicsSnapshots()

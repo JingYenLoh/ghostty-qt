@@ -58,6 +58,8 @@ constexpr qsizetype maximumLogicalLineBytes = 4 * 1024 * 1024;
 constexpr size_t maximumClipboardRepresentations = 256;
 constexpr qsizetype maximumPendingClipboardWrites = 64;
 constexpr quint64 maximumPendingClipboardBytes = 64 * 1024 * 1024;
+constexpr qsizetype maximumPendingDesktopNotifications = 64;
+constexpr size_t maximumPendingDesktopNotificationBytes = 1024 * 1024;
 constexpr uint32_t kittyUnicodePlaceholder = 0x10eeeeU;
 constexpr int kittyMaximumDecodedImageMegabytes = 400;
 
@@ -1175,6 +1177,13 @@ public:
         ghostty_terminal_set(
             terminal_, GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE,
             reinterpret_cast<const void *>(&Impl::clipboardWriteCallback));
+        if (ghostty_terminal_set(terminal_,
+                                 GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION,
+                                 reinterpret_cast<const void *>(
+                                     &Impl::desktopNotificationCallback))
+            != GHOSTTY_SUCCESS) {
+            return false;
+        }
 
         if (ghostty_render_state_new(nullptr, &renderState_) != GHOSTTY_SUCCESS
             || ghostty_render_state_row_iterator_new(nullptr, &rowIterator_)
@@ -4963,6 +4972,9 @@ public:
         effects.clipboardWrites = std::move(pendingClipboardWrites_);
         pendingClipboardWrites_.clear();
         pendingClipboardBytes_ = 0;
+        effects.desktopNotifications = std::move(pendingDesktopNotifications_);
+        pendingDesktopNotifications_.clear();
+        pendingDesktopNotificationBytes_ = 0;
         return effects;
     }
 
@@ -5227,6 +5239,63 @@ private:
                                : GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED;
     }
 
+    void desktopNotification(
+        const GhosttyTerminalDesktopNotification *notification) noexcept
+    {
+        constexpr size_t minimumSize =
+            offsetof(GhosttyTerminalDesktopNotification, body)
+            + sizeof(GhosttyString);
+        if (notification == nullptr || notification->size < minimumSize
+            || pendingDesktopNotifications_.size()
+                >= maximumPendingDesktopNotifications) {
+            return;
+        }
+
+        const GhosttyString title = notification->title;
+        const GhosttyString body = notification->body;
+        const size_t maximumQtStringBytes =
+            static_cast<size_t>(std::numeric_limits<qsizetype>::max());
+        if ((title.len != 0 && title.ptr == nullptr)
+            || (body.len != 0 && body.ptr == nullptr)
+            || title.len > maximumQtStringBytes
+            || body.len > maximumQtStringBytes
+            || title.len > maximumPendingDesktopNotificationBytes
+            || body.len > maximumPendingDesktopNotificationBytes - title.len
+            || pendingDesktopNotificationBytes_
+                > maximumPendingDesktopNotificationBytes - title.len
+                    - body.len) {
+            return;
+        }
+
+        try {
+            const auto copy = [](GhosttyString value) {
+                return value.len == 0
+                    ? QString{}
+                    : QString::fromUtf8(
+                          reinterpret_cast<const char *>(value.ptr),
+                          static_cast<qsizetype>(value.len));
+            };
+            pendingDesktopNotifications_.append({
+                .title = copy(title),
+                .body = copy(body),
+            });
+            pendingDesktopNotificationBytes_ += title.len + body.len;
+        } catch (...) {
+            // A libghostty callback cannot report allocation failure or let
+            // an exception cross the C ABI. Dropping this advisory effect
+            // keeps terminal parsing and later requests usable.
+        }
+    }
+
+    static void desktopNotificationCallback(
+        GhosttyTerminal, void *userdata,
+        const GhosttyTerminalDesktopNotification *notification)
+    {
+        if (auto *impl = static_cast<Impl *>(userdata)) {
+            impl->desktopNotification(notification);
+        }
+    }
+
     Geometry geometry_;
     Callbacks callbacks_;
     std::shared_ptr<const AdapterOwnerToken> ownerToken_;
@@ -5262,6 +5331,8 @@ private:
     QByteArray enquiryResponse_;
     QVector<TerminalClipboardWriteRequest> pendingClipboardWrites_;
     quint64 pendingClipboardBytes_ = 0;
+    QVector<TerminalDesktopNotification> pendingDesktopNotifications_;
+    size_t pendingDesktopNotificationBytes_ = 0;
     std::optional<quintptr> lastOutputBottomNode_;
     quint16 lastOutputBottomY_ = 0;
     uint32_t mouseModeFingerprint_ = 0;

@@ -1547,6 +1547,13 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                                  TerminalPane *) {
                 beginTerminalClipboardWrite(request, {paneId, pane});
             });
+    connect(
+        pane, &TerminalPane::desktopNotificationRequested, this,
+        [this, paneId, pane](const TerminalDesktopNotification &notification,
+                             TerminalPane *source) {
+            if (source != pane || paneForId(paneId) != pane) return;
+            Q_EMIT desktopNotificationRequested(paneId, notification);
+        });
     connect(pane, &TerminalPane::selectionClipboardWriteRequested, this,
             [this, paneId, pane](const QString &text,
                                  TerminalClipboardDestination destination,

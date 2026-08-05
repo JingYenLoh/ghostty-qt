@@ -514,6 +514,25 @@ set_tests_properties(desktop-activation PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 
+qt_add_executable(test-desktop-notification-service
+    test_desktop_notification_service.cpp
+)
+target_include_directories(test-desktop-notification-service PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_compile_definitions(test-desktop-notification-service PRIVATE
+    GHOSTTY_QT_APPLICATION_ID="${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}"
+)
+target_link_libraries(test-desktop-notification-service PRIVATE
+    Qt6::Core
+    Qt6::DBus
+    Qt6::Test
+    ghostty-qt-desktop-notification
+)
+add_test(NAME desktop-notification-service
+    COMMAND test-desktop-notification-service)
+set_tests_properties(desktop-notification-service PROPERTIES TIMEOUT 10)
+
 qt_add_executable(test-application-lifetime
     test_application_lifetime.cpp
 )

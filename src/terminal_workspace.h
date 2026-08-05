@@ -5,6 +5,7 @@
 #include "launch_options.h"
 #include "revision_counter.h"
 #include "tab_list_model.h"
+#include "terminal_desktop_notification.h"
 #include "terminal_types.h"
 #include "window_navigation_action.h"
 #include "workspace_action.h"
@@ -300,6 +301,10 @@ Q_SIGNALS:
                                    PaneId sourcePaneId);
     void frontendActionRequested(const WorkspaceFrontendActionRequest &request);
     void standardClipboardCommitted(bool empty);
+    // Stable pane identity lets the process-owned native notification service
+    // route a later click without retaining a surface pointer.
+    void desktopNotificationRequested(
+        PaneId sourcePaneId, const TerminalDesktopNotification &notification);
     // Process-wide broad dispatch mirrors Ghostty's append-on-create,
     // swap-remove surface vector. These fire only after a pane gains a stable
     // tree identity and immediately after that identity is retired.

@@ -363,6 +363,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(values.kittyImageStorageLimitBytes, quint32{123456789});
     QVERIFY(!values.scrollbackCompression);
     QCOMPARE(values.scrollbar, ScrollbarPolicy::Never);
+    QVERIFY(!values.desktopNotifications);
     QVERIFY(values.bellFeatures.system);
     QVERIFY(values.bellFeatures.audio);
     QVERIFY(!values.bellFeatures.attention);
@@ -1264,7 +1265,15 @@ void GhosttyConfigExportTest::rejectsMalformedEnvelope()
                  "Ghostty structured config JSON root must be an object"));
 
     QJsonObject malformed = object();
-    malformed.insert(QStringLiteral("version"), 3);
+    malformed.insert(QStringLiteral("version"), 4);
+    parsed = parseGhosttyConfigExportJson(json(malformed));
+    QVERIFY(!parsed);
+    QCOMPARE(parsed.error(),
+             QStringLiteral(
+                 "Unsupported Ghostty structured config JSON schema version"));
+
+    malformed = object();
+    malformed.insert(QStringLiteral("version"), 2);
     parsed = parseGhosttyConfigExportJson(json(malformed));
     QVERIFY(!parsed);
     QCOMPARE(parsed.error(),
@@ -2021,6 +2030,9 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-scrollback-compression")
         << withoutValue(object(), QStringLiteral("scrollback-compression"))
         << QStringLiteral("values is missing field 'scrollback-compression'");
+    QTest::newRow("missing-desktop-notifications")
+        << withoutValue(object(), QStringLiteral("desktop-notifications"))
+        << QStringLiteral("values is missing field 'desktop-notifications'");
     QTest::newRow("missing-bell-features")
         << withoutValue(object(), QStringLiteral("bell-features"))
         << QStringLiteral("values is missing field 'bell-features'");
@@ -2935,6 +2947,10 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withValue(object(), QStringLiteral("scrollback-compression"),
                      QStringLiteral("true"))
         << QStringLiteral("values.scrollback-compression must be a boolean");
+    QTest::newRow("desktop-notifications-type")
+        << withValue(object(), QStringLiteral("desktop-notifications"),
+                     QStringLiteral("true"))
+        << QStringLiteral("values.desktop-notifications must be a boolean");
     QTest::newRow("linux-cgroup-memory-number")
         << withValue(object(), QStringLiteral("linux-cgroup-memory-limit"), 1)
         << QStringLiteral("values.linux-cgroup-memory-limit must be a string");

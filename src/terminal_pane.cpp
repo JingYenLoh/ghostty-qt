@@ -556,6 +556,10 @@ TerminalPane::TerminalPane(
             this, [this](const TerminalClipboardWriteRequest &request) {
                 Q_EMIT terminalClipboardWriteRequested(request, this);
             });
+    connect(controller_, &TerminalController::desktopNotificationRequested,
+            this, [this](const TerminalDesktopNotification &notification) {
+                Q_EMIT desktopNotificationRequested(notification, this);
+            });
     connect(controller_, &TerminalController::terminalActionReady, this,
             &TerminalPane::handleTerminalActionResult, Qt::QueuedConnection);
     connect(controller_, &TerminalController::hyperlinkResolved, this,

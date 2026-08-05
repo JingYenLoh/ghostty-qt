@@ -464,6 +464,7 @@ private Q_SLOTS:
     void readOnlyNaturalExitPromptsExactlyOnce();
     void queuesAndCorrelatesUnsafePasteConfirmations();
     void ordersAndConfirmsTerminalClipboardWrites();
+    void routesDesktopNotificationsByStablePane();
     void dropsSelectionClipboardWritesFromRetiredPanes();
     void performableTabChangeRequiresDifferentTarget();
     void relativeTabActionsUseCurrentSelectionAndBroadFanout();
@@ -6526,6 +6527,65 @@ void TerminalWorkspaceTest::ordersAndConfirmsTerminalClipboardWrites()
              QStringLiteral("reentrant-stable"));
     QCOMPARE(resolved.constLast().constFirst().toULongLong(),
              reentrantConfirmationId);
+}
+
+void TerminalWorkspaceTest::routesDesktopNotificationsByStablePane()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+
+    TerminalWorkspace workspace;
+    QVERIFY(workspace.initialize(options, TerminalSessionStartMode::Deferred));
+    TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    TerminalController *const controller =
+        pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    const PaneId paneId = workspace.surfaceSnapshot().constFirst().paneId;
+    const TabId tabId = workspace.tabModel()->idAt(0);
+    QSignalSpy notifications(&workspace,
+                             &TerminalWorkspace::desktopNotificationRequested);
+    const TerminalDesktopNotification notification{
+        .title = QStringLiteral("Build"),
+        .body = QStringLiteral("complete"),
+    };
+
+    Q_EMIT controller->desktopNotificationRequested(notification);
+    QCOMPARE(notifications.size(), 1);
+    QCOMPARE(qvariant_cast<PaneId>(notifications.constFirst().at(0)), paneId);
+    QCOMPARE(qvariant_cast<TerminalDesktopNotification>(
+                 notifications.constFirst().at(1)),
+             notification);
+
+    // A forged or stale source pointer cannot borrow a live pane's stable ID.
+    Q_EMIT pane->desktopNotificationRequested(notification, nullptr);
+    QCOMPARE(notifications.size(), 1);
+
+    QVERIFY(QMetaObject::invokeMethod(
+        controller,
+        [controller, notification] {
+            Q_EMIT controller->desktopNotificationRequested(notification);
+        },
+        Qt::QueuedConnection));
+    bool deliveredDuringRemoval = false;
+    const QMetaObject::Connection removalDelivery = connect(
+        &workspace, &TerminalWorkspace::paneRemoved, this,
+        [&](PaneId removedId, TerminalPane *removedPane) {
+            QCOMPARE(removedId, paneId);
+            QCOMPARE(removedPane, pane);
+            QCoreApplication::sendPostedEvents(controller, QEvent::MetaCall);
+            deliveredDuringRemoval = true;
+        });
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ClosePane,
+        {tabId, paneId, 0},
+    }));
+    disconnect(removalDelivery);
+    QVERIFY(deliveredDuringRemoval);
+    QCOMPARE(notifications.size(), 1);
 }
 
 void TerminalWorkspaceTest::dropsSelectionClipboardWritesFromRetiredPanes()

@@ -1,6 +1,7 @@
 #include "application_controller.h"
 
 #include "desktop_activation.h"
+#include "desktop_notification_service.h"
 #include "ghostty_action_catalog.h"
 #include "ghostty_application_ipc.h"
 #include "ghostty_application_keybindings.h"
@@ -14,6 +15,7 @@
 #include "window_ui_controller.h"
 
 #include <QCursor>
+#include <QDebug>
 #include <QGuiApplication>
 #include <QInputMethod>
 #include <QPointer>
@@ -259,6 +261,7 @@ ApplicationController::ApplicationController(
               .command = selectedFirstCommand(effectiveOptions_),
               .hold = effectiveOptions_.hold,
           }))
+    , desktopNotifications_(std::make_unique<DesktopNotificationService>())
     , keybindings_(std::make_unique<GhosttyApplicationKeybindings>(
           effectiveOptions_, enableGlobalShortcutsPortal))
 {
@@ -272,6 +275,12 @@ ApplicationController::ApplicationController(
         keybindings_.get(),
         &GhosttyApplicationKeybindings::applicationActionRequested, this,
         [this](ApplicationAction action) { dispatchRequestedAction(action); });
+    connect(desktopNotifications_.get(),
+            &DesktopNotificationService::activationRequested, this,
+            [this](SurfaceTarget target) { (void)presentSurface(target); });
+    connect(desktopNotifications_.get(),
+            &DesktopNotificationService::warningOccurred, this,
+            [](const QString &message) { qWarning().noquote() << message; });
 }
 
 ApplicationController::~ApplicationController()
@@ -1657,6 +1666,20 @@ void ApplicationController::registerWindow(
                     record->ui->notifyClipboardCopied(empty);
                 }
             });
+    connect(
+        workspace, &TerminalWorkspace::desktopNotificationRequested, this,
+        [this, guarded = QPointer(workspace)](
+            PaneId paneId, const TerminalDesktopNotification &notification) {
+            if (!effectiveOptions_.desktopNotifications) return;
+            const WindowRecord *const record =
+                recordForWorkspace(guarded.data());
+            if (record == nullptr || record->workspace == nullptr
+                || !record->workspace->containsPane(paneId)) {
+                return;
+            }
+            (void)desktopNotifications_->show(notification,
+                                              {record->id, paneId});
+        });
     connect(workspace, &TerminalWorkspace::windowNavigationRequested, this,
             [this](WindowNavigationAction action, PaneId) {
                 // Keep activation in the originating event dispatch so Qt's
