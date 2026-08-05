@@ -1,0 +1,14 @@
+[Unit]
+Description=Ghostty Qt terminal emulator
+After=graphical-session.target
+After=dbus.socket
+Requires=dbus.socket
+
+[Service]
+Type=notify-reload
+ReloadSignal=SIGUSR2
+BusName=@GHOSTTY_QT_EFFECTIVE_APPLICATION_ID@
+ExecStart=__GHOSTTY_QT_INSTALL_SYSTEMD_COMMAND__ --single-instance=true --initial-window=false
+
+[Install]
+WantedBy=graphical-session.target

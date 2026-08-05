@@ -106,18 +106,27 @@ QStringList FrontendConfigService::watchedDirectories() const
 
 void FrontendConfigService::requestReload()
 {
+    const quint64 requestEpoch = requestEpoch_.advance();
+    Q_EMIT reloadScheduled(requestEpoch);
     debounceTimer_.start();
 }
 
 void FrontendConfigService::reloadNow()
 {
     debounceTimer_.stop();
+    // This synchronous generation also supersedes a request that was queued
+    // behind an in-flight worker. Its stale callback must not start another
+    // load under the epoch that reloadNow is about to settle.
+    reloadPending_ = false;
     refreshWatchPaths();
+    const quint64 requestEpoch = requestEpoch_.advance();
+    Q_EMIT reloadScheduled(requestEpoch);
     ++loadGeneration_;
 
     if (!loader_) {
-        applyLoadResult(std::unexpected(
-            QStringLiteral("Frontend configuration loader is unavailable")));
+        applyLoadResult(std::unexpected(QStringLiteral(
+                            "Frontend configuration loader is unavailable")),
+                        requestEpoch);
         return;
     }
 
@@ -125,10 +134,11 @@ void FrontendConfigService::reloadNow()
         QMutexLocker locker(&loaderMutex_);
         return loader_(configPath_);
     }();
-    applyLoadResult(std::move(result));
+    applyLoadResult(std::move(result), requestEpoch);
 }
 
-void FrontendConfigService::applyLoadResult(FrontendConfigLoadResult result)
+void FrontendConfigService::applyLoadResult(FrontendConfigLoadResult result,
+                                            quint64 requestEpoch)
 {
     if (!result) {
         const QString message = result.error().isEmpty()
@@ -137,6 +147,9 @@ void FrontendConfigService::applyLoadResult(FrontendConfigLoadResult result)
         lastError_ = message;
         refreshWatchPaths();
         if (!failureRetryTimer_.isActive()) failureRetryTimer_.start();
+        const QPointer<FrontendConfigService> guard(this);
+        Q_EMIT reloadSettled(requestEpoch);
+        if (!guard) return;
         Q_EMIT reloadFailed(message);
         return;
     }
@@ -146,6 +159,9 @@ void FrontendConfigService::applyLoadResult(FrontendConfigLoadResult result)
     snapshot_ = std::move(*result);
     refreshWatchPaths();
     const FrontendConfigSnapshot published = *snapshot_;
+    const QPointer<FrontendConfigService> guard(this);
+    Q_EMIT reloadSettled(requestEpoch);
+    if (!guard) return;
     Q_EMIT changed(published);
 }
 
@@ -158,38 +174,45 @@ void FrontendConfigService::beginAsyncReload()
         return;
     }
     if (!loader_) {
-        applyLoadResult(std::unexpected(
-            QStringLiteral("Frontend configuration loader is unavailable")));
+        const quint64 requestEpoch = requestEpoch_.current();
+        applyLoadResult(std::unexpected(QStringLiteral(
+                            "Frontend configuration loader is unavailable")),
+                        requestEpoch);
         return;
     }
 
     loadInProgress_ = true;
     const quint64 generation = ++loadGeneration_;
+    const quint64 requestEpoch = requestEpoch_.current();
     const FrontendConfigLoader loader = loader_;
     const QString path = configPath_;
     FrontendConfigService *const self = this;
     QMutex *const loaderMutex = &loaderMutex_;
-    reloadPool_.start([self, loader, path, generation, loaderMutex] {
-        FrontendConfigLoadResult result = [&] {
-            QMutexLocker locker(loaderMutex);
-            return loader(path);
-        }();
-        QMetaObject::invokeMethod(
-            self,
-            [self, generation, result = std::move(result)]() mutable {
-                const QPointer<FrontendConfigService> guard(self);
-                self->loadInProgress_ = false;
-                if (generation == self->loadGeneration_) {
-                    self->applyLoadResult(std::move(result));
-                }
-                if (!guard) return;
-                if (self->reloadPending_) {
-                    self->reloadPending_ = false;
-                    self->beginAsyncReload();
-                }
-            },
-            Qt::QueuedConnection);
-    });
+    reloadPool_.start(
+        [self, loader, path, generation, requestEpoch, loaderMutex] {
+            FrontendConfigLoadResult result = [&] {
+                QMutexLocker locker(loaderMutex);
+                return loader(path);
+            }();
+            QMetaObject::invokeMethod(
+                self,
+                [self, generation, requestEpoch,
+                 result = std::move(result)]() mutable {
+                    const QPointer<FrontendConfigService> guard(self);
+                    self->loadInProgress_ = false;
+                    if (generation == self->loadGeneration_) {
+                        self->applyLoadResult(std::move(result), requestEpoch);
+                    } else {
+                        Q_EMIT self->reloadSettled(requestEpoch);
+                    }
+                    if (!guard) return;
+                    if (self->reloadPending_) {
+                        self->reloadPending_ = false;
+                        self->beginAsyncReload();
+                    }
+                },
+                Qt::QueuedConnection);
+        });
 }
 
 QString FrontendConfigService::normalizedAbsolutePath(const QString &path)

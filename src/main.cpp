@@ -9,6 +9,7 @@
 #include "ghostty_config_service.h"
 #include "launch_options.h"
 #include "single_instance_activation.h"
+#include "systemd_notify.h"
 #include "terminal_cell_metrics.h"
 #include "terminal_geometry.h"
 #include "terminal_pane.h"
@@ -1888,6 +1889,20 @@ int main(int argc, char *argv[])
     // Ghostty owns last-window process lifetime, including disabled and
     // delayed modes. Qt's implicit auto-quit would bypass that policy.
     application.setQuitOnLastWindowClosed(false);
+
+    SystemdApplicationLifecycle systemdLifecycle;
+    const auto reloadSignalInstalled = systemdLifecycle.installReloadSignal();
+    if (!reloadSignalInstalled) {
+        qCritical().noquote()
+            << "Could not install the systemd SIGUSR2 reload bridge:"
+            << reloadSignalInstalled.error();
+        return 1;
+    }
+    QObject::connect(
+        &systemdLifecycle, &SystemdApplicationLifecycle::notificationFailed,
+        &application, [](const QString &message) {
+            qWarning().noquote() << "Systemd notification failed:" << message;
+        });
 #if GHOSTTY_QT_CONFIG_ENABLED
     if (identityConfigFailure.has_value()) {
         qWarning().noquote()
@@ -2107,6 +2122,13 @@ int main(int argc, char *argv[])
                          }
                      });
 
+    QObject::connect(&systemdLifecycle,
+                     &SystemdApplicationLifecycle::reloadRequested,
+                     &applicationController, [&applicationController] {
+                         (void)applicationController.dispatch(
+                             ApplicationAction::ReloadConfig);
+                     });
+
 #if GHOSTTY_QT_CONFIG_ENABLED
     const auto applyCurrentOptions = [&] {
         applicationController.applyLaunchOptions(reconcileAppearance(false));
@@ -2122,6 +2144,16 @@ int main(int argc, char *argv[])
         });
     QObject::connect(&configService, &GhosttyConfigService::changed,
                      &application, &reportConfigDiagnostics);
+    QObject::connect(
+        &configService, &GhosttyConfigService::reloadScheduled,
+        &systemdLifecycle, [&systemdLifecycle, &configService](quint64 epoch) {
+            systemdLifecycle.reloadScheduled(&configService, epoch);
+        });
+    QObject::connect(&configService, &GhosttyConfigService::reloadSettled,
+                     &systemdLifecycle,
+                     [&systemdLifecycle, &configService](quint64 epoch) {
+                         systemdLifecycle.reloadSettled(&configService, epoch);
+                     });
     QObject::connect(&applicationController,
                      &ApplicationController::configReloadRequested,
                      &configService, &GhosttyConfigService::requestReload);
@@ -2139,6 +2171,18 @@ int main(int argc, char *argv[])
                 ApplicationController::ConfigurationSource::Frontend);
             applyCurrentOptions();
             applicationController.notifyConfigurationReloaded();
+        });
+    QObject::connect(
+        &frontendConfigService, &FrontendConfigService::reloadScheduled,
+        &systemdLifecycle,
+        [&systemdLifecycle, &frontendConfigService](quint64 epoch) {
+            systemdLifecycle.reloadScheduled(&frontendConfigService, epoch);
+        });
+    QObject::connect(
+        &frontendConfigService, &FrontendConfigService::reloadSettled,
+        &systemdLifecycle,
+        [&systemdLifecycle, &frontendConfigService](quint64 epoch) {
+            systemdLifecycle.reloadSettled(&frontendConfigService, epoch);
         });
     QObject::connect(
         &applicationController, &ApplicationController::configReloadRequested,
@@ -2346,6 +2390,10 @@ int main(int argc, char *argv[])
         }
     });
 
+    // Remote launchers have already returned above. At this point the serving
+    // process has committed its initial-window policy, installed every action
+    // and reload handler, and can safely accept systemd activation or reload.
+    systemdLifecycle.applicationReady();
     const int exitCode = application.exec();
     if (lifetimeTestMode != ApplicationLifetimeTestMode::None
         && !lifetimeTestCompleted) {

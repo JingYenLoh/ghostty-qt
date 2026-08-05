@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ghostty_config_loader.h"
+#include "revision_counter.h"
 
 #include <QFileSystemWatcher>
 #include <QMutex>
@@ -71,6 +72,10 @@ public Q_SLOTS:
     void reloadNow();
 
 Q_SIGNALS:
+    // The latest request epoch is carried through debouncing and async
+    // coalescing so application readiness never completes an older reload.
+    void reloadScheduled(quint64 requestEpoch);
+    void reloadSettled(quint64 requestEpoch);
     // Published after every successful reload, including an unchanged
     // snapshot, so runtime-only surface overrides can be restored.
     void changed(const GhosttyConfigSnapshot &snapshot);
@@ -88,7 +93,7 @@ private:
     void refreshWatchPaths();
     void watchedPathChanged(const QString &path);
     void beginAsyncReload();
-    void applyLoadResult(GhosttyConfigLoadResult result);
+    void applyLoadResult(GhosttyConfigLoadResult result, quint64 requestEpoch);
 
     QStringList candidatePaths_;
     TerminalColorScheme colorScheme_;
@@ -107,5 +112,6 @@ private:
     bool asynchronousReloads_ = false;
     bool loadInProgress_ = false;
     bool reloadPending_ = false;
+    RevisionCounter requestEpoch_;
     quint64 loadGeneration_ = 0;
 };

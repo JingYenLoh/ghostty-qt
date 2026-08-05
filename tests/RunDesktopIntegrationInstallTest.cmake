@@ -48,12 +48,15 @@ set(desktop
     "${staging_root}${final_data_dir}/applications/${APPLICATION_ID}.desktop")
 set(service
     "${staging_root}${final_data_dir}/dbus-1/services/${APPLICATION_ID}.service")
+set(systemd_service
+    "${staging_root}${final_data_dir}/systemd/user/app-${APPLICATION_ID}.service")
 set(icon
     "${staging_root}${final_data_dir}/icons/hicolor/scalable/apps/${APPLICATION_ID}.svg")
 set(metainfo
     "${staging_root}${final_data_dir}/metainfo/${APPLICATION_ID}.metainfo.xml")
 foreach(required_path IN ITEMS
-        "${executable}" "${desktop}" "${service}" "${icon}" "${metainfo}")
+        "${executable}" "${desktop}" "${service}" "${systemd_service}"
+        "${icon}" "${metainfo}")
     if(NOT EXISTS "${required_path}")
         message(FATAL_ERROR "Installed desktop integration is missing: ${required_path}")
     endif()
@@ -61,6 +64,7 @@ endforeach()
 
 file(READ "${desktop}" desktop_contents)
 file(READ "${service}" service_contents)
+file(READ "${systemd_service}" systemd_service_contents)
 file(READ "${icon}" icon_contents)
 file(READ "${metainfo}" metainfo_contents)
 
@@ -146,6 +150,22 @@ foreach(quoted_character IN ITEMS
 endforeach()
 set(escaped_executable "${escaped_dbus_executable}")
 string(REPLACE [[%]] [[%%]] escaped_executable "${escaped_executable}")
+
+set(escaped_systemd_argument "${final_executable}")
+string(REPLACE [[\]] [[\\]] escaped_systemd_argument
+    "${escaped_systemd_argument}")
+string(REPLACE "${desktop_double_quote}" [[\"]]
+    escaped_systemd_argument "${escaped_systemd_argument}")
+string(REPLACE [[%]] [[%%]] escaped_systemd_argument
+    "${escaped_systemd_argument}")
+string(FIND "${final_executable}" "${desktop_double_quote}"
+    systemd_quote_position)
+string(FIND "${final_executable}" [[\]] systemd_backslash_position)
+if(systemd_quote_position EQUAL -1 AND systemd_backslash_position EQUAL -1)
+    set(systemd_command ":\"${escaped_systemd_argument}\"")
+else()
+    set(systemd_command ":env \"${escaped_systemd_argument}\"")
+endif()
 set(desktop_exec
     "Exec=\"${escaped_executable}\" --single-instance=true")
 set(desktop_try_exec "TryExec=${escaped_try_executable}")
@@ -155,6 +175,8 @@ string(CONCAT desktop_new_window_action
     "${desktop_exec}\n")
 set(service_exec
     "Exec=\"${escaped_dbus_executable}\" --single-instance=true --initial-window=false")
+set(systemd_service_exec
+    "ExecStart=${systemd_command} --single-instance=true --initial-window=false")
 string(FIND "${desktop_contents}" "${desktop_exec}\n"
     desktop_exec_position)
 string(FIND "${desktop_contents}" "${desktop_try_exec}\n"
@@ -167,6 +189,11 @@ string(FIND "${service_contents}" "Name=${APPLICATION_ID}\n"
     service_name_position)
 string(FIND "${service_contents}" "${service_exec}\n"
     service_exec_position)
+string(FIND "${service_contents}"
+    "SystemdService=app-${APPLICATION_ID}.service\n"
+    service_systemd_position)
+string(FIND "${systemd_service_contents}" "${systemd_service_exec}\n"
+    systemd_service_exec_position)
 
 if(NOT desktop_contents MATCHES "(^|\n)DBusActivatable=true(\n|$)"
    OR desktop_exec_position EQUAL -1
@@ -207,10 +234,25 @@ endif()
 
 if(service_name_position EQUAL -1
    OR service_exec_position EQUAL -1
+   OR service_systemd_position EQUAL -1
    OR service_contents MATCHES "%%"
-   OR service_contents MATCHES "SystemdService="
-   OR service_contents MATCHES "__GHOSTTY_QT_INSTALL_(TRY_|DBUS_)?EXECUTABLE__")
+   OR service_contents MATCHES "__GHOSTTY_QT_INSTALL_(TRY_|DBUS_)?EXECUTABLE__|__GHOSTTY_QT_INSTALL_SYSTEMD_COMMAND__")
     message(FATAL_ERROR "Invalid installed D-Bus service:\n${service_contents}")
+endif()
+
+if(systemd_service_exec_position EQUAL -1
+   OR NOT systemd_service_contents MATCHES
+       "(^|\n)Type=notify-reload(\n|$)"
+   OR NOT systemd_service_contents MATCHES
+       "(^|\n)ReloadSignal=SIGUSR2(\n|$)"
+   OR NOT systemd_service_contents MATCHES
+       "(^|\n)BusName=${APPLICATION_ID}(\n|$)"
+   OR NOT systemd_service_contents MATCHES
+       "(^|\n)WantedBy=graphical-session.target(\n|$)"
+   OR systemd_service_contents MATCHES
+       "__GHOSTTY_QT_INSTALL_(TRY_|DBUS_)?EXECUTABLE__|__GHOSTTY_QT_INSTALL_SYSTEMD_COMMAND__")
+    message(FATAL_ERROR
+        "Invalid installed systemd user service:\n${systemd_service_contents}")
 endif()
 
 # Exercise the installed service through the reference D-Bus daemon when its

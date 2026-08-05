@@ -107,6 +107,14 @@ void DesktopActivationTest::scopesPlatformDataToWindowPresentation()
     const ScopedEnvironmentVariable inheritedSentinel(
         QByteArrayLiteral("GHOSTTY_QT_ACTIVATION_SENTINEL"),
         QByteArrayLiteral("before-show"));
+    const ScopedEnvironmentVariable notifySocket(
+        QByteArrayLiteral("NOTIFY_SOCKET"),
+        QByteArrayLiteral("@ghostty-qt-test-notify"));
+    const ScopedEnvironmentVariable invocationId(
+        QByteArrayLiteral("INVOCATION_ID"), QByteArrayLiteral("service-id"));
+    const ScopedEnvironmentVariable dbusStarter(
+        QByteArrayLiteral("DBUS_STARTER_ADDRESS"),
+        QByteArrayLiteral("unix:path=/service-bus"));
 
     QByteArray tokenDuringShow;
     QByteArray startupDuringShow;
@@ -142,8 +150,13 @@ void DesktopActivationTest::scopesPlatformDataToWindowPresentation()
         QStringLiteral("XDG_ACTIVATION_TOKEN")));
     QVERIFY(!childDuringShow.contains(
         QStringLiteral("DESKTOP_STARTUP_ID")));
+    QVERIFY(!childDuringShow.contains(QStringLiteral("NOTIFY_SOCKET")));
+    QVERIFY(!childDuringShow.contains(QStringLiteral("INVOCATION_ID")));
+    QVERIFY(!childDuringShow.contains(QStringLiteral("DBUS_STARTER_ADDRESS")));
     QVERIFY(!qEnvironmentVariableIsSet("XDG_ACTIVATION_TOKEN"));
     QVERIFY(!qEnvironmentVariableIsSet("DESKTOP_STARTUP_ID"));
+    QCOMPARE(qgetenv("NOTIFY_SOCKET"),
+             QByteArrayLiteral("@ghostty-qt-test-notify"));
 }
 
 QTEST_MAIN(DesktopActivationTest)

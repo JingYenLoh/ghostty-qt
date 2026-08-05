@@ -768,6 +768,12 @@ string filtering, FIFO platform-data retention, pre-Qt launcher capture,
 scoped window-show projection, cached race-free worker snapshots,
 fallback-executable forwarding, cleanup, removal from inherited terminal child
 environments, and explicit reintroduction through finalized `env` overrides.
+The same full-process fixture gives the retained primary an abstract
+`NOTIFY_SOCKET`, verifies that a remote secondary emits no readiness, and maps
+`SIGUSR2` to ordered reload and completion datagrams. The focused
+`systemd-notify` test also covers filesystem sockets, malformed addresses,
+overlapping configuration epochs, burst coalescing, and restoration of the
+previous signal disposition.
 Controller coverage adds first-surface-only command/cwd/title overrides,
 inherit mode, duplicate pane IDs in different windows, dynamic rows for hidden
 quick terminals, cross-tab focus, and stale composite-target rejection. The
@@ -775,11 +781,11 @@ DESTDIR-staged desktop integration test checks
 configuration-specific IDs, relative or absolute final executable paths,
 distinct desktop fallback/service-host arguments, `TryExec`, the New Window
 desktop action, supported `X-TerminalArgExec`/`AppId`/`Dir` mappings, deliberate
-`Title`/`Hold` mappings, the shared desktop/icon/AppStream identity, XML and
-AppStream validity, SVG rendering from 16 through 512 pixels,
-special-character path serialization, optional `desktop-file-validate`, live
-activation of the installed service on a private D-Bus, and config-helper
-presence.
+`Title`/`Hold` mappings, the shared desktop/icon/AppStream identity, the
+matching systemd user unit and D-Bus delegation, XML and AppStream validity,
+SVG rendering from 16 through 512 pixels, service-specific special-character
+path serialization, optional `desktop-file-validate`, live activation of the
+installed service on a private D-Bus, and config-helper presence.
 BEL coverage keeps the worker event and GUI presentation boundaries separate:
 pane cases verify transition-only latch notification versus every-event bell
 publication, active title and border derivation, live feature changes without

@@ -1,3 +1,4 @@
 [D-BUS Service]
 Name=@GHOSTTY_QT_EFFECTIVE_APPLICATION_ID@
+SystemdService=app-@GHOSTTY_QT_EFFECTIVE_APPLICATION_ID@.service
 Exec="__GHOSTTY_QT_INSTALL_DBUS_EXECUTABLE__" --single-instance=true --initial-window=false

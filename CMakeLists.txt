@@ -682,6 +682,13 @@ ghostty_qt_add_internal_library(ghostty-qt-application-identity
 )
 target_link_libraries(ghostty-qt-application-identity PUBLIC Qt6::Core)
 
+ghostty_qt_add_internal_library(ghostty-qt-systemd-notify
+    src/systemd_notify.cpp
+    src/systemd_notify.h
+    src/unique_file_descriptor.h
+)
+target_link_libraries(ghostty-qt-systemd-notify PUBLIC Qt6::Core)
+
 ghostty_qt_add_internal_library(ghostty-qt-quick-terminal
     src/quick_terminal.cpp
     src/quick_terminal.h
@@ -1322,6 +1329,7 @@ target_link_libraries(ghostty-qt PRIVATE
     ghostty-qt-runtime-paths
     ghostty-qt-single-instance-activation
     ghostty-qt-shell-integration
+    ghostty-qt-systemd-notify
     ghostty-qt-tab-list-model
     ghostty-qt-terminal-controller
     ghostty-qt-terminal-foundation
@@ -1416,6 +1424,10 @@ configure_file(
     "${_ghostty_qt_desktop_build_dir}/ghostty-qt.service.in"
     @ONLY)
 configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/dist/linux/ghostty-qt-systemd.service.in"
+    "${_ghostty_qt_desktop_build_dir}/ghostty-qt-systemd.service.in"
+    @ONLY)
+configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/dist/linux/ghostty-qt.metainfo.xml.in"
     "${_ghostty_qt_desktop_build_dir}/ghostty-qt.metainfo.xml.in"
     @ONLY)
@@ -1431,6 +1443,10 @@ file(GENERATE
     OUTPUT
         "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}.service"
     INPUT "${_ghostty_qt_desktop_build_dir}/ghostty-qt.service.in")
+file(GENERATE
+    OUTPUT
+        "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/app-${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}.service"
+    INPUT "${_ghostty_qt_desktop_build_dir}/ghostty-qt-systemd.service.in")
 file(GENERATE
     OUTPUT
         "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}.metainfo.xml"
@@ -1453,6 +1469,9 @@ install(FILES
 install(FILES
     "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}.service"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/dbus-1/services")
+install(FILES
+    "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/app-${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}.service"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/systemd/user")
 install(FILES
     "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}.metainfo.xml"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/metainfo")

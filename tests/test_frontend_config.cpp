@@ -443,12 +443,18 @@ void FrontendConfigTest::debouncesAsynchronousReloads()
         [&loads](const QString &) { return snapshotWithMarker(++loads); }, 60);
     QCOMPARE(loads.load(), 1);
 
+    QSignalSpy scheduled(&service, &FrontendConfigService::reloadScheduled);
+    QSignalSpy settled(&service, &FrontendConfigService::reloadSettled);
     service.requestReload();
     service.requestReload();
     service.requestReload();
     QTRY_COMPARE_WITH_TIMEOUT(loads.load(), 2, 1000);
     QTest::qWait(100);
     QCOMPARE(loads.load(), 2);
+    QCOMPARE(scheduled.count(), 3);
+    QCOMPARE(settled.count(), 1);
+    QCOMPARE(settled.constFirst().constFirst().toULongLong(),
+             scheduled.constLast().constFirst().toULongLong());
 }
 
 void FrontendConfigTest::asynchronousReloadDoesNotBlockEventLoop()
@@ -494,14 +500,27 @@ void FrontendConfigTest::synchronousReloadSupersedesOlderAsyncResult()
         0);
     QCOMPARE(loads.load(), 1);
 
+    QSignalSpy scheduled(&service, &FrontendConfigService::reloadScheduled);
+    QSignalSpy settled(&service, &FrontendConfigService::reloadSettled);
     service.requestReload();
     QTRY_COMPARE_WITH_TIMEOUT(loads.load(), 2, 1000);
+
+    // Let a second request reach beginAsyncReload while generation 2 still
+    // owns the worker. reloadNow must supersede both that generation and its
+    // queued follow-up instead of allowing an untracked generation 4 later.
+    service.requestReload();
+    QTest::qWait(20);
     service.reloadNow();
     QCOMPARE(loads.load(), 3);
     QCOMPARE(service.snapshot().sourcePath, QStringLiteral("3"));
+    QCOMPARE(scheduled.count(), 3);
+    QCOMPARE(settled.count(), 1);
+    QCOMPARE(settled.constFirst(), scheduled.constLast());
 
     QTest::qWait(350);
     QCOMPARE(service.snapshot().sourcePath, QStringLiteral("3"));
+    QCOMPARE(settled.count(), 2);
+    QCOMPARE(settled.constLast(), scheduled.constFirst());
 }
 
 void FrontendConfigTest::publishesUnchangedSuccessfulReloads()
@@ -519,9 +538,14 @@ void FrontendConfigTest::publishesUnchangedSuccessfulReloads()
     QCOMPARE(loads, 1);
 
     QSignalSpy changed(&service, &FrontendConfigService::changed);
+    QSignalSpy scheduled(&service, &FrontendConfigService::reloadScheduled);
+    QSignalSpy settled(&service, &FrontendConfigService::reloadSettled);
     service.reloadNow();
     QCOMPARE(loads, 2);
     QCOMPARE(changed.count(), 1);
+    QCOMPARE(scheduled.count(), 1);
+    QCOMPARE(settled.count(), 1);
+    QCOMPARE(settled.constFirst(), scheduled.constFirst());
     const QVariant published = changed.constFirst().constFirst();
     QCOMPARE(published.metaType(),
              QMetaType::fromType<FrontendConfigSnapshot>());
@@ -550,10 +574,12 @@ void FrontendConfigTest::retainsLastGoodSnapshotAfterFailure()
 
     QSignalSpy changed(&service, &FrontendConfigService::changed);
     QSignalSpy failed(&service, &FrontendConfigService::reloadFailed);
+    QSignalSpy settled(&service, &FrontendConfigService::reloadSettled);
     fail = true;
     service.reloadNow();
 
     QCOMPARE(failed.count(), 1);
+    QCOMPARE(settled.count(), 1);
     QCOMPARE(failed.constFirst().constFirst().toString(),
              QStringLiteral("invalid frontend config"));
     QCOMPARE(changed.count(), 0);

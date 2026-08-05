@@ -182,6 +182,20 @@ target_link_libraries(test-application-identity PRIVATE
 add_test(NAME application-identity COMMAND test-application-identity)
 set_tests_properties(application-identity PROPERTIES TIMEOUT 10)
 
+qt_add_executable(test-systemd-notify
+    test_systemd_notify.cpp
+)
+target_include_directories(test-systemd-notify PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-systemd-notify PRIVATE
+    Qt6::Core
+    Qt6::Test
+    ghostty-qt-systemd-notify
+)
+add_test(NAME systemd-notify COMMAND test-systemd-notify)
+set_tests_properties(systemd-notify PROPERTIES TIMEOUT 10)
+
 qt_add_executable(test-quick-terminal
     test_quick_terminal.cpp
 )

@@ -419,12 +419,18 @@ void GhosttyConfigServiceTest::debouncesReloadBursts()
         60);
     QCOMPARE(loads, 1);
 
+    QSignalSpy scheduled(&service, &GhosttyConfigService::reloadScheduled);
+    QSignalSpy settled(&service, &GhosttyConfigService::reloadSettled);
     service.requestReload();
     service.requestReload();
     service.requestReload();
     QTRY_COMPARE_WITH_TIMEOUT(loads, 2, 1000);
     QTest::qWait(100);
     QCOMPARE(loads, 2);
+    QVERIFY(scheduled.count() >= 3);
+    QCOMPARE(settled.count(), 1);
+    QCOMPARE(settled.constFirst().constFirst().toULongLong(),
+             scheduled.constLast().constFirst().toULongLong());
 }
 
 void GhosttyConfigServiceTest::standardServiceReloadsOffGuiThread()
@@ -452,24 +458,53 @@ void GhosttyConfigServiceTest::standardServiceReloadsOffGuiThread()
 void GhosttyConfigServiceTest::synchronousReloadSupersedesOlderAsyncResult()
 {
     std::atomic<int> loads = 0;
-    GhosttyConfigService service([&loads](const GhosttyConfigLoadRequest &) {
-        const int load = ++loads;
-        if (load == 2) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        }
-        return snapshotWithMarker(load);
-    });
-    QCOMPARE(loads.load(), 1);
+    {
+        std::binary_semaphore blockedLoadStarted{0};
+        std::binary_semaphore releaseBlockedLoad{0};
+        bool blockedLoadReleased = false;
+        GhosttyConfigService service(
+            [&loads, &blockedLoadStarted,
+             &releaseBlockedLoad](const GhosttyConfigLoadRequest &) {
+                const int load = ++loads;
+                if (load == 2) {
+                    blockedLoadStarted.release();
+                    releaseBlockedLoad.acquire();
+                }
+                return snapshotWithMarker(load);
+            });
+        const auto unblockOnFailure = qScopeGuard([&] {
+            if (!blockedLoadReleased) releaseBlockedLoad.release();
+        });
+        QCOMPARE(loads.load(), 1);
 
-    service.requestReload();
-    QTRY_COMPARE_WITH_TIMEOUT(loads.load(), 2, 1000);
-    service.reloadNow();
+        QSignalSpy scheduled(&service, &GhosttyConfigService::reloadScheduled);
+        QSignalSpy settled(&service, &GhosttyConfigService::reloadSettled);
+        service.requestReload();
+        QTRY_COMPARE_WITH_TIMEOUT(loads.load(), 2, 1000);
+        QVERIFY2(blockedLoadStarted.try_acquire_for(std::chrono::seconds(1)),
+                 "the asynchronous reload did not enter its blocked section");
+
+        // Let a second request become the worker's queued follow-up. A
+        // synchronous reload supersedes that request as well as generation 2.
+        service.requestReload();
+        QTest::qWait(GhosttyConfigService::DefaultDebounceMilliseconds + 25);
+        blockedLoadReleased = true;
+        releaseBlockedLoad.release();
+        service.reloadNow();
+        QCOMPARE(loads.load(), 3);
+        QCOMPARE(service.snapshot().values.windowWidth, quint32{3});
+        QCOMPARE(scheduled.count(), 3);
+        QCOMPARE(settled.count(), 1);
+        QCOMPARE(settled.constFirst(), scheduled.constLast());
+
+        // The blocked generation's queued callback cannot replace generation
+        // 3 or consume the superseded follow-up to start generation 4.
+        QTRY_COMPARE_WITH_TIMEOUT(settled.count(), 2, 1000);
+        QCOMPARE(service.snapshot().values.windowWidth, quint32{3});
+        QCOMPARE(settled.constLast(), scheduled.constFirst());
+    }
+    // Destruction joins any worker that the stale callback might have queued.
     QCOMPARE(loads.load(), 3);
-    QCOMPARE(service.snapshot().values.windowWidth, quint32{3});
-
-    // The slow generation completes later but cannot replace generation 3.
-    QTest::qWait(350);
-    QCOMPARE(service.snapshot().values.windowWidth, quint32{3});
 }
 
 void GhosttyConfigServiceTest::colorSchemeChangeSupersedesBlockedAsyncResult()
@@ -537,9 +572,14 @@ void GhosttyConfigServiceTest::publishesUnchangedSuccessfulReloads()
     QCOMPARE(loads, 1);
 
     QSignalSpy changed(&service, &GhosttyConfigService::changed);
+    QSignalSpy scheduled(&service, &GhosttyConfigService::reloadScheduled);
+    QSignalSpy settled(&service, &GhosttyConfigService::reloadSettled);
     service.reloadNow();
     QCOMPARE(loads, 2);
     QCOMPARE(changed.count(), 1);
+    QCOMPARE(scheduled.count(), 1);
+    QCOMPARE(settled.count(), 1);
+    QCOMPARE(settled.constFirst(), scheduled.constFirst());
     const QVariant published = changed.constFirst().constFirst();
     QCOMPARE(published.metaType(),
              QMetaType::fromType<GhosttyConfigSnapshot>());
@@ -571,10 +611,12 @@ void GhosttyConfigServiceTest::retainsLastGoodSnapshotAfterFailure()
 
     QSignalSpy changed(&service, &GhosttyConfigService::changed);
     QSignalSpy failed(&service, &GhosttyConfigService::reloadFailed);
+    QSignalSpy settled(&service, &GhosttyConfigService::reloadSettled);
     fail = true;
     service.reloadNow();
 
     QCOMPARE(failed.count(), 1);
+    QCOMPARE(settled.count(), 1);
     QCOMPARE(failed.constFirst().constFirst().toString(),
              QStringLiteral("invalid config"));
     QCOMPARE(changed.count(), 0);

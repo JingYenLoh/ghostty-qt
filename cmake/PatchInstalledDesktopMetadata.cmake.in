@@ -48,9 +48,36 @@ set(_ghostty_qt_exec_executable "${_ghostty_qt_dbus_executable}")
 string(REPLACE [[%]] [[%%]] _ghostty_qt_exec_executable
     "${_ghostty_qt_exec_executable}")
 
+# systemd.exec uses its own double-quoted command grammar. Its ':' executable
+# prefix disables environment substitution, while '%%' suppresses unit
+# specifier expansion. The executable token itself cannot contain a literal
+# quote or backslash even when escaped. For those legal filesystem paths, use
+# the standard-path `env` trampoline so the installed executable is an
+# argument instead. Backticks have no shell meaning in either form.
+set(_ghostty_qt_systemd_argument "${_ghostty_qt_executable}")
+string(REPLACE [[\]] [[\\]] _ghostty_qt_systemd_argument
+    "${_ghostty_qt_systemd_argument}")
+string(REPLACE "${_ghostty_qt_double_quote}" [[\"]]
+    _ghostty_qt_systemd_argument "${_ghostty_qt_systemd_argument}")
+string(REPLACE [[%]] [[%%]] _ghostty_qt_systemd_argument
+    "${_ghostty_qt_systemd_argument}")
+string(FIND "${_ghostty_qt_executable}" "${_ghostty_qt_double_quote}"
+    _ghostty_qt_systemd_quote_position)
+string(FIND "${_ghostty_qt_executable}" [[\]]
+    _ghostty_qt_systemd_backslash_position)
+if(_ghostty_qt_systemd_quote_position EQUAL -1
+   AND _ghostty_qt_systemd_backslash_position EQUAL -1)
+    set(_ghostty_qt_systemd_command
+        ":\"${_ghostty_qt_systemd_argument}\"")
+else()
+    set(_ghostty_qt_systemd_command
+        ":env \"${_ghostty_qt_systemd_argument}\"")
+endif()
+
 foreach(_ghostty_qt_metadata IN ITEMS
         "applications/@GHOSTTY_QT_EFFECTIVE_APPLICATION_ID@.desktop"
-        "dbus-1/services/@GHOSTTY_QT_EFFECTIVE_APPLICATION_ID@.service")
+        "dbus-1/services/@GHOSTTY_QT_EFFECTIVE_APPLICATION_ID@.service"
+        "systemd/user/app-@GHOSTTY_QT_EFFECTIVE_APPLICATION_ID@.service")
     set(_ghostty_qt_metadata_path
         "${_ghostty_qt_metadata_root}/${_ghostty_qt_metadata}")
     file(READ "${_ghostty_qt_metadata_path}" _ghostty_qt_contents)
@@ -63,8 +90,11 @@ foreach(_ghostty_qt_metadata IN ITEMS
     string(REPLACE "__GHOSTTY_QT_INSTALL_DBUS_EXECUTABLE__"
         "${_ghostty_qt_dbus_executable}"
         _ghostty_qt_contents "${_ghostty_qt_contents}")
+    string(REPLACE "__GHOSTTY_QT_INSTALL_SYSTEMD_COMMAND__"
+        "${_ghostty_qt_systemd_command}"
+        _ghostty_qt_contents "${_ghostty_qt_contents}")
     if(_ghostty_qt_contents
-        MATCHES "__GHOSTTY_QT_INSTALL_(TRY_|DBUS_)?EXECUTABLE__")
+        MATCHES "__GHOSTTY_QT_INSTALL_(TRY_|DBUS_)?EXECUTABLE__|__GHOSTTY_QT_INSTALL_SYSTEMD_COMMAND__")
         message(FATAL_ERROR
             "Desktop metadata retained its executable placeholder: ${_ghostty_qt_metadata_path}")
     endif()

@@ -18,8 +18,9 @@ every Ghostty frontend feature.
 The project already covers the core terminal, renderer, tabs and splits,
 multiwindow lifecycle, quick terminal, configuration, keybindings, search,
 links, clipboard writes, shell integration, terminfo, desktop activation,
-ordinary Kitty graphics placements, custom-shader post-processing, and
-substantial appearance behavior.
+systemd service readiness and reload coordination, ordinary Kitty graphics
+placements, custom-shader post-processing, and substantial appearance
+behavior.
 
 ## Parity source of truth
 
@@ -81,8 +82,8 @@ for intentional upgrade procedure.
   backends keep terminal output unfiltered and expose a configuration
   diagnostic; final multi-pass output and frame cost still require
   qualification on the target GPU and Wayland compositor.
-- Saved sessions, a theme editor, systemd readiness notification, and
-  distribution packaging remain future work.
+- Saved sessions, a theme editor, and distribution packaging remain future
+  work.
 
 The exact API gaps and acceptance criteria are maintained in
 [Features requiring upstream Ghostty changes](../REQUIRES_UPSTREAM.md).

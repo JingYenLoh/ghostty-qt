@@ -95,8 +95,8 @@ advanced text/graphics support, and distribution:
   ID also remains limited by the public C API, which exposes only the
   destination URI.
 - Runtime terminfo lookup is relocatable and covered by a staged-install test.
-  A second staged contract covers desktop and direct D-Bus service activation,
-  a scalable project icon, and AppStream metadata; systemd notification and
+  A second staged contract covers desktop, D-Bus, and systemd user-service
+  activation, a scalable project icon, and AppStream metadata;
   distribution-specific packages remain.
 - Headless smoke tests use Qt's software scene graph. The hardware RHI path
   needs interactive visual and performance qualification on representative

@@ -1344,13 +1344,15 @@ bool SessionWorker::spawnChild()
         struct sigaction defaultAction{};
         defaultAction.sa_handler = SIG_DFL;
         if (::sigemptyset(&defaultAction.sa_mask) != 0
-            || ::sigaction(SIGHUP, &defaultAction, nullptr) != 0) {
+            || ::sigaction(SIGHUP, &defaultAction, nullptr) != 0
+            || ::sigaction(SIGUSR2, &defaultAction, nullptr) != 0) {
             _exit(126);
         }
 
         // forkpty returns to the parent before the child necessarily finishes
-        // login_tty. Publish readiness only after SIGHUP can no longer invoke
-        // an inherited Qt/application handler during an immediate close.
+        // login_tty. Publish readiness only after SIGHUP and systemd's reload
+        // signal can no longer invoke an inherited application handler during
+        // an immediate close or while the cgroup launch gate is pending.
         constexpr char ready = 1;
         ssize_t written = -1;
         do {

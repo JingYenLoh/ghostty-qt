@@ -5,6 +5,7 @@
 #include <QMutexLocker>
 #include <QWindow>
 
+#include <array>
 #include <cstddef>
 
 namespace {
@@ -26,8 +27,23 @@ QString exactString(const QVariantMap &platformData, const QString &key)
 QProcessEnvironment sanitizedSystemEnvironment()
 {
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
-    environment.remove(QStringLiteral("XDG_ACTIVATION_TOKEN"));
-    environment.remove(QStringLiteral("DESKTOP_STARTUP_ID"));
+    // Launcher capabilities and service-manager identity belong to the
+    // application process. A terminal child must neither reuse one-shot
+    // presentation state nor impersonate ghostty-qt to D-Bus or systemd.
+    constexpr std::array<const char *, 9> ApplicationOnlyEnvironment{
+        "XDG_ACTIVATION_TOKEN",
+        "DESKTOP_STARTUP_ID",
+        "GIO_LAUNCHED_DESKTOP_FILE",
+        "GIO_LAUNCHED_DESKTOP_FILE_PID",
+        "DBUS_STARTER_ADDRESS",
+        "DBUS_STARTER_BUS_TYPE",
+        "INVOCATION_ID",
+        "JOURNAL_STREAM",
+        "NOTIFY_SOCKET",
+    };
+    for (const char *name : ApplicationOnlyEnvironment) {
+        environment.remove(QString::fromLatin1(name));
+    }
     return environment;
 }
 

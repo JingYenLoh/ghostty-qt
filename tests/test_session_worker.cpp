@@ -257,7 +257,7 @@ private Q_SLOTS:
     void cgroupSoftFailureContinuesLaunch();
     void cgroupHardFailurePreventsExec();
     void disabledCgroupSkipsScopeMove();
-    void stripsDesktopActivationFromChildEnvironment();
+    void stripsApplicationOnlyEnvironmentFromChild();
     void fallsBackFromUnavailableWorkingDirectory_data();
     void fallsBackFromUnavailableWorkingDirectory();
     void preservesInheritedLogicalPwd();
@@ -1817,7 +1817,7 @@ void SessionWorkerTest::resizesPtyWithPaddingExcludedPixels()
     worker.shutdown();
 }
 
-void SessionWorkerTest::stripsDesktopActivationFromChildEnvironment()
+void SessionWorkerTest::stripsApplicationOnlyEnvironmentFromChild()
 {
     const ScopedEnvironmentVariable activationToken(
         QByteArrayLiteral("XDG_ACTIVATION_TOKEN"),
@@ -1828,6 +1828,25 @@ void SessionWorkerTest::stripsDesktopActivationFromChildEnvironment()
     const ScopedEnvironmentVariable sentinel(
         QByteArrayLiteral("GHOSTTY_QT_CHILD_ENV_SENTINEL"),
         QByteArrayLiteral("preserved"));
+    const ScopedEnvironmentVariable notifySocket(
+        QByteArrayLiteral("NOTIFY_SOCKET"),
+        QByteArrayLiteral("@must-not-leak"));
+    const ScopedEnvironmentVariable invocationId(
+        QByteArrayLiteral("INVOCATION_ID"), QByteArrayLiteral("must-not-leak"));
+    const ScopedEnvironmentVariable journalStream(
+        QByteArrayLiteral("JOURNAL_STREAM"), QByteArrayLiteral("8:9"));
+    const ScopedEnvironmentVariable dbusStarterAddress(
+        QByteArrayLiteral("DBUS_STARTER_ADDRESS"),
+        QByteArrayLiteral("unix:path=/must-not-leak"));
+    const ScopedEnvironmentVariable dbusStarterType(
+        QByteArrayLiteral("DBUS_STARTER_BUS_TYPE"),
+        QByteArrayLiteral("session"));
+    const ScopedEnvironmentVariable launchedDesktopFile(
+        QByteArrayLiteral("GIO_LAUNCHED_DESKTOP_FILE"),
+        QByteArrayLiteral("/must-not-leak.desktop"));
+    const ScopedEnvironmentVariable launchedDesktopPid(
+        QByteArrayLiteral("GIO_LAUNCHED_DESKTOP_FILE_PID"),
+        QByteArrayLiteral("1234"));
 
     qRegisterMetaType<TerminalUpdate>();
     SessionWorker worker;
@@ -1841,11 +1860,19 @@ void SessionWorkerTest::stripsDesktopActivationFromChildEnvironment()
     options.program = {
         QStringLiteral("/bin/sh"),
         QStringLiteral("-c"),
-        QStringLiteral(
-            "printf 'xdg=%s startup=%s sentinel=%s\\n' "
-            "\"${XDG_ACTIVATION_TOKEN-unset}\" "
-            "\"${DESKTOP_STARTUP_ID-unset}\" "
-            "\"${GHOSTTY_QT_CHILD_ENV_SENTINEL-unset}\""),
+        QStringLiteral("printf 'xdg=%s startup=%s notify=%s invocation=%s "
+                       "journal=%s starter=%s starter_type=%s desktop=%s "
+                       "desktop_pid=%s sentinel=%s\\n' "
+                       "\"${XDG_ACTIVATION_TOKEN-unset}\" "
+                       "\"${DESKTOP_STARTUP_ID-unset}\" "
+                       "\"${NOTIFY_SOCKET-unset}\" "
+                       "\"${INVOCATION_ID-unset}\" "
+                       "\"${JOURNAL_STREAM-unset}\" "
+                       "\"${DBUS_STARTER_ADDRESS-unset}\" "
+                       "\"${DBUS_STARTER_BUS_TYPE-unset}\" "
+                       "\"${GIO_LAUNCHED_DESKTOP_FILE-unset}\" "
+                       "\"${GIO_LAUNCHED_DESKTOP_FILE_PID-unset}\" "
+                       "\"${GHOSTTY_QT_CHILD_ENV_SENTINEL-unset}\""),
     };
     options.hold = true;
     worker.initialize(options);
@@ -1858,8 +1885,10 @@ void SessionWorkerTest::stripsDesktopActivationFromChildEnvironment()
                  : qPrintable(errorSpy.constFirst().constFirst().toString()));
     QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
     const QString contents = frameText(accumulatedFrame(updateSpy));
-    QVERIFY2(contents.contains(
-                 QStringLiteral("xdg=unset startup=unset sentinel=preserved")),
+    QVERIFY2(contents.contains(QStringLiteral(
+                 "xdg=unset startup=unset notify=unset invocation=unset "
+                 "journal=unset starter=unset starter_type=unset "
+                 "desktop=unset desktop_pid=unset sentinel=preserved")),
              qPrintable(contents));
     worker.shutdown();
 }
@@ -2164,6 +2193,8 @@ void SessionWorkerTest::usesConfiguredTerminalEnvironment()
     const ScopedEnvironmentVariable activationToken(
         QByteArrayLiteral("XDG_ACTIVATION_TOKEN"),
         QByteArrayLiteral("sanitized"));
+    const ScopedEnvironmentVariable notifySocket(
+        QByteArrayLiteral("NOTIFY_SOCKET"), QByteArrayLiteral("@sanitized"));
     const ScopedEnvironmentVariable parentPath(
         QByteArrayLiteral("PATH"), QByteArrayLiteral("/bin:/usr/bin"));
 
@@ -2195,6 +2226,10 @@ void SessionWorkerTest::usesConfiguredTerminalEnvironment()
         {
             .key = QByteArrayLiteral("XDG_ACTIVATION_TOKEN"),
             .value = QByteArrayLiteral("configured-token"),
+        },
+        {
+            .key = QByteArrayLiteral("NOTIFY_SOCKET"),
+            .value = QByteArrayLiteral("@configured-notify"),
         },
         {.key = QByteArrayLiteral("TERM"), .value = configuredTerm},
         {
@@ -2233,9 +2268,10 @@ void SessionWorkerTest::usesConfiguredTerminalEnvironment()
     options.program = {
         QStringLiteral("sh"),
         QStringLiteral("-c"),
-        QStringLiteral("printf 'sentinel=%s xdg=%s removed=%s\\n' "
+        QStringLiteral("printf 'sentinel=%s xdg=%s notify=%s removed=%s\\n' "
                        "\"$GHOSTTY_QT_CHILD_ENV_SENTINEL\" "
-                       "\"$XDG_ACTIVATION_TOKEN\" \"$GHOSTTY_QT_REMOVED_ENV\"; "
+                       "\"$XDG_ACTIVATION_TOKEN\" \"$NOTIFY_SOCKET\" "
+                       "\"$GHOSTTY_QT_REMOVED_ENV\"; "
                        "printf 'terminfo=%s color=%s program=%s version=%s\\n' "
                        "\"$TERMINFO\" \"$COLORTERM\" \"$TERM_PROGRAM\" "
                        "\"$TERM_PROGRAM_VERSION\"; "
@@ -2262,6 +2298,7 @@ void SessionWorkerTest::usesConfiguredTerminalEnvironment()
     const QString contents = frameText(accumulatedFrame(updateSpy));
     QVERIFY2(contents.contains(
                  QStringLiteral("sentinel=configured xdg=configured-token "
+                                "notify=@configured-notify "
                                 "removed=still-inherited")),
              qPrintable(contents));
     QVERIFY2(contents.contains(QStringLiteral(

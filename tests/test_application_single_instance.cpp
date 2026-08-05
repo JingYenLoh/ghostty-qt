@@ -1,5 +1,6 @@
 #include "private_session_bus.h"
 
+#include <QCoreApplication>
 #include <QDBusConnectionInterface>
 #include <QDBusError>
 #include <QDBusMessage>
@@ -17,10 +18,21 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QUuid>
 #include <QVariantMap>
 
 #include <algorithm>
+#include <array>
+#include <cerrno>
+#include <cstddef>
+#include <cstring>
 #include <optional>
+
+#include <poll.h>
+#include <signal.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
 
 #ifndef GHOSTTY_QT_TEST_CONFIG_ENABLED
 #define GHOSTTY_QT_TEST_CONFIG_ENABLED 0
@@ -105,6 +117,79 @@ bool writeEnvironmentProbe(const QString &path)
     return script.open(QIODevice::WriteOnly | QIODevice::Truncate)
         && script.write(contents) == contents.size();
 }
+
+class NotifyReceiver final {
+public:
+    NotifyReceiver()
+        : address_(QByteArrayLiteral("@ghostty-qt-application-")
+                   + QByteArray::number(QCoreApplication::applicationPid())
+                   + '-' + QUuid::createUuid().toByteArray(QUuid::Id128))
+        , descriptor_(::socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0))
+    {
+        if (descriptor_ < 0) {
+            errorCode_ = errno;
+            error_ = QString::fromLocal8Bit(std::strerror(errno));
+            return;
+        }
+        struct sockaddr_un socketAddress{};
+        socketAddress.sun_family = AF_UNIX;
+        const auto pathLength = static_cast<std::size_t>(address_.size());
+        std::memcpy(socketAddress.sun_path, address_.constData(), pathLength);
+        socketAddress.sun_path[0] = '\0';
+        const socklen_t length = static_cast<socklen_t>(
+            offsetof(sockaddr_un, sun_path) + pathLength);
+        if (::bind(descriptor_,
+                   reinterpret_cast<const struct sockaddr *>(&socketAddress),
+                   length)
+            != 0) {
+            errorCode_ = errno;
+            error_ = QString::fromLocal8Bit(std::strerror(errno));
+        }
+    }
+
+    ~NotifyReceiver()
+    {
+        if (descriptor_ >= 0) (void)::close(descriptor_);
+    }
+
+    Q_DISABLE_COPY_MOVE(NotifyReceiver)
+
+    [[nodiscard]] bool isValid() const
+    {
+        return descriptor_ >= 0 && error_.isEmpty();
+    }
+    [[nodiscard]] int errorCode() const { return errorCode_; }
+    [[nodiscard]] const QString &errorString() const { return error_; }
+    [[nodiscard]] const QByteArray &address() const { return address_; }
+
+    QByteArray receive(int timeoutMilliseconds)
+    {
+        struct pollfd descriptor{
+            .fd = descriptor_,
+            .events = POLLIN,
+            .revents = 0,
+        };
+        int ready = -1;
+        do {
+            ready = ::poll(&descriptor, 1, timeoutMilliseconds);
+        } while (ready < 0 && errno == EINTR);
+        if (ready <= 0 || (descriptor.revents & POLLIN) == 0) return {};
+
+        std::array<char, 512> buffer{};
+        ssize_t size = -1;
+        do {
+            size = ::recv(descriptor_, buffer.data(), buffer.size(), 0);
+        } while (size < 0 && errno == EINTR);
+        if (size <= 0) return {};
+        return QByteArray(buffer.data(), static_cast<qsizetype>(size));
+    }
+
+private:
+    QByteArray address_;
+    int descriptor_ = -1;
+    int errorCode_ = 0;
+    QString error_;
+};
 
 QProcessEnvironment headlessApplicationEnvironment(const QString &configHome)
 {
@@ -339,11 +424,96 @@ private Q_SLOTS:
     void ghosttyCliActionColdStartsService();
     void hostPortalRegistrationPrecedesGlobalShortcutSession_data();
     void hostPortalRegistrationPrecedesGlobalShortcutSession();
+    void systemdReadinessAndReloadBelongToPrimary();
 #if GHOSTTY_QT_TEST_CONFIG_ENABLED
     void residentPrimaryIsReactivatedByBareSecondLaunch();
     void falseLauncherLeavesPrimaryAtZeroUntilTrueLauncherActivates();
 #endif
 };
+
+void ApplicationSingleInstanceTest::systemdReadinessAndReloadBelongToPrimary()
+{
+    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon"))
+            .isEmpty()) {
+        QSKIP("dbus-daemon is unavailable");
+    }
+    NotifyReceiver notify;
+    if (!notify.isValid()
+        && (notify.errorCode() == EPERM || notify.errorCode() == EACCES)) {
+        QSKIP("The managed environment forbids AF_UNIX datagram sockets");
+    }
+    QVERIFY2(notify.isValid(), qPrintable(notify.errorString()));
+
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir configHome(QDir::current().filePath(
+        QStringLiteral("tmp/application-systemd-notify-XXXXXX")));
+    QVERIFY(configHome.isValid());
+    QVERIFY(writeGhosttyConfig(
+        configHome.path(),
+        QByteArrayLiteral("initial-window = true\n"
+                          "confirm-close-surface = false\n")));
+    QVERIFY(writeFrontendConfig(
+        configHome.path(), QByteArrayLiteral("single-instance = false\n")));
+
+    PrivateSessionBus bus;
+    QVERIFY2(bus.start(), qPrintable(bus.errorString()));
+    QProcessEnvironment environment =
+        applicationEnvironment(bus, configHome.path());
+    environment.insert(QStringLiteral("NOTIFY_SOCKET"),
+                       QString::fromLatin1(notify.address()));
+    environment.insert(QStringLiteral("GHOSTTY_QT_TEST_DESKTOP_ACTIVATION"),
+                       QStringLiteral("1"));
+
+    QProcess primary;
+    primary.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
+    primary.setArguments({QStringLiteral("--single-instance=true"),
+                          QStringLiteral("--initial-window=false")});
+    primary.setProcessEnvironment(environment);
+    primary.start();
+    QVERIFY(primary.waitForStarted(3000));
+    const auto cleanup = qScopeGuard([&primary] {
+        if (primary.state() == QProcess::NotRunning) return;
+        primary.kill();
+        primary.waitForFinished(3000);
+    });
+
+    QByteArray output;
+    QVERIFY2(waitForMarker(
+                 primary, output,
+                 QByteArrayView("GHOSTTY_QT_DESKTOP_ACTIVATION_READY"), 10'000),
+             qPrintable(processFailure(primary, output)));
+    QCOMPARE(notify.receive(3000), QByteArrayLiteral("READY=1"));
+
+    QVERIFY(::kill(static_cast<pid_t>(primary.processId()), SIGUSR2) == 0);
+    const QByteArray reloading = notify.receive(3000);
+    QVERIFY2(
+        reloading.startsWith(QByteArrayLiteral("RELOADING=1\nMONOTONIC_USEC=")),
+        reloading.constData());
+    QCOMPARE(notify.receive(10'000), QByteArrayLiteral("READY=1"));
+
+    QProcess secondary;
+    secondary.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
+    secondary.setArguments({QStringLiteral("--single-instance=true")});
+    secondary.setProcessEnvironment(environment);
+    secondary.start();
+    QVERIFY(secondary.waitForStarted(3000));
+    QVERIFY2(secondary.waitForFinished(10'000),
+             qPrintable(
+                 processFailure(secondary, secondary.readAllStandardOutput())));
+    QCOMPARE(secondary.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(secondary.exitCode(), 0);
+
+    QVERIFY2(
+        waitForMarker(primary, output,
+                      QByteArrayView("GHOSTTY_QT_DESKTOP_ACTIVATION_CREATED"),
+                      10'000),
+        qPrintable(processFailure(primary, output)));
+    QVERIFY2(primary.waitForFinished(10'000),
+             qPrintable(processFailure(primary, output)));
+    QCOMPARE(primary.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(primary.exitCode(), 0);
+    QCOMPARE(notify.receive(100), QByteArray());
+}
 
 void ApplicationSingleInstanceTest::execFallbackForwardsLauncherPlatformData()
 {

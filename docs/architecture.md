@@ -302,8 +302,8 @@ Destruction sends
 uses `SIGKILL` if the group does not exit; workspace/tab teardown starts all
 pane shutdowns first so grace periods overlap. A close-on-exec readiness pipe
 holds parent-side publication until the `forkpty` child has reset its inherited
-`SIGHUP` disposition, so an immediate close cannot enter an application signal
-handler in the child before `exec`.
+`SIGHUP` and `SIGUSR2` dispositions, so an immediate close or systemd reload
+cannot enter an application signal handler in the child before `exec`.
 
 When the finalized Linux cgroup policy applies, a second close-on-exec
 parent/child gate extends that boundary. The child publishes PTY readiness and
@@ -469,6 +469,30 @@ is functional. Standard `ActivateAction(s,av,a{sv})` and a sibling exact
 `new-window-command`, and `toggle-quick-terminal` requests. Unknown names and
 malformed parameter variants are rejected before entering the queue.
 `Open(as,a{sv})` remains exported with a stable `NotSupported` error.
+
+The installed D-Bus service names a configuration-specific
+`app-<application-id>.service`, allowing the bus to delegate cold activation to
+the user systemd manager while keeping a direct executable fallback. That unit
+uses `Type=notify-reload`, `ReloadSignal=SIGUSR2`, and the same `BusName`.
+Only the retained primary or independent serving process reaches the startup
+`READY=1` boundary: single-instance clients have already returned, initial
+window policy is committed, and the activation and reload handlers are
+installed. A direct `AF_UNIX` datagram implementation supports both filesystem
+and abstract `NOTIFY_SOCKET` addresses. It intentionally adds no direct or
+build-contract `libsystemd` dependency, matching the protocol-level strategy
+used by the pinned Ghostty implementation. Other Qt/platform libraries may
+still bring `libsystemd` into a process transitively on a particular host.
+
+`SIGUSR2` enters Qt through a nonblocking close-on-exec self-pipe: the
+async-signal-safe handler only writes a byte, and a `QSocketNotifier` coalesces
+bursts before dispatching the ordinary `reload_config` application action.
+Each configuration service publishes a monotonically increasing request epoch
+when work is scheduled and settles the captured epoch on success, failure, or
+supersession. The lifecycle coordinator sends one
+`RELOADING=1\nMONOTONIC_USEC=...`, advances its target across overlapping
+requests, and queues the completing `READY=1` only after every participating
+domain has settled. Queuing completion by one event turn lets normal snapshot
+and diagnostic subscribers finish first.
 
 Qt 6.11 also registers `QGuiApplication::desktopFileName` with the host portal
 from its Wayland platform-services constructor. The effective Ghostty `class`
@@ -1707,6 +1731,13 @@ last-good generation. The merged result still enters
 `ApplicationController::applyLaunchOptions` once per publication, updating all
 live workspaces and future windows without cumulative overlay state.
 
+The environment snapshot inherited by terminal children removes one-shot
+desktop activation fields, D-Bus starter fields, `INVOCATION_ID`,
+`JOURNAL_STREAM`, and `NOTIFY_SOCKET`. This prevents a shell or application in
+a pane from impersonating the terminal emulator to its service manager.
+Finalized Ghostty `env` overrides are applied afterward, so an intentional
+child-specific value still wins.
+
 Hard reload failures also enter a process-owned diagnostic state with separate
 Ghostty and ghostty-qt frontend sources. Every existing window receives the
 deterministically combined, source-labelled text, and a newly registered
@@ -2797,7 +2828,8 @@ runs the moved main executable through its sibling helper, and runs a Qt
 Core-only probe from the moved `bin` directory to verify that it selects the
 moved private database. It also runs `+list-themes` against the moved bundled
 resources. A separate staged-install test verifies the configuration-specific
-desktop entry and direct D-Bus service, `TryExec`, the New Window action,
+desktop entry, D-Bus service, and systemd user unit, `TryExec`, the New Window
+action,
 supported terminal-launcher Exec/Title/AppId/Dir/Hold mappings, their distinct
 fallback/zero-window commands, exact service identity,
 actual install-prefix or configured-absolute executable path, DESTDIR exclusion
@@ -2806,10 +2838,14 @@ helper boundary. The same contract requires the configuration-specific
 scalable icon and AppStream component, checks their shared identity and desktop
 launchable, and uses available XML, AppStream, and SVG render validators at 16
 through 512 pixels. A special-character prefix distinguishes ordinary-string,
-Desktop Entry Exec, and D-Bus Exec escaping; where the reference D-Bus tools
-are available, the test also activates the installed service on a private bus.
-Systemd readiness notification and distribution packaging remain separate
-work; per-pane transient systemd cgroups are implemented.
+Desktop Entry Exec, D-Bus Exec, and systemd `ExecStart` escaping; where the
+reference D-Bus tools are available, the test also activates the installed
+service on a private bus. Systemd forbids literal quote and backslash bytes in
+its executable token, so only those otherwise valid install paths use a short
+`env` trampoline with environment expansion disabled; ordinary prefixes
+execute `ghostty-qt` directly. Distribution packaging remains separate work;
+application-level readiness and reload notification and per-pane transient
+systemd cgroups are implemented.
 
 Qt's `emit` macro is disabled with `QT_NO_KEYWORDS` because the public Ghostty C
 API legitimately contains struct fields named `emit`.
@@ -3170,7 +3206,11 @@ The default CTest suite has focused layers for each ownership boundary:
   forwards exact launcher token/startup-ID platform data. Separate warm and
   cold flows run the real pre-GUI `+new-window` and
   `+toggle-quick-terminal` clients through `org.gtk.Actions`, including D-Bus
-  service activation and primary teardown.
+  service activation and primary teardown. A systemd lifecycle flow proves
+  primary-only startup readiness and ordered `SIGUSR2` reload completion.
+- `systemd-notify` verifies filesystem and abstract sockets, exact readiness
+  and monotonic reload datagrams, invalid-address diagnostics, overlapping
+  request epochs, signal burst coalescing, and handler restoration.
 - `ghostty-application-ipc` verifies raw-argv UTF-8 validation, exact
   class/object targeting, caller-cwd insertion, concrete path and tilde
   canonicalization, the pinned home/inherit quirk, opaque `-e` arguments,
@@ -3182,9 +3222,11 @@ The default CTest suite has focused layers for each ownership boundary:
   reentrant half-pair destruction and shell-child token scrubbing.
 - `desktop-integration-install` stages an installation under repository-local
   `./tmp` and validates configuration-specific desktop/service/AppStream
-  metadata, the scalable icon and its rendered size range, install-time
+  metadata, the systemd user unit, the scalable icon and its rendered size
+  range, install-time
   executable and `TryExec` paths, the New Window action, terminal-launcher
-  argument mappings, bootstrap arguments, special-character serialization,
+  argument mappings, bootstrap arguments, service-specific special-character
+  serialization,
   live private-bus activation when D-Bus tools are available, and config-helper
   presence or absence.
 - `application-close-dialog` opens and accepts the real QML close confirmation
@@ -3275,7 +3317,7 @@ be checked interactively in a real Wayland session.
   actions, user-defined `link` rules, saved sessions, and full production
   packaging remain future work. Source-less desktop activation and
   payload-bearing `+new-window` activation are implemented, including
-  activation-token consumption; systemd readiness notification remains. The
+  activation-token consumption and systemd readiness/reload notification. The
   desktop entry, scalable icon, and AppStream component share one
   configuration-specific identity. OSC 8, the
   default `link-url` matcher, link previews, and the incremental search foundation are

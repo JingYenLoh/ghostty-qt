@@ -21,7 +21,8 @@ The install contains:
 
 - `ghostty-qt` and its private configuration helper;
 - the private Ghostty runtime required by that helper;
-- a desktop entry, D-Bus service, scalable icon, and AppStream metadata;
+- a desktop entry, D-Bus service, systemd user service, scalable icon, and
+  AppStream metadata;
 - the compiled `xterm-ghostty` terminfo entry;
 - the pinned Ghostty theme bundle;
 - staged Bash, Elvish, Fish, Nushell, and Zsh integration resources.
@@ -37,6 +38,7 @@ Configuration-specific metadata is installed under:
 ```text
 ${CMAKE_INSTALL_DATADIR}/applications/io.github.JingYenLoh.ghostty_qt.desktop
 ${CMAKE_INSTALL_DATADIR}/dbus-1/services/io.github.JingYenLoh.ghostty_qt.service
+${CMAKE_INSTALL_DATADIR}/systemd/user/app-io.github.JingYenLoh.ghostty_qt.service
 ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps/io.github.JingYenLoh.ghostty_qt.svg
 ${CMAKE_INSTALL_DATADIR}/metainfo/io.github.JingYenLoh.ghostty_qt.metainfo.xml
 ```
@@ -57,11 +59,33 @@ single-instance startup, and provides a New Window desktop action. Its
 `--title=`, `--class=`, `--working-directory=`, and
 `--wait-after-command` spellings to desktop terminal launchers.
 
-The D-Bus service starts a resident zero-window host and lets the queued
-activation create one window. Warm and cold activation support ordinary
+The D-Bus service delegates to the matching systemd user unit when the session
+bus supports systemd activation, while retaining its direct `Exec` fallback.
+The unit starts a resident zero-window host, waits for an exact startup
+readiness notification, and maps `systemctl --user reload` to the application's
+asynchronous configuration reload. `Type=notify-reload` and `ReloadSignal=`
+require systemd 253 or newer; on other service managers the direct D-Bus
+`Exec` fallback and ordinary direct launches remain available. Warm and cold
+activation support ordinary
 launches, `+new-window`, and `+toggle-quick-terminal`. Activation tokens and
-startup IDs are scoped to the requested window and are scrubbed before terminal
-children inherit their base environment.
+startup IDs, D-Bus starter state, and systemd service identity are scoped to the
+application and scrubbed before terminal children inherit their base
+environment; an explicit Ghostty `env` entry may intentionally reintroduce a
+value.
+
+D-Bus activation does not require enabling the unit. After installing or
+upgrading it, the user manager can be refreshed and the service inspected or
+reloaded directly with:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user start app-io.github.JingYenLoh.ghostty_qt.service
+systemctl --user reload app-io.github.JingYenLoh.ghostty_qt.service
+```
+
+Enabling the unit is optional and makes the zero-window host start with the
+graphical session. Direct build-tree runs have no installed unit, but still
+honor `NOTIFY_SOCKET` when launched by a compatible service manager.
 
 The desktop entry, notifications, and AppStream component share the same icon
 theme identity. The installed vector-only, font-free SVG is intentionally

@@ -29,6 +29,10 @@ public:
     }
 
     [[nodiscard]] constexpr int get() const noexcept { return descriptor_; }
+    [[nodiscard]] constexpr int release() noexcept
+    {
+        return std::exchange(descriptor_, -1);
+    }
 
 private:
     void close() noexcept

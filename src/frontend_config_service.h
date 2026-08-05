@@ -1,6 +1,7 @@
 #pragma once
 
 #include "frontend_config.h"
+#include "revision_counter.h"
 
 #include <QFileSystemWatcher>
 #include <QMutex>
@@ -40,6 +41,11 @@ public Q_SLOTS:
     void reloadNow();
 
 Q_SIGNALS:
+    // Request epochs identify the newest reload a coalesced asynchronous load
+    // satisfies. They let process-level readiness wait through overlapping
+    // requests and through both successful and failed loads.
+    void reloadScheduled(quint64 requestEpoch);
+    void reloadSettled(quint64 requestEpoch);
     // Every successful load is published, including an unchanged snapshot.
     void changed(const FrontendConfigSnapshot &snapshot);
     void reloadFailed(const QString &message);
@@ -50,7 +56,7 @@ private:
     void refreshWatchPaths();
     void watchedPathChanged(const QString &path);
     void beginAsyncReload();
-    void applyLoadResult(FrontendConfigLoadResult result);
+    void applyLoadResult(FrontendConfigLoadResult result, quint64 requestEpoch);
 
     QString configPath_;
     FrontendConfigLoader loader_;
@@ -63,5 +69,6 @@ private:
     QString lastError_;
     bool loadInProgress_ = false;
     bool reloadPending_ = false;
+    RevisionCounter requestEpoch_;
     quint64 loadGeneration_ = 0;
 };

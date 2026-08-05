@@ -25,8 +25,8 @@ application.
   revision.
 - Live configuration reload, dynamic light/dark appearance, command palette,
   pane titles, bell feedback, and Linux systemd cgroup integration.
-- Standard desktop and D-Bus activation, including `+new-window` and
-  `+toggle-quick-terminal`.
+- Standard desktop, D-Bus, and systemd user-service activation, including
+  readiness/reload handshakes, `+new-window`, and `+toggle-quick-terminal`.
 
 This list is intentionally not exhaustive. See [Project status](docs/status.md)
 and the machine-checked [parity manifest](docs/ghostty-parity.json) for the
@@ -48,7 +48,10 @@ current compatibility boundary.
 
 Cgroup isolation additionally needs a user systemd manager on the session
 D-Bus. Its default soft-failure policy allows terminals to start when that
-service is unavailable.
+service is unavailable. Service readiness uses the stable `NOTIFY_SOCKET`
+protocol directly and does not add a `libsystemd` build dependency. The
+installed `Type=notify-reload` unit requires systemd 253 or newer; direct
+launches remain independent of systemd.
 
 ## Quick start
 

@@ -227,22 +227,31 @@ void GhosttyConfigService::setColorScheme(TerminalColorScheme colorScheme)
 
 void GhosttyConfigService::requestReload()
 {
+    const quint64 requestEpoch = requestEpoch_.advance();
+    Q_EMIT reloadScheduled(requestEpoch);
     debounceTimer_.start();
 }
 
 void GhosttyConfigService::reloadNow()
 {
     debounceTimer_.stop();
+    // This synchronous generation also supersedes a request that was queued
+    // behind an in-flight worker. Its stale callback must not start another
+    // load under the epoch that reloadNow is about to settle.
+    reloadPending_ = false;
     refreshWatchPaths();
 
     // A deterministic synchronous reload supersedes any worker result that
     // was started earlier. The worker is still joined normally, but its stale
     // snapshot must not overwrite this one when its queued callback arrives.
+    const quint64 requestEpoch = requestEpoch_.advance();
+    Q_EMIT reloadScheduled(requestEpoch);
     ++loadGeneration_;
 
     if (!loader_) {
-        applyLoadResult(std::unexpected(
-            QStringLiteral("Ghostty configuration loader is unavailable")));
+        applyLoadResult(std::unexpected(QStringLiteral(
+                            "Ghostty configuration loader is unavailable")),
+                        requestEpoch);
         return;
     }
 
@@ -251,10 +260,11 @@ void GhosttyConfigService::reloadNow()
         QMutexLocker locker(&loaderMutex_);
         return loader_(request);
     }();
-    applyLoadResult(std::move(result));
+    applyLoadResult(std::move(result), requestEpoch);
 }
 
-void GhosttyConfigService::applyLoadResult(GhosttyConfigLoadResult result)
+void GhosttyConfigService::applyLoadResult(GhosttyConfigLoadResult result,
+                                           quint64 requestEpoch)
 {
     if (!result) {
         const QString &error = result.error();
@@ -266,6 +276,9 @@ void GhosttyConfigService::applyLoadResult(GhosttyConfigLoadResult result)
         if (!failureRetryTimer_.isActive()) {
             failureRetryTimer_.start();
         }
+        const QPointer<GhosttyConfigService> guard(this);
+        Q_EMIT reloadSettled(requestEpoch);
+        if (!guard) return;
         // A direct subscriber is allowed to delete this service. Keep the
         // emitted value off-object and do not access members after emission.
         Q_EMIT reloadFailed(message);
@@ -280,6 +293,9 @@ void GhosttyConfigService::applyLoadResult(GhosttyConfigLoadResult result)
     // successful reload is published even when its values compare equal:
     // runtime-only surface actions must be replaced by configured state.
     const GhosttyConfigSnapshot published = *snapshot_;
+    const QPointer<GhosttyConfigService> guard(this);
+    Q_EMIT reloadSettled(requestEpoch);
+    if (!guard) return;
     Q_EMIT changed(published);
 }
 
@@ -292,40 +308,47 @@ void GhosttyConfigService::beginAsyncReload()
         return;
     }
     if (!loader_) {
-        applyLoadResult(std::unexpected(
-            QStringLiteral("Ghostty configuration loader is unavailable")));
+        const quint64 requestEpoch = requestEpoch_.current();
+        applyLoadResult(std::unexpected(QStringLiteral(
+                            "Ghostty configuration loader is unavailable")),
+                        requestEpoch);
         return;
     }
 
     loadInProgress_ = true;
     const quint64 generation = ++loadGeneration_;
+    const quint64 requestEpoch = requestEpoch_.current();
     const GhosttyConfigLoader loader = loader_;
     const GhosttyConfigLoadRequest request = loadRequest();
     GhosttyConfigService *const self = this;
     QMutex *const loaderMutex = &loaderMutex_;
-    reloadPool_.start([self, loader, request, generation, loaderMutex] {
-        GhosttyConfigLoadResult result = [&] {
-            QMutexLocker locker(loaderMutex);
-            return loader(request);
-        }();
-        QMetaObject::invokeMethod(
-            self,
-            [self, generation, result = std::move(result)]() mutable {
-                const QPointer<GhosttyConfigService> guard(self);
-                self->loadInProgress_ = false;
-                if (generation == self->loadGeneration_) {
-                    self->applyLoadResult(std::move(result));
-                }
-                if (!guard) {
-                    return;
-                }
-                if (self->reloadPending_) {
-                    self->reloadPending_ = false;
-                    self->beginAsyncReload();
-                }
-            },
-            Qt::QueuedConnection);
-    });
+    reloadPool_.start(
+        [self, loader, request, generation, requestEpoch, loaderMutex] {
+            GhosttyConfigLoadResult result = [&] {
+                QMutexLocker locker(loaderMutex);
+                return loader(request);
+            }();
+            QMetaObject::invokeMethod(
+                self,
+                [self, generation, requestEpoch,
+                 result = std::move(result)]() mutable {
+                    const QPointer<GhosttyConfigService> guard(self);
+                    self->loadInProgress_ = false;
+                    if (generation == self->loadGeneration_) {
+                        self->applyLoadResult(std::move(result), requestEpoch);
+                    } else {
+                        Q_EMIT self->reloadSettled(requestEpoch);
+                    }
+                    if (!guard) {
+                        return;
+                    }
+                    if (self->reloadPending_) {
+                        self->reloadPending_ = false;
+                        self->beginAsyncReload();
+                    }
+                },
+                Qt::QueuedConnection);
+        });
 }
 
 GhosttyConfigLoadRequest GhosttyConfigService::loadRequest() const
