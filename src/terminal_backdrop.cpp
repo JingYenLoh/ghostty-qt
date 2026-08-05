@@ -10,32 +10,67 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QPointer>
+#include <QScopeGuard>
 #include <QThreadPool>
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <ranges>
+#include <system_error>
 #include <utility>
 #include <vector>
+
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace {
 
 struct DecodedImageKey {
     QString path;
+    quint64 device = 0;
+    quint64 inode = 0;
+    quint64 links = 0;
     qint64 size = -1;
-    qint64 modifiedMilliseconds = 0;
+    qint64 modifiedSeconds = 0;
+    qint64 modifiedNanoseconds = 0;
+    qint64 changedSeconds = 0;
+    qint64 changedNanoseconds = 0;
 
     bool operator==(const DecodedImageKey &) const = default;
 };
 
 size_t qHash(const DecodedImageKey &key, size_t seed = 0) noexcept
 {
-    return qHashMulti(seed, key.path, key.size, key.modifiedMilliseconds);
+    return qHashMulti(seed, key.path, key.device, key.inode, key.links,
+                      key.size, key.modifiedSeconds, key.modifiedNanoseconds,
+                      key.changedSeconds, key.changedNanoseconds);
+}
+
+bool sameOpenedContents(const DecodedImageKey &before,
+                        const DecodedImageKey &after) noexcept
+{
+    if (before.path != after.path || before.device != after.device
+        || before.inode != after.inode || before.size != after.size
+        || before.modifiedSeconds != after.modifiedSeconds
+        || before.modifiedNanoseconds != after.modifiedNanoseconds) {
+        return false;
+    }
+
+    const bool statusChangeMatches =
+        before.changedSeconds == after.changedSeconds
+        && before.changedNanoseconds == after.changedNanoseconds;
+    // Replacing or unlinking a pathname updates the still-open old inode's
+    // ctime and link count without changing its bytes. Accept that transition;
+    // a ctime-only change is conservatively treated as an in-place rewrite.
+    return statusChangeMatches || before.links != after.links;
 }
 
 struct Waiter {
@@ -58,6 +93,7 @@ QHash<DecodedImageKey,
       std::weak_ptr<const TerminalBackgroundImageAsset>>
     decodedImages;
 QHash<DecodedImageKey, DecodeFailure> decodeFailures;
+QHash<QString, DecodeFailure> sourceFailures;
 QHash<DecodedImageKey, std::shared_ptr<PendingLoad>> pendingLoads;
 std::atomic<quint64> nextAssetSerial{1};
 qsizetype decodedCacheRequestsUntilSweep = 0;
@@ -114,16 +150,87 @@ prepareStraightRgba(QImage source, quint64 serial)
     };
 }
 
-std::expected<std::shared_ptr<const TerminalBackgroundImageAsset>, QString>
-decodeImageFile(const QString &path)
+QString nativeErrorString(int error)
 {
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) {
+    const std::string message = std::generic_category().message(error);
+    return QString::fromLocal8Bit(message.data(),
+                                  static_cast<qsizetype>(message.size()));
+}
+
+std::expected<DecodedImageKey, QString> decodedImageKey(int descriptor,
+                                                        const QString &path)
+{
+    struct stat metadata{};
+    if (descriptor < 0 || ::fstat(descriptor, &metadata) != 0) {
+        const int error = descriptor < 0 ? EBADF : errno;
         return std::unexpected(
-            QStringLiteral("Could not open background image '%1': %2")
-                .arg(path, file.errorString()));
+            QStringLiteral("Could not inspect background image '%1': %2")
+                .arg(path, nativeErrorString(error)));
+    }
+    if (!S_ISREG(metadata.st_mode)) {
+        return std::unexpected(
+            QStringLiteral("Background image '%1' is not a regular file.")
+                .arg(path));
+    }
+    if (metadata.st_size < 0) {
+        return std::unexpected(
+            QStringLiteral("Background image '%1' has an invalid size.")
+                .arg(path));
     }
 
+    return DecodedImageKey{
+        .path = path,
+        .device = static_cast<quint64>(metadata.st_dev),
+        .inode = static_cast<quint64>(metadata.st_ino),
+        .links = static_cast<quint64>(metadata.st_nlink),
+        .size = static_cast<qint64>(metadata.st_size),
+        .modifiedSeconds = static_cast<qint64>(metadata.st_mtim.tv_sec),
+        .modifiedNanoseconds = static_cast<qint64>(metadata.st_mtim.tv_nsec),
+        .changedSeconds = static_cast<qint64>(metadata.st_ctim.tv_sec),
+        .changedNanoseconds = static_cast<qint64>(metadata.st_ctim.tv_nsec),
+    };
+}
+
+std::expected<DecodedImageKey, QString> decodedImageKey(QFile &file,
+                                                        const QString &path)
+{
+    return decodedImageKey(file.handle(), path);
+}
+
+std::expected<DecodedImageKey, QString>
+openBackgroundImageFile(QFile &file, const QString &path)
+{
+    const QByteArray nativePath = QFile::encodeName(path);
+    int descriptor = -1;
+    do {
+        descriptor = ::open(nativePath.constData(),
+                            O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOCTTY);
+    } while (descriptor < 0 && errno == EINTR);
+    if (descriptor < 0) {
+        const int error = errno;
+        return std::unexpected(
+            QStringLiteral("Could not open background image '%1': %2")
+                .arg(path, nativeErrorString(error)));
+    }
+
+    auto closeDescriptor =
+        qScopeGuard([descriptor] { (void)::close(descriptor); });
+    auto key = decodedImageKey(descriptor, path);
+    if (!key) return std::unexpected(std::move(key.error()));
+
+    if (!file.open(descriptor, QIODevice::ReadOnly,
+                   QFileDevice::AutoCloseHandle)) {
+        return std::unexpected(
+            QStringLiteral("Could not use background image '%1': %2")
+                .arg(path, file.errorString()));
+    }
+    closeDescriptor.dismiss();
+    return key;
+}
+
+std::expected<std::shared_ptr<const TerminalBackgroundImageAsset>, QString>
+decodeImageFile(QFile &file, const QString &path)
+{
     QByteArray format = QImageReader::imageFormat(&file).toLower();
     if (format.isEmpty()) {
         format = QFileInfo(path).suffix().toLatin1().toLower();
@@ -182,24 +289,43 @@ void deliver(std::vector<Waiter> waiters,
         Qt::QueuedConnection);
 }
 
-bool hasActiveWaiter(const PendingLoad &load) noexcept
+bool hasActiveWaiter(const std::vector<Waiter> &waiters) noexcept
 {
-    return std::ranges::any_of(load.waiters, [](const Waiter &waiter) {
+    return std::ranges::any_of(waiters, [](const Waiter &waiter) {
         return !waiter.stopToken.stop_requested();
     });
 }
 
-void rememberFailure(const DecodedImageKey &key, QString message)
+bool hasActiveWaiter(const PendingLoad &load) noexcept
 {
-    decodeFailures.insert(
-        key,
-        {
-            .message = std::move(message),
-            .retryAfter = std::chrono::steady_clock::now()
-                + std::chrono::milliseconds(250),
-        });
-    while (decodeFailures.size() > 64) {
-        decodeFailures.erase(decodeFailures.begin());
+    return hasActiveWaiter(load.waiters);
+}
+
+template <typename Key>
+std::optional<QString> recentFailure(QHash<Key, DecodeFailure> &failures,
+                                     const Key &key)
+{
+    const auto failure = failures.find(key);
+    if (failure == failures.end()) return std::nullopt;
+    if (std::chrono::steady_clock::now() < failure->retryAfter) {
+        return failure->message;
+    }
+    failures.erase(failure);
+    return std::nullopt;
+}
+
+template <typename Key>
+void rememberFailure(QHash<Key, DecodeFailure> &failures, const Key &key,
+                     QString message)
+{
+    failures.insert(key,
+                    {
+                        .message = std::move(message),
+                        .retryAfter = std::chrono::steady_clock::now()
+                            + std::chrono::milliseconds(250),
+                    });
+    while (failures.size() > 64) {
+        failures.erase(failures.begin());
     }
 }
 
@@ -336,36 +462,57 @@ QImage terminalCompositedBackgroundImage(
         : QImage{};
 }
 
-TerminalBackgroundImageRequestHandle requestTerminalBackgroundImage(
-    const TerminalBackgroundImageRequest &request, QObject *receiver,
-    TerminalBackgroundImageCallback callback)
-{
-    if (receiver == nullptr || !callback || request.source.path.isEmpty()) {
-        return {};
-    }
+namespace {
 
-    std::stop_source stopSource;
-    const std::stop_token stopToken = stopSource.get_token();
-    TerminalBackgroundImageRequestHandle handle(std::move(stopSource));
+void startTerminalBackgroundImageRequest(
+    const TerminalBackgroundImageRequest &request, QObject *receiver,
+    TerminalBackgroundImageCallback callback,
+    TerminalBackgroundImageOpenedHook openedHook, std::stop_token stopToken)
+{
     Waiter waiter{
         .receiver = QPointer<QObject>(receiver),
         .stopToken = stopToken,
         .callback = std::move(callback),
     };
+    std::vector<Waiter> waiters;
+    waiters.push_back(std::move(waiter));
 
-    backgroundImageThreadPool().start(
-        [source = request.source, waiter = std::move(waiter)]() mutable {
-            if (waiter.stopToken.stop_requested()) return;
+    backgroundImageThreadPool().start([source = request.source,
+                                       waiters = std::move(waiters),
+                                       openedHook =
+                                           std::move(openedHook)]() mutable {
+        constexpr int maximumDecodeAttempts = 2;
+        for (int attempt = 0; attempt < maximumDecodeAttempts; ++attempt) {
+            if (!hasActiveWaiter(waiters)) return;
 
-            // File-system metadata may block for network or FUSE paths, so it
-            // belongs on the same bounded worker pool as decoding.
-            const QFileInfo sourceInfo(source.path);
-            const DecodedImageKey key{
-                .path = source.path,
-                .size = sourceInfo.size(),
-                .modifiedMilliseconds =
-                    sourceInfo.lastModified().toMSecsSinceEpoch(),
-            };
+            std::optional<QString> cachedSourceFailure;
+            {
+                QMutexLocker locker(&cacheMutex);
+                cachedSourceFailure =
+                    recentFailure(sourceFailures, source.path);
+            }
+            if (cachedSourceFailure.has_value()) {
+                deliver(std::move(waiters),
+                        std::unexpected(std::move(*cachedSourceFailure)));
+                return;
+            }
+
+            // Opening, descriptor inspection, and decoding all stay on
+            // the same bounded worker. The open descriptor is the
+            // request's linearization point: a later rename cannot change
+            // either its identity or the bytes QImageReader consumes.
+            QFile file;
+            auto keyResult = openBackgroundImageFile(file, source.path);
+            if (!keyResult) {
+                QString error = std::move(keyResult.error());
+                {
+                    QMutexLocker locker(&cacheMutex);
+                    rememberFailure(sourceFailures, source.path, error);
+                }
+                deliver(std::move(waiters), std::unexpected(std::move(error)));
+                return;
+            }
+            const DecodedImageKey key = std::move(*keyResult);
 
             std::shared_ptr<const TerminalBackgroundImageAsset> cached;
             std::optional<QString> cachedFailure;
@@ -375,37 +522,32 @@ TerminalBackgroundImageRequestHandle requestTerminalBackgroundImage(
                 sweepExpiredDecodedImages();
                 if (auto image = decodedImages.value(key).lock()) {
                     cached = std::move(image);
-                } else if (auto failure = decodeFailures.find(key);
-                           failure != decodeFailures.end()) {
-                    if (std::chrono::steady_clock::now()
-                        < failure->retryAfter) {
-                        cachedFailure = failure->message;
-                    } else {
-                        decodeFailures.erase(failure);
-                    }
+                } else {
+                    cachedFailure = recentFailure(decodeFailures, key);
                 }
 
                 if (!cached && !cachedFailure) {
                     if (const auto pending = pendingLoads.constFind(key);
                         pending != pendingLoads.cend()) {
-                        (*pending)->waiters.push_back(std::move(waiter));
+                        auto &pendingWaiters = (*pending)->waiters;
+                        pendingWaiters.insert(
+                            pendingWaiters.end(),
+                            std::make_move_iterator(waiters.begin()),
+                            std::make_move_iterator(waiters.end()));
                         return;
                     }
                     load = std::make_shared<PendingLoad>();
-                    load->waiters.push_back(std::move(waiter));
+                    load->waiters = std::move(waiters);
                     pendingLoads.insert(key, load);
                 }
             }
 
             if (cached || cachedFailure) {
-                std::vector<Waiter> waiters;
-                waiters.push_back(std::move(waiter));
                 if (cached) {
                     deliver(std::move(waiters), std::move(cached));
                 } else {
                     deliver(std::move(waiters),
-                            std::unexpected(
-                                std::move(*cachedFailure)));
+                            std::unexpected(std::move(*cachedFailure)));
                 }
                 return;
             }
@@ -420,22 +562,93 @@ TerminalBackgroundImageRequestHandle requestTerminalBackgroundImage(
                 }
             }
 
+            if (openedHook) {
+                openedHook();
+                openedHook = {};
+            }
+
+            {
+                QMutexLocker locker(&cacheMutex);
+                if (!hasActiveWaiter(*load)) {
+                    if (pendingLoads.value(key) == load) {
+                        pendingLoads.remove(key);
+                    }
+                    return;
+                }
+            }
+
             TerminalBackgroundImageResult result =
-                decodeImageFile(key.path);
-            std::vector<Waiter> waiters;
+                decodeImageFile(file, source.path);
+            auto finalKey = decodedImageKey(file, source.path);
+            const bool stable =
+                finalKey.has_value() && sameOpenedContents(key, *finalKey);
+            QString unstableError;
+            if (!stable) {
+                unstableError = finalKey
+                    ? QStringLiteral(
+                          "Background image '%1' changed while it was being decoded.")
+                          .arg(source.path)
+                    : std::move(finalKey.error());
+            }
+
             {
                 QMutexLocker locker(&cacheMutex);
                 if (pendingLoads.value(key) != load) return;
                 pendingLoads.remove(key);
                 waiters = std::move(load->waiters);
-                if (result) {
-                    decodedImages.insert(key, *result);
-                    decodeFailures.remove(key);
-                } else {
-                    rememberFailure(key, result.error());
+                if (stable) {
+                    if (result) {
+                        decodedImages.insert(key, *result);
+                        decodeFailures.remove(key);
+                    } else {
+                        rememberFailure(decodeFailures, key, result.error());
+                    }
                 }
             }
-            deliver(std::move(waiters), std::move(result));
-        });
+
+            if (stable) {
+                deliver(std::move(waiters), std::move(result));
+                return;
+            }
+            if (attempt + 1 == maximumDecodeAttempts) {
+                deliver(std::move(waiters),
+                        std::unexpected(std::move(unstableError)));
+                return;
+            }
+        }
+    });
+}
+
+} // namespace
+
+TerminalBackgroundImageRequestHandle
+requestTerminalBackgroundImage(const TerminalBackgroundImageRequest &request,
+                               QObject *receiver,
+                               TerminalBackgroundImageCallback callback)
+{
+    if (receiver == nullptr || !callback || request.source.path.isEmpty()) {
+        return {};
+    }
+    std::stop_source stopSource;
+    const std::stop_token stopToken = stopSource.get_token();
+    TerminalBackgroundImageRequestHandle handle(std::move(stopSource));
+    startTerminalBackgroundImageRequest(request, receiver, std::move(callback),
+                                        {}, stopToken);
+    return handle;
+}
+
+TerminalBackgroundImageRequestHandle requestTerminalBackgroundImageForTest(
+    const TerminalBackgroundImageRequest &request, QObject *receiver,
+    TerminalBackgroundImageCallback callback,
+    TerminalBackgroundImageOpenedHook openedHook)
+{
+    if (receiver == nullptr || !callback || request.source.path.isEmpty()) {
+        return {};
+    }
+    std::stop_source stopSource;
+    const std::stop_token stopToken = stopSource.get_token();
+    TerminalBackgroundImageRequestHandle handle(std::move(stopSource));
+    startTerminalBackgroundImageRequest(request, receiver, std::move(callback),
+                                        std::move(openedHook), stopToken);
     return handle;
 }

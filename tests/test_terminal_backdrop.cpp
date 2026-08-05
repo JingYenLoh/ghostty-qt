@@ -1,5 +1,6 @@
-#include "terminal_backdrop.h"
+#include "terminal_backdrop_p.h"
 
+#include <QBuffer>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -7,13 +8,21 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
+#include <QScopeGuard>
+#include <QSemaphore>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QThread>
 
+#include <algorithm>
+#include <array>
+#include <cstdio>
 #include <memory>
 #include <optional>
 #include <utility>
+
+#include <fcntl.h>
+#include <sys/stat.h>
 
 namespace {
 
@@ -88,6 +97,67 @@ QImage patternedImage(QSize size)
     return result;
 }
 
+QByteArray encodedPng(const QImage &image)
+{
+    QByteArray result;
+    QBuffer buffer(&result);
+    if (!buffer.open(QIODevice::WriteOnly) || !image.save(&buffer, "PNG")) {
+        return {};
+    }
+    return result;
+}
+
+void equalizeByteLengths(QByteArray &first, QByteArray &second)
+{
+    const qsizetype size = std::max(first.size(), second.size());
+    first.append(QByteArray(size - first.size(), '\0'));
+    second.append(QByteArray(size - second.size(), '\0'));
+}
+
+bool writeBytes(const QString &path, const QByteArray &bytes)
+{
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly | QIODevice::Truncate)
+        && file.write(bytes) == bytes.size() && file.flush();
+}
+
+bool setModificationTime(const QString &path, qint64 seconds,
+                         qint64 nanoseconds)
+{
+    const QByteArray nativePath = QFile::encodeName(path);
+    const std::array<timespec, 2> times{
+        timespec{.tv_sec = 0, .tv_nsec = UTIME_OMIT},
+        timespec{
+            .tv_sec = static_cast<time_t>(seconds),
+            .tv_nsec = static_cast<long>(nanoseconds),
+        },
+    };
+    return ::utimensat(AT_FDCWD, nativePath.constData(), times.data(), 0) == 0;
+}
+
+std::optional<struct stat> fileStatus(const QString &path)
+{
+    struct stat result{};
+    const QByteArray nativePath = QFile::encodeName(path);
+    if (::stat(nativePath.constData(), &result) != 0) return std::nullopt;
+    return result;
+}
+
+bool replaceAtomically(const QString &source, const QString &destination)
+{
+    const QByteArray nativeSource = QFile::encodeName(source);
+    const QByteArray nativeDestination = QFile::encodeName(destination);
+    return ::rename(nativeSource.constData(), nativeDestination.constData())
+        == 0;
+}
+
+QImage solidImage(const QColor &color, QSize size = QSize(3, 2))
+{
+    QImage image(size, QImage::Format_RGBA8888);
+    image.fill(color);
+    return image;
+}
+
 } // namespace
 
 class TerminalBackdropTest : public QObject {
@@ -102,10 +172,16 @@ private Q_SLOTS:
     void decodesPngIntoPackedRgba();
     void decodesJpegIntoPackedRgba();
     void rejectsUnsupportedAndCorruptImages();
+    void rejectsSpecialFilesWithoutStarvingPool();
+    void repairedImageBypassesNegativeCache();
     void coalescesIdenticalInflightRequests();
     void cancellationSuppressesCallback();
     void destroyedReceiverSuppressesCallback();
     void fingerprintsReplacementsAndReusesLiveCache();
+    void detectsSameMillisecondInPlaceRewrite();
+    void detectsAtomicReplacementWithIdenticalMetadata();
+    void decodesOpenedFileAcrossAtomicReplacement();
+    void retriesInPlaceRewriteAfterOpen();
     void deliversCallbacksOnApplicationThread();
 
 private:
@@ -336,6 +412,108 @@ void TerminalBackdropTest::rejectsUnsupportedAndCorruptImages()
              qPrintable(missingReply.result->error()));
 }
 
+void TerminalBackdropTest::rejectsSpecialFilesWithoutStarvingPool()
+{
+    const auto directory = makeTestDirectory();
+    QVERIFY2(directory->isValid(), qPrintable(directory->errorString()));
+
+    const QString firstPath = directory->filePath(QStringLiteral("first.fifo"));
+    const QString secondPath =
+        directory->filePath(QStringLiteral("second.fifo"));
+    const QByteArray firstNativePath = QFile::encodeName(firstPath);
+    const QByteArray secondNativePath = QFile::encodeName(secondPath);
+    QVERIFY(::mkfifo(firstNativePath.constData(), 0600) == 0);
+    QVERIFY(::mkfifo(secondNativePath.constData(), 0600) == 0);
+
+    const QString imagePath =
+        directory->filePath(QStringLiteral("after-special-files.png"));
+    const QImage image = solidImage(QColor(21, 41, 61, 81));
+    QVERIFY(image.save(imagePath, "PNG"));
+
+    ImageReply firstReply;
+    ImageReply secondReply;
+    ImageReply imageReply;
+    QObject firstReceiver;
+    QObject secondReceiver;
+    QObject imageReceiver;
+    auto firstHandle = requestTerminalBackgroundImage(
+        imageRequest(firstPath), &firstReceiver, captureReply(firstReply));
+    auto secondHandle = requestTerminalBackgroundImage(
+        imageRequest(secondPath), &secondReceiver, captureReply(secondReply));
+    auto imageHandle = requestTerminalBackgroundImage(
+        imageRequest(imagePath), &imageReceiver, captureReply(imageReply));
+
+    QTRY_VERIFY_WITH_TIMEOUT(firstReply.result.has_value(), asyncTimeout);
+    QTRY_VERIFY_WITH_TIMEOUT(secondReply.result.has_value(), asyncTimeout);
+    QTRY_VERIFY_WITH_TIMEOUT(imageReply.result.has_value(), asyncTimeout);
+    QVERIFY(!firstReply.result->has_value());
+    QVERIFY(!secondReply.result->has_value());
+    QVERIFY2(firstReply.result->error().contains(
+                 QStringLiteral("is not a regular file")),
+             qPrintable(firstReply.result->error()));
+    QVERIFY2(secondReply.result->error().contains(
+                 QStringLiteral("is not a regular file")),
+             qPrintable(secondReply.result->error()));
+    QVERIFY2(imageReply.result->has_value(),
+             qPrintable(replyFailure(imageReply)));
+    QCOMPARE(packedPixels(imageReply.result->value()->straightRgba),
+             expectedPackedBytes(image));
+}
+
+void TerminalBackdropTest::repairedImageBypassesNegativeCache()
+{
+    const auto directory = makeTestDirectory();
+    QVERIFY2(directory->isValid(), qPrintable(directory->errorString()));
+    const QString path = directory->filePath(QStringLiteral("repaired.png"));
+    const QImage image = solidImage(QColor(25, 45, 65, 85));
+    const QByteArray validBytes = encodedPng(image);
+    QVERIFY(!validBytes.isEmpty());
+    const QByteArray corruptBytes(validBytes.size(), '\x7f');
+
+    constexpr qint64 modifiedSeconds = 1'700'000'050;
+    constexpr qint64 modifiedNanoseconds = 123'456'789;
+    QVERIFY(writeBytes(path, corruptBytes));
+    QVERIFY(setModificationTime(path, modifiedSeconds, modifiedNanoseconds));
+    const auto corruptStatus = fileStatus(path);
+    QVERIFY(corruptStatus.has_value());
+
+    ImageReply corruptReply;
+    QObject corruptReceiver;
+    auto corruptHandle = requestTerminalBackgroundImage(
+        imageRequest(path), &corruptReceiver, captureReply(corruptReply));
+    QTRY_VERIFY_WITH_TIMEOUT(corruptReply.result.has_value(), asyncTimeout);
+    QVERIFY(!corruptReply.result->has_value());
+
+    QTest::qSleep(2);
+    QVERIFY(writeBytes(path, validBytes));
+    QVERIFY(setModificationTime(path, modifiedSeconds, modifiedNanoseconds));
+    const auto repairedStatus = fileStatus(path);
+    QVERIFY(repairedStatus.has_value());
+    QCOMPARE(static_cast<quint64>(repairedStatus->st_ino),
+             static_cast<quint64>(corruptStatus->st_ino));
+    QCOMPARE(static_cast<qint64>(repairedStatus->st_size),
+             static_cast<qint64>(corruptStatus->st_size));
+    QCOMPARE(static_cast<qint64>(repairedStatus->st_mtim.tv_sec),
+             static_cast<qint64>(corruptStatus->st_mtim.tv_sec));
+    QCOMPARE(static_cast<qint64>(repairedStatus->st_mtim.tv_nsec),
+             static_cast<qint64>(corruptStatus->st_mtim.tv_nsec));
+    if (repairedStatus->st_ctim.tv_sec == corruptStatus->st_ctim.tv_sec
+        && repairedStatus->st_ctim.tv_nsec == corruptStatus->st_ctim.tv_nsec) {
+        QSKIP(
+            "The test filesystem does not expose an in-place identity change");
+    }
+
+    ImageReply repairedReply;
+    QObject repairedReceiver;
+    auto repairedHandle = requestTerminalBackgroundImage(
+        imageRequest(path), &repairedReceiver, captureReply(repairedReply));
+    QTRY_VERIFY_WITH_TIMEOUT(repairedReply.result.has_value(), asyncTimeout);
+    QVERIFY2(repairedReply.result->has_value(),
+             qPrintable(replyFailure(repairedReply)));
+    QCOMPARE(packedPixels(repairedReply.result->value()->straightRgba),
+             expectedPackedBytes(image));
+}
+
 void TerminalBackdropTest::coalescesIdenticalInflightRequests()
 {
     const auto directory = makeTestDirectory();
@@ -513,6 +691,301 @@ void TerminalBackdropTest::fingerprintsReplacementsAndReusesLiveCache()
     const auto redecodedAsset = redecodedReply.result->value();
     QVERIFY(redecodedAsset->serial != replacementSerial);
     QCOMPARE(packedPixels(redecodedAsset->straightRgba), expectedReplacement);
+}
+
+void TerminalBackdropTest::detectsSameMillisecondInPlaceRewrite()
+{
+    const auto directory = makeTestDirectory();
+    QVERIFY2(directory->isValid(), qPrintable(directory->errorString()));
+    const QString path =
+        directory->filePath(QStringLiteral("submillisecond-rewrite.png"));
+    const QImage original = solidImage(QColor(9, 19, 29, 39));
+    const QImage replacement = solidImage(QColor(109, 119, 129, 139));
+    QByteArray originalBytes = encodedPng(original);
+    QByteArray replacementBytes = encodedPng(replacement);
+    QVERIFY(!originalBytes.isEmpty());
+    QVERIFY(!replacementBytes.isEmpty());
+    equalizeByteLengths(originalBytes, replacementBytes);
+    QCOMPARE(originalBytes.size(), replacementBytes.size());
+    QVERIFY(!QImage::fromData(originalBytes, "PNG").isNull());
+    QVERIFY(!QImage::fromData(replacementBytes, "PNG").isNull());
+
+    constexpr qint64 modifiedSeconds = 1'700'000'000;
+    constexpr qint64 originalNanoseconds = 456'100'100;
+    constexpr qint64 replacementNanoseconds = 456'100'900;
+    QVERIFY(writeBytes(path, originalBytes));
+    QVERIFY(setModificationTime(path, modifiedSeconds, originalNanoseconds));
+    const auto originalStatus = fileStatus(path);
+    QVERIFY(originalStatus.has_value());
+    if (originalStatus->st_mtim.tv_nsec != originalNanoseconds) {
+        QSKIP("The test filesystem does not preserve nanosecond mtimes");
+    }
+
+    ImageReply originalReply;
+    QObject originalReceiver;
+    auto originalHandle = requestTerminalBackgroundImage(
+        imageRequest(path), &originalReceiver, captureReply(originalReply));
+    QTRY_VERIFY_WITH_TIMEOUT(originalReply.result.has_value(), asyncTimeout);
+    QVERIFY2(originalReply.result->has_value(),
+             qPrintable(replyFailure(originalReply)));
+    const auto originalAsset = originalReply.result->value();
+    QCOMPARE(packedPixels(originalAsset->straightRgba),
+             expectedPackedBytes(original));
+
+    // Preserve the legacy path/size/millisecond fingerprint while changing
+    // both the bytes and the descriptor's nanosecond identity.
+    QVERIFY(writeBytes(path, replacementBytes));
+    QVERIFY(setModificationTime(path, modifiedSeconds, replacementNanoseconds));
+    const auto replacementStatus = fileStatus(path);
+    QVERIFY(replacementStatus.has_value());
+    if (replacementStatus->st_mtim.tv_nsec != replacementNanoseconds) {
+        QSKIP("The test filesystem does not preserve nanosecond mtimes");
+    }
+    QCOMPARE(static_cast<quint64>(replacementStatus->st_ino),
+             static_cast<quint64>(originalStatus->st_ino));
+    QCOMPARE(static_cast<qint64>(replacementStatus->st_size),
+             static_cast<qint64>(originalStatus->st_size));
+    QCOMPARE(static_cast<qint64>(replacementStatus->st_mtim.tv_sec),
+             static_cast<qint64>(originalStatus->st_mtim.tv_sec));
+    QCOMPARE(replacementStatus->st_mtim.tv_nsec / 1'000'000,
+             originalStatus->st_mtim.tv_nsec / 1'000'000);
+    QVERIFY(replacementStatus->st_mtim.tv_nsec
+            != originalStatus->st_mtim.tv_nsec);
+
+    ImageReply replacementReply;
+    QObject replacementReceiver;
+    auto replacementHandle =
+        requestTerminalBackgroundImage(imageRequest(path), &replacementReceiver,
+                                       captureReply(replacementReply));
+    QTRY_VERIFY_WITH_TIMEOUT(replacementReply.result.has_value(), asyncTimeout);
+    QVERIFY2(replacementReply.result->has_value(),
+             qPrintable(replyFailure(replacementReply)));
+    const auto replacementAsset = replacementReply.result->value();
+    QVERIFY(replacementAsset->serial != originalAsset->serial);
+    QCOMPARE(packedPixels(replacementAsset->straightRgba),
+             expectedPackedBytes(replacement));
+}
+
+void TerminalBackdropTest::detectsAtomicReplacementWithIdenticalMetadata()
+{
+    const auto directory = makeTestDirectory();
+    QVERIFY2(directory->isValid(), qPrintable(directory->errorString()));
+    const QString path =
+        directory->filePath(QStringLiteral("atomic-target.png"));
+    const QString stagedPath =
+        directory->filePath(QStringLiteral("atomic-replacement.png"));
+    const QImage original = solidImage(QColor(17, 27, 37, 47));
+    const QImage replacement = solidImage(QColor(117, 127, 137, 147));
+    QByteArray originalBytes = encodedPng(original);
+    QByteArray replacementBytes = encodedPng(replacement);
+    QVERIFY(!originalBytes.isEmpty());
+    QVERIFY(!replacementBytes.isEmpty());
+    equalizeByteLengths(originalBytes, replacementBytes);
+    QVERIFY(writeBytes(path, originalBytes));
+    QVERIFY(writeBytes(stagedPath, replacementBytes));
+
+    constexpr qint64 modifiedSeconds = 1'700'000'100;
+    constexpr qint64 modifiedNanoseconds = 234'567'890;
+    QVERIFY(setModificationTime(path, modifiedSeconds, modifiedNanoseconds));
+    QVERIFY(
+        setModificationTime(stagedPath, modifiedSeconds, modifiedNanoseconds));
+    const auto originalStatus = fileStatus(path);
+    const auto stagedStatus = fileStatus(stagedPath);
+    QVERIFY(originalStatus.has_value());
+    QVERIFY(stagedStatus.has_value());
+    QVERIFY(originalStatus->st_ino != stagedStatus->st_ino);
+    QCOMPARE(static_cast<qint64>(originalStatus->st_size),
+             static_cast<qint64>(stagedStatus->st_size));
+    QCOMPARE(static_cast<qint64>(originalStatus->st_mtim.tv_sec),
+             static_cast<qint64>(stagedStatus->st_mtim.tv_sec));
+    QCOMPARE(static_cast<qint64>(originalStatus->st_mtim.tv_nsec),
+             static_cast<qint64>(stagedStatus->st_mtim.tv_nsec));
+
+    ImageReply originalReply;
+    QObject originalReceiver;
+    auto originalHandle = requestTerminalBackgroundImage(
+        imageRequest(path), &originalReceiver, captureReply(originalReply));
+    QTRY_VERIFY_WITH_TIMEOUT(originalReply.result.has_value(), asyncTimeout);
+    QVERIFY2(originalReply.result->has_value(),
+             qPrintable(replyFailure(originalReply)));
+    const auto originalAsset = originalReply.result->value();
+
+    QVERIFY(replaceAtomically(stagedPath, path));
+    const auto currentStatus = fileStatus(path);
+    QVERIFY(currentStatus.has_value());
+    QCOMPARE(static_cast<quint64>(currentStatus->st_ino),
+             static_cast<quint64>(stagedStatus->st_ino));
+    QCOMPARE(static_cast<qint64>(currentStatus->st_size),
+             static_cast<qint64>(originalStatus->st_size));
+    QCOMPARE(static_cast<qint64>(currentStatus->st_mtim.tv_sec),
+             static_cast<qint64>(originalStatus->st_mtim.tv_sec));
+    QCOMPARE(currentStatus->st_mtim.tv_nsec / 1'000'000,
+             originalStatus->st_mtim.tv_nsec / 1'000'000);
+
+    ImageReply replacementReply;
+    QObject replacementReceiver;
+    auto replacementHandle =
+        requestTerminalBackgroundImage(imageRequest(path), &replacementReceiver,
+                                       captureReply(replacementReply));
+    QTRY_VERIFY_WITH_TIMEOUT(replacementReply.result.has_value(), asyncTimeout);
+    QVERIFY2(replacementReply.result->has_value(),
+             qPrintable(replyFailure(replacementReply)));
+    const auto replacementAsset = replacementReply.result->value();
+    QVERIFY(replacementAsset->serial != originalAsset->serial);
+    QCOMPARE(packedPixels(replacementAsset->straightRgba),
+             expectedPackedBytes(replacement));
+}
+
+void TerminalBackdropTest::decodesOpenedFileAcrossAtomicReplacement()
+{
+    const auto directory = makeTestDirectory();
+    QVERIFY2(directory->isValid(), qPrintable(directory->errorString()));
+    const QString path =
+        directory->filePath(QStringLiteral("open-race-target.png"));
+    const QString stagedPath =
+        directory->filePath(QStringLiteral("open-race-replacement.png"));
+    const QImage original = solidImage(QColor(23, 43, 63, 83));
+    const QImage replacement = solidImage(QColor(123, 143, 163, 183));
+    QByteArray originalBytes = encodedPng(original);
+    QByteArray replacementBytes = encodedPng(replacement);
+    QVERIFY(!originalBytes.isEmpty());
+    QVERIFY(!replacementBytes.isEmpty());
+    equalizeByteLengths(originalBytes, replacementBytes);
+    QVERIFY(writeBytes(path, originalBytes));
+    QVERIFY(writeBytes(stagedPath, replacementBytes));
+    constexpr qint64 modifiedSeconds = 1'700'000'200;
+    constexpr qint64 modifiedNanoseconds = 345'678'901;
+    QVERIFY(setModificationTime(path, modifiedSeconds, modifiedNanoseconds));
+    QVERIFY(
+        setModificationTime(stagedPath, modifiedSeconds, modifiedNanoseconds));
+
+    struct DecodeGate {
+        QSemaphore reached;
+        QSemaphore resume;
+    };
+    const auto gate = std::make_shared<DecodeGate>();
+    bool resumed = false;
+    const auto resumeGuard = qScopeGuard([gate, &resumed] {
+        if (!resumed) gate->resume.release();
+    });
+
+    ImageReply originalReply;
+    QObject originalReceiver;
+    auto originalHandle = requestTerminalBackgroundImageForTest(
+        imageRequest(path), &originalReceiver, captureReply(originalReply),
+        [gate] {
+            gate->reached.release();
+            gate->resume.acquire();
+        });
+    QVERIFY(gate->reached.tryAcquire(1, asyncTimeout));
+    QVERIFY(replaceAtomically(stagedPath, path));
+
+    // The replacement has a different descriptor identity, so it neither
+    // joins nor waits for the paused old-inode leader.
+    ImageReply replacementReply;
+    QObject replacementReceiver;
+    auto replacementHandle =
+        requestTerminalBackgroundImage(imageRequest(path), &replacementReceiver,
+                                       captureReply(replacementReply));
+    QTRY_VERIFY_WITH_TIMEOUT(replacementReply.result.has_value(), asyncTimeout);
+    QVERIFY2(replacementReply.result->has_value(),
+             qPrintable(replyFailure(replacementReply)));
+    const auto replacementAsset = replacementReply.result->value();
+    QCOMPARE(packedPixels(replacementAsset->straightRgba),
+             expectedPackedBytes(replacement));
+    QVERIFY(!originalReply.result.has_value());
+
+    gate->resume.release();
+    resumed = true;
+    QTRY_VERIFY_WITH_TIMEOUT(originalReply.result.has_value(), asyncTimeout);
+    QVERIFY2(originalReply.result->has_value(),
+             qPrintable(replyFailure(originalReply)));
+    const auto originalAsset = originalReply.result->value();
+    QCOMPARE(packedPixels(originalAsset->straightRgba),
+             expectedPackedBytes(original));
+    QVERIFY(originalAsset->serial != replacementAsset->serial);
+}
+
+void TerminalBackdropTest::retriesInPlaceRewriteAfterOpen()
+{
+    const auto directory = makeTestDirectory();
+    QVERIFY2(directory->isValid(), qPrintable(directory->errorString()));
+    const QString path =
+        directory->filePath(QStringLiteral("open-in-place-race.png"));
+    const QImage original = solidImage(QColor(31, 51, 71, 91));
+    const QImage replacement = solidImage(QColor(131, 151, 171, 191));
+    QByteArray originalBytes = encodedPng(original);
+    QByteArray replacementBytes = encodedPng(replacement);
+    QVERIFY(!originalBytes.isEmpty());
+    QVERIFY(!replacementBytes.isEmpty());
+    equalizeByteLengths(originalBytes, replacementBytes);
+    QVERIFY(writeBytes(path, originalBytes));
+    constexpr qint64 modifiedSeconds = 1'700'000'300;
+    constexpr qint64 modifiedNanoseconds = 456'789'012;
+    QVERIFY(setModificationTime(path, modifiedSeconds, modifiedNanoseconds));
+    const auto originalStatus = fileStatus(path);
+    QVERIFY(originalStatus.has_value());
+
+    struct DecodeGate {
+        QSemaphore reached;
+        QSemaphore resume;
+    };
+    const auto gate = std::make_shared<DecodeGate>();
+    bool resumed = false;
+    const auto resumeGuard = qScopeGuard([gate, &resumed] {
+        if (!resumed) gate->resume.release();
+    });
+
+    ImageReply replacementReply;
+    QObject replacementReceiver;
+    auto replacementHandle = requestTerminalBackgroundImageForTest(
+        imageRequest(path), &replacementReceiver,
+        captureReply(replacementReply), [gate] {
+            gate->reached.release();
+            gate->resume.acquire();
+        });
+    QVERIFY(gate->reached.tryAcquire(1, asyncTimeout));
+
+    QTest::qSleep(2);
+    QVERIFY(writeBytes(path, replacementBytes));
+    QVERIFY(setModificationTime(path, modifiedSeconds, modifiedNanoseconds));
+    const auto changedStatus = fileStatus(path);
+    QVERIFY(changedStatus.has_value());
+    QCOMPARE(static_cast<quint64>(changedStatus->st_ino),
+             static_cast<quint64>(originalStatus->st_ino));
+    QCOMPARE(static_cast<qint64>(changedStatus->st_size),
+             static_cast<qint64>(originalStatus->st_size));
+    QCOMPARE(static_cast<qint64>(changedStatus->st_mtim.tv_sec),
+             static_cast<qint64>(originalStatus->st_mtim.tv_sec));
+    QCOMPARE(static_cast<qint64>(changedStatus->st_mtim.tv_nsec),
+             static_cast<qint64>(originalStatus->st_mtim.tv_nsec));
+    if (changedStatus->st_ctim.tv_sec == originalStatus->st_ctim.tv_sec
+        && changedStatus->st_ctim.tv_nsec == originalStatus->st_ctim.tv_nsec) {
+        gate->resume.release();
+        resumed = true;
+        QSKIP(
+            "The test filesystem does not expose an in-place identity change");
+    }
+
+    gate->resume.release();
+    resumed = true;
+    QTRY_VERIFY_WITH_TIMEOUT(replacementReply.result.has_value(), asyncTimeout);
+    QVERIFY2(replacementReply.result->has_value(),
+             qPrintable(replyFailure(replacementReply)));
+    const auto replacementAsset = replacementReply.result->value();
+    QCOMPARE(packedPixels(replacementAsset->straightRgba),
+             expectedPackedBytes(replacement));
+
+    // The coherent retry is cached under the post-mutation identity rather
+    // than publishing the first attempt under stale metadata.
+    ImageReply cachedReply;
+    QObject cachedReceiver;
+    auto cachedHandle = requestTerminalBackgroundImage(
+        imageRequest(path), &cachedReceiver, captureReply(cachedReply));
+    QTRY_VERIFY_WITH_TIMEOUT(cachedReply.result.has_value(), asyncTimeout);
+    QVERIFY2(cachedReply.result->has_value(),
+             qPrintable(replyFailure(cachedReply)));
+    QCOMPARE(cachedReply.result->value().get(), replacementAsset.get());
 }
 
 void TerminalBackdropTest::deliversCallbacksOnApplicationThread()

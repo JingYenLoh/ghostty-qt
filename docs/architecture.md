@@ -2001,12 +2001,25 @@ cell backgrounds, selection, search, inverse, and padding extension draw over
 that pass. Matching Ghostty, minimum contrast deliberately evaluates only the
 cell and global configured-background layers and never samples the image.
 
-PNG/JPEG file inspection, decoding, and straight-`RGBA8888` preparation run on
-a bounded two-thread pool, outside the GUI, render, and session threads. A
-process-wide weak cache keys those immutable decoded pixels by finalized path
-plus file size and millisecond modification time. Identical concurrent
-requests coalesce, and expired weak entries release unused CPU images. Each
-pane still owns its placement, render-thread textures, and composition state.
+PNG/JPEG file opening, inspection, decoding, and straight-`RGBA8888`
+preparation run on a bounded two-thread pool, outside the GUI, render, and
+session threads. Each attempt opens the finalized path once with nonblocking
+Linux descriptor flags, rejects non-regular files before they can occupy the
+pool, derives the identity with `fstat`, and passes that same handle through a
+`QFile` to `QImageReader`. An atomic path replacement therefore cannot make
+bytes from a new inode enter the old cache key. The process-wide weak key
+contains path, device, inode, link count, size, and nanosecond
+modification/status-change timestamps. Identical concurrent identities
+coalesce, while same-path atomic replacements bypass positive and
+descriptor-keyed negative entries. Repaired same-inode files likewise bypass
+them when the filesystem exposes the changed size, mtime, or ctime. Open and
+`fstat` failures retain a separate bounded path-keyed throttle. The loader
+rechecks the open descriptor after decoding. A pathname unlink/link-count
+transition keeps the opened snapshot, while an observable in-place metadata
+change discards the attempt and retries once rather than publishing or caching
+potentially torn pixels.
+Expired weak entries release unused CPU images. Each pane still owns its
+placement, render-thread textures, and composition state.
 Generation and cancellation guards discard stale completions after reload or
 pane destruction. A changed path keeps the prior image visible until a
 successful replacement arrives, an absent path unloads it, and
@@ -2836,12 +2849,15 @@ The default CTest suite has focused layers for each ownership boundary:
   excessive-padding safety, DPR behavior, and numeric saturation.
 - `terminal-backdrop` exercises all four fit calculations, all nine anchors,
   device-pixel `none` sizing, transparent source pixels, rounded global alpha,
-  an image multiplier above one, and zero-opacity composition as pure
-  GUI-independent helpers. Software-scene-graph integration can verify the
-  deterministic fallback and retained pane lifecycle, but it cannot execute
-  the packed-RGBA RHI material. `terminal-backdrop-rhi` covers backend shader
-  creation, linear texture sampling, and modulo seam behavior separately;
-  final Wayland compositor presentation remains an interactive check.
+  an image multiplier above one, zero-opacity composition, descriptor-identity
+  cache reuse, repaired negative entries, nonblocking special-file rejection,
+  sub-millisecond in-place changes, identical-size/mtime atomic replacement,
+  same-open-file decoding, and one successful mutation retry. Software
+  scene-graph integration can verify the deterministic fallback and retained
+  pane lifecycle, but it cannot execute the packed-RGBA RHI material.
+  `terminal-backdrop-rhi` covers backend shader creation, linear texture
+  sampling, and modulo seam behavior separately; final Wayland compositor
+  presentation remains an interactive check.
 - `terminal-backdrop-rhi` verifies that both compiled QSB resources are linked
   into an independent consumer, reflects the fragment QSB's single RGBA
   sampler, then attempts OpenGL and Vulkan RHI checks for orientation,
@@ -3222,10 +3238,7 @@ be checked interactively in a real Wayland session.
   varying-alpha edges and tile seams are therefore deliberate approximations.
   The normal RHI material is covered through OpenGL and Vulkan integration
   attempts; final production-GPU and Wayland-compositor presentation remains
-  an interactive validation boundary. The weak decoded-image cache identity is
-  path, size, and millisecond mtime rather than an opened-file identity, so an
-  adversarial same-size/same-mtime replacement or replacement between metadata
-  inspection and path reopen can temporarily reuse or mis-key an asset.
+  an interactive validation boundary.
 - Public `libghostty-vt` cannot preserve configured cursor-blink tri-state
   precedence over DEC mode 12, so that case remains explicitly partial in the
   parity ledger. Palette generation does not depend on the text config dump:

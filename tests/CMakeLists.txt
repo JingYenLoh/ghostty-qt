@@ -343,7 +343,7 @@ target_link_libraries(test-terminal-backdrop PRIVATE
     ghostty-qt-terminal-rendering
 )
 add_test(NAME terminal-backdrop COMMAND test-terminal-backdrop)
-set_tests_properties(terminal-backdrop PROPERTIES TIMEOUT 10)
+set_tests_properties(terminal-backdrop PROPERTIES TIMEOUT 30)
 
 qt_add_executable(test-terminal-alpha-blending
     test_terminal_alpha_blending.cpp

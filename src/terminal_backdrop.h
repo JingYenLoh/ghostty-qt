@@ -89,12 +89,16 @@ private:
     requestTerminalBackgroundImage(
         const TerminalBackgroundImageRequest &, QObject *,
         TerminalBackgroundImageCallback);
+    friend TerminalBackgroundImageRequestHandle
+    requestTerminalBackgroundImageForTest(
+        const TerminalBackgroundImageRequest &, QObject *,
+        TerminalBackgroundImageCallback, std::move_only_function<void()>);
 };
 
-// File inspection, decoding, and RGBA preparation are performed off the
-// GUI/render threads. Identical in-flight loads are coalesced process-wide.
-// A weak, file-metadata-keyed cache shares active images without retaining
-// unused resources or hiding file changes.
+// Opening, descriptor inspection, decoding, and RGBA preparation are performed
+// off the GUI/render threads. Identical opened-file identities are coalesced
+// process-wide. A weak cache shares active images without retaining unused
+// resources or hiding same-path replacements.
 [[nodiscard]] TerminalBackgroundImageRequestHandle
 requestTerminalBackgroundImage(
     const TerminalBackgroundImageRequest &request, QObject *receiver,
