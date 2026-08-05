@@ -48,7 +48,12 @@ set(desktop
     "${staging_root}${final_data_dir}/applications/${APPLICATION_ID}.desktop")
 set(service
     "${staging_root}${final_data_dir}/dbus-1/services/${APPLICATION_ID}.service")
-foreach(required_path IN ITEMS "${executable}" "${desktop}" "${service}")
+set(icon
+    "${staging_root}${final_data_dir}/icons/hicolor/scalable/apps/${APPLICATION_ID}.svg")
+set(metainfo
+    "${staging_root}${final_data_dir}/metainfo/${APPLICATION_ID}.metainfo.xml")
+foreach(required_path IN ITEMS
+        "${executable}" "${desktop}" "${service}" "${icon}" "${metainfo}")
     if(NOT EXISTS "${required_path}")
         message(FATAL_ERROR "Installed desktop integration is missing: ${required_path}")
     endif()
@@ -56,6 +61,8 @@ endforeach()
 
 file(READ "${desktop}" desktop_contents)
 file(READ "${service}" service_contents)
+file(READ "${icon}" icon_contents)
+file(READ "${metainfo}" metainfo_contents)
 
 find_program(desktop_file_validate desktop-file-validate)
 if(desktop_file_validate)
@@ -68,6 +75,57 @@ if(desktop_file_validate)
         message(FATAL_ERROR
             "desktop-file-validate rejected the installed entry (${desktop_validation_result})\n${desktop_validation_output}\n${desktop_validation_error}")
     endif()
+endif()
+
+find_program(appstreamcli appstreamcli)
+if(appstreamcli)
+    execute_process(
+        COMMAND "${appstreamcli}" validate --no-net --strict "${metainfo}"
+        RESULT_VARIABLE appstream_validation_result
+        OUTPUT_VARIABLE appstream_validation_output
+        ERROR_VARIABLE appstream_validation_error)
+    if(NOT appstream_validation_result EQUAL 0)
+        message(FATAL_ERROR
+            "appstreamcli rejected the installed metadata (${appstream_validation_result})\n${appstream_validation_output}\n${appstream_validation_error}")
+    endif()
+endif()
+
+find_program(xmllint xmllint)
+if(xmllint)
+    foreach(xml_file IN ITEMS "${icon}" "${metainfo}")
+        execute_process(
+            COMMAND "${xmllint}" --noout "${xml_file}"
+            RESULT_VARIABLE xml_validation_result
+            OUTPUT_VARIABLE xml_validation_output
+            ERROR_VARIABLE xml_validation_error)
+        if(NOT xml_validation_result EQUAL 0)
+            message(FATAL_ERROR
+                "xmllint rejected ${xml_file} (${xml_validation_result})\n${xml_validation_output}\n${xml_validation_error}")
+        endif()
+    endforeach()
+endif()
+
+find_program(rsvg_convert rsvg-convert)
+if(rsvg_convert)
+    foreach(icon_size IN ITEMS 16 32 64 512)
+        set(rendered_icon "${STAGE_DIR}/icon-${icon_size}.png")
+        execute_process(
+            COMMAND "${rsvg_convert}"
+                --width "${icon_size}" --height "${icon_size}"
+                --output "${rendered_icon}" "${icon}"
+            RESULT_VARIABLE icon_render_result
+            OUTPUT_VARIABLE icon_render_output
+            ERROR_VARIABLE icon_render_error)
+        if(NOT icon_render_result EQUAL 0 OR NOT EXISTS "${rendered_icon}")
+            message(FATAL_ERROR
+                "Could not render installed icon at ${icon_size}px (${icon_render_result})\n${icon_render_output}\n${icon_render_error}")
+        endif()
+        file(SIZE "${rendered_icon}" rendered_icon_size)
+        if(rendered_icon_size EQUAL 0)
+            message(FATAL_ERROR
+                "Installed icon rendered an empty ${icon_size}px PNG")
+        endif()
+    endforeach()
 endif()
 
 set(escaped_try_executable "${final_executable}")
@@ -101,6 +159,8 @@ string(FIND "${desktop_contents}" "${desktop_exec}\n"
     desktop_exec_position)
 string(FIND "${desktop_contents}" "${desktop_try_exec}\n"
     desktop_try_exec_position)
+string(FIND "${desktop_contents}" "Icon=${APPLICATION_ID}\n"
+    desktop_icon_position)
 string(FIND "${desktop_contents}" "${desktop_new_window_action}"
     desktop_new_window_action_position)
 string(FIND "${service_contents}" "Name=${APPLICATION_ID}\n"
@@ -112,6 +172,7 @@ if(NOT desktop_contents MATCHES "(^|\n)DBusActivatable=true(\n|$)"
    OR desktop_exec_position EQUAL -1
    OR desktop_exec_position GREATER desktop_new_window_action_position
    OR desktop_try_exec_position EQUAL -1
+   OR desktop_icon_position EQUAL -1
    OR desktop_new_window_action_position EQUAL -1
    OR NOT desktop_contents MATCHES "(^|\n)Actions=new-window;(\n|$)"
    OR NOT desktop_contents MATCHES "(^|\n)X-TerminalArgExec=-e(\n|$)"
@@ -120,9 +181,28 @@ if(NOT desktop_contents MATCHES "(^|\n)DBusActivatable=true(\n|$)"
    OR NOT desktop_contents MATCHES "(^|\n)X-TerminalArgDir=--working-directory=(\n|$)"
    OR NOT desktop_contents MATCHES "(^|\n)X-TerminalArgHold=--wait-after-command(\n|$)"
    OR desktop_contents MATCHES "initial-window=false"
-   OR desktop_contents MATCHES "(^|\n)(MimeType|Icon)="
+   OR desktop_contents MATCHES "(^|\n)MimeType="
    OR desktop_contents MATCHES "__GHOSTTY_QT_INSTALL_(TRY_|DBUS_)?EXECUTABLE__")
     message(FATAL_ERROR "Invalid installed desktop entry:\n${desktop_contents}")
+endif()
+
+string(FIND "${metainfo_contents}" "<id>${APPLICATION_ID}</id>"
+    metainfo_id_position)
+string(FIND "${metainfo_contents}"
+    "<launchable type=\"desktop-id\">${APPLICATION_ID}.desktop</launchable>"
+    metainfo_launchable_position)
+if(metainfo_id_position EQUAL -1
+   OR metainfo_launchable_position EQUAL -1
+   OR metainfo_contents MATCHES "@GHOSTTY_QT_[A-Z_]+@"
+   OR metainfo_contents MATCHES [[\$<]])
+    message(FATAL_ERROR "Invalid installed AppStream metadata:\n${metainfo_contents}")
+endif()
+
+if(NOT icon_contents MATCHES "<svg"
+   OR NOT icon_contents MATCHES "viewBox=\"0 0 512 512\""
+   OR icon_contents MATCHES "<(image|script|foreignObject)([ >])"
+   OR icon_contents MATCHES "(href|xlink:href)=")
+    message(FATAL_ERROR "Invalid installed scalable icon:\n${icon_contents}")
 endif()
 
 if(service_name_position EQUAL -1

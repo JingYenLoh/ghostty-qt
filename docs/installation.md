@@ -1,8 +1,8 @@
 # Installation and desktop integration
 
 The build tree is directly runnable, but installing the release preset provides
-relocatable helper binaries, desktop activation metadata, terminfo, and shell
-integration and theme resources.
+relocatable helper binaries, desktop activation and AppStream metadata, a
+scalable application icon, terminfo, and shell integration and theme resources.
 
 ## Install
 
@@ -18,7 +18,7 @@ The install contains:
 
 - `ghostty-qt` and its private configuration helper;
 - the private Ghostty runtime required by that helper;
-- a desktop entry and D-Bus service;
+- a desktop entry, D-Bus service, scalable icon, and AppStream metadata;
 - the compiled `xterm-ghostty` terminfo entry;
 - the pinned Ghostty theme bundle;
 - staged Bash, Elvish, Fish, Nushell, and Zsh integration resources.
@@ -34,10 +34,18 @@ Configuration-specific metadata is installed under:
 ```text
 ${CMAKE_INSTALL_DATADIR}/applications/io.github.JingYenLoh.ghostty_qt.desktop
 ${CMAKE_INSTALL_DATADIR}/dbus-1/services/io.github.JingYenLoh.ghostty_qt.service
+${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps/io.github.JingYenLoh.ghostty_qt.svg
+${CMAKE_INSTALL_DATADIR}/metainfo/io.github.JingYenLoh.ghostty_qt.metainfo.xml
 ```
 
-A Debug install appends `.Debug` to the filenames and application identity, so
-it cannot activate a Release process.
+A Debug install appends `.Debug` to these filenames and the application
+identity, so it neither activates nor overwrites a Release installation's
+desktop assets.
+
+The established application ID retains the mixed-case GitHub owner segment.
+AppStream accepts it, although pedantic validation recommends lowercase-only
+component IDs. Changing it requires a coordinated desktop and D-Bus identity
+migration rather than a metadata-only rename.
 
 The desktop entry names the installed executable through `TryExec`, requests
 single-instance startup, and provides a New Window desktop action. Its
@@ -52,7 +60,16 @@ launches, `+new-window`, and `+toggle-quick-terminal`. Activation tokens and
 startup IDs are scoped to the requested window and are scrubbed before terminal
 children inherit their base environment.
 
-There is not yet a project icon, AppStream metadata, or distribution package.
+The desktop entry, notifications, and AppStream component share the same icon
+theme identity. The installed vector-only, font-free SVG is intentionally
+simple enough to remain legible at 16 pixels. When available, the staged-install
+test validates the desktop entry, AppStream document, XML, and rendered SVG
+with the host's freedesktop.org tooling.
+
+The repository does not currently declare a top-level software license, so the
+AppStream component conservatively reports `LicenseRef-proprietary`; its
+metadata document is separately reusable under CC0-1.0. Distribution-specific
+packages remain future work.
 
 ## Terminfo
 

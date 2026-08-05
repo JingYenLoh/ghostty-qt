@@ -1416,6 +1416,10 @@ configure_file(
     "${_ghostty_qt_desktop_build_dir}/ghostty-qt.service.in"
     @ONLY)
 configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/dist/linux/ghostty-qt.metainfo.xml.in"
+    "${_ghostty_qt_desktop_build_dir}/ghostty-qt.metainfo.xml.in"
+    @ONLY)
+configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchInstalledDesktopMetadata.cmake.in"
     "${_ghostty_qt_desktop_build_dir}/PatchInstalledDesktopMetadata.cmake.in"
     @ONLY)
@@ -1429,6 +1433,15 @@ file(GENERATE
     INPUT "${_ghostty_qt_desktop_build_dir}/ghostty-qt.service.in")
 file(GENERATE
     OUTPUT
+        "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}.metainfo.xml"
+    INPUT "${_ghostty_qt_desktop_build_dir}/ghostty-qt.metainfo.xml.in")
+file(GENERATE
+    OUTPUT
+        "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}.svg"
+    INPUT
+        "${CMAKE_CURRENT_SOURCE_DIR}/dist/linux/icons/hicolor/scalable/apps/ghostty-qt.svg")
+file(GENERATE
+    OUTPUT
         "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/PatchInstalledDesktopMetadata.cmake"
     INPUT
         "${_ghostty_qt_desktop_build_dir}/PatchInstalledDesktopMetadata.cmake.in")
@@ -1440,6 +1453,12 @@ install(FILES
 install(FILES
     "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}.service"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/dbus-1/services")
+install(FILES
+    "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}.metainfo.xml"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/metainfo")
+install(FILES
+    "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}.svg"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps")
 install(SCRIPT
     "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/PatchInstalledDesktopMetadata.cmake")
 install(DIRECTORY "${GHOSTTY_QT_TERMINFO_DIR}/"

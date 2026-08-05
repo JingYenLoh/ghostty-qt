@@ -769,9 +769,11 @@ DESTDIR-staged desktop integration test checks
 configuration-specific IDs, relative or absolute final executable paths,
 distinct desktop fallback/service-host arguments, `TryExec`, the New Window
 desktop action, supported `X-TerminalArgExec`/`AppId`/`Dir` mappings, deliberate
-`Title`/`Hold` mappings, special-character path serialization, optional
-`desktop-file-validate`, live activation of the installed service on a private
-D-Bus, and config-helper presence.
+`Title`/`Hold` mappings, the shared desktop/icon/AppStream identity, XML and
+AppStream validity, SVG rendering from 16 through 512 pixels,
+special-character path serialization, optional `desktop-file-validate`, live
+activation of the installed service on a private D-Bus, and config-helper
+presence.
 BEL coverage keeps the worker event and GUI presentation boundaries separate:
 pane cases verify transition-only latch notification versus every-event bell
 publication, active title and border derivation, live feature changes without

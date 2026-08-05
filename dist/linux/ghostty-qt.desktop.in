@@ -5,6 +5,7 @@ Name=Ghostty Qt
 Comment=A Wayland terminal emulator powered by libghostty
 TryExec=__GHOSTTY_QT_INSTALL_TRY_EXECUTABLE__
 Exec="__GHOSTTY_QT_INSTALL_EXECUTABLE__" --single-instance=true
+Icon=@GHOSTTY_QT_EFFECTIVE_APPLICATION_ID@
 Categories=System;TerminalEmulator;
 Keywords=terminal;tty;pty;
 StartupNotify=true

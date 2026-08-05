@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>@GHOSTTY_QT_EFFECTIVE_APPLICATION_ID@</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <name>Ghostty Qt</name>
+  <developer id="io.github.jingyenloh">
+    <name>Ghostty Qt contributors</name>
+  </developer>
+  <summary>A native Qt terminal powered by Ghostty</summary>
+  <description>
+    <p>
+      Ghostty Qt is an independent terminal frontend for Linux on Wayland,
+      built with Qt Quick and Ghostty's libghostty-vt terminal library.
+    </p>
+    <p>
+      It provides tabs, nested splits, multiple windows, a quick terminal,
+      shell integration, configurable keybindings, GPU rendering, and support
+      for Ghostty configuration and themes.
+    </p>
+  </description>
+  <launchable type="desktop-id">@GHOSTTY_QT_EFFECTIVE_APPLICATION_ID@.desktop</launchable>
+  <provides>
+    <binary>ghostty-qt</binary>
+  </provides>
+  <categories>
+    <category>System</category>
+    <category>TerminalEmulator</category>
+  </categories>
+  <branding>
+    <color type="primary" scheme_preference="light">#153dc7</color>
+    <color type="primary" scheme_preference="dark">#58e0c1</color>
+  </branding>
+  <url type="homepage">https://github.com/JingYenLoh/ghostty-qt</url>
+  <url type="bugtracker">https://github.com/JingYenLoh/ghostty-qt/issues</url>
+  <url type="vcs-browser">https://github.com/JingYenLoh/ghostty-qt</url>
+  <content_rating type="oars-1.1"/>
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </recommends>
+</component>

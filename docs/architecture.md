@@ -2775,15 +2775,18 @@ Core-only probe from the moved `bin` directory to verify that it selects the
 moved private database. It also runs `+list-themes` against the moved bundled
 resources. A separate staged-install test verifies the configuration-specific
 desktop entry and direct D-Bus service, `TryExec`, the New Window action,
-supported terminal-launcher Exec/AppId/Dir mappings, deliberate Title/Hold
-omission, their distinct fallback/zero-window commands, exact service identity,
+supported terminal-launcher Exec/Title/AppId/Dir/Hold mappings, their distinct
+fallback/zero-window commands, exact service identity,
 actual install-prefix or configured-absolute executable path, DESTDIR exclusion
 from embedded paths, absence of unresolved placeholders, and the config-on/off
-helper boundary. A special-character prefix distinguishes ordinary-string,
+helper boundary. The same contract requires the configuration-specific
+scalable icon and AppStream component, checks their shared identity and desktop
+launchable, and uses available XML, AppStream, and SVG render validators at 16
+through 512 pixels. A special-character prefix distinguishes ordinary-string,
 Desktop Entry Exec, and D-Bus Exec escaping; where the reference D-Bus tools
 are available, the test also activates the installed service on a private bus.
-Systemd notification integration, icon, AppStream, and distribution packaging
-remain separate work; per-pane transient systemd cgroups are implemented.
+Systemd readiness notification and distribution packaging remain separate
+work; per-pane transient systemd cgroups are implemented.
 
 Qt's `emit` macro is disabled with `QT_NO_KEYWORDS` because the public Ghostty C
 API legitimately contains struct fields named `emit`.
@@ -3155,11 +3158,12 @@ The default CTest suite has focused layers for each ownership boundary:
   one-shot cleanup. Controller and worker suites additionally cover
   reentrant half-pair destruction and shell-child token scrubbing.
 - `desktop-integration-install` stages an installation under repository-local
-  `./tmp` and validates configuration-specific desktop/service metadata,
-  install-time executable and `TryExec` paths, the New Window action,
-  terminal-launcher argument mappings, bootstrap arguments, special-character
-  serialization, live private-bus activation when D-Bus tools are available,
-  and config-helper presence or absence.
+  `./tmp` and validates configuration-specific desktop/service/AppStream
+  metadata, the scalable icon and its rendered size range, install-time
+  executable and `TryExec` paths, the New Window action, terminal-launcher
+  argument mappings, bootstrap arguments, special-character serialization,
+  live private-bus activation when D-Bus tools are available, and config-helper
+  presence or absence.
 - `application-close-dialog` opens and accepts the real QML close confirmation
   around a live child, failing on binding loops or shutdown regressions.
 - `ghostty-parity-manifest` checks the pinned revision and upstream-derived
@@ -3248,8 +3252,9 @@ be checked interactively in a real Wayland session.
   actions, user-defined `link` rules, saved sessions, and full production
   packaging remain future work. Source-less desktop activation and
   payload-bearing `+new-window` activation are implemented, including
-  activation-token consumption; systemd notification, icon, and AppStream
-  layers remain. OSC 8, the
+  activation-token consumption; systemd readiness notification remains. The
+  desktop entry, scalable icon, and AppStream component share one
+  configuration-specific identity. OSC 8, the
   default `link-url` matcher, link previews, and the incremental search foundation are
   implemented. Search remains partial because the library artifact omits the
   upstream `xev`-dependent thread, mutation restarts its scan, inactive-screen
