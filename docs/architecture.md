@@ -566,7 +566,7 @@ fire-and-forget normal activation.
 
 The private structured config export retains Ghostty's boolean
 `initial-window` value and raw `gtk-single-instance` false/true/detect enum.
-The latter is an unused field in the sole accepted schema-v3 contract: process
+The latter is an unused field in the sole accepted schema-v4 contract: process
 uniqueness belongs to the independent frontend `single-instance` setting. The
 GUI process resolves frontend `detect` from its real invocation and
 `TERM_PROGRAM`. Parsing
@@ -714,6 +714,24 @@ body is replaced. Default-action clicks return only the stable target and pass
 through `presentSurface`, so a removed pane or window is a no-op rather than a
 use-after-free. Missing or failing notification daemons never affect VT
 parsing or the child process.
+
+OSC 9;4 progress reports use a separate bounded ordered deferred effect. The
+adapter validates the public sized callback and normalizes remove, set, error,
+indeterminate, and pause plus the optional 0-through-100 value into an owning
+project type. At the 256-report bound, the adapter replaces the queued prefix
+with a state-equivalent sequence instead of dropping the newest state; this
+keeps a trailing remove and pause-without-value semantics exact. `SessionWorker`
+and `TerminalController` otherwise preserve callback order because pause
+without a value intentionally retains the pane's previous presentation. Each
+pane owns the visible state and a single 15-second `QChronoTimer`: every
+non-remove report restarts it, while remove, expiry, or a live
+`progress-style = false` update hides the overlay and stops the timer.
+Re-enabling presentation alone does not resurrect stale UI. One input-transparent
+two-pixel QML bar is attached through the ordinary pane-overlay lifecycle.
+Indeterminate reports advance one finite pulse animation and return the scene
+graph to idle rather than scheduling frames until expiry. Determinate
+active-pane values also feed the existing tab model progress role, while hidden
+and indeterminate states publish `-1`.
 
 The pane-local inspector follows the same ownership boundary without adding
 diagnostic work to the output path. Its model and 250 ms coarse timer exist
@@ -1600,7 +1618,7 @@ explicit CLI and recursive `config-file` sources, and the successful snapshot
 omits those candidates from the service's watcher set. A setting encountered
 inside a config file remains intentionally inert, matching Ghostty's own load
 order.
-Each JSON document is one exact schema-v3 frontend projection containing all
+Each JSON document is one exact schema-v4 frontend projection containing all
 consumed values plus the finalized current and platform-default binding sets.
 The two JSON byte streams must match, preventing a valid A-to-B edit from
 publishing a mixed snapshot. The adapter strictly decodes the verified
@@ -1697,15 +1715,16 @@ lifetime, typography and terminal appearance, scrollback,
 selection/clipboard/mouse/link behavior, resize-overlay presentation, default
 and included config-file policy, and the finalized keybinding sets. The README
 and machine-checked parity ledger describe the individual keys. One strict
-schema-v3 document carries the whole slice, including nullable command
+schema-v4 document carries the whole slice, including nullable command
 objects, nullable values such as `quit-after-last-window-closed-delay`, the
 ordered clipboard replacement list, and both cgroup limits; there is no
 version fallback, separate defaults merge, or partially populated snapshot.
-The finalized default-true `desktop-notifications` bit is decoded into
-`GhosttyConfigValues` and projected into application-owned `LaunchOptions`.
-It deliberately stays out of `TerminalSessionRuntimeOptions`: configuration
-reload changes the application presentation gate without mutating terminal or
-PTY state, and disabling presentation does not disable OSC parsing.
+The finalized default-true `desktop-notifications` and `progress-style` bits
+are decoded into `GhosttyConfigValues` and projected into application-owned
+`LaunchOptions`. They deliberately stay out of `TerminalSessionRuntimeOptions`:
+configuration reload changes the application presentation gates without
+mutating terminal or PTY state, and disabling presentation does not disable
+OSC parsing.
 Optional cgroup uint64 limits cross JSON as null or canonical decimal strings
 so the complete range remains exact despite Qt JSON's double representation.
 The finalized `env` map crosses as an ordered array of objects whose `key` and
@@ -1773,7 +1792,7 @@ f32-derived point size, the complete ordered feature list, four ordered
 variation lists, u21 codepoint-to-family ranges, three synthesis permissions,
 the cursor shaping-break flag, five FreeType load booleans, and eleven optional
 metric modifiers. Variation values retain their finalized f64 bit pattern in
-schema v3, including negative zero and non-finite values, instead of relying on
+schema v4, including negative zero and non-finite values, instead of relying on
 non-standard JSON numbers.
 
 `terminalFontProgram` takes one GUI-thread font-database snapshot for each
@@ -2999,7 +3018,7 @@ The default CTest suite has focused layers for each ownership boundary:
   while pane wheel tests cover precision threshold, timeout, direction,
   simultaneous-axis, reload-reset, and discrete-horizontal pass-through
   behavior.
-- `ghostty-config-export` verifies strict decoding of the complete schema-v3
+- `ghostty-config-export` verifies strict decoding of the complete schema-v4
   frontend projection, including tagged nullable command objects and their raw
   bytes, finalized non-empty byte-valued `term`, ordered tagged raw/path input,
   the ordered raw-byte `env` pairs and their closed validity rules,

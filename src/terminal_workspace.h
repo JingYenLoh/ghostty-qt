@@ -106,6 +106,9 @@ class TerminalWorkspace : public QQuickItem {
     Q_PROPERTY(
         QQmlComponent *resizeOverlayComponent READ resizeOverlayComponent WRITE
             setResizeOverlayComponent NOTIFY resizeOverlayComponentChanged)
+    Q_PROPERTY(QQmlComponent *progressOverlayComponent READ
+                   progressOverlayComponent WRITE setProgressOverlayComponent
+                       NOTIFY progressOverlayComponentChanged)
     Q_PROPERTY(QQmlComponent *scrollbarComponent READ scrollbarComponent WRITE
                    setScrollbarComponent NOTIFY scrollbarComponentChanged)
     Q_PROPERTY(QQmlComponent *bellBorderComponent READ bellBorderComponent WRITE
@@ -218,6 +221,11 @@ public:
         return resizeOverlay_.component.data();
     }
     void setResizeOverlayComponent(QQmlComponent *component);
+    QQmlComponent *progressOverlayComponent() const
+    {
+        return progressOverlay_.component.data();
+    }
+    void setProgressOverlayComponent(QQmlComponent *component);
     QQmlComponent *scrollbarComponent() const
     {
         return scrollbar_.component.data();
@@ -325,6 +333,7 @@ Q_SIGNALS:
     void abnormalExitOverlayComponentChanged();
     void readOnlyOverlayComponentChanged();
     void resizeOverlayComponentChanged();
+    void progressOverlayComponentChanged();
     void scrollbarComponentChanged();
     void bellBorderComponentChanged();
     void customShaderStageComponentChanged();
@@ -604,6 +613,7 @@ private:
     PaneOverlaySlot abnormalExitOverlay_;
     PaneOverlaySlot readOnlyOverlay_;
     PaneOverlaySlot resizeOverlay_;
+    PaneOverlaySlot progressOverlay_;
     PaneOverlaySlot scrollbar_;
     PaneOverlaySlot bellBorder_;
     QPointer<QQmlComponent> customShaderStageComponent_;

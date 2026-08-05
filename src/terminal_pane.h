@@ -16,6 +16,7 @@
 #include "terminal_desktop_notification.h"
 #include "terminal_geometry.h"
 #include "terminal_inspector_model.h"
+#include "terminal_progress_report.h"
 #include "terminal_types.h"
 #include "window_navigation_action.h"
 #include "workspace_action.h"
@@ -111,6 +112,14 @@ class TerminalPane final : public QQuickItem,
     Q_PROPERTY(
         qreal scrollbarPosition READ scrollbarPosition NOTIFY scrollbarChanged)
     Q_PROPERTY(qreal scrollbarSize READ scrollbarSize NOTIFY scrollbarChanged)
+    Q_PROPERTY(bool progressVisible READ progressVisible NOTIFY progressChanged)
+    Q_PROPERTY(int progressValue READ progressValue NOTIFY progressChanged)
+    Q_PROPERTY(bool progressIndeterminate READ progressIndeterminate NOTIFY
+                   progressChanged)
+    Q_PROPERTY(bool progressError READ progressError NOTIFY progressChanged)
+    Q_PROPERTY(bool progressPaused READ progressPaused NOTIFY progressChanged)
+    Q_PROPERTY(qreal progressActivityPosition READ progressActivityPosition
+                   NOTIFY progressChanged)
     Q_PROPERTY(bool bellRinging READ bellRinging NOTIFY bellChanged)
     Q_PROPERTY(bool bellBorderVisible READ bellBorderVisible NOTIFY bellChanged)
     Q_PROPERTY(TerminalInspectorModel *inspectorModel READ inspectorModel NOTIFY
@@ -163,6 +172,20 @@ public:
     bool scrollbarVisible() const { return scrollbarVisible_; }
     qreal scrollbarPosition() const { return scrollbarPosition_; }
     qreal scrollbarSize() const { return scrollbarSize_; }
+    bool progressVisible() const { return progressVisible_; }
+    int progressValue() const { return progressValue_; }
+    bool progressIndeterminate() const { return progressIndeterminate_; }
+    bool progressError() const { return progressError_; }
+    bool progressPaused() const { return progressPaused_; }
+    qreal progressActivityPosition() const
+    {
+        return static_cast<qreal>(progressActivityStep_) / 10.0;
+    }
+    [[nodiscard]] int tabProgress() const
+    {
+        return progressVisible_ && !progressIndeterminate_ ? progressValue_
+                                                           : -1;
+    }
     bool bellRinging() const { return bellRinging_; }
     bool bellTitleVisible() const
     {
@@ -263,6 +286,7 @@ Q_SIGNALS:
     void resizeOverlayTextChanged();
     void resizeOverlayRectChanged();
     void scrollbarChanged();
+    void progressChanged();
     void bellChanged();
     void inspectorModelChanged();
     void inspectorCellPickingChanged();
@@ -382,6 +406,9 @@ private:
     void showPendingResizeOverlay();
     void hideResizeOverlay();
     void restartResizeOverlayTimer();
+    void handleProgressReport(const TerminalProgressReport &report);
+    void hideProgressPresentation();
+    void advanceProgressActivity();
     [[nodiscard]] std::optional<TerminalSessionGeometry> currentSessionGeometry(
         std::optional<QSizeF> viewportSize = std::nullopt) const;
     [[nodiscard]] std::optional<TerminalViewportLayout> currentViewportLayout(
@@ -611,6 +638,7 @@ private:
     QTimer *cursorTimer_ = nullptr;
     QChronoTimer *horizontalTabScrollResetTimer_ = nullptr;
     QChronoTimer *resizeOverlayTimer_ = nullptr;
+    QChronoTimer *progressReportTimer_ = nullptr;
     std::chrono::steady_clock::time_point resizeOverlayStartupSuppressionEnds_;
     std::optional<QSize> resizeOverlayGrid_;
     QString resizeOverlayText_;
@@ -622,6 +650,13 @@ private:
     qreal scrollbarPosition_ = 0.0;
     qreal scrollbarSize_ = 1.0;
     std::optional<quint64> pendingScrollbarRow_;
+    int progressValue_ = 0;
+    bool progressVisible_ = false;
+    bool progressIndeterminate_ = false;
+    bool progressError_ = false;
+    bool progressPaused_ = false;
+    int progressActivityStep_ = 0;
+    bool progressActivityForward_ = true;
     std::shared_ptr<TerminalBellPlayer> bellPlayer_ =
         std::make_shared<TerminalBellPlayer>();
     bool bellRinging_ = false;

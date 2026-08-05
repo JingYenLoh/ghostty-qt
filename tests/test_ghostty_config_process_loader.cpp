@@ -252,6 +252,7 @@ private Q_SLOTS:
     void realHelperExportsAbnormalCommandExitRuntime();
     void realHelperExportsScrollbackCompression();
     void realHelperExportsDesktopNotifications();
+    void realHelperExportsProgressStyle();
     void realHelperExportsBellFeatures();
     void realHelperExportsMouseHideWhileTyping();
     void realHelperExportsFocusFollowsMouse();
@@ -2304,6 +2305,39 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsDesktopNotifications()
         helperPath, fixture, {QStringLiteral("--desktop-notifications=")});
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QVERIFY(result->values.desktopNotifications);
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsProgressStyle()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.progressStyle);
+
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QByteArrayLiteral("progress-style = false\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(!result->values.progressStyle);
+
+    result = queryRealConfigExport(helperPath, fixture,
+                                   {QStringLiteral("--progress-style=true")});
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.progressStyle);
+
+    result = queryRealConfigExport(helperPath, fixture,
+                                   {QStringLiteral("--progress-style=")});
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.progressStyle);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsBellFeatures()

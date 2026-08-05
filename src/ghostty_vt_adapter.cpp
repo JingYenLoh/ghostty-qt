@@ -60,6 +60,7 @@ constexpr qsizetype maximumPendingClipboardWrites = 64;
 constexpr quint64 maximumPendingClipboardBytes = 64 * 1024 * 1024;
 constexpr qsizetype maximumPendingDesktopNotifications = 64;
 constexpr size_t maximumPendingDesktopNotificationBytes = 1024 * 1024;
+constexpr qsizetype maximumPendingProgressReports = 256;
 constexpr uint32_t kittyUnicodePlaceholder = 0x10eeeeU;
 constexpr int kittyMaximumDecodedImageMegabytes = 400;
 
@@ -1181,6 +1182,12 @@ public:
                                  GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION,
                                  reinterpret_cast<const void *>(
                                      &Impl::desktopNotificationCallback))
+            != GHOSTTY_SUCCESS) {
+            return false;
+        }
+        if (ghostty_terminal_set(
+                terminal_, GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT,
+                reinterpret_cast<const void *>(&Impl::progressReportCallback))
             != GHOSTTY_SUCCESS) {
             return false;
         }
@@ -4975,6 +4982,8 @@ public:
         effects.desktopNotifications = std::move(pendingDesktopNotifications_);
         pendingDesktopNotifications_.clear();
         pendingDesktopNotificationBytes_ = 0;
+        effects.progressReports = std::move(pendingProgressReports_);
+        pendingProgressReports_.clear();
         return effects;
     }
 
@@ -5296,6 +5305,175 @@ private:
         }
     }
 
+    void progressReport(const GhosttyTerminalProgressReport *report) noexcept
+    {
+        constexpr size_t minimumSize =
+            offsetof(GhosttyTerminalProgressReport, progress) + sizeof(int8_t);
+        if (report == nullptr || report->size < minimumSize) {
+            return;
+        }
+
+        TerminalProgressState state;
+        switch (report->state) {
+        case GHOSTTY_TERMINAL_PROGRESS_STATE_REMOVE:
+            state = TerminalProgressState::Remove;
+            break;
+        case GHOSTTY_TERMINAL_PROGRESS_STATE_SET:
+            state = TerminalProgressState::Set;
+            break;
+        case GHOSTTY_TERMINAL_PROGRESS_STATE_ERROR:
+            state = TerminalProgressState::Error;
+            break;
+        case GHOSTTY_TERMINAL_PROGRESS_STATE_INDETERMINATE:
+            state = TerminalProgressState::Indeterminate;
+            break;
+        case GHOSTTY_TERMINAL_PROGRESS_STATE_PAUSE:
+            state = TerminalProgressState::Pause;
+            break;
+        default: return;
+        }
+
+        if (report->progress < -1 || report->progress > 100) return;
+        const std::optional<quint8> progress = report->progress < 0
+            ? std::nullopt
+            : std::optional<quint8>(static_cast<quint8>(report->progress));
+        try {
+            if (pendingProgressReports_.size()
+                >= maximumPendingProgressReports) {
+                compactPendingProgressReports();
+            }
+            pendingProgressReports_.append({
+                .state = state,
+                .progress = progress,
+            });
+        } catch (...) {
+            // The C callback cannot propagate allocation failure. Progress is
+            // advisory, so dropping this report keeps VT parsing usable.
+        }
+    }
+
+    void compactPendingProgressReports()
+    {
+        // A PTY read can contain an arbitrary number of tiny OSC reports. Do
+        // not discard the suffix when the bounded queue fills: REMOVE and the
+        // last value are the state that the user must see. Instead, replace
+        // the prefix with a short sequence that has the same transformation
+        // on any pre-existing pane state. This also preserves pause-without-
+        // value, whose meaning depends on the preceding presentation.
+        if (pendingProgressReports_.isEmpty()) return;
+
+        std::array<TerminalProgressReport, 3> compacted;
+        qsizetype compactedCount = 0;
+        const auto append = [&compacted, &compactedCount](
+                                TerminalProgressState state,
+                                std::optional<quint8> progress = std::nullopt) {
+            compacted.at(static_cast<size_t>(compactedCount++)) = {
+                .state = state,
+                .progress = progress,
+                .activityPulses = quint8{0},
+            };
+        };
+
+        bool visible = false;
+        bool paused = false;
+        std::optional<bool> error;
+        std::optional<bool> indeterminate;
+        std::optional<quint8> value;
+        quint32 activityPulses = 0;
+        for (const TerminalProgressReport &report :
+             std::as_const(pendingProgressReports_)) {
+            const bool ordinaryActivity =
+                report.state == TerminalProgressState::Indeterminate
+                || ((report.state == TerminalProgressState::Set
+                     || report.state == TerminalProgressState::Error)
+                    && !report.progress.has_value());
+            activityPulses += report.activityPulses.value_or(
+                ordinaryActivity ? quint8{1} : quint8{0});
+
+            switch (report.state) {
+            case TerminalProgressState::Remove:
+                visible = false;
+                paused = false;
+                break;
+            case TerminalProgressState::Set:
+            case TerminalProgressState::Error:
+                visible = true;
+                paused = false;
+                error = report.state == TerminalProgressState::Error;
+                indeterminate = !report.progress.has_value();
+                if (report.progress.has_value()) value = report.progress;
+                break;
+            case TerminalProgressState::Indeterminate:
+                visible = true;
+                paused = false;
+                indeterminate = true;
+                break;
+            case TerminalProgressState::Pause:
+                visible = true;
+                paused = true;
+                if (report.progress.has_value()) {
+                    value = report.progress;
+                    indeterminate = false;
+                }
+            }
+        }
+
+        bool canonicalPaused = false;
+        if (error.has_value()) {
+            const TerminalProgressState state = *error
+                ? TerminalProgressState::Error
+                : TerminalProgressState::Set;
+            if (indeterminate.value_or(false)) {
+                if (value.has_value()) append(state, value);
+                append(state);
+            } else {
+                Q_ASSERT(value.has_value());
+                append(state, value);
+            }
+        } else if (indeterminate.has_value()) {
+            if (*indeterminate) {
+                if (value.has_value()) {
+                    append(TerminalProgressState::Pause, value);
+                }
+                append(TerminalProgressState::Indeterminate);
+            } else {
+                Q_ASSERT(value.has_value());
+                append(TerminalProgressState::Pause, value);
+                canonicalPaused = true;
+            }
+        }
+
+        if (!visible) {
+            append(TerminalProgressState::Remove);
+        } else if (paused && !canonicalPaused) {
+            append(TerminalProgressState::Pause);
+        } else if (compactedCount == 0) {
+            // With no internal transformation, the only report that can make
+            // the final presentation visible is pause-without-value.
+            Q_ASSERT(paused);
+            append(TerminalProgressState::Pause);
+        }
+
+        Q_ASSERT(compactedCount > 0);
+        compacted.front().activityPulses =
+            static_cast<quint8>(activityPulses % 20);
+
+        for (qsizetype index = 0; index < compactedCount; ++index) {
+            pendingProgressReports_[index] =
+                compacted.at(static_cast<size_t>(index));
+        }
+        pendingProgressReports_.resize(compactedCount);
+    }
+
+    static void
+    progressReportCallback(GhosttyTerminal, void *userdata,
+                           const GhosttyTerminalProgressReport *report)
+    {
+        if (auto *impl = static_cast<Impl *>(userdata)) {
+            impl->progressReport(report);
+        }
+    }
+
     Geometry geometry_;
     Callbacks callbacks_;
     std::shared_ptr<const AdapterOwnerToken> ownerToken_;
@@ -5333,6 +5511,7 @@ private:
     quint64 pendingClipboardBytes_ = 0;
     QVector<TerminalDesktopNotification> pendingDesktopNotifications_;
     size_t pendingDesktopNotificationBytes_ = 0;
+    QVector<TerminalProgressReport> pendingProgressReports_;
     std::optional<quintptr> lastOutputBottomNode_;
     quint16 lastOutputBottomY_ = 0;
     uint32_t mouseModeFingerprint_ = 0;

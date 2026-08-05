@@ -3974,6 +3974,9 @@ void SessionWorker::processDeferredEffects()
          effects.desktopNotifications) {
         Q_EMIT desktopNotificationRequested(notification);
     }
+    for (const TerminalProgressReport &report : effects.progressReports) {
+        Q_EMIT progressReportRequested(report);
+    }
 }
 
 void SessionWorker::checkChild()

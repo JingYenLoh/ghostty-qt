@@ -310,6 +310,7 @@ private Q_SLOTS:
     void appliesFinalizedGhosttyTypography();
     void mapsScrollbarPolicy();
     void mapsDesktopNotifications();
+    void mapsProgressStyle();
     void mapsBellFeatures();
     void mapsBellAudio();
     void mapsBackdropAndPaddingSnapshots();
@@ -451,6 +452,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(options.scrollbackCompression);
     QCOMPARE(options.scrollbar, ScrollbarPolicy::System);
     QVERIFY(options.desktopNotifications);
+    QVERIFY(options.progressStyle);
     QVERIFY(!options.bellFeatures.system);
     QVERIFY(!options.bellFeatures.audio);
     QVERIFY(options.bellFeatures.attention);
@@ -1374,6 +1376,19 @@ void LaunchOptionsTest::mapsDesktopNotifications()
         QCOMPARE(
             applyGhosttyConfigSnapshot(base, snapshot).desktopNotifications,
             configured);
+    }
+}
+
+void LaunchOptionsTest::mapsProgressStyle()
+{
+    for (const bool configured : {false, true}) {
+        LaunchOptions base;
+        base.progressStyle = !configured;
+        GhosttyConfigSnapshot snapshot = completeSnapshot();
+        snapshot.values.progressStyle = configured;
+
+        QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).progressStyle,
+                 configured);
     }
 }
 

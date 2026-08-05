@@ -338,6 +338,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     result.kittyImageStorageLimitBytes = config.kittyImageStorageLimitBytes;
     result.scrollbar = config.scrollbar;
     result.desktopNotifications = config.desktopNotifications;
+    result.progressStyle = config.progressStyle;
     result.bellFeatures = config.bellFeatures;
     result.bellAudioPath = config.bellAudioPath;
     result.bellAudioVolume = config.bellAudioVolume;

@@ -9,6 +9,7 @@
 #include "terminal_typography.h"
 #include "terminal_workspace.h"
 
+#include <QAccessible>
 #include <QClipboard>
 #include <QDir>
 #include <QElapsedTimer>
@@ -460,6 +461,7 @@ private Q_SLOTS:
     void pendingPaneReloadsDuringOverlayCompletion();
     void resizeOverlayIsPaneLocalAndScalesWithDpr();
     void scrollbarOverlayIsPaneLocalAndReloadable();
+    void progressOverlayIsPaneLocalAndFeedsActiveTab();
     void bellBorderOverlayIsPaneLocalAndInputTransparent();
     void readOnlyNaturalExitPromptsExactlyOnce();
     void queuesAndCorrelatesUnsafePasteConfirmations();
@@ -4325,6 +4327,12 @@ void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
             &TerminalWorkspace::resizeOverlayComponentChanged,
         },
         OverlayCase{
+            "progress",
+            &TerminalWorkspace::setProgressOverlayComponent,
+            &TerminalWorkspace::progressOverlayComponent,
+            &TerminalWorkspace::progressOverlayComponentChanged,
+        },
+        OverlayCase{
             "scrollbar",
             &TerminalWorkspace::setScrollbarComponent,
             &TerminalWorkspace::scrollbarComponent,
@@ -5951,6 +5959,148 @@ void TerminalWorkspaceTest::scrollbarOverlayIsPaneLocalAndReloadable()
             == nullptr);
     QVERIFY(secondPane->findChild<QQuickItem *>(
                 QStringLiteral("terminalScrollBar"), Qt::FindDirectChildrenOnly)
+            == nullptr);
+    workspace.reset();
+    window.close();
+}
+
+void TerminalWorkspaceTest::progressOverlayIsPaneLocalAndFeedsActiveTab()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.progressStyle = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQmlEngine engine;
+    const QString overlayPath = QFINDTESTDATA("../qml/ProgressOverlay.qml");
+    QVERIFY(!overlayPath.isEmpty());
+    QQmlComponent overlayComponent(&engine, QUrl::fromLocalFile(overlayPath));
+    QVERIFY2(overlayComponent.isReady(),
+             qPrintable(overlayComponent.errorString()));
+
+    QQuickWindow window;
+    window.resize(900, 600);
+    auto workspace = std::make_unique<TerminalWorkspace>();
+    workspace->setParentItem(window.contentItem());
+    workspace->setSize(window.size());
+    QVERIFY(workspace->initialize(options, TerminalSessionStartMode::Deferred));
+    workspace->setProgressOverlayComponent(&overlayComponent);
+    QCOMPARE(workspace->tabCount(), 1);
+
+    TerminalPane *const firstPane = workspace->findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+    auto *const firstController = firstPane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    auto *const firstOverlay = firstPane->findChild<QQuickItem *>(
+        QStringLiteral("terminalProgressOverlay"), Qt::FindDirectChildrenOnly);
+    QVERIFY(firstOverlay != nullptr);
+    QCOMPARE(firstOverlay->parentItem(), firstPane);
+    QVERIFY(firstOverlay->isEnabled());
+    QVERIFY(!firstOverlay->isVisible());
+    QCOMPARE(firstOverlay->height(), qreal{2.0});
+    QCOMPARE(workspace->tabModel()->entryAt(0)->progress, -1);
+
+    Q_EMIT firstController->progressReportRequested({
+        TerminalProgressState::Set,
+        quint8{37},
+    });
+    QVERIFY(firstOverlay->isVisible());
+    QCOMPARE(firstOverlay->position(), QPointF{});
+    QCOMPARE(firstOverlay->width(), firstPane->width());
+    QCOMPARE(workspace->tabModel()->entryAt(0)->progress, 37);
+    QCOMPARE(workspace->tabModel()
+                 ->data(workspace->tabModel()->index(0, 0),
+                        TabListModel::ProgressRole)
+                 .toInt(),
+             37);
+    QAccessibleInterface *const progressAccessible =
+        QAccessible::queryAccessibleInterface(firstOverlay);
+    QVERIFY(progressAccessible != nullptr);
+    QCOMPARE(progressAccessible->role(), QAccessible::ProgressBar);
+    QAccessibleValueInterface *const progressValue =
+        progressAccessible->valueInterface();
+    QVERIFY(progressValue != nullptr);
+    QCOMPARE(progressValue->minimumValue().toInt(), 0);
+    QCOMPARE(progressValue->maximumValue().toInt(), 100);
+    QCOMPARE(progressValue->minimumStepSize().toInt(), 1);
+    QCOMPARE(progressValue->currentValue().toInt(), 37);
+    QCOMPARE(progressAccessible->text(QAccessible::Description),
+             QStringLiteral("37 percent complete"));
+
+    const TabId tabId = workspace->tabModel()->idAt(0);
+    const PaneId firstId = workspace->tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, firstId, 0},
+    }));
+    QCOMPARE(workspace->findChildren<TerminalPane *>().size(), 2);
+    const PaneId secondId = workspace->tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(secondId != firstId);
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+        if (pane != firstPane) secondPane = pane;
+    }
+    QVERIFY(secondPane != nullptr);
+    auto *const secondController =
+        secondPane->findChild<TerminalController *>();
+    QVERIFY(secondController != nullptr);
+    auto *const secondOverlay = secondPane->findChild<QQuickItem *>(
+        QStringLiteral("terminalProgressOverlay"), Qt::FindDirectChildrenOnly);
+    QVERIFY(secondOverlay != nullptr);
+    QVERIFY(secondOverlay != firstOverlay);
+    QVERIFY(!secondOverlay->isVisible());
+    QCOMPARE(workspace->tabModel()->entryAt(0)->progress, -1);
+
+    // Inactive pane updates remain pane-local and do not replace the active
+    // pane's tab-model projection.
+    Q_EMIT firstController->progressReportRequested({
+        TerminalProgressState::Set,
+        quint8{55},
+    });
+    QVERIFY(firstOverlay->isVisible());
+    QCOMPARE(workspace->tabModel()->entryAt(0)->progress, -1);
+
+    Q_EMIT secondController->progressReportRequested({
+        TerminalProgressState::Error,
+        quint8{61},
+    });
+    QVERIFY(secondOverlay->isVisible());
+    QCOMPARE(secondOverlay->property("progressColor").value<QColor>(),
+             QColor(QStringLiteral("#e05252")));
+    QCOMPARE(workspace->tabModel()->entryAt(0)->progress, 61);
+
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ActivatePane,
+        {tabId, firstId, 0},
+    }));
+    QCOMPARE(workspace->tabModel()->entryAt(0)->activePaneId, firstId);
+    QCOMPARE(workspace->tabModel()->entryAt(0)->progress, 55);
+
+    Q_EMIT firstController->progressReportRequested({
+        TerminalProgressState::Indeterminate,
+        std::nullopt,
+    });
+    QVERIFY(firstOverlay->isVisible());
+    QCOMPARE(workspace->tabModel()->entryAt(0)->progress, -1);
+
+    Q_EMIT firstController->progressReportRequested({
+        TerminalProgressState::Remove,
+        std::nullopt,
+    });
+    QVERIFY(!firstOverlay->isVisible());
+    QVERIFY(secondOverlay->isVisible());
+
+    workspace->setProgressOverlayComponent(nullptr);
+    QVERIFY(firstPane->findChild<QQuickItem *>(
+                QStringLiteral("terminalProgressOverlay"),
+                Qt::FindDirectChildrenOnly)
+            == nullptr);
+    QVERIFY(secondPane->findChild<QQuickItem *>(
+                QStringLiteral("terminalProgressOverlay"),
+                Qt::FindDirectChildrenOnly)
             == nullptr);
     workspace.reset();
     window.close();

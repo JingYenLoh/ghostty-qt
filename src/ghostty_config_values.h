@@ -244,6 +244,8 @@ struct GhosttyConfigValues {
     // Application-originated OSC 9/777 notifications are enabled by default
     // and remain live frontend policy rather than terminal worker state.
     bool desktopNotifications = true;
+    // OSC 9;4 progress presentation is an application-owned live policy.
+    bool progressStyle = true;
     BellFeatures bellFeatures;
     std::optional<GhosttyConfigPath> bellAudioPath;
     double bellAudioVolume = 0.5;

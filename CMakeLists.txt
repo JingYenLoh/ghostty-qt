@@ -1008,6 +1008,7 @@ add_library(ghostty-qt-vt-adapter STATIC
     src/ghostty_vt_adapter.h
     src/terminal_desktop_notification.h
     src/terminal_inspector_snapshot.h
+    src/terminal_progress_report.h
 )
 target_include_directories(ghostty-qt-vt-adapter PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
@@ -1078,6 +1079,7 @@ ghostty_qt_add_internal_library(ghostty-qt-session-worker
     src/terminal_desktop_notification.h
     src/terminal_osc8_index.h
     src/terminal_path.h
+    src/terminal_progress_report.h
     src/terminal_session_options.h
     src/terminal_types.h
     src/terminal_write_file_action.h
@@ -1107,6 +1109,7 @@ ghostty_qt_add_internal_library(ghostty-qt-terminal-controller
     src/terminal_controller.cpp
     src/terminal_controller.h
     src/terminal_desktop_notification.h
+    src/terminal_progress_report.h
 )
 target_link_libraries(ghostty-qt-terminal-controller
     PUBLIC
@@ -1285,6 +1288,7 @@ qt_add_qml_module(ghostty-qt
         qml/Main.qml
         qml/ReadOnlyOverlay.qml
         qml/ResizeOverlay.qml
+        qml/ProgressOverlay.qml
         qml/SearchOverlay.qml
         qml/TabOverview.qml
         qml/TerminalScrollBar.qml

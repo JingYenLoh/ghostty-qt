@@ -197,10 +197,10 @@ TerminalController::TerminalController(
         TerminalSelectionPressInput, TerminalSelectionDragInput,
         QVector<QPoint>, TerminalSessionRuntimeOptions,
         TerminalClipboardDestination, TerminalClipboardWriteRequest,
-        TerminalDesktopNotification, TerminalActionResult,
-        TerminalWriteFileAction, TerminalInspectorSnapshot,
-        TerminalInspectorCellSnapshot, TerminalKeyboardTraceDecision,
-        TerminalKeyboardTraceResult>();
+        TerminalDesktopNotification, TerminalProgressReport,
+        TerminalActionResult, TerminalWriteFileAction,
+        TerminalInspectorSnapshot, TerminalInspectorCellSnapshot,
+        TerminalKeyboardTraceDecision, TerminalKeyboardTraceResult>();
 
     if (initialSessionCoordinator_ != nullptr) {
         launchOptions_.program.clear();
@@ -396,6 +396,8 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
     connect(worker, &SessionWorker::desktopNotificationRequested, this,
             &TerminalController::desktopNotificationRequested,
             Qt::QueuedConnection);
+    connect(worker, &SessionWorker::progressReportRequested, this,
+            &TerminalController::progressReportRequested, Qt::QueuedConnection);
     connect(
         worker, &SessionWorker::terminalActionFinished, this,
         [this](const TerminalActionResult &result) {

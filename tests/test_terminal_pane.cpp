@@ -9,6 +9,7 @@
 #include "terminal_pane_render_probe_p.h"
 #include "terminal_types.h"
 
+#include <QChronoTimer>
 #include <QClipboard>
 #include <QColor>
 #include <QCoreApplication>
@@ -425,6 +426,7 @@ private Q_SLOTS:
     void disabledCustomShadersAvoidOffscreenRenderLayers();
     void delegatedCustomShaderRenderingTearsDownDirectPaintNode();
     void presentsScrollbarFromRetainedMetadata();
+    void presentsProgressReportsAndAppliesLivePolicy();
     void routesWaitAfterCommandDismissalSeparatelyFromHold();
     void presentsAbnormalExitUntilExplicitDismissal();
     void presentsChildExecFailureEndToEnd();
@@ -746,6 +748,160 @@ void TerminalPaneTest::presentsScrollbarFromRetainedMetadata()
     controller->terminalUpdated(scrollbarMetadata(25, 0, 26, 6));
     QVERIFY(!pane.scrollbarVisible());
     QCOMPARE(changed.count(), 3);
+}
+
+void TerminalPaneTest::presentsProgressReportsAndAppliesLivePolicy()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.progressStyle = true;
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    auto *const controller = pane.findChild<TerminalController *>();
+    auto *const timer =
+        pane.findChild<QChronoTimer *>(QStringLiteral("progressReportTimer"));
+    QVERIFY(controller != nullptr);
+    QVERIFY(timer != nullptr);
+    QVERIFY(timer->isSingleShot());
+    QCOMPARE(timer->interval(), std::chrono::seconds(15));
+    QSignalSpy changed(&pane, &TerminalPane::progressChanged);
+
+    const auto publish = [controller](TerminalProgressState state,
+                                      std::optional<quint8> progress = {}) {
+        Q_EMIT controller->progressReportRequested({state, progress});
+    };
+
+    QVERIFY(!pane.progressVisible());
+    QCOMPARE(pane.tabProgress(), -1);
+    QCOMPARE(pane.progressActivityPosition(), qreal{0.0});
+    QVERIFY(!timer->isActive());
+
+    Q_EMIT controller->progressReportRequested({
+        .state = TerminalProgressState::Indeterminate,
+        .progress = std::nullopt,
+        .activityPulses = quint8{20},
+    });
+    QVERIFY(pane.progressVisible());
+    QVERIFY(pane.progressIndeterminate());
+    QCOMPARE(pane.progressActivityPosition(), qreal{0.0});
+    Q_EMIT controller->progressReportRequested({
+        .state = TerminalProgressState::Indeterminate,
+        .progress = std::nullopt,
+        .activityPulses = quint8{12},
+    });
+    QCOMPARE(pane.progressActivityPosition(), qreal{0.8});
+    Q_EMIT controller->progressReportRequested({
+        .state = TerminalProgressState::Indeterminate,
+        .progress = std::nullopt,
+        .activityPulses = quint8{8},
+    });
+    QCOMPARE(pane.progressActivityPosition(), qreal{0.0});
+    publish(TerminalProgressState::Remove);
+    QVERIFY(!pane.progressVisible());
+    changed.clear();
+
+    publish(TerminalProgressState::Set, quint8{42});
+    QVERIFY(pane.progressVisible());
+    QCOMPARE(pane.progressValue(), 42);
+    QVERIFY(!pane.progressIndeterminate());
+    QVERIFY(!pane.progressError());
+    QVERIFY(!pane.progressPaused());
+    QCOMPARE(pane.tabProgress(), 42);
+    QVERIFY(timer->isActive());
+    QCOMPARE(changed.count(), 1);
+
+    // An identical report only refreshes expiry; it does not churn QML.
+    publish(TerminalProgressState::Set, quint8{42});
+    QVERIFY(timer->isActive());
+    QCOMPARE(changed.count(), 1);
+
+    publish(TerminalProgressState::Error);
+    QVERIFY(pane.progressVisible());
+    QCOMPARE(pane.progressValue(), 42);
+    QVERIFY(pane.progressIndeterminate());
+    QVERIFY(pane.progressError());
+    QVERIFY(!pane.progressPaused());
+    QCOMPARE(pane.tabProgress(), -1);
+    const qreal errorActivityPosition = pane.progressActivityPosition();
+    QVERIFY(errorActivityPosition > 0.0);
+
+    publish(TerminalProgressState::Pause);
+    QCOMPARE(pane.progressValue(), 42);
+    QVERIFY(pane.progressIndeterminate());
+    QVERIFY(pane.progressError());
+    QVERIFY(pane.progressPaused());
+    QCOMPARE(pane.tabProgress(), -1);
+    QCOMPARE(pane.progressActivityPosition(), errorActivityPosition);
+
+    publish(TerminalProgressState::Pause, quint8{75});
+    QCOMPARE(pane.progressValue(), 75);
+    QVERIFY(!pane.progressIndeterminate());
+    QVERIFY(pane.progressError());
+    QVERIFY(pane.progressPaused());
+    QCOMPARE(pane.tabProgress(), 75);
+
+    publish(TerminalProgressState::Set, quint8{80});
+    QCOMPARE(pane.progressValue(), 80);
+    QVERIFY(!pane.progressIndeterminate());
+    QVERIFY(!pane.progressError());
+    QVERIFY(!pane.progressPaused());
+    QCOMPARE(pane.tabProgress(), 80);
+
+    const int changesBeforeActivity = changed.count();
+    const qreal activityBefore = pane.progressActivityPosition();
+    publish(TerminalProgressState::Indeterminate);
+    QVERIFY(pane.progressIndeterminate());
+    QVERIFY(!pane.progressError());
+    QCOMPARE(pane.tabProgress(), -1);
+    QVERIFY(pane.progressActivityPosition() != activityBefore);
+    QCOMPARE(changed.count(), changesBeforeActivity + 1);
+    const qreal firstPulse = pane.progressActivityPosition();
+    publish(TerminalProgressState::Indeterminate);
+    QVERIFY(pane.progressActivityPosition() != firstPulse);
+    QCOMPARE(changed.count(), changesBeforeActivity + 2);
+
+    publish(TerminalProgressState::Remove);
+    QVERIFY(!pane.progressVisible());
+    QVERIFY(!pane.progressPaused());
+    QVERIFY(!timer->isActive());
+    QCOMPARE(pane.tabProgress(), -1);
+
+    // GTK retains hidden presentation internals. A later pause without a
+    // percentage can intentionally reuse them, but a policy re-enable alone
+    // cannot resurrect the bar.
+    publish(TerminalProgressState::Pause);
+    QVERIFY(pane.progressVisible());
+    QVERIFY(pane.progressIndeterminate());
+    QVERIFY(pane.progressPaused());
+
+    LaunchOptions disabled = options;
+    disabled.progressStyle = false;
+    pane.applyRuntimeOptions(disabled);
+    QVERIFY(!pane.progressVisible());
+    QVERIFY(!timer->isActive());
+    publish(TerminalProgressState::Set, quint8{5});
+    QVERIFY(!pane.progressVisible());
+    QCOMPARE(pane.progressValue(), 80);
+
+    pane.applyRuntimeOptions(options);
+    QVERIFY(!pane.progressVisible());
+    publish(TerminalProgressState::Set, quint8{90});
+    QVERIFY(pane.progressVisible());
+    QCOMPARE(pane.tabProgress(), 90);
+    QVERIFY(timer->isActive());
+
+    QVERIFY(QMetaObject::invokeMethod(timer, "timeout", Qt::DirectConnection));
+    QVERIFY(!pane.progressVisible());
+    QVERIFY(!timer->isActive());
+    QCOMPARE(pane.tabProgress(), -1);
+
+    pane.beginShutdown();
+    publish(TerminalProgressState::Set, quint8{100});
+    QVERIFY(!pane.progressVisible());
+    QVERIFY(!timer->isActive());
 }
 
 void TerminalPaneTest::movesScrollbarWithClampedAbsoluteRows()

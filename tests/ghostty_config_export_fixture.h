@@ -560,6 +560,7 @@ inline QJsonObject values()
         {QStringLiteral("scrollback-compression"), false},
         {QStringLiteral("scrollbar"), QStringLiteral("never")},
         {QStringLiteral("desktop-notifications"), false},
+        {QStringLiteral("progress-style"), false},
         {QStringLiteral("bell-features"),
          bellFeatures(true, true, false, false, true)},
         {QStringLiteral("bell-audio-path"),
@@ -644,7 +645,7 @@ inline QJsonObject object()
 {
     const QJsonObject baseline = keybindings();
     return {
-        {QStringLiteral("version"), 3},
+        {QStringLiteral("version"), 4},
         {QStringLiteral("values"), values()},
         {QStringLiteral("keybindings"), baseline},
         {QStringLiteral("default-keybindings"), baseline},

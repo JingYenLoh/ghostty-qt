@@ -64,6 +64,7 @@ constexpr qint64 kMaximumMouseScrollStepsPerAxis = 10'000;
 constexpr double kHorizontalTabScrollThreshold = 120.0;
 constexpr auto kHorizontalTabScrollResetInterval =
     std::chrono::milliseconds(500);
+constexpr auto kProgressReportTimeout = std::chrono::seconds(15);
 
 TerminalCustomShaderCompileBroker *customShaderCompileBroker()
 {
@@ -449,6 +450,12 @@ TerminalPane::TerminalPane(
     resizeOverlayTimer_->setSingleShot(true);
     connect(resizeOverlayTimer_, &QChronoTimer::timeout, this,
             &TerminalPane::hideResizeOverlay);
+    progressReportTimer_ = new QChronoTimer(this);
+    progressReportTimer_->setObjectName(QStringLiteral("progressReportTimer"));
+    progressReportTimer_->setSingleShot(true);
+    progressReportTimer_->setInterval(kProgressReportTimeout);
+    connect(progressReportTimer_, &QChronoTimer::timeout, this,
+            &TerminalPane::hideProgressPresentation);
 
     TerminalSessionLaunchOptions sessionOptions =
         toTerminalSessionLaunchOptions(options);
@@ -560,6 +567,8 @@ TerminalPane::TerminalPane(
             this, [this](const TerminalDesktopNotification &notification) {
                 Q_EMIT desktopNotificationRequested(notification, this);
             });
+    connect(controller_, &TerminalController::progressReportRequested, this,
+            &TerminalPane::handleProgressReport);
     connect(controller_, &TerminalController::terminalActionReady, this,
             &TerminalPane::handleTerminalActionResult, Qt::QueuedConnection);
     connect(controller_, &TerminalController::hyperlinkResolved, this,
@@ -1708,6 +1717,119 @@ void TerminalPane::updateScrollbarState()
     Q_EMIT scrollbarChanged();
 }
 
+void TerminalPane::handleProgressReport(const TerminalProgressReport &report)
+{
+    // Every report replaces the expiry deadline. Removal and disabled
+    // presentation instead leave no timer armed.
+    progressReportTimer_->stop();
+    if (!terminalActionsAccepted_ || !options_.progressStyle) {
+        hideProgressPresentation();
+        return;
+    }
+    if (report.state == TerminalProgressState::Remove) {
+        hideProgressPresentation();
+        return;
+    }
+
+    const int previousValue = progressValue_;
+    const bool wasVisible = progressVisible_;
+    const bool wasIndeterminate = progressIndeterminate_;
+    const bool wasError = progressError_;
+    const bool wasPaused = progressPaused_;
+    const qreal previousActivityPosition = progressActivityPosition();
+
+    const auto applyProgress = [this, &report] {
+        if (!report.progress.has_value()) return false;
+        progressValue_ = std::min<int>(*report.progress, 100);
+        progressIndeterminate_ = false;
+        return true;
+    };
+
+    switch (report.state) {
+    case TerminalProgressState::Remove: return;
+    case TerminalProgressState::Set:
+        progressError_ = false;
+        progressPaused_ = false;
+        if (!applyProgress()) {
+            progressIndeterminate_ = true;
+        }
+        break;
+    case TerminalProgressState::Error:
+        progressError_ = true;
+        progressPaused_ = false;
+        if (!applyProgress()) {
+            progressIndeterminate_ = true;
+        }
+        break;
+    case TerminalProgressState::Indeterminate:
+        // Ghostty does not clear an existing error style for this state.
+        progressIndeterminate_ = true;
+        progressPaused_ = false;
+        break;
+    case TerminalProgressState::Pause:
+        // An omitted value deliberately retains the current fraction/activity
+        // and error presentation. The QML layer uses `paused` to freeze an
+        // otherwise indeterminate activity indicator.
+        (void)applyProgress();
+        progressPaused_ = true;
+        break;
+    }
+
+    const bool ordinaryActivity =
+        report.state == TerminalProgressState::Indeterminate
+        || ((report.state == TerminalProgressState::Set
+             || report.state == TerminalProgressState::Error)
+            && !report.progress.has_value());
+    const quint8 activityPulses = report.activityPulses.value_or(
+        ordinaryActivity ? quint8{1} : quint8{0});
+    for (quint8 pulse = 0; pulse < activityPulses; ++pulse) {
+        advanceProgressActivity();
+    }
+
+    progressVisible_ = true;
+    progressReportTimer_->start();
+    if (previousValue != progressValue_ || wasVisible != progressVisible_
+        || wasIndeterminate != progressIndeterminate_
+        || wasError != progressError_ || wasPaused != progressPaused_) {
+        Q_EMIT progressChanged();
+    } else if (previousActivityPosition != progressActivityPosition()) {
+        // Like GtkProgressBar::pulse(), repeated activity reports advance a
+        // finite animation step without scheduling perpetual scene-graph
+        // frames between reports.
+        Q_EMIT progressChanged();
+    }
+}
+
+void TerminalPane::advanceProgressActivity()
+{
+    if (progressActivityForward_) {
+        ++progressActivityStep_;
+        if (progressActivityStep_ >= 10) {
+            progressActivityStep_ = 10;
+            progressActivityForward_ = false;
+        }
+    } else {
+        --progressActivityStep_;
+        if (progressActivityStep_ <= 0) {
+            progressActivityStep_ = 0;
+            progressActivityForward_ = true;
+        }
+    }
+}
+
+void TerminalPane::hideProgressPresentation()
+{
+    if (progressReportTimer_ != nullptr) progressReportTimer_->stop();
+    if (!progressVisible_ && !progressPaused_) return;
+
+    // Match pinned GTK by retaining fraction, activity mode, and error style
+    // while hidden. Re-enabling progress-style alone therefore cannot revive
+    // a report, while a later pause without a value can reuse that state.
+    progressVisible_ = false;
+    progressPaused_ = false;
+    Q_EMIT progressChanged();
+}
+
 void TerminalPane::scrollbarMoveTo(qreal position)
 {
     if (!scrollbarVisible_ || std::isnan(position)) return;
@@ -2036,6 +2158,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.padding.balance = options.padding.balance;
     updated.padding.color = options.padding.color;
     updated.scrollbar = options.scrollbar;
+    updated.progressStyle = options.progressStyle;
     updated.bellFeatures = options.bellFeatures;
     updated.bellAudioPath = options.bellAudioPath;
     updated.bellAudioVolume = options.bellAudioVolume;
@@ -2122,6 +2245,8 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
         options_.mouseHideWhileTyping != updated.mouseHideWhileTyping;
     const bool horizontalTabScrollChanged =
         options_.horizontalTabScroll != updated.horizontalTabScroll;
+    const bool progressStyleChanged =
+        options_.progressStyle != updated.progressStyle;
     const BellFeatures previousBellFeatures = options_.bellFeatures;
     const ResizeOverlayOptions previousResizeOverlay = options_.resizeOverlay;
     const bool paddingLayoutChanged =
@@ -2179,6 +2304,13 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
         splitAppearance_ = updated.splitAppearance;
     }
     options_ = updated;
+    if (progressStyleChanged && !options_.progressStyle) {
+        hideProgressPresentation();
+        if (guard == nullptr
+            || !guard->runtimeOptionsRevision_.isCurrent(revision)) {
+            return;
+        }
+    }
     if (horizontalTabScrollChanged) {
         pendingHorizontalTabScrollPixels_ = 0.0;
         horizontalTabScrollResetTimer_->stop();
@@ -2354,6 +2486,8 @@ void TerminalPane::beginShutdown()
     resizeOverlayShuttingDown_ = true;
     cancelPendingResizeOverlay();
     hideResizeOverlay();
+    if (guard == nullptr) return;
+    hideProgressPresentation();
 }
 
 void TerminalPane::startSearchUi()

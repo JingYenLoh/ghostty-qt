@@ -83,12 +83,30 @@ Popup {
                 required property int progress
                 required property bool readOnly
                 readonly property var stableTabId: tabId
+                readonly property string statusText: {
+                    const states = []
+                    if (running)
+                        states.push("Running")
+                    if (readOnly)
+                        states.push("Read only")
+                    if (progress >= 0)
+                        states.push(progress + "%")
+                    return states.join(" · ")
+                }
+                readonly property string accessibleDescription: {
+                    const parts = []
+                    if (currentDirectory.length > 0)
+                        parts.push(currentDirectory)
+                    if (statusText.length > 0)
+                        parts.push(statusText)
+                    return parts.join(". ")
+                }
 
                 width: GridView.view.cellWidth - 8
                 height: GridView.view.cellHeight - 8
                 highlighted: GridView.isCurrentItem
                 Accessible.name: title
-                Accessible.description: currentDirectory
+                Accessible.description: accessibleDescription
 
                 contentItem: ColumnLayout {
                     spacing: 3
@@ -111,16 +129,7 @@ Popup {
 
                     Label {
                         Layout.fillWidth: true
-                        text: {
-                            const states = []
-                            if (tabDelegate.running)
-                                states.push("Running")
-                            if (tabDelegate.readOnly)
-                                states.push("Read only")
-                            if (tabDelegate.progress >= 0)
-                                states.push(tabDelegate.progress + "%")
-                            return states.join(" · ")
-                        }
+                        text: tabDelegate.statusText
                         visible: text.length > 0
                         elide: Text.ElideRight
                         opacity: 0.72

@@ -44,6 +44,7 @@ constexpr auto kKeyStateOverlayProperty = "_ghosttyQtKeyStateOverlay";
 constexpr auto kAbnormalExitOverlayProperty = "_ghosttyQtAbnormalExitOverlay";
 constexpr auto kReadOnlyOverlayProperty = "_ghosttyQtReadOnlyOverlay";
 constexpr auto kResizeOverlayProperty = "_ghosttyQtResizeOverlay";
+constexpr auto kProgressOverlayProperty = "_ghosttyQtProgressOverlay";
 constexpr auto kScrollbarProperty = "_ghosttyQtScrollbar";
 constexpr auto kBellBorderProperty = "_ghosttyQtBellBorder";
 constexpr std::size_t kMaximumPendingClipboardWrites = 64;
@@ -496,6 +497,14 @@ void TerminalWorkspace::setResizeOverlayComponent(QQmlComponent *component)
                             &TerminalWorkspace::resizeOverlayComponentChanged);
 }
 
+void TerminalWorkspace::setProgressOverlayComponent(QQmlComponent *component)
+{
+    setPaneOverlayComponent(
+        progressOverlay_, component, kProgressOverlayProperty,
+        "terminal progress overlay",
+        &TerminalWorkspace::progressOverlayComponentChanged);
+}
+
 void TerminalWorkspace::setScrollbarComponent(QQmlComponent *component)
 {
     setPaneOverlayComponent(scrollbar_, component, kScrollbarProperty,
@@ -634,6 +643,12 @@ bool TerminalWorkspace::attachPaneOverlays(TerminalPane *pane)
     }
     if (!attachPaneOverlay(resizeOverlay_.component, paneGuard,
                            kResizeOverlayProperty, "terminal resize overlay")
+        || guard == nullptr) {
+        return false;
+    }
+    if (!attachPaneOverlay(progressOverlay_.component, paneGuard,
+                           kProgressOverlayProperty,
+                           "terminal progress overlay")
         || guard == nullptr) {
         return false;
     }
@@ -1418,6 +1433,13 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
     connect(pane, &TerminalPane::titleChanged, this,
             [this, paneId] { refreshTab(tabIdForPane(paneId)); });
     connect(pane, &TerminalPane::bellChanged, this, [this, paneId] {
+        const TabId tabId = tabIdForPane(paneId);
+        const Tab *const tab = tabById(tabId);
+        if (tab != nullptr && tab->activePaneId == paneId) {
+            refreshTab(tabId);
+        }
+    });
+    connect(pane, &TerminalPane::progressChanged, this, [this, paneId] {
         const TabId tabId = tabIdForPane(paneId);
         const Tab *const tab = tabById(tabId);
         if (tab != nullptr && tab->activePaneId == paneId) {
@@ -3315,6 +3337,7 @@ TabListEntry TerminalWorkspace::tabListEntry(const Tab &tab) const
     entry.currentDirectory =
         activePane != nullptr ? activePane->currentDirectory() : QString{};
     entry.running = running;
+    entry.progress = activePane != nullptr ? activePane->tabProgress() : -1;
     entry.readOnly = activePane != nullptr && activePane->isReadOnly();
     return entry;
 }

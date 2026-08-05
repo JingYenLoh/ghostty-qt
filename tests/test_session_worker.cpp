@@ -230,6 +230,7 @@ class SessionWorkerTest : public QObject {
 private Q_SLOTS:
     void runsCommandThroughPty();
     void publishesDesktopNotificationsInParserOrder();
+    void publishesProgressReportsInParserOrder();
     void runsTaggedShellAndDirectCommands();
     void appliesPinnedShellIntegrationLaunchOrdering();
     void classifiesAbnormalCommandExitBoundaries();
@@ -1284,6 +1285,54 @@ void SessionWorkerTest::publishesDesktopNotificationsInParserOrder()
                  .value<TerminalDesktopNotification>()
                  .body,
              QStringLiteral("second"));
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::publishesProgressReportsInParserOrder()
+{
+    qRegisterMetaType<TerminalProgressReport>();
+    SessionWorker worker;
+    QSignalSpy progressSpy(&worker, &SessionWorker::progressReportRequested);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.command = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/printf"),
+        QByteArrayLiteral("\033]9;4;0;\033\\"
+                          "\033]9;4;1;42\007"
+                          "\033]9;4;2;7\033\\"
+                          "\033]9;4;3\033\\"
+                          "\033]9;4;4;75\033\\"),
+    });
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+
+    QTRY_COMPARE_WITH_TIMEOUT(progressSpy.count(), 5, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    const auto reportAt = [&progressSpy](qsizetype index) {
+        return progressSpy.at(index)
+            .constFirst()
+            .value<TerminalProgressReport>();
+    };
+    QCOMPARE(reportAt(0).state, TerminalProgressState::Remove);
+    QVERIFY(!reportAt(0).progress.has_value());
+    QCOMPARE(reportAt(1).state, TerminalProgressState::Set);
+    QVERIFY(reportAt(1).progress.has_value());
+    QCOMPARE(*reportAt(1).progress, quint8{42});
+    QCOMPARE(reportAt(2).state, TerminalProgressState::Error);
+    QVERIFY(reportAt(2).progress.has_value());
+    QCOMPARE(*reportAt(2).progress, quint8{7});
+    QCOMPARE(reportAt(3).state, TerminalProgressState::Indeterminate);
+    QVERIFY(!reportAt(3).progress.has_value());
+    QCOMPARE(reportAt(4).state, TerminalProgressState::Pause);
+    QVERIFY(reportAt(4).progress.has_value());
+    QCOMPARE(*reportAt(4).progress, quint8{75});
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty()
                  ? ""

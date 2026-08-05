@@ -131,6 +131,8 @@ struct LaunchOptions {
     // Live GUI policy for terminal-originated OSC 9/777 desktop notification
     // requests. The terminal parser remains active when presentation is off.
     bool desktopNotifications = true;
+    // Live GUI policy for presenting normalized OSC 9;4 progress reports.
+    bool progressStyle = true;
     // BEL presentation is frontend-owned. The worker publishes the event,
     // while panes, tabs, and host windows apply these finalized features.
     BellFeatures bellFeatures;

@@ -485,7 +485,7 @@
     },
     "desktop-notifications": {
       "status": "supported",
-      "note": "The finalized default-true boolean crosses strict schema v3 and applies live as application-owned LaunchOptions policy. The pinned synchronous libghostty-vt callback normalizes OSC 9 and OSC 777; its sized borrowed strings are validated, deep-copied, bounded, and preserved in callback order before crossing the queued worker/controller/pane path. The application delivers native Linux notifications through org.freedesktop.Notifications, defaults an empty title to Ghostty, matches Ghostty's process-global one-second and sequential-identical five-second limits, reuses notification IDs by body, and routes default-action clicks through revalidated stable WindowId/PaneId targets. Backend absence and stale targets are non-fatal."
+      "note": "The finalized default-true boolean crosses strict schema v4 and applies live as application-owned LaunchOptions policy. The pinned synchronous libghostty-vt callback normalizes OSC 9 and OSC 777; its sized borrowed strings are validated, deep-copied, bounded, and preserved in callback order before crossing the queued worker/controller/pane path. The application delivers native Linux notifications through org.freedesktop.Notifications, defaults an empty title to Ghostty, matches Ghostty's process-global one-second and sequential-identical five-second limits, reuses notification IDs by body, and routes default-action clicks through revalidated stable WindowId/PaneId targets. Backend absence and stale targets are non-fatal."
     },
     "enquiry-response": {
       "status": "supported",
@@ -567,7 +567,7 @@
     },
     "font-variation": {
       "status": "partial",
-      "note": "The finalized ordered regular-face axis list crosses schema v3 as exact f64 bit patterns, including non-finite values. The first matching tag is consumed before validity and range checks, matching the pinned FreeType duplicate policy, and valid axes reload live. Status remains partial because Qt narrows applied values to its float axis API and does not expose Ghostty's selected FreeType face and variation-coordinate pipeline."
+      "note": "The finalized ordered regular-face axis list crosses schema v4 as exact f64 bit patterns, including non-finite values. The first matching tag is consumed before validity and range checks, matching the pinned FreeType duplicate policy, and valid axes reload live. Status remains partial because Qt narrows applied values to its float axis API and does not expose Ghostty's selected FreeType face and variation-coordinate pipeline."
     },
     "font-variation-bold": {
       "status": "partial",
@@ -689,8 +689,8 @@
       "note": "The helper passes the finalized value into Ghostty's exact generator. For generated light-theme palettes, false orients the extended cube and ramp dark-to-light while true retains the configured light-background-to-dark-foreground orientation. It has no effect for dark themes, disabled generation, or the empty-explicit-mask gate; dynamic theme changes recompute the selected finalized palette through the same live path."
     },
     "progress-style": {
-      "status": "planned",
-      "note": "The pinned public libghostty-vt API now exposes a synchronous OSC 9;4 progress effect with normalized remove, set, error, indeterminate, and pause states plus an optional percentage. Frontend presentation, expiry, and pane-lifetime handling remain to be implemented."
+      "status": "supported",
+      "note": "The finalized default-true boolean crosses strict schema v4 as live application-owned policy. The public sized libghostty-vt callback is validated and copied into a bounded ordered effect; saturation compacts the prefix into an equivalent state transformation instead of losing the newest remove or value. Worker and controller preserve the resulting order. Every pane presents a two-pixel top overlay with normal, error, paused, determinate, and report-driven indeterminate pulse states, restarts one 15-second stale-report timer after each non-remove update, and hides on remove, expiry, session lifetime, or live disable without resurfacing merely on re-enable. Active-pane determinate values also populate the existing tab progress role."
     },
     "quit-after-last-window-closed": {
       "status": "supported",
@@ -844,7 +844,7 @@
         "gtk-single-instance": {
           "status": "not_applicable",
           "scope": "gtk_only",
-          "note": "The upstream GTK key is not consumed. The private schema-v3 export retains its raw value only as an unused compatibility field; ghostty-qt owns equivalent process arbitration through single-instance in $XDG_CONFIG_HOME/ghostty-qt/config and --single-instance."
+          "note": "The upstream GTK key is not consumed. The private schema-v4 export retains its raw value only as an unused compatibility field; ghostty-qt owns equivalent process arbitration through single-instance in $XDG_CONFIG_HOME/ghostty-qt/config and --single-instance."
         },
         "gtk-tabs-location": {
           "status": "not_applicable",
@@ -1140,7 +1140,7 @@
         },
         "working-directory": {
           "status": "supported",
-          "note": "The shared-config value supplies initial panes plus new-tab, split, and new-window fallback. Raw POSIX bytes remain lossless through strict schema-v3 export, CLI parsing, launch snapshots, worker chdir/PWD, OSC 7, controllers, and inheritance; QString is only the GUI display projection. Original-process classification preserves Ghostty's unset desktop-launch home default versus probable-CLI inherit behavior across reloads. Explicit home/tilde paths, symlink-sensitive spelling, live future-surface updates, composite source identity, NUL rejection, and pinned stale-PWD/non-fatal-chdir fallback are tested."
+          "note": "The shared-config value supplies initial panes plus new-tab, split, and new-window fallback. Raw POSIX bytes remain lossless through strict schema-v4 export, CLI parsing, launch snapshots, worker chdir/PWD, OSC 7, controllers, and inheritance; QString is only the GUI display projection. Original-process classification preserves Ghostty's unset desktop-launch home default versus probable-CLI inherit behavior across reloads. Explicit home/tilde paths, symlink-sensitive spelling, live future-surface updates, composite source identity, NUL rejection, and pinned stale-PWD/non-fatal-chdir fallback are tested."
         },
         "x11-instance-name": {
           "status": "not_applicable",

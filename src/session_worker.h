@@ -4,6 +4,7 @@
 #include "terminal_action_result.h"
 #include "terminal_desktop_notification.h"
 #include "terminal_inspector_snapshot.h"
+#include "terminal_progress_report.h"
 #include "terminal_session_options.h"
 #include "terminal_types.h"
 #include "terminal_write_file_action.h"
@@ -151,6 +152,7 @@ Q_SIGNALS:
         const TerminalClipboardWriteRequest &request);
     void desktopNotificationRequested(
         const TerminalDesktopNotification &notification);
+    void progressReportRequested(const TerminalProgressReport &report);
     void terminalActionFinished(const TerminalActionResult &result);
     void unsafePasteConfirmationRequested(quint64 requestId,
                                           const QString &text);

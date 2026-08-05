@@ -151,6 +151,7 @@ class GhosttyVtAdapterTest : public QObject {
 private Q_SLOTS:
     void rendersTerminalValuesAndEffects();
     void normalizesDesktopNotificationEffects();
+    void normalizesProgressReportEffects();
     void publishesKittyGraphicsSnapshots();
     void publishesMpvShapedKittyFrames();
     void cullsOpaqueKittyGraphicsWithoutDeletingHistory();
@@ -455,6 +456,124 @@ void GhosttyVtAdapterTest::normalizesDesktopNotificationEffects()
     QCOMPARE(effects.desktopNotifications.size(), 1);
     QCOMPARE(effects.desktopNotifications.constFirst().body,
              QStringLiteral("after-drain"));
+}
+
+void GhosttyVtAdapterTest::normalizesProgressReportEffects()
+{
+    GhosttyVtAdapter::Options options;
+    auto adapter = GhosttyVtAdapter::create(options, {});
+    QVERIFY(adapter != nullptr);
+
+    writeFragmented(adapter.get(),
+                    QByteArrayLiteral("\033]9;4;0;\033\\"
+                                      "\033]9;4;1;42\007"
+                                      "\033]9;4;2;7\033\\"
+                                      "\033]9;4;3\033\\"
+                                      "\033]9;4;4;75\033\\"));
+    const GhosttyVtAdapter::DeferredEffects effects =
+        adapter->takeDeferredEffects();
+    QCOMPARE(effects.progressReports.size(), 5);
+
+    const auto expect = [&effects](qsizetype index, TerminalProgressState state,
+                                   std::optional<quint8> progress) {
+        const TerminalProgressReport &report =
+            effects.progressReports.at(index);
+        QCOMPARE(report.state, state);
+        QCOMPARE(report.progress.has_value(), progress.has_value());
+        if (progress.has_value()) {
+            QCOMPARE(*report.progress, *progress);
+        }
+    };
+    expect(0, TerminalProgressState::Remove, std::nullopt);
+    expect(1, TerminalProgressState::Set, quint8{42});
+    expect(2, TerminalProgressState::Error, quint8{7});
+    expect(3, TerminalProgressState::Indeterminate, std::nullopt);
+    expect(4, TerminalProgressState::Pause, quint8{75});
+    QVERIFY(adapter->takeDeferredEffects().progressReports.isEmpty());
+
+    QByteArray overflow = QByteArrayLiteral("\033]9;4;1;17\033\\");
+    for (int index = 0; index < 255; ++index) {
+        overflow += QByteArrayLiteral("\033]9;4;4\033\\");
+    }
+    overflow += QByteArrayLiteral("\033]9;4;0\033\\"
+                                  "\033]9;4;4\033\\");
+    adapter->writeVt(overflow);
+    const QVector<TerminalProgressReport> compacted =
+        adapter->takeDeferredEffects().progressReports;
+    QCOMPARE(compacted.size(), 4);
+    const auto expectCompacted =
+        [](const QVector<TerminalProgressReport> &batch, qsizetype index,
+           TerminalProgressState state, std::optional<quint8> progress,
+           std::optional<quint8> activityPulses) {
+            const TerminalProgressReport &report = batch.at(index);
+            QCOMPARE(report.state, state);
+            QCOMPARE(report.progress.has_value(), progress.has_value());
+            if (progress.has_value()) QCOMPARE(*report.progress, *progress);
+            QCOMPARE(report.activityPulses.has_value(),
+                     activityPulses.has_value());
+            if (activityPulses.has_value()) {
+                QCOMPARE(*report.activityPulses, *activityPulses);
+            }
+        };
+    expectCompacted(compacted, 0, TerminalProgressState::Set, quint8{17},
+                    quint8{0});
+    expectCompacted(compacted, 1, TerminalProgressState::Pause, std::nullopt,
+                    quint8{0});
+    expectCompacted(compacted, 2, TerminalProgressState::Remove, std::nullopt,
+                    std::nullopt);
+    expectCompacted(compacted, 3, TerminalProgressState::Pause, std::nullopt,
+                    std::nullopt);
+
+    QByteArray retainedValue = QByteArrayLiteral("\033]9;4;2;17\033\\"
+                                                 "\033]9;4;3\033\\");
+    for (int index = 0; index < 254; ++index) {
+        retainedValue += QByteArrayLiteral("\033]9;4;4\033\\");
+    }
+    retainedValue += QByteArrayLiteral("\033]9;4;0\033\\");
+    adapter->writeVt(retainedValue);
+    const QVector<TerminalProgressReport> retained =
+        adapter->takeDeferredEffects().progressReports;
+    QCOMPARE(retained.size(), 4);
+    expectCompacted(retained, 0, TerminalProgressState::Error, quint8{17},
+                    quint8{1});
+    expectCompacted(retained, 1, TerminalProgressState::Error, std::nullopt,
+                    quint8{0});
+    expectCompacted(retained, 2, TerminalProgressState::Pause, std::nullopt,
+                    quint8{0});
+    expectCompacted(retained, 3, TerminalProgressState::Remove, std::nullopt,
+                    std::nullopt);
+
+    QByteArray activity;
+    for (int index = 0; index < 256; ++index) {
+        activity += QByteArrayLiteral("\033]9;4;3\033\\");
+    }
+    activity += QByteArrayLiteral("\033]9;4;0\033\\");
+    adapter->writeVt(activity);
+    const QVector<TerminalProgressReport> pulsed =
+        adapter->takeDeferredEffects().progressReports;
+    QCOMPARE(pulsed.size(), 2);
+    expectCompacted(pulsed, 0, TerminalProgressState::Indeterminate,
+                    std::nullopt, quint8{16});
+    expectCompacted(pulsed, 1, TerminalProgressState::Remove, std::nullopt,
+                    std::nullopt);
+
+    QByteArray repeatedActivity;
+    for (int index = 0; index < 512; ++index) {
+        repeatedActivity += QByteArrayLiteral("\033]9;4;3\033\\");
+    }
+    repeatedActivity += QByteArrayLiteral("\033]9;4;0\033\\");
+    adapter->writeVt(repeatedActivity);
+    const QVector<TerminalProgressReport> repeatedlyCompacted =
+        adapter->takeDeferredEffects().progressReports;
+    QCOMPARE(repeatedlyCompacted.size(), 3);
+    expectCompacted(repeatedlyCompacted, 0,
+                    TerminalProgressState::Indeterminate, std::nullopt,
+                    quint8{11});
+    expectCompacted(repeatedlyCompacted, 1,
+                    TerminalProgressState::Indeterminate, std::nullopt,
+                    std::nullopt);
+    expectCompacted(repeatedlyCompacted, 2, TerminalProgressState::Remove,
+                    std::nullopt, std::nullopt);
 }
 
 void GhosttyVtAdapterTest::publishesKittyGraphicsSnapshots()

@@ -3,6 +3,7 @@
 #include "terminal_appearance.h"
 #include "terminal_desktop_notification.h"
 #include "terminal_inspector_snapshot.h"
+#include "terminal_progress_report.h"
 #include "terminal_session_options.h"
 #include "terminal_types.h"
 #include "terminal_write_file_action.h"
@@ -222,6 +223,7 @@ public:
         bool bell = false;
         QVector<TerminalClipboardWriteRequest> clipboardWrites;
         QVector<TerminalDesktopNotification> desktopNotifications;
+        QVector<TerminalProgressReport> progressReports;
     };
 
     struct HyperlinkMatch {

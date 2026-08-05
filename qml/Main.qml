@@ -115,6 +115,11 @@ ApplicationWindow {
     }
 
     Component {
+        id: terminalProgressOverlayFactory
+        ProgressOverlay {}
+    }
+
+    Component {
         id: terminalScrollBarFactory
         TerminalScrollBar {}
     }
@@ -294,6 +299,7 @@ ApplicationWindow {
         abnormalExitOverlayComponent: terminalAbnormalExitOverlayFactory
         readOnlyOverlayComponent: terminalReadOnlyOverlayFactory
         resizeOverlayComponent: terminalResizeOverlayFactory
+        progressOverlayComponent: terminalProgressOverlayFactory
         scrollbarComponent: terminalScrollBarFactory
         bellBorderComponent: terminalBellBorderFactory
         inspectorComponent: terminalInspectorFactory
