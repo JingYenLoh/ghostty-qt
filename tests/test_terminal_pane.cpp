@@ -482,6 +482,7 @@ private Q_SLOTS:
     void runsCursorBlinkTimerOnlyWhenNeeded();
     void defaultCursorBlinkPublishesBothRenderPhases();
     void retainsMainTextRowsAcrossIncrementalUpdates();
+    void invalidatesOnlyChangedSearchDecorationRows();
     void rendersAndRetainsKittyGraphics();
     void reloadsShapingAndTracksLogicalCursorRows();
     void retainsTextWhileDimmingUnfocusedSplits();
@@ -2170,10 +2171,9 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     const TerminalPaneRenderProbeSnapshot searched =
         terminalPaneRenderProbe(pane);
     QCOMPARE(searched.rootSerial, cursorOnThird.rootSerial);
-    for (int row = 0; row < rows; ++row) {
-        QCOMPARE(searched.rowBuildCounts[row],
-                 cursorOnThird.rowBuildCounts[row] + 1);
-    }
+    QVector<quint64> searchedBuildCounts = cursorOnThird.rowBuildCounts;
+    ++searchedBuildCounts[1];
+    QCOMPARE(searched.rowBuildCounts, searchedBuildCounts);
     QVector<quint64> searchedSolidBuildCounts =
         cursorOnThird.rowSolidBuildCounts;
     ++searchedSolidBuildCounts[1];
@@ -2189,10 +2189,9 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     QVERIFY(!clearedSearchImage.isNull());
     const TerminalPaneRenderProbeSnapshot clearedSearch =
         terminalPaneRenderProbe(pane);
-    for (int row = 0; row < rows; ++row) {
-        QCOMPARE(clearedSearch.rowBuildCounts[row],
-                 searched.rowBuildCounts[row] + 1);
-    }
+    QVector<quint64> clearedSearchBuildCounts = searched.rowBuildCounts;
+    ++clearedSearchBuildCounts[1];
+    QCOMPARE(clearedSearch.rowBuildCounts, clearedSearchBuildCounts);
     QVector<quint64> clearedSearchSolidBuildCounts =
         searched.rowSolidBuildCounts;
     ++clearedSearchSolidBuildCounts[1];
@@ -2263,6 +2262,260 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
         terminalPaneRenderProbe(pane);
     QCOMPARE(resized.rootSerial, reloadedFont.rootSerial);
     QVERIFY(allVisibleRowsRebuilt(reloadedFont, resized));
+
+    window.close();
+    delete pane;
+}
+
+void TerminalPaneTest::invalidatesOnlyChangedSearchDecorationRows()
+{
+    qRegisterMetaType<TerminalSearchUpdate>();
+    qRegisterMetaType<TerminalUpdate>();
+
+    const QColor baseForeground(QStringLiteral("#dddddd"));
+    const QColor baseBackground(QStringLiteral("#101010"));
+    const QColor candidateForeground(QStringLiteral("#abcdef"));
+    const QColor candidateBackground(QStringLiteral("#123456"));
+    const QColor selectedForeground(QStringLiteral("#fedcba"));
+    const QColor selectedBackground(QStringLiteral("#654321"));
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    useSystemFixedFont(options);
+    options.appearance.foregroundColor = baseForeground;
+    options.appearance.backgroundColor = baseBackground;
+    options.appearance.searchForeground =
+        TerminalColorValue::fromColor(candidateForeground);
+    options.appearance.searchBackground =
+        TerminalColorValue::fromColor(candidateBackground);
+    options.appearance.searchSelectedForeground =
+        TerminalColorValue::fromColor(selectedForeground);
+    options.appearance.searchSelectedBackground =
+        TerminalColorValue::fromColor(selectedBackground);
+
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
+    constexpr int columns = 4;
+    constexpr int rows = 4;
+    constexpr qsizetype cellCount = columns * rows;
+    QQuickWindow window;
+    window.setColor(baseBackground);
+    window.resize(qCeil(metrics.cellWidth * columns),
+                  qCeil(metrics.cellHeight * rows));
+    auto *pane = new TerminalPane(options, window.contentItem(), std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
+    pane->setSize(window.size());
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    TerminalUpdate frame;
+    frame.columns = columns;
+    frame.rows = rows;
+    frame.fullFrame = true;
+    frame.colorsChanged = true;
+    frame.foreground = baseForeground;
+    frame.background = baseBackground;
+    frame.cursorChanged = true;
+    frame.cursorVisible = false;
+    frame.contentRevision = 73;
+    for (int row = 0; row < rows; ++row) {
+        TerminalRowUpdate rowUpdate;
+        rowUpdate.row = row;
+        rowUpdate.cells.resize(columns);
+        for (TerminalCell &cell : rowUpdate.cells) {
+            cell.text = QStringLiteral("x");
+            cell.foreground = baseForeground;
+            cell.background = baseBackground;
+            cell.backgroundExplicit = true;
+        }
+        frame.dirtyRows.append(std::move(rowUpdate));
+    }
+    TerminalCell &wideHead = frame.dirtyRows[2].cells[1];
+    wideHead.text = QString(QChar(0x754c));
+    wideHead.columnSpan = 2;
+    TerminalCell &wideSpacer = frame.dirtyRows[2].cells[2];
+    wideSpacer.text.clear();
+    wideSpacer.spacer = true;
+    controller->terminalUpdated(frame);
+
+    const auto paint = [&] {
+        pane->update();
+        const QImage image = window.grabWindow();
+        if (image.isNull()) return TerminalPaneRenderProbeSnapshot{};
+        return terminalPaneRenderProbe(pane);
+    };
+    QTRY_COMPARE_WITH_TIMEOUT(paint().rowBuildCounts.size(), rows, 3000);
+    const TerminalPaneRenderProbeSnapshot initial = paint();
+    QCOMPARE(initial.rowSolidBuildCounts.size(), rows);
+    QCOMPARE(initial.cellBackgrounds.size(), cellCount);
+    QCOMPARE(initial.glyphForegrounds.size(), cellCount);
+
+    const auto incrementedRows = [](QVector<quint64> counts,
+                                    std::initializer_list<int> changed) {
+        for (const int row : changed) ++counts[row];
+        return counts;
+    };
+    const auto cellIndex = [](int column, int row) {
+        return static_cast<qsizetype>(row) * columns + column;
+    };
+    const auto verifyRetainedRoot =
+        [](const TerminalPaneRenderProbeSnapshot &before,
+           const TerminalPaneRenderProbeSnapshot &after) {
+            QCOMPARE(after.rootSerial, before.rootSerial);
+            QCOMPARE(after.rowNodeSerials, before.rowNodeSerials);
+        };
+
+    TerminalSearchUpdate search;
+    search.generation = 1;
+    search.contentRevision = frame.contentRevision;
+    search.active = true;
+    search.complete = false;
+    search.totalMatches = 1;
+    search.selectedMatch = -1;
+    search.columns = columns;
+    search.rows = rows;
+    search.visibleCellMask = cellMask(columns, rows, {QPoint(0, 1)});
+    search.selectedCellMask = QBitArray(cellCount);
+    controller->searchUpdated(search);
+    const TerminalPaneRenderProbeSnapshot candidate = paint();
+    verifyRetainedRoot(initial, candidate);
+    QCOMPARE(candidate.rowBuildCounts,
+             incrementedRows(initial.rowBuildCounts, {1}));
+    QCOMPARE(candidate.rowSolidBuildCounts,
+             incrementedRows(initial.rowSolidBuildCounts, {1}));
+    QCOMPARE(candidate.solidCellVisitCount,
+             initial.solidCellVisitCount + static_cast<quint64>(columns));
+    QCOMPARE(candidate.cellBackgrounds.at(cellIndex(0, 1)),
+             candidateBackground);
+    QCOMPARE(candidate.glyphForegrounds.at(cellIndex(0, 1)),
+             candidateForeground);
+    QCOMPARE(candidate.cellBackgrounds.at(cellIndex(0, 0)), baseBackground);
+    QCOMPARE(candidate.glyphForegrounds.at(cellIndex(0, 0)), baseForeground);
+
+    search.complete = true;
+    search.selectedMatch = 0;
+    search.selectedCellMask = cellMask(columns, rows, {QPoint(0, 1)});
+    controller->searchUpdated(search);
+    const TerminalPaneRenderProbeSnapshot selected = paint();
+    verifyRetainedRoot(candidate, selected);
+    QCOMPARE(selected.rowBuildCounts,
+             incrementedRows(candidate.rowBuildCounts, {1}));
+    QCOMPARE(selected.rowSolidBuildCounts,
+             incrementedRows(candidate.rowSolidBuildCounts, {1}));
+    QCOMPARE(selected.solidCellVisitCount,
+             candidate.solidCellVisitCount + static_cast<quint64>(columns));
+    QCOMPARE(selected.cellBackgrounds.at(cellIndex(0, 1)), selectedBackground);
+    QCOMPARE(selected.glyphForegrounds.at(cellIndex(0, 1)), selectedForeground);
+
+    // Moving the candidate clears its old row and decorates its new row. A
+    // mask bit on a wide-cell head must also decorate the spacer cell.
+    search.complete = false;
+    search.selectedMatch = -1;
+    search.visibleCellMask = cellMask(columns, rows, {QPoint(1, 2)});
+    search.selectedCellMask = QBitArray(cellCount);
+    controller->searchUpdated(search);
+    const TerminalPaneRenderProbeSnapshot wideCandidate = paint();
+    verifyRetainedRoot(selected, wideCandidate);
+    QCOMPARE(wideCandidate.rowBuildCounts,
+             incrementedRows(selected.rowBuildCounts, {1, 2}));
+    QCOMPARE(wideCandidate.rowSolidBuildCounts,
+             incrementedRows(selected.rowSolidBuildCounts, {1, 2}));
+    QCOMPARE(wideCandidate.solidCellVisitCount,
+             selected.solidCellVisitCount + static_cast<quint64>(2 * columns));
+    QCOMPARE(wideCandidate.cellBackgrounds.at(cellIndex(0, 1)), baseBackground);
+    QCOMPARE(wideCandidate.glyphForegrounds.at(cellIndex(0, 1)),
+             baseForeground);
+    for (const int column : {1, 2}) {
+        QCOMPARE(wideCandidate.cellBackgrounds.at(cellIndex(column, 2)),
+                 candidateBackground);
+        QCOMPARE(wideCandidate.glyphForegrounds.at(cellIndex(column, 2)),
+                 candidateForeground);
+    }
+
+    search.complete = true;
+    search.selectedMatch = 0;
+    search.selectedCellMask = cellMask(columns, rows, {QPoint(1, 2)});
+    controller->searchUpdated(search);
+    const TerminalPaneRenderProbeSnapshot wideSelected = paint();
+    verifyRetainedRoot(wideCandidate, wideSelected);
+    QCOMPARE(wideSelected.rowBuildCounts,
+             incrementedRows(wideCandidate.rowBuildCounts, {2}));
+    QCOMPARE(wideSelected.rowSolidBuildCounts,
+             incrementedRows(wideCandidate.rowSolidBuildCounts, {2}));
+    QCOMPARE(wideSelected.solidCellVisitCount,
+             wideCandidate.solidCellVisitCount + static_cast<quint64>(columns));
+    for (const int column : {1, 2}) {
+        QCOMPARE(wideSelected.cellBackgrounds.at(cellIndex(column, 2)),
+                 selectedBackground);
+        QCOMPARE(wideSelected.glyphForegrounds.at(cellIndex(column, 2)),
+                 selectedForeground);
+    }
+
+    search.active = false;
+    controller->searchUpdated(search);
+    const TerminalPaneRenderProbeSnapshot cleared = paint();
+    verifyRetainedRoot(wideSelected, cleared);
+    QCOMPARE(cleared.rowBuildCounts,
+             incrementedRows(wideSelected.rowBuildCounts, {2}));
+    QCOMPARE(cleared.rowSolidBuildCounts,
+             incrementedRows(wideSelected.rowSolidBuildCounts, {2}));
+    QCOMPARE(cleared.solidCellVisitCount,
+             wideSelected.solidCellVisitCount + static_cast<quint64>(columns));
+    for (const int column : {1, 2}) {
+        QCOMPARE(cleared.cellBackgrounds.at(cellIndex(column, 2)),
+                 baseBackground);
+        QCOMPARE(cleared.glyphForegrounds.at(cellIndex(column, 2)),
+                 baseForeground);
+    }
+
+    search.active = true;
+    search.complete = false;
+    search.selectedMatch = -1;
+    search.visibleCellMask = cellMask(columns, rows, {QPoint(3, 3)});
+    search.selectedCellMask = QBitArray(cellCount);
+    controller->searchUpdated(search);
+    const TerminalPaneRenderProbeSnapshot beforeMalformed = paint();
+    verifyRetainedRoot(cleared, beforeMalformed);
+    QCOMPARE(beforeMalformed.rowBuildCounts,
+             incrementedRows(cleared.rowBuildCounts, {3}));
+    QCOMPARE(beforeMalformed.rowSolidBuildCounts,
+             incrementedRows(cleared.rowSolidBuildCounts, {3}));
+    QCOMPARE(beforeMalformed.cellBackgrounds.at(cellIndex(3, 3)),
+             candidateBackground);
+
+    // A malformed pair is rejected atomically. Replacing a valid mask with
+    // it clears only the previously decorated row.
+    search.visibleCellMask = QBitArray(cellCount - 1);
+    search.visibleCellMask.setBit(cellCount - 2);
+    search.selectedCellMask = QBitArray(cellCount - 1);
+    controller->searchUpdated(search);
+    const TerminalPaneRenderProbeSnapshot malformed = paint();
+    verifyRetainedRoot(beforeMalformed, malformed);
+    QCOMPARE(malformed.rowBuildCounts,
+             incrementedRows(beforeMalformed.rowBuildCounts, {3}));
+    QCOMPARE(malformed.rowSolidBuildCounts,
+             incrementedRows(beforeMalformed.rowSolidBuildCounts, {3}));
+    QCOMPARE(malformed.solidCellVisitCount,
+             beforeMalformed.solidCellVisitCount
+                 + static_cast<quint64>(columns));
+    QCOMPARE(malformed.cellBackgrounds.at(cellIndex(3, 3)), baseBackground);
+    QCOMPARE(malformed.glyphForegrounds.at(cellIndex(3, 3)), baseForeground);
+
+    // A valid candidate mask paired with a malformed selected mask is also
+    // rejected, and empty-to-empty rejection must retain every row.
+    search.visibleCellMask = cellMask(columns, rows, {QPoint(0, 0)});
+    search.selectedCellMask = QBitArray(cellCount - 1);
+    controller->searchUpdated(search);
+    const TerminalPaneRenderProbeSnapshot malformedPair = paint();
+    verifyRetainedRoot(malformed, malformedPair);
+    QCOMPARE(malformedPair.rowBuildCounts, malformed.rowBuildCounts);
+    QCOMPARE(malformedPair.rowSolidBuildCounts, malformed.rowSolidBuildCounts);
+    QCOMPARE(malformedPair.solidCellVisitCount, malformed.solidCellVisitCount);
+    QCOMPARE(malformedPair.cellBackgrounds.at(cellIndex(0, 0)), baseBackground);
+    QCOMPARE(malformedPair.glyphForegrounds.at(cellIndex(0, 0)),
+             baseForeground);
 
     window.close();
     delete pane;

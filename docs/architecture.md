@@ -675,18 +675,24 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    recreates the affected node.
    Main terminal text is retained in one public `QSGTextNode` per visible row;
    accepted row epochs rebuild only changed rows, while font, geometry,
-   appearance, palette, search, and frame-shape changes rebuild the complete
-   text layer. Old and new block-cursor rows are rebuilt when its text override
-   changes. The row nodes use `QtRendering`, which stores distance-field glyphs
-   in GPU atlases on hardware RHI backends. The final rectangle keeps an empty
-   extent while inactive and updates without scene-graph allocation. Dimming
-   state is absent from the retained text-state key. Existing focus-driven
-   block-cursor changes keep their targeted row rebuilds, while search
-   decoration changes retain their full text-state invalidation.
+   appearance, palette, search-style, and frame-shape changes rebuild the
+   complete text layer. Candidate and selected search-mask replacement is not
+   part of that global text-state key. The pane compares normalized old and new
+   masks by row with boundary-masked packed-word loads, then advances both text
+   and solid epochs only for rows whose effective bits changed. Moving a
+   highlight therefore rebuilds its old and new rows while retaining every
+   unaffected text node and solid plan; clearing a valid mask, including by
+   rejecting a malformed replacement, rebuilds only rows that lose
+   decorations. Old and new block-cursor rows are rebuilt when
+   its text override changes. The row nodes use `QtRendering`, which stores
+   distance-field glyphs in GPU atlases on hardware RHI backends. The final
+   rectangle keeps an empty extent while inactive and updates without
+   scene-graph allocation. Dimming state is absent from the retained text-state
+   key.
 7. Cell-derived backgrounds, resolved glyph/decor colors, and before/after-text
    decorations are retained in one render-thread cache per visible row.
    Independent solid-row epochs cover terminal dirty rows; search and
-   hyperlink mask replacement marks only rows whose bits changed. A global
+   hyperlink mask replacement mark only rows whose bits changed. A global
    solid-state key invalidates all rows for palette, appearance,
    cell-affecting opacity, geometry, or device-pixel changes. Block-cursor
    transitions rebuild only their old and new rows, while bar/underline cursor
@@ -885,8 +891,9 @@ rows whose presentation changed. The software fallback retains the row plans
 but flattens them into global node pools. Padding, cursor, and frontend overlays
 use independent global batches; unchanged batches skip geometry updates and
 every batch reuses its CPU and scene-graph allocation capacity. Global
-text-state changes, including search-decoration mask replacement, still rebuild
-the complete text layer.
+text-state changes, including search-decoration color changes, still rebuild
+the complete text layer. Search mask-only changes use the shared row-damage
+epochs described above and leave unaffected text and solid rows retained.
 
 Custom shaders are pane-local post-processing stages around the private render
 item, so terminal pixels and Kitty graphics are filtered while Qt-owned pane
@@ -3184,7 +3191,10 @@ The default CTest suite has focused layers for each ownership boundary:
   bounded/escaped display of arbitrary destination bytes. Search rendering
   covers candidate/selected/terminal-selection precedence, resize-safe masks,
   live colors, overlay state, and the distinction between UI and engine-only
-  actions.
+  actions. Row-damage probes additionally cover candidate insertion,
+  candidate-to-selected replacement, old/new-row movement, clearing,
+  malformed-pair rejection, wide-cell spacer inheritance, and retention of
+  every unaffected text and solid row.
 - `application-lifecycle` and `application-lifecycle-dash-e` start the complete
   QML application on Qt's offscreen software backend through both command
   spellings, verify a short-lived child closes the window cleanly, and fail on
@@ -3291,10 +3301,12 @@ be checked interactively in a real Wayland session.
   per-cell fallback for unsafe runs. Solid
   presentation and its three cell-derived RHI geometry batches are retained by
   row, so sparse output and cursor-only updates plan and commit only damaged
-  rows on the GPU path. The software fallback still flattens cached plans into
-  global node pools because per-row scene-node traversal costs more than it
-  saves there. A global appearance, geometry, palette, or renderer-backend
-  change still rebuilds every visible row by design.
+  rows on the GPU path. Candidate and selected search-mask changes use the same
+  row-local text and solid damage boundary. The software fallback still
+  flattens cached plans into global node pools because per-row scene-node
+  traversal costs more than it saves there. A global appearance, geometry,
+  palette, search-style, or renderer-backend change still rebuilds every
+  visible row by design.
 - Text uses Qt's GPU distance-field glyph atlas on hardware RHI backends and
   shapes compatible cells together. It cannot consume Ghostty's private
   selected-face and positioned-glyph plan, so exact fallback, synthesis,

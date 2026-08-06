@@ -793,8 +793,6 @@ struct TerminalTextRenderState {
     QColor globalBackground;
     int explicitBackgroundAlpha = 255;
     QVector<QColor> palette;
-    QBitArray searchCandidateCells;
-    QBitArray searchSelectedCells;
     qreal devicePixelRatio = 1.0;
     int graphicsApi = -1;
     int frameColumns = 0;
@@ -1773,8 +1771,6 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
             textState.globalBackground = frame.background;
         }
         textState.palette = frame.palette;
-        textState.searchCandidateCells = searchCandidateCellMask;
-        textState.searchSelectedCells = searchSelectedCellMask;
         textState.devicePixelRatio = devicePixelRatio;
         textState.graphicsApi = rendererInterface != nullptr
             ? static_cast<int>(rendererInterface->graphicsApi())

@@ -39,6 +39,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <optional>
 #include <utility>
@@ -65,6 +66,58 @@ constexpr double kHorizontalTabScrollThreshold = 120.0;
 constexpr auto kHorizontalTabScrollResetInterval =
     std::chrono::milliseconds(500);
 constexpr auto kProgressReportTimeout = std::chrono::seconds(15);
+
+bool packedBitRangeDiffers(const QBitArray &left, const QBitArray &right,
+                           qsizetype firstBit, qsizetype bitCount) noexcept
+{
+    if (bitCount <= 0) return false;
+
+    const auto *leftBits = reinterpret_cast<const uchar *>(left.bits());
+    const auto *rightBits = reinterpret_cast<const uchar *>(right.bits());
+    const auto byteDifference = [leftBits, rightBits](qsizetype index) {
+        const uchar leftByte = leftBits != nullptr ? leftBits[index] : 0;
+        const uchar rightByte = rightBits != nullptr ? rightBits[index] : 0;
+        return static_cast<unsigned>(leftByte ^ rightByte);
+    };
+
+    const qsizetype bitEnd = firstBit + bitCount;
+    qsizetype byte = firstBit / 8;
+    const unsigned head = static_cast<unsigned>(firstBit % 8);
+    const qsizetype endByte = bitEnd / 8;
+    const unsigned tail = static_cast<unsigned>(bitEnd % 8);
+
+    if (byte == endByte) {
+        const unsigned highMask = (1U << tail) - 1U;
+        const unsigned lowMask = (1U << head) - 1U;
+        return (byteDifference(byte) & highMask & ~lowMask) != 0;
+    }
+    if (head != 0) {
+        if ((byteDifference(byte) & (0xffU << head)) != 0) return true;
+        ++byte;
+    }
+
+    while (byte + static_cast<qsizetype>(sizeof(quint64)) <= endByte) {
+        quint64 leftWord = 0;
+        quint64 rightWord = 0;
+        if (leftBits != nullptr) {
+            std::memcpy(&leftWord, leftBits + byte, sizeof(leftWord));
+        }
+        if (rightBits != nullptr) {
+            std::memcpy(&rightWord, rightBits + byte, sizeof(rightWord));
+        }
+        if (leftWord != rightWord) return true;
+        byte += static_cast<qsizetype>(sizeof(quint64));
+    }
+    while (byte < endByte) {
+        if (byteDifference(byte) != 0) return true;
+        ++byte;
+    }
+    if (tail != 0) {
+        const unsigned tailMask = (1U << tail) - 1U;
+        if ((byteDifference(endByte) & tailMask) != 0) return true;
+    }
+    return false;
+}
 
 TerminalCustomShaderCompileBroker *customShaderCompileBroker()
 {
@@ -2578,14 +2631,14 @@ bool TerminalPane::navigateSearch(int direction)
 
 void TerminalPane::clearSearchDecorationsLocked()
 {
-    markSolidMaskRowsChangedLocked(
+    markMaskRowsChangedLocked(
         searchCandidateCellMask_, searchDecorationColumns_,
         searchDecorationRows_, {}, searchDecorationColumns_,
-        searchDecorationRows_);
-    markSolidMaskRowsChangedLocked(
-        searchSelectedCellMask_, searchDecorationColumns_,
-        searchDecorationRows_, {}, searchDecorationColumns_,
-        searchDecorationRows_);
+        searchDecorationRows_, MaskRowImpact::TextAndSolid);
+    markMaskRowsChangedLocked(searchSelectedCellMask_, searchDecorationColumns_,
+                              searchDecorationRows_, {},
+                              searchDecorationColumns_, searchDecorationRows_,
+                              MaskRowImpact::TextAndSolid);
     searchCandidateCellMask_.clear();
     searchSelectedCellMask_.clear();
     searchDecorationRevision_ = 0;
@@ -2620,14 +2673,14 @@ void TerminalPane::installSearchDecorationsLocked(
             selectedCellMask = searchUpdate.selectedCellMask;
         }
     }
-    markSolidMaskRowsChangedLocked(searchCandidateCellMask_,
-                                   searchDecorationColumns_,
-                                   searchDecorationRows_, candidateCellMask,
-                                   searchUpdate.columns, searchUpdate.rows);
-    markSolidMaskRowsChangedLocked(searchSelectedCellMask_,
-                                   searchDecorationColumns_,
-                                   searchDecorationRows_, selectedCellMask,
-                                   searchUpdate.columns, searchUpdate.rows);
+    markMaskRowsChangedLocked(searchCandidateCellMask_,
+                              searchDecorationColumns_, searchDecorationRows_,
+                              candidateCellMask, searchUpdate.columns,
+                              searchUpdate.rows, MaskRowImpact::TextAndSolid);
+    markMaskRowsChangedLocked(searchSelectedCellMask_, searchDecorationColumns_,
+                              searchDecorationRows_, selectedCellMask,
+                              searchUpdate.columns, searchUpdate.rows,
+                              MaskRowImpact::TextAndSolid);
     searchCandidateCellMask_ = std::move(candidateCellMask);
     searchSelectedCellMask_ = std::move(selectedCellMask);
     searchDecorationRevision_ = searchUpdate.contentRevision;
@@ -2774,19 +2827,26 @@ void TerminalPane::markSolidRowsChangedLocked(const TerminalUpdate &update)
     }
 }
 
-void TerminalPane::markSolidMaskRowsChangedLocked(const QBitArray &oldMask,
-                                                  int oldColumns, int oldRows,
-                                                  const QBitArray &newMask,
-                                                  int newColumns, int newRows)
+void TerminalPane::markMaskRowsChangedLocked(const QBitArray &oldMask,
+                                             int oldColumns, int oldRows,
+                                             const QBitArray &newMask,
+                                             int newColumns, int newRows,
+                                             MaskRowImpact impact)
 {
     if (oldMask.isEmpty() && newMask.isEmpty()) {
         return;
     }
-    if (oldMask == newMask && oldColumns == newColumns && oldRows == newRows) {
+    if (oldColumns == newColumns && oldRows == newRows
+        && oldMask.size() == newMask.size()
+        && oldMask.bits() == newMask.bits()) {
         return;
     }
 
-    ++solidRowEpoch_;
+    const bool affectsText = impact == MaskRowImpact::TextAndSolid;
+    const auto advanceEpochs = [this, affectsText] {
+        if (affectsText) ++textRowEpoch_;
+        ++solidRowEpoch_;
+    };
     const bool hasOldMask = !oldMask.isEmpty();
     const bool hasNewMask = !newMask.isEmpty();
     const bool oldMaskMatchesShape = !hasOldMask
@@ -2797,30 +2857,33 @@ void TerminalPane::markSolidMaskRowsChangedLocked(const QBitArray &oldMask,
             && newMask.size() == static_cast<qsizetype>(newColumns) * newRows);
     const int columns = hasNewMask ? newColumns : oldColumns;
     const int rows = hasNewMask ? newRows : oldRows;
-    if (solidRowEpochs_.size() != frame_.rows || !oldMaskMatchesShape
+    if ((affectsText && textRowEpochs_.size() != frame_.rows)
+        || solidRowEpochs_.size() != frame_.rows || !oldMaskMatchesShape
         || !newMaskMatchesShape
         || (hasOldMask && hasNewMask
             && (oldColumns != newColumns || oldRows != newRows))
         || columns != frame_.columns || rows != frame_.rows) {
+        advanceEpochs();
+        if (affectsText) {
+            textRowEpochs_.fill(textRowEpoch_, frame_.rows);
+        }
         solidRowEpochs_.fill(solidRowEpoch_, frame_.rows);
         return;
     }
 
+    bool epochsAdvanced = false;
     for (int row = 0; row < rows; ++row) {
         const qsizetype rowStart = static_cast<qsizetype>(row) * columns;
-        bool rowChanged = false;
-        for (int column = 0; column < columns; ++column) {
-            const qsizetype index = rowStart + column;
-            const bool oldValue =
-                index < oldMask.size() && oldMask.testBit(index);
-            const bool newValue =
-                index < newMask.size() && newMask.testBit(index);
-            if (oldValue != newValue) {
-                rowChanged = true;
-                break;
-            }
-        }
+        const bool rowChanged = packedBitRangeDiffers(
+            oldMask, newMask, rowStart, static_cast<qsizetype>(columns));
         if (rowChanged && row < solidRowEpochs_.size()) {
+            if (!epochsAdvanced) {
+                advanceEpochs();
+                epochsAdvanced = true;
+            }
+            if (affectsText) {
+                textRowEpochs_[row] = textRowEpoch_;
+            }
             solidRowEpochs_[row] = solidRowEpoch_;
         }
     }
@@ -5396,10 +5459,10 @@ void TerminalPane::clearHyperlinkDecoration()
     {
         QMutexLocker locker(&renderMutex_);
         hadHighlight = !hoveredHyperlinkCellMask_.isEmpty();
-        markSolidMaskRowsChangedLocked(
+        markMaskRowsChangedLocked(
             hoveredHyperlinkCellMask_, hoveredHyperlinkColumns_,
             hoveredHyperlinkRows_, {}, hoveredHyperlinkColumns_,
-            hoveredHyperlinkRows_);
+            hoveredHyperlinkRows_, MaskRowImpact::SolidOnly);
         hoveredHyperlinkCellMask_.clear();
         hoveredHyperlinkColumns_ = 0;
         hoveredHyperlinkRows_ = 0;
@@ -5579,9 +5642,10 @@ void TerminalPane::handleHyperlinkResult(quint64 contentRevision,
     hoveredHyperlinkCell_ = hoverCell_;
     {
         QMutexLocker locker(&renderMutex_);
-        markSolidMaskRowsChangedLocked(
-            hoveredHyperlinkCellMask_, hoveredHyperlinkColumns_,
-            hoveredHyperlinkRows_, indexes, columns, rows);
+        markMaskRowsChangedLocked(hoveredHyperlinkCellMask_,
+                                  hoveredHyperlinkColumns_,
+                                  hoveredHyperlinkRows_, indexes, columns, rows,
+                                  MaskRowImpact::SolidOnly);
         hoveredHyperlinkCellMask_ = std::move(indexes);
         hoveredHyperlinkColumns_ = columns;
         hoveredHyperlinkRows_ = rows;

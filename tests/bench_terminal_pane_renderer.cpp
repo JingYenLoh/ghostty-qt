@@ -545,13 +545,58 @@ public:
             QStringLiteral("search-update"), warmupIterations,
             measuredIterations,
             {.paintSerial = 1,
-             .solidCellVisits = static_cast<quint64>(2 * grid_.columns)},
+             .solidCellVisits = static_cast<quint64>(2 * grid_.columns),
+             .textRowBuilds = 2,
+             .textLayouts = 3},
             0, 0, {},
             [this, &row] {
                 row = row == 1 ? 2 : 1;
                 publishSearch(row);
             },
             capture, error);
+    }
+
+    ScenarioResult searchSelectionUpdate(int warmupIterations,
+                                         int measuredIterations,
+                                         RenderDocCapture *capture,
+                                         QString *error)
+    {
+        constexpr int row = 1;
+        publishSearch(row);
+        if (!renderUntimed(error)) return {};
+        bool selected = false;
+        return measure(
+            QStringLiteral("search-selection-update"), warmupIterations,
+            measuredIterations,
+            {.paintSerial = 1,
+             .solidCellVisits = static_cast<quint64>(grid_.columns),
+             .textRowBuilds = 1,
+             .textLayouts = 2},
+            0, 0, {},
+            [this, &selected] {
+                selected = !selected;
+                publishSearch(row, selected);
+            },
+            capture, error);
+    }
+
+    ScenarioResult searchClear(int warmupIterations, int measuredIterations,
+                               RenderDocCapture *capture, QString *error)
+    {
+        constexpr int row = 1;
+        return measure(
+            QStringLiteral("search-clear"), warmupIterations,
+            measuredIterations,
+            {.paintSerial = 1,
+             .solidCellVisits = static_cast<quint64>(grid_.columns),
+             .textRowBuilds = 1,
+             .textLayouts = 1},
+            0, 0,
+            [this, error] {
+                publishSearch(row);
+                return renderUntimed(error);
+            },
+            [this] { clearSearch(); }, capture, error);
     }
 
     ScenarioResult kittyFirstUpload(int warmupIterations,
@@ -960,7 +1005,7 @@ private:
         controller_->terminalUpdated(update);
     }
 
-    void publishSearch(int row)
+    void publishSearch(int row, bool selected = false)
     {
         TerminalSearchUpdate search;
         search.generation = ++searchGeneration_;
@@ -970,7 +1015,7 @@ private:
         search.scannedRows = static_cast<quint64>(grid_.rows);
         search.totalRows = static_cast<quint64>(grid_.rows);
         search.totalMatches = 1;
-        search.selectedMatch = 0;
+        search.selectedMatch = selected ? 0 : -1;
         search.columns = grid_.columns;
         search.rows = grid_.rows;
         const qsizetype cellCount =
@@ -982,6 +1027,7 @@ private:
                 * grid_.columns
             + grid_.columns / 2;
         search.visibleCellMask.setBit(index);
+        if (selected) search.selectedCellMask.setBit(index);
         controller_->searchUpdated(search);
     }
 
@@ -1364,6 +1410,9 @@ const QVector<std::pair<QString, ScenarioFunction>> &scenarioFunctions()
         {QStringLiteral("full-invalidation"),
          &RendererBenchmark::fullInvalidation},
         {QStringLiteral("search-update"), &RendererBenchmark::searchUpdate},
+        {QStringLiteral("search-selection-update"),
+         &RendererBenchmark::searchSelectionUpdate},
+        {QStringLiteral("search-clear"), &RendererBenchmark::searchClear},
         {QStringLiteral("kitty-first-upload"),
          &RendererBenchmark::kittyFirstUpload},
         {QStringLiteral("kitty-translucent-first-upload"),

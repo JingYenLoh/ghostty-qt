@@ -419,10 +419,14 @@ private:
     void tryDeferredSessionStart();
     void markTextRowsChangedLocked(const TerminalUpdate &update);
     void markSolidRowsChangedLocked(const TerminalUpdate &update);
-    void markSolidMaskRowsChangedLocked(const QBitArray &oldMask,
-                                        int oldColumns, int oldRows,
-                                        const QBitArray &newMask,
-                                        int newColumns, int newRows);
+    enum class MaskRowImpact : quint8 {
+        SolidOnly,
+        TextAndSolid
+    };
+    void markMaskRowsChangedLocked(const QBitArray &oldMask, int oldColumns,
+                                   int oldRows, const QBitArray &newMask,
+                                   int newColumns, int newRows,
+                                   MaskRowImpact impact);
     void syncCursorBlink(bool resetPhase);
     void refreshBackgroundImage();
     void setFontPointSize(qreal points);

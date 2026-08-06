@@ -46,8 +46,18 @@ production renderer through a single-threaded, production-like scene-graph path
 without a swapchain or present. Untimed initialization readbacks verify both
 terminal output and a known-color Kitty placement on the selected backend;
 measured frames do not read the target back. Damage counters assert that the
-text scenarios visit the intended number of cells, preventing a faster result
-caused by accidentally skipping work.
+scenarios rebuild the intended text rows and visit the intended number of solid
+cells, preventing a faster result caused by accidentally skipping work.
+`search-update` moves one candidate highlight between rows and requires two
+text-row builds, three layouts, and `2 * columns` solid-cell visits per frame.
+`search-selection-update` toggles a candidate between ordinary and selected
+presentation on one row, while `search-clear` toggles one row of highlights on
+and off. Both require one text-row build and `columns` solid-cell visits per
+frame; selection uses two layouts and clear uses one. Those counts prohibit
+extra row rebuilds; the terminal-pane row-damage tests separately assert the
+affected row identities and retention of every unaffected row. Search-color,
+geometry, and other global style invalidations remain deliberately outside
+these sparse benchmark scenarios.
 
 Use a Release build and compare results only on the same machine, Qt version,
 backend, dimensions, warmup, and iteration count:
@@ -239,7 +249,8 @@ non-empty capture:
 ```
 
 Accepted scenario names are `metadata`, `one-dirty-row`, `cursor-only`,
-`full-invalidation`, `search-update`, `kitty-first-upload`,
+`full-invalidation`, `search-update`, `search-selection-update`,
+`search-clear`, `kitty-first-upload`,
 `kitty-translucent-first-upload`, `kitty-retained-redraw`,
 `kitty-translucent-retained-redraw`, `kitty-movement`,
 `kitty-replacement`, `kitty-translucent-replacement`, and `kitty-eviction`.
