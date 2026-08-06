@@ -173,10 +173,17 @@ void KeyboardLayoutTest::translatesUsShiftAndCapsLock()
 
     const quint32 num = keymap.modifierMask(XKB_MOD_NAME_NUM);
     QVERIFY(num != 0);
+    layout.resetModifiers();
+    const KeyboardLayoutTranslation numOff =
+        layout.translate(xkbKeycode(KEY_KP1));
+    QCOMPARE(numOff.resolvedKeysym, quint32{XKB_KEY_KP_End});
+    QVERIFY(!numOff.numLock);
+
     layout.updateModifiers(0, 0, num, 0);
     const KeyboardLayoutTranslation numTranslation =
         layout.translate(xkbKeycode(KEY_KP1));
     QVERIFY(numTranslation.authoritative);
+    QCOMPARE(numTranslation.resolvedKeysym, quint32{XKB_KEY_KP_1});
     QVERIFY(!numTranslation.capsLock);
     QVERIFY(numTranslation.numLock);
 

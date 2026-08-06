@@ -618,7 +618,7 @@
     },
     "keybind": {
       "status": "partial",
-      "note": "A private versioned export carries Ghostty's finalized root and named-table bindings. Per-surface table stacks, shared-prefix sequences, physical/Unicode/catch-all triggers, chains, local flags, stage-time VT encoding, invalid replay, application-wide all/global dispatch, and Linux XDG portal registration are implemented for the supported action subset. Selection-dependent copy, search, endpoint adjustment, and viewport movement use correlated worker-authoritative performability across separate input events; local and broad chains wait for ordered GUI effects before continuing. Portal registration intentionally matches the pinned GTK frontend's root/direct/single-action restriction."
+      "note": "A private versioned export carries Ghostty's finalized root and named-table bindings. Per-surface table stacks, shared-prefix sequences, physical/Unicode/catch-all triggers, chains, local flags, stage-time VT encoding, invalid replay, application-wide all/global dispatch, and Linux XDG portal registration are implemented for the supported action subset. XKB-resolved semantic keypad identities keep NumLock-off navigation distinct from the numeric identities at the same hardware locations, including canonical/W3C and legacy kp_* trigger spellings. Selection-dependent copy, search, endpoint adjustment, and viewport movement use correlated worker-authoritative performability across separate input events; local and broad chains wait for ordered GUI effects before continuing. Portal registration intentionally matches the pinned GTK frontend's root/direct/single-action restriction."
     },
     "link": {
       "status": "blocked_upstream",

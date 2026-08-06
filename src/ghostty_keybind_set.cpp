@@ -42,6 +42,7 @@ struct ParsedTrigger {
 struct PhysicalKey {
     int qtKey = Qt::Key_unknown;
     quint32 nativeScanCode = 0;
+    GhosttyKey identity = GHOSTTY_KEY_UNIDENTIFIED;
     bool keypad = false;
 };
 
@@ -124,6 +125,18 @@ QString w3cToSnake(QStringView name)
     return result;
 }
 
+QString canonicalPhysicalName(QStringView rawName)
+{
+    const QString source = rawName.toString();
+    const bool exactLowercase = source == source.toLower();
+    QString name =
+        rawName.contains(u'_') || exactLowercase ? source : w3cToSnake(rawName);
+    if (exactLowercase && source.startsWith(QLatin1StringView("kp_"))) {
+        name = QStringLiteral("numpad_") + name.sliced(3);
+    }
+    return name;
+}
+
 quint32 xkbKeycode(unsigned int evdevCode)
 {
     // wl_keyboard sends Linux evdev codes. Qt Wayland adds the XKB offset
@@ -160,10 +173,7 @@ std::optional<PhysicalKey> functionKey(QStringView name)
 
 std::optional<PhysicalKey> physicalKey(QStringView rawName)
 {
-    const QString name =
-        rawName.contains(u'_') || rawName == rawName.toString().toLower()
-        ? rawName.toString()
-        : w3cToSnake(rawName);
+    const QString name = canonicalPhysicalName(rawName);
 
     if (const auto key = functionKey(name)) {
         return key;
@@ -203,7 +213,18 @@ std::optional<PhysicalKey> physicalKey(QStringView rawName)
 
     const auto key = [](int qtKey, unsigned int evdevCode,
                         bool keypad = false) {
-        return PhysicalKey{qtKey, xkbKeycode(evdevCode), keypad};
+        return PhysicalKey{
+            .qtKey = qtKey,
+            .nativeScanCode = xkbKeycode(evdevCode),
+            .keypad = keypad,
+        };
+    };
+    const auto semanticKey = [](int qtKey, GhosttyKey identity) {
+        return PhysicalKey{
+            .qtKey = qtKey,
+            .identity = identity,
+            .keypad = true,
+        };
     };
     static const QHash<QString, PhysicalKey> keys = {
         {QStringLiteral("backquote"), key(Qt::Key_QuoteLeft, KEY_GRAVE)},
@@ -259,8 +280,32 @@ std::optional<PhysicalKey> physicalKey(QStringView rawName)
         {QStringLiteral("numpad_equal"), key(Qt::Key_Equal, KEY_KPEQUAL, true)},
         {QStringLiteral("numpad_multiply"),
          key(Qt::Key_Asterisk, KEY_KPASTERISK, true)},
+        {QStringLiteral("numpad_separator"),
+         semanticKey(Qt::Key_Comma, GHOSTTY_KEY_NUMPAD_SEPARATOR)},
         {QStringLiteral("numpad_subtract"),
          key(Qt::Key_Minus, KEY_KPMINUS, true)},
+        {QStringLiteral("numpad_left"),
+         semanticKey(Qt::Key_Left, GHOSTTY_KEY_NUMPAD_LEFT)},
+        {QStringLiteral("numpad_right"),
+         semanticKey(Qt::Key_Right, GHOSTTY_KEY_NUMPAD_RIGHT)},
+        {QStringLiteral("numpad_up"),
+         semanticKey(Qt::Key_Up, GHOSTTY_KEY_NUMPAD_UP)},
+        {QStringLiteral("numpad_down"),
+         semanticKey(Qt::Key_Down, GHOSTTY_KEY_NUMPAD_DOWN)},
+        {QStringLiteral("numpad_page_up"),
+         semanticKey(Qt::Key_PageUp, GHOSTTY_KEY_NUMPAD_PAGE_UP)},
+        {QStringLiteral("numpad_page_down"),
+         semanticKey(Qt::Key_PageDown, GHOSTTY_KEY_NUMPAD_PAGE_DOWN)},
+        {QStringLiteral("numpad_home"),
+         semanticKey(Qt::Key_Home, GHOSTTY_KEY_NUMPAD_HOME)},
+        {QStringLiteral("numpad_end"),
+         semanticKey(Qt::Key_End, GHOSTTY_KEY_NUMPAD_END)},
+        {QStringLiteral("numpad_insert"),
+         semanticKey(Qt::Key_Insert, GHOSTTY_KEY_NUMPAD_INSERT)},
+        {QStringLiteral("numpad_delete"),
+         semanticKey(Qt::Key_Delete, GHOSTTY_KEY_NUMPAD_DELETE)},
+        {QStringLiteral("numpad_begin"),
+         semanticKey(Qt::Key_Clear, GHOSTTY_KEY_NUMPAD_BEGIN)},
         {QStringLiteral("escape"), key(Qt::Key_Escape, KEY_ESC)},
         {QStringLiteral("print_screen"), key(Qt::Key_Print, KEY_SYSRQ)},
         {QStringLiteral("scroll_lock"),
@@ -293,6 +338,17 @@ std::optional<PhysicalKey> physicalKey(QStringView rawName)
                                 : std::optional<PhysicalKey>(*found);
 }
 
+GhosttyKey physicalIdentity(const PhysicalKey &key)
+{
+    if (key.identity != GHOSTTY_KEY_UNIDENTIFIED) return key.identity;
+
+    const GhosttyKey native = ghosttyKeyFromNativeScanCode(key.nativeScanCode);
+    if (native != GHOSTTY_KEY_UNIDENTIFIED) return native;
+
+    return ghosttyKeyFromQt(key.qtKey,
+                            key.keypad ? Qt::KeypadModifier : Qt::NoModifier);
+}
+
 QString triggerModifierLabel(quint8 modifiers)
 {
     QString result;
@@ -313,10 +369,7 @@ QString triggerModifierLabel(quint8 modifiers)
 
 QString physicalTriggerKeyLabel(QStringView rawName)
 {
-    const QString name =
-        rawName.contains(u'_') || rawName == rawName.toString().toLower()
-        ? rawName.toString()
-        : w3cToSnake(rawName);
+    const QString name = canonicalPhysicalName(rawName);
 
     if (name.startsWith(QLatin1StringView("key_")) && name.size() == 5) {
         return QString(name.back()).toUpper();
@@ -344,6 +397,18 @@ QString physicalTriggerKeyLabel(QStringView rawName)
             {QStringLiteral("equal"), QStringLiteral("KP_Equal")},
             {QStringLiteral("multiply"), QStringLiteral("KP_Multiply")},
             {QStringLiteral("subtract"), QStringLiteral("KP_Subtract")},
+            {QStringLiteral("separator"), QStringLiteral("KP_Separator")},
+            {QStringLiteral("left"), QStringLiteral("KP_Left")},
+            {QStringLiteral("right"), QStringLiteral("KP_Right")},
+            {QStringLiteral("up"), QStringLiteral("KP_Up")},
+            {QStringLiteral("down"), QStringLiteral("KP_Down")},
+            {QStringLiteral("page_up"), QStringLiteral("KP_Prior")},
+            {QStringLiteral("page_down"), QStringLiteral("KP_Next")},
+            {QStringLiteral("home"), QStringLiteral("KP_Home")},
+            {QStringLiteral("end"), QStringLiteral("KP_End")},
+            {QStringLiteral("insert"), QStringLiteral("KP_Insert")},
+            {QStringLiteral("delete"), QStringLiteral("KP_Delete")},
+            {QStringLiteral("begin"), QStringLiteral("KP_Begin")},
         };
         if (const auto found = keypadNames.constFind(suffix);
             found != keypadNames.cend()) {
@@ -588,10 +653,7 @@ std::expected<ParsedTrigger, QString> parseTrigger(QStringView input)
             trigger.qtKey = key->qtKey;
             trigger.nativeScanCode = key->nativeScanCode;
             trigger.keypad = key->keypad;
-            trigger.physicalName =
-                part.contains(u'_') || part == part.toString().toLower()
-                ? part.toString().toLower()
-                : w3cToSnake(part);
+            trigger.physicalName = canonicalPhysicalName(part);
             continue;
         }
         if (singleUnicodeScalar(part).has_value()) {
@@ -636,22 +698,25 @@ QString unicodeFromQtEvent(int qtKey, QStringView text)
 }
 
 bool physicalMatches(int configured, quint32 configuredScanCode,
-                     bool configuredKeypad, int eventKey, quint32 eventScanCode,
+                     int configuredIdentity, bool configuredKeypad,
+                     int eventKey, quint32 eventScanCode,
                      quint32 eventResolvedKeysym,
                      Qt::KeyboardModifiers eventModifiers)
 {
     const Qt::KeyboardModifiers configuredModifiers =
         configuredKeypad ? Qt::KeypadModifier : Qt::NoModifier;
-    GhosttyKey configuredIdentity =
-        ghosttyKeyFromNativeScanCode(configuredScanCode);
-    if (configuredIdentity == GHOSTTY_KEY_UNIDENTIFIED) {
-        configuredIdentity = ghosttyKeyFromQt(configured, configuredModifiers);
+    GhosttyKey configuredKey = static_cast<GhosttyKey>(configuredIdentity);
+    if (configuredKey == GHOSTTY_KEY_UNIDENTIFIED) {
+        configuredKey = ghosttyKeyFromNativeScanCode(configuredScanCode);
+    }
+    if (configuredKey == GHOSTTY_KEY_UNIDENTIFIED) {
+        configuredKey = ghosttyKeyFromQt(configured, configuredModifiers);
     }
     const GhosttyKey eventIdentity = ghosttyEffectiveKey(
         eventScanCode, eventResolvedKeysym, eventKey, eventModifiers);
-    if (configuredIdentity != GHOSTTY_KEY_UNIDENTIFIED
+    if (configuredKey != GHOSTTY_KEY_UNIDENTIFIED
         && eventIdentity != GHOSTTY_KEY_UNIDENTIFIED) {
-        return configuredIdentity == eventIdentity;
+        return configuredKey == eventIdentity;
     }
 
     // Preserve a conservative Qt fallback for an identity outside the pinned
@@ -986,6 +1051,9 @@ GhosttyKeybindProgram::compile(const GhosttyKeybindConfig &config)
         if (left.keyKind == KeyKind::Unicode) {
             return left.foldedUnicode == right.foldedUnicode;
         }
+        if (left.physicalIdentity != 0 && right.physicalIdentity != 0) {
+            return left.physicalIdentity == right.physicalIdentity;
+        }
         if (left.nativeScanCode != 0 && right.nativeScanCode != 0) {
             return left.nativeScanCode == right.nativeScanCode;
         }
@@ -1041,6 +1109,8 @@ GhosttyKeybindProgram::compile(const GhosttyKeybindConfig &config)
                     trigger.keyKind = KeyKind::Physical;
                     trigger.qtKey = key->qtKey;
                     trigger.nativeScanCode = key->nativeScanCode;
+                    trigger.physicalIdentity =
+                        static_cast<int>(physicalIdentity(*key));
                     trigger.keypad = key->keypad;
                     break;
                 }
@@ -1227,9 +1297,9 @@ GhosttyKeybindProgram::lookup(NodeId node, PreparedEvent &prepared) const
             && (trigger.modifiers == normalized
                 || trigger.modifiers == withoutSelf)
             && physicalMatches(trigger.qtKey, trigger.nativeScanCode,
-                               trigger.keypad, event.qtKey,
-                               event.nativeScanCode, event.resolvedKeysym,
-                               event.modifiers)) {
+                               trigger.physicalIdentity, trigger.keypad,
+                               event.qtKey, event.nativeScanCode,
+                               event.resolvedKeysym, event.modifiers)) {
             return {&entry, true};
         }
     }

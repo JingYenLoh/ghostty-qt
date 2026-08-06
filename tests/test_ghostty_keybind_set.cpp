@@ -4,6 +4,7 @@
 #include <linux/input-event-codes.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
+#include <array>
 #include <initializer_list>
 #include <type_traits>
 #include <utility>
@@ -77,6 +78,15 @@ GhosttyKeybindTrigger catchAllTrigger(quint8 modifiers = 0)
     };
 }
 
+GhosttyKeybindTrigger physicalTrigger(QString name, quint8 modifiers = 0)
+{
+    return {
+        .kind = GhosttyKeybindKeyKind::Physical,
+        .physicalName = std::move(name),
+        .modifiers = modifiers,
+    };
+}
+
 GhosttyKeybindDefinition binding(
     QVector<GhosttyKeybindTrigger> sequence,
     QString action,
@@ -102,6 +112,7 @@ private Q_SLOTS:
     void nativePhysicalBindingsAreLayoutIndependent();
     void honorsFunctionalXkbRemapsForPhysicalBindings();
     void distinguishesKeypadAndModifierLocations();
+    void matchesSemanticNumLockKeypadBindings();
     void matchesShiftedUnicodeByUnshiftedCodepoint();
     void matchesFullUnicodeCaseFoldsAndScalars();
     void ordersAndFiltersUnicodeCandidates();
@@ -462,6 +473,142 @@ void GhosttyKeybindStateTest::distinguishesKeypadAndModifierLocations()
     QCOMPARE(serializedActions(requireMatch(set.match(
                  Qt::Key_Colon, Qt::ShiftModifier, QStringLiteral(":")))),
              QStringList({QStringLiteral("punctuation")}));
+}
+
+void GhosttyKeybindStateTest::matchesSemanticNumLockKeypadBindings()
+{
+    struct SemanticCase {
+        const char *name;
+        int qtKey;
+        unsigned int evdevCode;
+        quint32 keysym;
+    };
+    static constexpr std::array<SemanticCase, 12> semanticCases = {{
+        {"numpad_home", Qt::Key_Home, KEY_KP7, XKB_KEY_KP_Home},
+        {"numpad_up", Qt::Key_Up, KEY_KP8, XKB_KEY_KP_Up},
+        {"numpad_page_up", Qt::Key_PageUp, KEY_KP9, XKB_KEY_KP_Page_Up},
+        {"numpad_left", Qt::Key_Left, KEY_KP4, XKB_KEY_KP_Left},
+        {"numpad_begin", Qt::Key_Clear, KEY_KP5, XKB_KEY_KP_Begin},
+        {"numpad_right", Qt::Key_Right, KEY_KP6, XKB_KEY_KP_Right},
+        {"numpad_end", Qt::Key_End, KEY_KP1, XKB_KEY_KP_End},
+        {"numpad_down", Qt::Key_Down, KEY_KP2, XKB_KEY_KP_Down},
+        {"numpad_page_down", Qt::Key_PageDown, KEY_KP3, XKB_KEY_KP_Page_Down},
+        {"numpad_insert", Qt::Key_Insert, KEY_KP0, XKB_KEY_KP_Insert},
+        {"numpad_delete", Qt::Key_Delete, KEY_KPDOT, XKB_KEY_KP_Delete},
+        {"numpad_separator", Qt::Key_Comma, KEY_KPCOMMA, XKB_KEY_KP_Separator},
+    }};
+
+    const auto keypadEvent = [](int qtKey, unsigned int evdevCode,
+                                quint32 keysym) {
+        return GhosttyKeybindEvent{
+            .qtKey = qtKey,
+            .modifiers = Qt::KeypadModifier,
+            .nativeScanCode = xkbKeycode(evdevCode),
+            .resolvedKeysym = keysym,
+        };
+    };
+
+    GhosttyKeybindConfig config;
+    for (const SemanticCase &sample : semanticCases) {
+        const QString name = QString::fromLatin1(sample.name);
+        config.root.append(
+            binding({physicalTrigger(name)}, QStringLiteral("text:") + name));
+    }
+    config.root.append(binding({physicalTrigger(QStringLiteral("numpad_1"))},
+                               QStringLiteral("text:numpad_1")));
+    config.root.append(binding({physicalTrigger(QStringLiteral("numpad_5"))},
+                               QStringLiteral("text:numpad_5")));
+    config.root.append(
+        binding({physicalTrigger(QStringLiteral("numpad_decimal"))},
+                QStringLiteral("text:numpad_decimal")));
+
+    GhosttyKeybindState set;
+    QCOMPARE(installProgram(set, config).count(Disposition::Installed),
+             static_cast<int>(semanticCases.size()) + 3);
+    for (const SemanticCase &sample : semanticCases) {
+        const QString name = QString::fromLatin1(sample.name);
+        QCOMPARE(serializedActions(requireMatch(set.match(keypadEvent(
+                     sample.qtKey, sample.evdevCode, sample.keysym)))),
+                 QStringList({QStringLiteral("text:") + name}));
+    }
+
+    // The same hardware positions select their numeric identities with
+    // NumLock on rather than colliding with the semantic navigation entries.
+    QCOMPARE(serializedActions(requireMatch(
+                 set.match(keypadEvent(Qt::Key_1, KEY_KP1, XKB_KEY_KP_1)))),
+             QStringList({QStringLiteral("text:numpad_1")}));
+    QCOMPARE(serializedActions(requireMatch(
+                 set.match(keypadEvent(Qt::Key_5, KEY_KP5, XKB_KEY_KP_5)))),
+             QStringList({QStringLiteral("text:numpad_5")}));
+    QCOMPARE(serializedActions(requireMatch(set.match(
+                 keypadEvent(Qt::Key_Period, KEY_KPDOT, XKB_KEY_KP_Decimal)))),
+             QStringList({QStringLiteral("text:numpad_decimal")}));
+
+    GhosttyKeybindState aliases;
+    const GhosttyKeybindLoadReport aliasReport =
+        installProgram(aliases,
+                       {
+                           QStringLiteral("kp_end=text:legacy-end"),
+                           QStringLiteral("NumpadHome=text:camel-home"),
+                           QStringLiteral("kp_separator=text:legacy-separator"),
+                       });
+    QCOMPARE(aliasReport.count(Disposition::Installed), 3);
+    QCOMPARE(serializedActions(requireMatch(aliases.match(
+                 keypadEvent(Qt::Key_End, KEY_KP1, XKB_KEY_KP_End)))),
+             QStringList({QStringLiteral("text:legacy-end")}));
+    QCOMPARE(serializedActions(requireMatch(aliases.match(
+                 keypadEvent(Qt::Key_Home, KEY_KP7, XKB_KEY_KP_Home)))),
+             QStringList({QStringLiteral("text:camel-home")}));
+    QCOMPARE(serializedActions(requireMatch(aliases.match(keypadEvent(
+                 Qt::Key_Comma, KEY_KPCOMMA, XKB_KEY_KP_Separator)))),
+             QStringList({QStringLiteral("text:legacy-separator")}));
+
+    GhosttyKeybindState invalidAliases;
+    const GhosttyKeybindLoadReport invalidAliasReport =
+        installProgram(invalidAliases,
+                       {
+                           QStringLiteral("KP_End=text:invalid-uppercase"),
+                           QStringLiteral("kpEnd=text:invalid-camel-alias"),
+                           QStringLiteral("KEY_A=text:invalid-underscore-case"),
+                       });
+    QCOMPARE(invalidAliasReport.count(Disposition::Invalid), 3);
+    QVERIFY(invalidAliases.isEmpty());
+
+    GhosttyKeybindState sequence;
+    QCOMPARE(installProgram(
+                 sequence,
+                 {QStringLiteral("kp_begin>kp_page_up>kp_page_down>kp_end="
+                                 "text:keypad-sequence")})
+                 .count(Disposition::Installed),
+             1);
+    QCOMPARE(
+        sequence.advance(keypadEvent(Qt::Key_Clear, KEY_KP5, XKB_KEY_KP_Begin))
+            .kind,
+        GhosttyKeybindStepKind::Leader);
+    QCOMPARE(sequence.activeSequenceLabels(),
+             QStringList({QStringLiteral("KP_Begin")}));
+    QCOMPARE(
+        sequence
+            .advance(keypadEvent(Qt::Key_PageUp, KEY_KP9, XKB_KEY_KP_Page_Up))
+            .kind,
+        GhosttyKeybindStepKind::Leader);
+    QCOMPARE(
+        sequence.activeSequenceLabels(),
+        QStringList({QStringLiteral("KP_Begin"), QStringLiteral("KP_Prior")}));
+    QCOMPARE(sequence
+                 .advance(keypadEvent(Qt::Key_PageDown, KEY_KP3,
+                                      XKB_KEY_KP_Page_Down))
+                 .kind,
+             GhosttyKeybindStepKind::Leader);
+    QCOMPARE(
+        sequence.activeSequenceLabels(),
+        QStringList({QStringLiteral("KP_Begin"), QStringLiteral("KP_Prior"),
+                     QStringLiteral("KP_Next")}));
+    const GhosttyKeybindStep completed =
+        sequence.advance(keypadEvent(Qt::Key_End, KEY_KP1, XKB_KEY_KP_End));
+    QCOMPARE(completed.kind, GhosttyKeybindStepKind::Binding);
+    QCOMPARE(serializedActions(completed),
+             QStringList({QStringLiteral("text:keypad-sequence")}));
 }
 
 void GhosttyKeybindStateTest::matchesShiftedUnicodeByUnshiftedCodepoint()

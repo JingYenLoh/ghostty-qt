@@ -30,6 +30,7 @@ GhosttyKey ghosttyKeyFromQt(int key, Qt::KeyboardModifiers modifiers)
         case Qt::Key_Delete: return GHOSTTY_KEY_NUMPAD_DELETE;
         case Qt::Key_PageUp: return GHOSTTY_KEY_NUMPAD_PAGE_UP;
         case Qt::Key_PageDown: return GHOSTTY_KEY_NUMPAD_PAGE_DOWN;
+        case Qt::Key_Clear: return GHOSTTY_KEY_NUMPAD_BEGIN;
         default: break;
         }
     }

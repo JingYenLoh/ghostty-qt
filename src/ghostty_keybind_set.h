@@ -98,6 +98,10 @@ private:
         KeyKind keyKind = KeyKind::Unicode;
         int qtKey = Qt::Key_unknown;
         quint32 nativeScanCode = 0;
+        // Numeric GhosttyKey identity. This is distinct from nativeScanCode:
+        // NumLock changes KP1 into the semantic KP_End key without changing
+        // its hardware/XKB keycode.
+        int physicalIdentity = 0;
         bool keypad = false;
         QString foldedUnicode;
         // Human-readable text comes from the configured trigger that

@@ -2806,6 +2806,9 @@ void GhosttyVtAdapterTest::encodesUsingTerminalModes()
     keypad.nativeScanCode = KEY_KP1 + 8U;
     QCOMPARE(adapter->encodeKey(keypad).bytes,
              QByteArrayLiteral("\033[57400u"));
+    keypad.resolvedKeysym = XKB_KEY_KP_End;
+    QCOMPARE(adapter->encodeKey(keypad).bytes,
+             QByteArrayLiteral("\033[57424u"));
 
     // Classification follows the physical key that the encoder actually
     // receives, even when the logical Qt key says something else.

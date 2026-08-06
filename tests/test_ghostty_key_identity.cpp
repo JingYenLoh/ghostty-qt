@@ -78,6 +78,8 @@ void GhosttyKeyIdentityTest::preservesSidedKeypadAndExtendedFunctionIdentity()
     QCOMPARE(ghosttyEffectiveKey(xkbKeycode(KEY_KP1), XKB_KEY_KP_End,
                                  Qt::Key_End, Qt::KeypadModifier),
              GHOSTTY_KEY_NUMPAD_END);
+    QCOMPARE(ghosttyEffectiveKey(0, 0, Qt::Key_Clear, Qt::KeypadModifier),
+             GHOSTTY_KEY_NUMPAD_BEGIN);
     QCOMPARE(ghosttyEffectiveKey(xkbKeycode(KEY_F1), XKB_KEY_F25, Qt::Key_F25),
              GHOSTTY_KEY_F25);
 }

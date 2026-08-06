@@ -2343,6 +2343,11 @@ functional mappings such as `caps:swapescape` apply consistently to terminal
 encoding, root and pane physical bindings, and sided modifier reconstruction,
 without turning German Y/Z or other writing-layout changes into physical-key
 remaps. Raw scan identity remains the press/release correlation key.
+NumLock-off keypad navigation is represented by its resolved semantic identity
+rather than an invented scan code, so bindings for `numpad_1` and `numpad_end`
+can coexist on KP1 and switch with XKB state. The legacy `kp_*` spellings and
+canonical/W3C names compile to the same identity and retain `KP_*` overlay
+labels.
 
 Because `QKeyEvent` does not expose the compositor keymap's unmodified layout
 level, `WaylandKeyboardLayout` requests a second keyboard object from Qt's
@@ -3122,7 +3127,8 @@ The default CTest suite has focused layers for each ownership boundary:
   typed input effects, and direct-surface error categories—and deterministic
   malformed/unsupported results.
 - `ghostty-keybind-set` verifies delimiter edge cases, native physical-key
-  locations, shifted/unshifted Unicode matching, shared-prefix sequences,
+  locations, semantic NumLock keypad identities, shifted/unshifted Unicode
+  matching, shared-prefix sequences,
   catch-all priority and recovery, local/broad flags, action chains, named-table
   precedence and one-shot state, independent pane state, and Linux defaults.
   It also verifies compile-on-load scope/effect metadata, inert unsupported
