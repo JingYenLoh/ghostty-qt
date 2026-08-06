@@ -659,6 +659,7 @@ target_link_libraries(ghostty-qt-render-test-support PUBLIC
     Qt6::Quick
     ghostty-qt-action-pipeline
     ghostty-qt-key-identity
+    ghostty-qt-key-event-context
     ghostty-qt-keyboard-layout
     ghostty-qt-launch-options
     ghostty-qt-modifier-remap

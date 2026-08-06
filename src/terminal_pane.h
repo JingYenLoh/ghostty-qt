@@ -372,6 +372,7 @@ private:
     struct DeferredKeyInput {
         KeyEventSnapshot event;
         KeyboardLayoutTranslation layout;
+        bool composing = false;
         quint64 focusEpoch = 0;
         quint64 pointerActivityEpoch = 0;
     };
@@ -436,6 +437,13 @@ private:
     void endKeyEventDeferral();
     void beginKeyEventDispatch() noexcept;
     void endKeyEventDispatch();
+    [[nodiscard]] bool keyInputComposing(const QKeyEvent &event);
+    [[nodiscard]] bool inputMethodComposing() const noexcept
+    {
+        return inputMethodComposing_;
+    }
+    void clearInputMethodComposition();
+    void cancelKeySequenceForInputMethod();
     [[nodiscard]] bool deferKeyEventIfNeeded(const QKeyEvent &event);
     void deferKeyEvent(const QKeyEvent &event);
     void drainDeferredKeyEvents();
@@ -491,7 +499,8 @@ private:
     beginInspectorKeyboardTrace(const QKeyEvent &event, bool pressed);
     [[nodiscard]] TerminalKeyInput
     beginInspectorKeyboardTrace(const QKeyEvent &event, bool pressed,
-                                KeyboardLayoutTranslation layout);
+                                KeyboardLayoutTranslation layout,
+                                bool composing);
     void publishInspectorKeyboardTrace(TerminalKeyboardTraceDecision decision);
     void syncPointerCursor();
     [[nodiscard]] bool revealMouseForPointerPosition(const QPointF &position);
@@ -628,6 +637,8 @@ private:
     int terminalRows_ = 24;
     bool terminalResizePending_ = false;
     QString preedit_;
+    bool inputMethodComposing_ = false;
+    QHash<quint64, bool> keyCompositionByIdentity_;
     QString statusMessage_;
     bool selecting_ = false;
     // Ghostty accumulates wheel input in physical pixels. Vertical precision

@@ -488,6 +488,7 @@ private Q_SLOTS:
     void broadCloseTabModesUseFirstStableSource();
     void closeTabBatchShutdownGracePeriodsOverlap();
     void rootApplicationBindingPrecedesActiveTable();
+    void rootBindingsBypassImeAndProjectDeferredComposition();
     void windowNavigationRetainsSurfaceScopeAndBroadFanout();
     void broadBindingsReachInactivePanesAndIgnoreLocalFlags();
     void broadPasteActionsReachEveryPane();
@@ -8050,6 +8051,125 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
     QVERIFY(events->data(allDecision, TerminalInspectorEventModel::DetailsRole)
                 .toString()
                 .contains(QStringLiteral("all")));
+}
+
+void TerminalWorkspaceTest::rootBindingsBypassImeAndProjectDeferredComposition()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    GhosttyKeybindConfig config;
+    config.root = {GhosttyKeybindDefinition{
+        .sequence = {GhosttyKeybindTrigger{
+            .kind = GhosttyKeybindKeyKind::Unicode,
+            .unicodeCodepoint = 'x',
+        }},
+        .actions = {QStringLiteral("reload_config")},
+    }};
+    options.keybindSource = GhosttyKeybindSource::structured(config);
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QVERIFY(workspace.initialize(options, TerminalSessionStartMode::Deferred));
+    TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    TerminalController *const controller =
+        pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    pane->setUrlOpener([](const QUrl &) { return true; });
+
+    GhosttyApplicationKeybindings bindings(options, false);
+    bindings.registerWorkspace(&workspace);
+    QSignalSpy application(
+        &bindings, &GhosttyApplicationKeybindings::applicationActionRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy inputMethod(controller,
+                           &TerminalController::inputMethodRequested);
+    QSignalSpy files(controller,
+                     &TerminalController::writeTerminalFileRequested);
+
+    // Active composition bypasses the process root before the pane applies
+    // the same projection. Ending preedit before release must not lose the
+    // press-time composing state.
+    QInputMethodEvent start(QStringLiteral("compose"), {});
+    QCoreApplication::sendEvent(pane, &start);
+    QKeyEvent composedPress(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+                            QStringLiteral("x"));
+    QCoreApplication::sendEvent(pane, &composedPress);
+    QInputMethodEvent commit;
+    commit.setCommitString(QStringLiteral("χ"));
+    QCoreApplication::sendEvent(pane, &commit);
+    QKeyEvent composedRelease(QEvent::KeyRelease, Qt::Key_X, Qt::NoModifier);
+    QCoreApplication::sendEvent(pane, &composedRelease);
+
+    QVERIFY(application.isEmpty());
+    QCOMPARE(inputMethod.count(), 2);
+    QCOMPARE(forwarded.count(), 2);
+    QVERIFY(qvariant_cast<TerminalKeyInput>(forwarded.constFirst().constFirst())
+                .composing);
+    const TerminalKeyInput directRelease =
+        qvariant_cast<TerminalKeyInput>(forwarded.constLast().constFirst());
+    QVERIFY(!directRelease.pressed);
+    QVERIFY(directRelease.composing);
+
+    QKeyEvent boundPress(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+                         QStringLiteral("x"));
+    QCoreApplication::sendEvent(pane, &boundPress);
+    QCOMPARE(application.count(), 1);
+    QCOMPARE(
+        qvariant_cast<ApplicationAction>(application.constFirst().constFirst()),
+        ApplicationAction::ReloadConfig);
+    QKeyEvent boundRelease(QEvent::KeyRelease, Qt::Key_X, Qt::NoModifier);
+    QCoreApplication::sendEvent(pane, &boundRelease);
+    QCOMPARE(forwarded.count(), 2);
+
+    application.clear();
+    forwarded.clear();
+    inputMethod.clear();
+
+    // A broad worker barrier holds these events above the pane. The root
+    // projection must account for the earlier queued preedit instead of
+    // consulting only the pane's not-yet-updated live state.
+    bindings.dispatchBroadActions({QStringLiteral("write_screen_file:open")});
+    QCOMPARE(files.count(), 1);
+    QInputMethodEvent deferredStart(QStringLiteral("deferred"), {});
+    QCoreApplication::sendEvent(pane, &deferredStart);
+    QKeyEvent deferredPress(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+                            QStringLiteral("x"));
+    QCoreApplication::sendEvent(pane, &deferredPress);
+    QKeyEvent deferredRelease(QEvent::KeyRelease, Qt::Key_X, Qt::NoModifier);
+    QCoreApplication::sendEvent(pane, &deferredRelease);
+    QInputMethodEvent deferredEnd(QString{}, {});
+    QCoreApplication::sendEvent(pane, &deferredEnd);
+    QVERIFY(application.isEmpty());
+    QVERIFY(forwarded.isEmpty());
+    QVERIFY(inputMethod.isEmpty());
+
+    const quint64 requestId = files.constFirst().constFirst().toULongLong();
+    Q_EMIT controller->terminalActionReady(successfulOpenFileResult(
+        requestId, QStringLiteral("/tmp/ime-composition-deferred-root.txt")));
+    QCoreApplication::processEvents();
+
+    QVERIFY(application.isEmpty());
+    QCOMPARE(inputMethod.count(), 2);
+    QCOMPARE(forwarded.count(), 2);
+    const TerminalKeyInput deferredInputPress =
+        qvariant_cast<TerminalKeyInput>(forwarded.constFirst().constFirst());
+    const TerminalKeyInput deferredInputRelease =
+        qvariant_cast<TerminalKeyInput>(forwarded.constLast().constFirst());
+    QVERIFY(deferredInputPress.pressed);
+    QVERIFY(deferredInputPress.composing);
+    QVERIFY(!deferredInputRelease.pressed);
+    QVERIFY(deferredInputRelease.composing);
+
+    QKeyEvent reboundPress(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+                           QStringLiteral("x"));
+    QCoreApplication::sendEvent(pane, &reboundPress);
+    QCOMPARE(application.count(), 1);
+    QKeyEvent reboundRelease(QEvent::KeyRelease, Qt::Key_X, Qt::NoModifier);
+    QCoreApplication::sendEvent(pane, &reboundRelease);
 }
 
 void TerminalWorkspaceTest::

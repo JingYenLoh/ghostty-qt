@@ -1004,9 +1004,19 @@ signals:
 - One typed IME value carries the commit and preedit transition through a
   single queued worker operation. Commits use the same encoded-key policy;
   preedit start/change/end clears independently when configured. The rendered
-  preedit string remains a local UI overlay. A successfully encoded IME commit
-  is likewise a non-modifier keystroke for `scroll-to-bottom`; preedit alone is
-  not.
+  preedit string remains a local UI overlay. The pane tracks Qt composition
+  separately from that string and snapshots it before root, pane, or
+  asynchronous dispatch. Active-composition non-modifier keys bypass both
+  binding tries and reach libghostty with `composing=true`, so neither legacy
+  nor Kitty bytes escape; modifier events remain available to Kitty report-all.
+  Press-time composition is retained through repeats and the matching release,
+  preventing orphan Kitty releases when a commit changes the pane-wide state.
+  The eventual IME commit remains one separate unidentified input. A
+  successfully encoded IME commit is likewise a non-modifier keystroke for
+  `scroll-to-bottom`; preedit alone is not. This is intentionally stricter
+  than GTK's fallback for a composing event its IM context declines: Qt does
+  not expose that handled boundary to the pane, so an explicit preedit reserves
+  every non-modifier key for the input method.
 - The finalized default-false `vt-kam-allowed` policy also crosses that queued
   runtime boundary. After Qt has resolved keybindings, the worker queries
   libghostty's terminal-owned ANSI mode 2 and suppresses ordinary physical
@@ -2362,6 +2372,16 @@ the conservative US-oriented Qt-key fallback. Translation is captured beside
 deferred events and restored with a scoped replay override, so changing layouts
 during an asynchronous action cannot reinterpret queued input.
 
+IME composition is orthogonal to XKB identity. Pane-level deferred keys retain
+their effective composition value directly. The process-level FIFO also tracks
+the resulting preedit state for each target before that pane has received a
+deferred input-method event. A scoped replay override makes root matching,
+pane matching, inspector tracing, and libghostty encoding observe the same
+captured value even if a later commit, cancellation, focus change, or preedit
+transition has changed the live pane state. Any substantive input-method
+lifecycle event also drops a pending multi-key sequence so its next post-IME
+key cannot become a stale continuation.
+
 Each compiled trie edge also retains the human-readable label of its
 configured trigger. A pane publishes labels from the edges actually matched,
 not from the incoming `QKeyEvent`; this matters when a physical binding wins
@@ -2502,11 +2522,13 @@ and destroyed-pane callbacks are ignored by request ID. A completion delivered
 through a nested event loop while request dispatch is still unwinding is held
 as an early result and consumed by that same continuation frame, rather than
 recursively duplicating its sequence token or key-event deferral.
-Deferred key snapshots retain their focus epoch, and both pane-local and
-process-level drains identify the exact event currently being replayed. New
-key or IME input arriving through a nested event loop therefore joins the tail
-of the existing FIFO instead of overtaking older snapshots or borrowing a
-consumed release from another focus epoch.
+Deferred key snapshots retain their focus epoch and composition state, and both
+pane-local and process-level drains identify the exact event currently being
+replayed. Replay uses that captured value rather than the pane's then-current
+preedit state. New key or IME input arriving through a nested event loop
+therefore joins the tail of the existing FIFO instead of overtaking older
+snapshots, leaking an IME-owned physical key, or borrowing a consumed release
+from another focus epoch.
 The legacy synchronous `executeConfiguredAction()` API still returns an
 optimistic `true` when one of these operations is pending; local chains and
 the broad coordinator use the internal completion path for the authoritative
@@ -3218,7 +3240,10 @@ The default CTest suite has focused layers for each ownership boundary:
   selection/search/inverse layers, zero opacity, live in-place reload, and
   premultiplied minimum-contrast composition. It also exercises
   sequence consume/replay, performability, viewport/selection action routing,
-  release suppression, reload cancellation, correlated worker-action chain
+  release suppression, dead-key/preedit composition, single commit delivery,
+  composing-key binding and byte suppression, paired releases, modifier
+  preservation, focus-loss cleanup, deferred replay, reload cancellation,
+  correlated worker-action chain
   suspension/cancellation, and tracked OSC 8 hover, copy, and
   release-only activation through a real PTY-backed pane, including live
   output, viewport hiding/restoration, resize-safe masks, and mouse-capture
@@ -3309,7 +3334,8 @@ commits, select-all, ordered/ranged/overlapping clipboard codepoint
 replacements, non-BMP input and output, expansion, deletion, invalid-u21
 replacement behavior, live reload, middle-click source/ignore policy,
 clear-on-typing key traits, sequence replay exclusions, IME/preedit
-transitions, finalized ASCII/NUL/non-BMP word boundaries, double-click
+transitions and composition-aware legacy/Kitty encoding, finalized
+ASCII/NUL/non-BMP word boundaries, double-click
 selection, checked timestamp conversion, inclusive consecutive-time and
 original-anchor Euclidean-distance repeat thresholds, triple-count clamping,
 line and Ctrl semantic-output selection, ignored duplicate Qt double-click

@@ -452,6 +452,9 @@ private Q_SLOTS:
     void executesTypedFontSizeActions();
     void workspaceActionHandlerRetainsMutableState();
     void packagesInputMethodLifecycleAsOneWorkerRequest();
+    void routesImeCompositionAroundBindingsAndFocus();
+    void snapshotsCompositionAcrossPaneDeferredReplay();
+    void cancelsPendingSequenceWhenCompositionStarts();
     void writesClipboardDestinations();
     void configuredTitleReapplicationRestoresBaseLayer();
     void copiesRawEffectiveSurfaceTitle();
@@ -471,6 +474,7 @@ private Q_SLOTS:
     void convertsTerminalDropContent();
     void routesTerminalDropsThroughPasteController();
     void routesUnsafePasteConfirmationThroughWorker();
+    void composingNewlinesDoNotMarkProcessActivity();
     void reconcilesActivityAfterKamRejectsEnter();
     void hidesPointerOnlyForTerminalTypingAndRestoresOnInteraction();
     void focusesPaneAfterPhysicalPointerMotionAndReload();
@@ -4435,6 +4439,243 @@ void TerminalPaneTest::packagesInputMethodLifecycleAsOneWorkerRequest()
              }));
 }
 
+void TerminalPaneTest::routesImeCompositionAroundBindingsAndFocus()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("x=new_tab"),
+    });
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    auto *const controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy inputMethod(controller,
+                           &TerminalController::inputMethodRequested);
+    QSignalSpy newTabs(&pane, &TerminalPane::requestNewTab);
+
+    QInputMethodEvent start(QStringLiteral("compose"), {});
+    QCoreApplication::sendEvent(&pane, &start);
+    QVERIFY(start.isAccepted());
+    QCOMPARE(inputMethod.count(), 1);
+
+    QKeyEvent composedPress(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+                            QStringLiteral("x"));
+    QCoreApplication::sendEvent(&pane, &composedPress);
+    QCOMPARE(newTabs.count(), 0);
+    QCOMPARE(forwarded.count(), 1);
+    const TerminalKeyInput press =
+        qvariant_cast<TerminalKeyInput>(forwarded.constFirst().constFirst());
+    QVERIFY(press.pressed);
+    QVERIFY(press.composing);
+    QCOMPARE(press.text, QStringLiteral("x"));
+
+    // Commit ends the live preedit before the physical release arrives. The
+    // release must retain its press-time composing projection.
+    QInputMethodEvent commit;
+    commit.setCommitString(QStringLiteral("é"));
+    QCoreApplication::sendEvent(&pane, &commit);
+    QCOMPARE(inputMethod.count(), 2);
+    const TerminalInputMethodInput committed =
+        qvariant_cast<TerminalInputMethodInput>(
+            inputMethod.constLast().constFirst());
+    QCOMPARE(committed.commitText, QStringLiteral("é"));
+    QVERIFY(committed.preeditTransition);
+
+    QKeyEvent composedRelease(QEvent::KeyRelease, Qt::Key_X, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &composedRelease);
+    QCOMPARE(forwarded.count(), 2);
+    const TerminalKeyInput release =
+        qvariant_cast<TerminalKeyInput>(forwarded.constLast().constFirst());
+    QVERIFY(!release.pressed);
+    QVERIFY(release.composing);
+
+    // Once composition ends, the same press reaches the configured binding
+    // and its paired release remains consumed.
+    QKeyEvent boundPress(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+                         QStringLiteral("x"));
+    QCoreApplication::sendEvent(&pane, &boundPress);
+    QCOMPARE(newTabs.count(), 1);
+    QCOMPARE(forwarded.count(), 2);
+    QKeyEvent boundRelease(QEvent::KeyRelease, Qt::Key_X, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &boundRelease);
+    QCOMPARE(forwarded.count(), 2);
+
+    // A commit and replacement preedit in one Qt event remains composing.
+    // Focus loss then clears both the rendered preedit and routing state.
+    QInputMethodEvent restarted(QStringLiteral("again"), {});
+    restarted.setCommitString(QStringLiteral("a"));
+    QCoreApplication::sendEvent(&pane, &restarted);
+    QCOMPARE(inputMethod.count(), 3);
+    QKeyEvent beforeFocus(QEvent::KeyPress, Qt::Key_Z, Qt::NoModifier,
+                          QStringLiteral("z"));
+    QCoreApplication::sendEvent(&pane, &beforeFocus);
+    QCOMPARE(forwarded.count(), 3);
+    QVERIFY(qvariant_cast<TerminalKeyInput>(forwarded.constLast().constFirst())
+                .composing);
+
+    QFocusEvent focusOut(QEvent::FocusOut, Qt::OtherFocusReason);
+    QCoreApplication::sendEvent(&pane, &focusOut);
+
+    QKeyEvent afterFocus(QEvent::KeyPress, Qt::Key_W, Qt::NoModifier,
+                         QStringLiteral("w"));
+    QCoreApplication::sendEvent(&pane, &afterFocus);
+    QCOMPARE(forwarded.count(), 4);
+    const TerminalKeyInput focused =
+        qvariant_cast<TerminalKeyInput>(forwarded.constLast().constFirst());
+    QVERIFY(focused.pressed);
+    QVERIFY(!focused.composing);
+}
+
+void TerminalPaneTest::snapshotsCompositionAcrossPaneDeferredReplay()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("alt+b=write_screen_file:open"),
+    });
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    auto *const controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    pane.setUrlOpener([](const QUrl &) { return true; });
+    QSignalSpy files(controller,
+                     &TerminalController::writeTerminalFileRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy inputMethod(controller,
+                           &TerminalController::inputMethodRequested);
+
+    QKeyEvent trigger(QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+                      QStringLiteral("b"));
+    QCoreApplication::sendEvent(&pane, &trigger);
+    QCOMPARE(files.count(), 1);
+    QKeyEvent triggerRelease(QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QCoreApplication::sendEvent(&pane, &triggerRelease);
+
+    QInputMethodEvent start(QStringLiteral("compose"), {});
+    QCoreApplication::sendEvent(&pane, &start);
+    QKeyEvent composedPress(QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
+                            QStringLiteral("c"));
+    QCoreApplication::sendEvent(&pane, &composedPress);
+    QInputMethodEvent commit;
+    commit.setCommitString(QStringLiteral("ç"));
+    QCoreApplication::sendEvent(&pane, &commit);
+    QKeyEvent composedRelease(QEvent::KeyRelease, Qt::Key_C, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &composedRelease);
+    QKeyEvent ordinaryPress(QEvent::KeyPress, Qt::Key_D, Qt::NoModifier,
+                            QStringLiteral("d"));
+    QCoreApplication::sendEvent(&pane, &ordinaryPress);
+
+    QVERIFY(forwarded.isEmpty());
+    QVERIFY(inputMethod.isEmpty());
+
+    const quint64 requestId = files.constFirst().constFirst().toULongLong();
+    Q_EMIT controller->terminalActionReady(successfulOpenFileResult(
+        requestId, QStringLiteral("/tmp/ime-composition-deferred-pane.txt")));
+    QCoreApplication::processEvents();
+
+    QCOMPARE(inputMethod.count(), 2);
+    QCOMPARE(qvariant_cast<TerminalInputMethodInput>(
+                 inputMethod.constLast().constFirst())
+                 .commitText,
+             QStringLiteral("ç"));
+    QCOMPARE(forwarded.count(), 3);
+    const TerminalKeyInput press =
+        qvariant_cast<TerminalKeyInput>(forwarded.at(0).constFirst());
+    const TerminalKeyInput release =
+        qvariant_cast<TerminalKeyInput>(forwarded.at(1).constFirst());
+    const TerminalKeyInput ordinary =
+        qvariant_cast<TerminalKeyInput>(forwarded.at(2).constFirst());
+    QCOMPARE(press.key, static_cast<int>(Qt::Key_C));
+    QVERIFY(press.pressed);
+    QVERIFY(press.composing);
+    QCOMPARE(release.key, static_cast<int>(Qt::Key_C));
+    QVERIFY(!release.pressed);
+    QVERIFY(release.composing);
+    QCOMPARE(ordinary.key, static_cast<int>(Qt::Key_D));
+    QVERIFY(ordinary.pressed);
+    QVERIFY(!ordinary.composing);
+}
+
+void TerminalPaneTest::cancelsPendingSequenceWhenCompositionStarts()
+{
+    qRegisterMetaType<TerminalSequenceResolution>();
+
+    GhosttyKeybindConfig config;
+    config.root = {
+        generationTestBinding({generationTestKey('x'), generationTestKey('y')},
+                              QStringLiteral("new_tab"))};
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::structured(config);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    auto *const controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy staged(controller,
+                      &TerminalController::sequenceKeyStagingRequested);
+    QSignalSpy resolved(controller,
+                        &TerminalController::sequenceResolutionRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy newTabs(&pane, &TerminalPane::requestNewTab);
+    QSignalSpy sequenceChanges(&pane, &TerminalPane::pendingKeySequenceChanged);
+
+    QKeyEvent leader(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+                     QStringLiteral("x"));
+    QCoreApplication::sendEvent(&pane, &leader);
+    QCOMPARE(staged.count(), 1);
+    QCOMPARE(sequenceChanges.count(), 1);
+    QCOMPARE(pane.pendingKeySequence(), QStringList({QStringLiteral("X")}));
+    QKeyEvent leaderRelease(QEvent::KeyRelease, Qt::Key_X, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &leaderRelease);
+
+    QInputMethodEvent start(QStringLiteral("compose"), {});
+    QCoreApplication::sendEvent(&pane, &start);
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(resolved.constFirst().at(0).toULongLong(),
+             staged.constFirst().at(0).toULongLong());
+    QCOMPARE(
+        qvariant_cast<TerminalSequenceResolution>(resolved.constFirst().at(1)),
+        TerminalSequenceResolution::Drop);
+    QVERIFY(pane.pendingKeySequence().isEmpty());
+    QCOMPARE(sequenceChanges.count(), 2);
+
+    const int beforeComposedLeaf = forwarded.count();
+    QKeyEvent composedLeaf(QEvent::KeyPress, Qt::Key_Y, Qt::NoModifier,
+                           QStringLiteral("y"));
+    QCoreApplication::sendEvent(&pane, &composedLeaf);
+    QCOMPARE(newTabs.count(), 0);
+    QCOMPARE(forwarded.count(), beforeComposedLeaf + 1);
+    QVERIFY(qvariant_cast<TerminalKeyInput>(forwarded.constLast().constFirst())
+                .composing);
+
+    QInputMethodEvent end(QString{}, {});
+    QCoreApplication::sendEvent(&pane, &end);
+    QKeyEvent composedLeafRelease(QEvent::KeyRelease, Qt::Key_Y,
+                                  Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &composedLeafRelease);
+    QVERIFY(qvariant_cast<TerminalKeyInput>(forwarded.constLast().constFirst())
+                .composing);
+
+    QKeyEvent ordinaryLeaf(QEvent::KeyPress, Qt::Key_Y, Qt::NoModifier,
+                           QStringLiteral("y"));
+    QCoreApplication::sendEvent(&pane, &ordinaryLeaf);
+    QCOMPARE(newTabs.count(), 0);
+    QVERIFY(!qvariant_cast<TerminalKeyInput>(forwarded.constLast().constFirst())
+                 .composing);
+    QCOMPARE(resolved.count(), 1);
+}
+
 void TerminalPaneTest::writesClipboardDestinations()
 {
     QClipboard *const clipboard = QGuiApplication::clipboard();
@@ -6448,6 +6689,37 @@ void TerminalPaneTest::routesUnsafePasteConfirmationThroughWorker()
     QCOMPARE(confirmed.count(), 1);
     QCOMPARE(confirmed.constFirst().constFirst().toULongLong(), confirmedId);
     QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(activity, true), 2000);
+}
+
+void TerminalPaneTest::composingNewlinesDoNotMarkProcessActivity()
+{
+    ShellEnvironment shell;
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.hold = true;
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy activity(controller, &TerminalController::activeProcessChanged);
+    QSignalSpy errors(controller, &TerminalController::errorOccurred);
+
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->activeProcess(), 2000);
+    activity.clear();
+
+    TerminalKeyInput composingEnter;
+    composingEnter.key = Qt::Key_Return;
+    composingEnter.text = QStringLiteral("\n");
+    composingEnter.pressed = true;
+    composingEnter.composing = true;
+    controller->sendKey(composingEnter);
+    QTest::qWait(50);
+    QVERIFY(!spyContainsBool(activity, true));
+    QVERIFY(!controller->activeProcess());
+    QVERIFY2(errors.isEmpty(),
+             errors.isEmpty()
+                 ? ""
+                 : qPrintable(errors.constFirst().constFirst().toString()));
 }
 
 void TerminalPaneTest::reconcilesActivityAfterKamRejectsEnter()

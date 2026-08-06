@@ -313,6 +313,7 @@ private Q_SLOTS:
     void explicitProgramIsActiveForItsLifetime();
     void integratedShellStartupRemainsActiveUntilPrompt();
     void semanticPromptsTrackSameProcessShellActivity();
+    void composingNewlinesDoNotMarkProcessActivity();
     void interactiveShellTracksForegroundJobs();
 };
 
@@ -7276,6 +7277,53 @@ void SessionWorkerTest::semanticPromptsTrackSameProcessShellActivity()
             && !activitySpy.constLast().constFirst().toBool(),
         1000);
     QVERIFY(exitSpy.isEmpty());
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::composingNewlinesDoNotMarkProcessActivity()
+{
+    const bool shellWasSet = qEnvironmentVariableIsSet("SHELL");
+    const QByteArray previousShell = qgetenv("SHELL");
+    const auto restoreShell = qScopeGuard([shellWasSet, previousShell] {
+        if (shellWasSet) {
+            qputenv("SHELL", previousShell);
+        } else {
+            qunsetenv("SHELL");
+        }
+    });
+    qputenv("SHELL", QByteArrayLiteral("/bin/sh"));
+
+    SessionWorker worker;
+    QSignalSpy startedSpy(&worker, &SessionWorker::started);
+    QSignalSpy activitySpy(&worker, &SessionWorker::activeProcessChanged);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+    QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() > 0, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !activitySpy.isEmpty()
+            && !activitySpy.constLast().constFirst().toBool(),
+        1000);
+    activitySpy.clear();
+
+    TerminalKeyInput composingEnter;
+    composingEnter.key = Qt::Key_Return;
+    composingEnter.text = QStringLiteral("\n");
+    composingEnter.pressed = true;
+    composingEnter.composing = true;
+    worker.sendKey(composingEnter);
+
+    // libghostty deliberately emits no bytes for an ordinary composing key.
+    // Such a key must not start the grace period used by close confirmation.
+    QTest::qWait(50);
+    QVERIFY(!spyContainsBool(activitySpy, true));
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty()
                  ? ""

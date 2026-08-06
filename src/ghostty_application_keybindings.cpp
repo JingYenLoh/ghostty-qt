@@ -2,6 +2,7 @@
 
 #include "ghostty_action_catalog.h"
 #include "ghostty_global_shortcut_portal.h"
+#include "key_event_context.h"
 #include "terminal_pane.h"
 #include "terminal_workspace.h"
 
@@ -146,6 +147,20 @@ void GhosttyApplicationKeybindings::dispatchOrDeferBroadActions(
     dispatchCompiledBroadActions(actions);
 }
 
+bool GhosttyApplicationKeybindings::deferredCompositionState(
+    const TerminalPane &pane) const noexcept
+{
+    bool composing = pane.inputMethodComposing();
+    for (const DeferredInput &deferred : deferredInputs_) {
+        const auto *inputMethod =
+            std::get_if<DeferredInputMethodEvent>(&deferred);
+        if (inputMethod != nullptr && inputMethod->target.data() == &pane) {
+            composing = inputMethod->composingAfter;
+        }
+    }
+    return composing;
+}
+
 void GhosttyApplicationKeybindings::drainDeferredInputs()
 {
     if (configurationUpdateDepth_ != 0 || keyEventDispatchDepth_ != 0
@@ -171,6 +186,8 @@ void GhosttyApplicationKeybindings::drainDeferredInputs()
             QKeyEvent replay = key->event.replay();
             const ScopedKeyboardLayoutTranslation layoutScope(replay,
                                                               key->layout);
+            const ScopedKeyEventComposition compositionScope(replay,
+                                                             key->composing);
             guard->replayingDeferredKeyEvent_ = &replay;
             QCoreApplication::sendEvent(key->target, &replay);
             if (guard != nullptr) {
@@ -706,6 +723,13 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched, QEvent *event)
     auto *pane = qobject_cast<TerminalPane *>(watched);
     const bool inputMethod =
         event->type() == QEvent::InputMethod && pane != nullptr;
+    if (inputMethod) {
+        const auto *input = static_cast<QInputMethodEvent *>(event);
+        if (!input->preeditString().isNull()
+            || !input->commitString().isEmpty()) {
+            rootState_.resetSequence();
+        }
+    }
     const bool currentReplay = (keyPress || keyRelease)
         && replayingDeferredKeyEvent_ == static_cast<QKeyEvent *>(event);
     const bool currentInputMethodReplay = inputMethod
@@ -724,14 +748,21 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched, QEvent *event)
                 .commit = input->commitString(),
                 .replacementStart = input->replacementStart(),
                 .replacementLength = input->replacementLength(),
+                .composingAfter = !input->preeditString().isEmpty(),
             });
         } else {
+            auto *key = static_cast<QKeyEvent *>(event);
+            bool composing = false;
+            if (pane != nullptr) {
+                const ScopedKeyEventComposition compositionScope(
+                    *key, deferredCompositionState(*pane));
+                composing = pane->keyInputComposing(*key);
+            }
             deferredInputs_.emplace_back(DeferredKeyEvent{
                 .target = watched,
-                .event =
-                    KeyEventSnapshot::capture(*static_cast<QKeyEvent *>(event)),
-                .layout =
-                    translateKeyboardLayout(*static_cast<QKeyEvent *>(event)),
+                .event = KeyEventSnapshot::capture(*key),
+                .layout = translateKeyboardLayout(*key),
+                .composing = composing,
             });
         }
         event->accept();
@@ -755,47 +786,57 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched, QEvent *event)
         return true;
     }
     const KeyboardLayoutTranslation layout = translateKeyboardLayout(*keyEvent);
+    std::optional<bool> composing;
+    if (keyPress && pane != nullptr) {
+        composing = pane->keyInputComposing(*keyEvent);
+    }
     const KeyEventSnapshot remapped = modifierRemaps_.remapEvent(
         KeyEventSnapshot::capture(*keyEvent), layout.resolvedKeysym);
-    const auto publishRootTrace =
-        [pane, &remapped, &layout](TerminalKeyboardTraceDecisionKind kind,
-                                   const GhosttyKeybindMatch *match = nullptr) {
-            if (pane == nullptr
-                || !pane->inspectorKeyboardTraceCaptureActive()) {
-                return true;
-            }
-            const QPointer<TerminalPane> paneGuard(pane);
-            QKeyEvent tracedEvent = remapped.replay();
-            TerminalKeyInput input = pane->beginInspectorKeyboardTrace(
-                tracedEvent, remapped.pressed, layout);
-            TerminalKeyboardTraceDecision decision;
-            decision.input = std::move(input);
-            decision.kind = kind;
-            if (match != nullptr) {
-                decision.actions = match->actionChain.serializedActions();
-                decision.activeTables = pane->activeKeyTables();
-                decision.pendingSequence = pane->pendingKeySequence();
-                // Root application and global matches are consumed before
-                // surface lookup regardless of their raw unconsumed flag.
-                decision.consumed = true;
-                decision.performable = match->performable;
-                decision.all = match->all;
-                decision.global = match->global;
-                decision.physical = match->physical;
-            } else {
-                decision.consumed = true;
-            }
-            pane->publishInspectorKeyboardTrace(std::move(decision));
-            return paneGuard != nullptr;
-        };
+    const auto publishRootTrace = [pane, &remapped, &layout, &composing](
+                                      TerminalKeyboardTraceDecisionKind kind,
+                                      const GhosttyKeybindMatch *match =
+                                          nullptr) {
+        if (pane == nullptr || !pane->inspectorKeyboardTraceCaptureActive()) {
+            return true;
+        }
+        const QPointer<TerminalPane> paneGuard(pane);
+        QKeyEvent tracedEvent = remapped.replay();
+        TerminalKeyInput input = pane->beginInspectorKeyboardTrace(
+            tracedEvent, remapped.pressed, layout, composing.value_or(false));
+        TerminalKeyboardTraceDecision decision;
+        decision.input = std::move(input);
+        decision.kind = kind;
+        if (match != nullptr) {
+            decision.actions = match->actionChain.serializedActions();
+            decision.activeTables = pane->activeKeyTables();
+            decision.pendingSequence = pane->pendingKeySequence();
+            // Root application and global matches are consumed before
+            // surface lookup regardless of their raw unconsumed flag.
+            decision.consumed = true;
+            decision.performable = match->performable;
+            decision.all = match->all;
+            decision.global = match->global;
+            decision.physical = match->physical;
+        } else {
+            decision.consumed = true;
+        }
+        pane->publishInspectorKeyboardTrace(std::move(decision));
+        return paneGuard != nullptr;
+    };
     if (keyRelease) {
         if (consumedKeys_.remove(keyEventIdentity(keyEvent))) {
+            if (pane != nullptr) {
+                composing = pane->keyInputComposing(*keyEvent);
+            }
             if (!publishRootTrace(
                     TerminalKeyboardTraceDecisionKind::RootConsumedRelease)) {
                 return true;
             }
             return true;
         }
+        return QObject::eventFilter(watched, event);
+    }
+    if (composing.value_or(false) && !isCompositionModifierKey(remapped.key)) {
         return QObject::eventFilter(watched, event);
     }
     const auto match = rootState_.match(GhosttyKeybindEvent{

@@ -480,7 +480,7 @@ void addVisibleSearchCells(QBitArray &destination, TerminalSearchRange range,
 
 bool keyMayStartProcess(const TerminalKeyInput &input)
 {
-    return input.pressed
+    return !input.composing && input.pressed
         && (input.key == Qt::Key_Return || input.key == Qt::Key_Enter
             || input.text.contains(u'\n') || input.text.contains(u'\r'));
 }
@@ -1797,9 +1797,7 @@ void SessionWorker::sendKey(const TerminalKeyInput &input)
         Q_EMIT inputActivityReconciled(activeProcess_);
         return;
     }
-    if (!readOnly_ && masterFd_ >= 0 && input.pressed
-        && (input.key == Qt::Key_Return || input.key == Qt::Key_Enter
-            || input.text.contains(u'\n') || input.text.contains(u'\r'))) {
+    if (!readOnly_ && masterFd_ >= 0 && keyMayStartProcess(input)) {
         notePotentialActivity();
     }
     if (vt_ == nullptr) {

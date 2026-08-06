@@ -19,7 +19,7 @@ namespace {
 
 bool keyMayStartProcess(const TerminalKeyInput &input)
 {
-    return input.pressed
+    return !input.composing && input.pressed
         && (input.key == Qt::Key_Return || input.key == Qt::Key_Enter
             || input.text.contains(u'\n') || input.text.contains(u'\r'));
 }
@@ -811,9 +811,7 @@ void TerminalController::setKeyboardTraceGeneration(quint64 generation)
 
 void TerminalController::sendKey(const TerminalKeyInput &input)
 {
-    if (!readOnly_ && input.pressed
-        && (input.key == Qt::Key_Return || input.key == Qt::Key_Enter
-            || input.text.contains(u'\n') || input.text.contains(u'\r'))) {
+    if (!readOnly_ && keyMayStartProcess(input)) {
         notePotentialActivity();
     }
     Q_EMIT keyRequested(input);

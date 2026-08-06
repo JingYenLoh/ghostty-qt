@@ -64,6 +64,7 @@ private:
         QPointer<QObject> target;
         KeyEventSnapshot event;
         KeyboardLayoutTranslation layout;
+        bool composing = false;
     };
     struct DeferredInputMethodEvent {
         QPointer<QObject> target;
@@ -72,6 +73,7 @@ private:
         QString commit;
         int replacementStart = 0;
         int replacementLength = 0;
+        bool composingAfter = false;
     };
     using DeferredInput =
         std::variant<DeferredKeyEvent, DeferredInputMethodEvent,
@@ -88,6 +90,8 @@ private:
 
     void beginConfigurationUpdate() noexcept;
     void endConfigurationUpdate();
+    [[nodiscard]] bool
+    deferredCompositionState(const TerminalPane &pane) const noexcept;
     void dispatchOrDeferBroadActions(GhosttyCompiledActionChain actions);
     void drainDeferredInputs();
     void appendSurface(TerminalWorkspace *workspace, PaneId paneId,

@@ -1,6 +1,7 @@
 #include "terminal_pane.h"
 
 #include "ghostty_action_catalog.h"
+#include "key_event_context.h"
 #include "terminal_cell_metrics.h"
 #include "terminal_clipboard.h"
 #include "terminal_controller.h"
@@ -326,7 +327,8 @@ std::optional<qint64> fractionalPageDelta(float fraction, int pageRows)
 }
 
 TerminalKeyInput terminalKeyInput(const QKeyEvent *event, bool pressed,
-                                  const KeyboardLayoutTranslation &layout)
+                                  const KeyboardLayoutTranslation &layout,
+                                  bool composing)
 {
     return {
         .key = event->key(),
@@ -337,6 +339,7 @@ TerminalKeyInput terminalKeyInput(const QKeyEvent *event, bool pressed,
         .resolvedKeysym = layout.resolvedKeysym,
         .pressed = pressed,
         .autoRepeat = event->isAutoRepeat(),
+        .composing = composing,
         .capsLock = layout.capsLock,
         .numLock = layout.numLock,
         .consumedCapsLock = layout.consumedCapsLock,
@@ -613,6 +616,7 @@ TerminalPane::TerminalPane(
             // Results already queued to this pane, or retained by a
             // process-wide barrier, belong to the pre-exit epoch.
             advanceTerminalActionEpoch();
+            clearInputMethodComposition();
             clearHyperlinkHover();
             if (guard == nullptr) return;
             cancelHyperlinkPress();
@@ -2008,14 +2012,17 @@ TerminalKeyInput
 TerminalPane::beginInspectorKeyboardTrace(const QKeyEvent &event, bool pressed)
 {
     return beginInspectorKeyboardTrace(event, pressed,
-                                       translateKeyboardLayout(event));
+                                       translateKeyboardLayout(event),
+                                       keyInputComposing(event));
 }
 
 TerminalKeyInput
 TerminalPane::beginInspectorKeyboardTrace(const QKeyEvent &event, bool pressed,
-                                          KeyboardLayoutTranslation layout)
+                                          KeyboardLayoutTranslation layout,
+                                          bool composing)
 {
-    TerminalKeyInput input = terminalKeyInput(&event, pressed, layout);
+    TerminalKeyInput input =
+        terminalKeyInput(&event, pressed, layout, composing);
     if (inspectorKeyboardTraceGeneration_ == 0) return input;
 
     do {
@@ -2451,6 +2458,7 @@ void TerminalPane::beginShutdown()
     }
     pendingRightClickWindowPositions_.clear();
     newestRightClickRequestId_ = 0;
+    clearInputMethodComposition();
     // Queue worker teardown before resolving a suspended action chain. Its
     // completion may release pane- or process-level input deferral and replay
     // key/IME work; worker queue ordering then makes that replay inert instead
@@ -3082,6 +3090,61 @@ void TerminalPane::endKeyEventDispatch()
     }
 }
 
+bool TerminalPane::keyInputComposing(const QKeyEvent &event)
+{
+    if (const std::optional<bool> replayed =
+            keyEventCompositionOverride(event)) {
+        return *replayed;
+    }
+
+    const bool current = inputMethodComposing_;
+    if (isCompositionModifierKey(event.key())) return current;
+
+    const quint64 identity = keyEventIdentity(&event);
+    if (event.type() == QEvent::KeyRelease) {
+        const auto previous = keyCompositionByIdentity_.find(identity);
+        if (previous == keyCompositionByIdentity_.end()) return current;
+        const bool pressComposing = previous.value();
+        keyCompositionByIdentity_.erase(previous);
+        return pressComposing;
+    }
+
+    if (event.isAutoRepeat()) {
+        const auto previous = keyCompositionByIdentity_.constFind(identity);
+        if (previous != keyCompositionByIdentity_.constEnd()) {
+            return current || previous.value();
+        }
+    }
+    keyCompositionByIdentity_.insert(identity, current);
+    return current;
+}
+
+void TerminalPane::clearInputMethodComposition()
+{
+    inputMethodComposing_ = false;
+    keyCompositionByIdentity_.clear();
+    QMutexLocker locker(&renderMutex_);
+    preedit_.clear();
+}
+
+void TerminalPane::cancelKeySequenceForInputMethod()
+{
+    const bool sequenceWasActive = keybinds_.sequenceActive();
+    const quint64 token = std::exchange(activeSequenceToken_, 0);
+    if (!sequenceWasActive && token == 0) return;
+
+    keybinds_.resetSequence();
+    const QPointer<TerminalPane> guard(this);
+    if (sequenceWasActive) {
+        Q_EMIT pendingKeySequenceChanged();
+        if (guard == nullptr) return;
+    }
+    if (token != 0) {
+        guard->controller_->resolveSequence(token,
+                                            TerminalSequenceResolution::Drop);
+    }
+}
+
 bool TerminalPane::deferKeyEventIfNeeded(const QKeyEvent &event)
 {
     const bool isCurrentReplay = replayingDeferredKeyEvent_ == &event;
@@ -3098,6 +3161,7 @@ void TerminalPane::deferKeyEvent(const QKeyEvent &event)
     deferredInputs_.emplace_back(DeferredKeyInput{
         .event = KeyEventSnapshot::capture(event),
         .layout = translateKeyboardLayout(event),
+        .composing = keyInputComposing(event),
         .focusEpoch = keyFocusEpoch_,
         .pointerActivityEpoch = pointerActivityEpoch_,
     });
@@ -3120,6 +3184,8 @@ void TerminalPane::drainDeferredKeyEvents()
             QKeyEvent replay = key->event.replay();
             const ScopedKeyboardLayoutTranslation layoutScope(replay,
                                                               key->layout);
+            const ScopedKeyEventComposition compositionScope(replay,
+                                                             key->composing);
             guard->replayingDeferredKeyEvent_ = &replay;
             guard->replayingDeferredPointerActivityEpoch_ =
                 key->pointerActivityEpoch;
@@ -3139,11 +3205,13 @@ void TerminalPane::drainDeferredKeyEvents()
 void TerminalPane::keyPressEvent(QKeyEvent *event)
 {
     const KeyboardLayoutTranslation layout = translateKeyboardLayout(*event);
-    if (inspectorCellPicking_ && event->key() == Qt::Key_Escape) {
+    const bool composing = keyInputComposing(*event);
+    if (!composing && inspectorCellPicking_ && event->key() == Qt::Key_Escape) {
         const QPointer<TerminalPane> guard(this);
         if (inspectorKeyboardTraceCaptureActive()) {
             TerminalKeyboardTraceDecision decision;
-            decision.input = beginInspectorKeyboardTrace(*event, true, layout);
+            decision.input =
+                beginInspectorKeyboardTrace(*event, true, layout, composing);
             decision.kind =
                 TerminalKeyboardTraceDecisionKind::PaneInspectorCancel;
             decision.consumed = true;
@@ -3162,7 +3230,7 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
         replayingDeferredPointerActivityEpoch_.value_or(pointerActivityEpoch_);
     // The original interaction clears the alert before it may be deferred.
     // Replaying that old press must not clear a newer BEL received meanwhile.
-    if (replayingDeferredKeyEvent_ != event
+    if (!composing && replayingDeferredKeyEvent_ != event
         && !isModifierOnlyKey(event->key())) {
         const QPointer<TerminalPane> guard(this);
         setBellRinging(false);
@@ -3187,10 +3255,15 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
     const bool traceCapture = inspectorKeyboardTraceCaptureActive();
     TerminalKeyInput currentInput;
     if (configuredKeybinds || traceCapture) {
-        currentInput = beginInspectorKeyboardTrace(remappedEvent, true, layout);
+        currentInput =
+            beginInspectorKeyboardTrace(remappedEvent, true, layout, composing);
     }
-    const KeyHandling handling = handleShortcut(
-        &remappedEvent, guard, pointerActivityEpoch, currentInput);
+    const bool compositionBypass =
+        composing && !isCompositionModifierKey(remappedEvent.key());
+    const KeyHandling handling = compositionBypass
+        ? KeyHandling::PassThrough
+        : handleShortcut(&remappedEvent, guard, pointerActivityEpoch,
+                         currentInput);
     // Lifecycle actions are owner-deferred, but an embedding application may
     // still attach a destructive direct observer to another pane signal.
     // Never resume ordinary key handling through a deleted QObject.
@@ -3198,7 +3271,17 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
         event->accept();
         return;
     }
-    if (!configuredKeybinds && traceCapture) {
+    if (compositionBypass && traceCapture) {
+        TerminalKeyboardTraceDecision decision;
+        decision.input = currentInput;
+        decision.kind = TerminalKeyboardTraceDecisionKind::PaneUnmatched;
+        decision.consumed = false;
+        publishInspectorKeyboardTrace(std::move(decision));
+        if (guard == nullptr) {
+            event->accept();
+            return;
+        }
+    } else if (!configuredKeybinds && traceCapture) {
         TerminalKeyboardTraceDecision decision;
         decision.input = currentInput;
         decision.kind = handling == KeyHandling::PassThrough
@@ -3231,7 +3314,8 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
     }
 
     if (!configuredKeybinds && !traceCapture) {
-        currentInput = terminalKeyInput(&remappedEvent, true, layout);
+        currentInput =
+            terminalKeyInput(&remappedEvent, true, layout, composing);
     }
     hideMouseForTerminalKey(currentInput, pointerActivityEpoch);
     if (guard == nullptr) {
@@ -3249,6 +3333,7 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
         event->accept();
         return;
     }
+    const bool composing = keyInputComposing(*event);
     const QPointer<TerminalPane> guard(this);
     beginKeyEventDispatch();
     const auto dispatchGuard = qScopeGuard([guard] {
@@ -3260,8 +3345,8 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
     const bool traceCapture = inspectorKeyboardTraceCaptureActive();
     TerminalKeyInput currentInput;
     if (traceCapture) {
-        currentInput =
-            beginInspectorKeyboardTrace(remappedEvent, false, layout);
+        currentInput = beginInspectorKeyboardTrace(remappedEvent, false, layout,
+                                                   composing);
     }
     if (!controller_->keyboardInputSuppressed()) {
         updateHyperlinkModifiers(modifiersAfterKeyEvent(event, false));
@@ -3292,7 +3377,8 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
             return;
         }
     } else {
-        currentInput = terminalKeyInput(&remappedEvent, false, layout);
+        currentInput =
+            terminalKeyInput(&remappedEvent, false, layout, composing);
     }
     controller_->sendKey(currentInput);
     event->accept();
@@ -4329,13 +4415,23 @@ bool TerminalPane::performWorkspaceAction(WorkspaceActionRequest request)
 
 void TerminalPane::inputMethodEvent(QInputMethodEvent *event)
 {
+    event->accept();
     const quint64 pointerActivityEpoch = pointerActivityEpoch_;
     const QString nextPreedit = event->preeditString();
+    const bool nextComposing = !nextPreedit.isEmpty();
+    const bool inputMethodOwnsInput =
+        !nextPreedit.isNull() || !event->commitString().isEmpty();
+    inputMethodComposing_ = nextComposing;
     bool hadPreedit = false;
     {
         QMutexLocker locker(&renderMutex_);
         hadPreedit = !preedit_.isEmpty();
         preedit_ = nextPreedit.isEmpty() ? QString{} : nextPreedit;
+    }
+    if (inputMethodOwnsInput) {
+        const QPointer<TerminalPane> guard(this);
+        cancelKeySequenceForInputMethod();
+        if (guard == nullptr) return;
     }
     const TerminalInputMethodInput input{
         .commitText = event->commitString(),
@@ -4366,7 +4462,6 @@ void TerminalPane::inputMethodEvent(QInputMethodEvent *event)
         }
     }
     requestRenderUpdate();
-    event->accept();
 }
 
 QVariant TerminalPane::inputMethodQuery(Qt::InputMethodQuery query) const
@@ -4584,7 +4679,7 @@ void TerminalPane::hideMouseForTerminalKey(const TerminalKeyInput &input,
 {
     if (!controller_->keyboardInputSuppressed() && options_.mouseHideWhileTyping
         && pointerActivityEpoch == pointerActivityEpoch_ && input.pressed
-        && !input.autoRepeat && !input.text.isEmpty()) {
+        && !input.autoRepeat && !input.composing && !input.text.isEmpty()) {
         setMouseHiddenWhileTyping(true);
     }
 }
@@ -5685,6 +5780,7 @@ void TerminalPane::focusOutEvent(QFocusEvent *event)
     revealMouseAfterActivity();
     ++keyFocusEpoch_;
     consumedKeys_.clear();
+    clearInputMethodComposition();
     cursorTimer_->stop();
     cursorBlinkOn_ = true;
     hoverInside_ = false;

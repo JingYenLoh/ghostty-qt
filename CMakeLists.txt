@@ -707,6 +707,14 @@ target_link_libraries(ghostty-qt-key-identity
         PkgConfig::XKBCommon
 )
 
+ghostty_qt_add_internal_library(ghostty-qt-key-event-context
+    src/key_event_context.cpp
+    src/key_event_context.h
+)
+target_link_libraries(ghostty-qt-key-event-context PUBLIC
+    Qt6::Gui
+)
+
 ghostty_qt_add_internal_library(ghostty-qt-keyboard-layout
     src/keyboard_layout.cpp
     src/keyboard_layout.h
@@ -1225,6 +1233,7 @@ target_link_libraries(ghostty-qt-application-keybindings
         Qt6::Core
         Qt6::Gui
         ghostty-qt-action-pipeline
+        ghostty-qt-key-event-context
         ghostty-qt-keyboard-layout
         ghostty-qt-launch-options
         ghostty-qt-modifier-remap
@@ -1299,6 +1308,7 @@ qt_add_executable(ghostty-qt
     src/ghostty_config_export.h
     src/ghostty_config_values.h
     src/ghostty_keybind_config.h
+    src/key_event_context.h
     src/key_event_snapshot.h
     src/modifier_remap_types.h
     src/quick_terminal.h
@@ -1382,6 +1392,7 @@ target_link_libraries(ghostty-qt PRIVATE
     ghostty-qt-desktop-quick-controls-style
     ghostty-qt-frontend-config
     ghostty-qt-key-identity
+    ghostty-qt-key-event-context
     ghostty-qt-keyboard-layout
     ghostty-qt-launch-options
     ghostty-qt-linux-cgroup

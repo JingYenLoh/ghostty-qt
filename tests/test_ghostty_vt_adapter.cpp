@@ -171,6 +171,7 @@ private Q_SLOTS:
     void queriesKeyboardActionMode();
     void marksMinimumContrastExemptGlyphs();
     void encodesUsingTerminalModes();
+    void encodesComposingKeys();
     void encodesConsumedShiftTextInKittyMode();
     void encodesAlternateScreenWheelRows();
     void preparesPasteUsingExactSafetyPolicy();
@@ -2913,6 +2914,64 @@ void GhosttyVtAdapterTest::encodesUsingTerminalModes()
 
     adapter->writeVt(QByteArrayLiteral("\033[?1002l"));
     QVERIFY(!adapter->mouseTracking());
+}
+
+void GhosttyVtAdapterTest::encodesComposingKeys()
+{
+    auto adapter = GhosttyVtAdapter::create({});
+    QVERIFY(adapter != nullptr);
+
+    TerminalKeyInput ordinary;
+    ordinary.key = Qt::Key_A;
+    ordinary.text = QStringLiteral("a");
+    ordinary.nativeScanCode = KEY_A + 8U;
+    ordinary.unshiftedCodepoint = 'a';
+    ordinary.composing = true;
+
+    // Legacy encoding suppresses ordinary physical input while the input
+    // method owns the composition.
+    const GhosttyVtAdapter::EncodedKey legacyOrdinary =
+        adapter->encodeKey(ordinary);
+    QVERIFY(legacyOrdinary.bytes.isEmpty());
+    QVERIFY(!legacyOrdinary.modifier);
+
+    // Kitty report-all still suppresses ordinary composing keys, including
+    // releases. Only modifier identities are allowed through composition.
+    adapter->writeVt(QByteArrayLiteral("\033[>11u"));
+    QVERIFY(adapter->encodeKey(ordinary).bytes.isEmpty());
+    ordinary.pressed = false;
+    QVERIFY(adapter->encodeKey(ordinary).bytes.isEmpty());
+
+    TerminalKeyInput shift;
+    shift.key = Qt::Key_Shift;
+    shift.modifiers = Qt::ShiftModifier;
+    shift.nativeScanCode = KEY_LEFTSHIFT + 8U;
+    shift.composing = true;
+    const GhosttyVtAdapter::EncodedKey shiftPress = adapter->encodeKey(shift);
+    QCOMPARE(shiftPress.bytes, QByteArrayLiteral("\033[57441;2u"));
+    QVERIFY(shiftPress.modifier);
+
+    shift.pressed = false;
+    const GhosttyVtAdapter::EncodedKey shiftRelease = adapter->encodeKey(shift);
+    QCOMPARE(shiftRelease.bytes, QByteArrayLiteral("\033[57441;2:3u"));
+    QVERIFY(shiftRelease.modifier);
+
+    // Without event reporting, Kitty cannot represent releases even though
+    // report-all still permits the corresponding composing modifier press.
+    adapter->writeVt(QByteArrayLiteral("\033[>9u"));
+    shift.pressed = true;
+    QCOMPARE(adapter->encodeKey(shift).bytes,
+             QByteArrayLiteral("\033[57441;2u"));
+    shift.pressed = false;
+    QVERIFY(adapter->encodeKey(shift).bytes.isEmpty());
+
+    // Event reporting alone is insufficient: composing modifier events require
+    // report-all as well.
+    adapter->writeVt(QByteArrayLiteral("\033[>3u"));
+    shift.pressed = true;
+    QVERIFY(adapter->encodeKey(shift).bytes.isEmpty());
+    shift.pressed = false;
+    QVERIFY(adapter->encodeKey(shift).bytes.isEmpty());
 }
 
 void GhosttyVtAdapterTest::encodesConsumedShiftTextInKittyMode()
