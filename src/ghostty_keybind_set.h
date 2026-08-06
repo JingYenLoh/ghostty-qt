@@ -189,6 +189,7 @@ struct GhosttyKeybindEvent {
     Qt::KeyboardModifiers modifiers = Qt::NoModifier;
     QString text;
     quint32 nativeScanCode = 0;
+    quint32 resolvedKeysym = 0;
     std::uint32_t unshiftedCodepoint = 0;
 
     bool operator==(const GhosttyKeybindEvent &) const = default;

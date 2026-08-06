@@ -293,6 +293,7 @@ private:
     quint64 nextPasteRequestId_ = 0;
     QByteArray stagedSequenceBytes_;
     Qt::KeyboardModifiers stagedSequenceModifiers_ = Qt::NoModifier;
+    std::optional<TerminalKeyInput> stagedSequenceLastKey_;
     quint64 newestSequenceToken_ = 0;
     quint64 activeSequenceToken_ = 0;
     bool stagedSequencePotentialActivity_ = false;
@@ -316,6 +317,7 @@ private:
     bool selectionAvailable_ = false;
     bool readOnly_ = false;
     Qt::KeyboardModifiers heldTerminalModifiers_ = Qt::NoModifier;
+    std::optional<TerminalKeyInput> lastTerminalKey_;
     QElapsedTimer childRuntimeTimer_;
     QElapsedTimer potentialActivityTimer_;
     QElapsedTimer cursorBlinkResetTimer_;

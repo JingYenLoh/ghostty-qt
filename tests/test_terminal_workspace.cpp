@@ -37,6 +37,7 @@
 #include <QtQml/qqml.h>
 
 #include <linux/input-event-codes.h>
+#include <xkbcommon/xkbcommon-keysyms.h>
 
 #include <algorithm>
 #include <array>
@@ -5048,9 +5049,17 @@ void TerminalWorkspaceTest::inspectorQmlWindowTracksPaneLifetime()
     QTRY_VERIFY_WITH_TIMEOUT(eventList->property("count").toInt() >= 2, 1000);
 
     eventModel->clear();
-    QKeyEvent correlatedPress(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
-                              QStringLiteral("x"));
-    QCoreApplication::sendEvent(pane, &correlatedPress);
+    QKeyEvent correlatedPress(QEvent::KeyPress, Qt::Key_F25, Qt::NoModifier,
+                              KEY_F1 + 8U, XKB_KEY_F25, 0);
+    {
+        const ScopedKeyboardLayoutTranslation layoutScope(
+            correlatedPress,
+            {
+                .resolvedKeysym = XKB_KEY_F25,
+                .authoritative = true,
+            });
+        QCoreApplication::sendEvent(pane, &correlatedPress);
+    }
     quint64 correlatedTrace = 0;
     const auto hasCorrelatedKind =
         [&eventModel, &correlatedTrace](QStringView expectedKind) {
@@ -5078,16 +5087,25 @@ void TerminalWorkspaceTest::inspectorQmlWindowTracksPaneLifetime()
         hasCorrelatedKind(QStringLiteral("Forwarded key request")), 1000);
     QTRY_VERIFY_WITH_TIMEOUT(
         hasCorrelatedKind(QStringLiteral("Worker key encoding")), 5000);
+    QString forwardedDetails;
     for (int row = 0; row < eventModel->rowCount(); ++row) {
         const QModelIndex index = eventModel->index(row, 0);
         if (eventModel->data(index, TerminalInspectorEventModel::TraceIdRole)
-                    .toULongLong()
-                != correlatedTrace
-            || eventModel->data(index, TerminalInspectorEventModel::KindRole)
-                    .toString()
-                != QStringLiteral("Keybinding decision")) {
+                .toULongLong()
+            != correlatedTrace) {
             continue;
         }
+        const QString kind =
+            eventModel->data(index, TerminalInspectorEventModel::KindRole)
+                .toString();
+        if (kind == QStringLiteral("Forwarded key request")) {
+            forwardedDetails =
+                eventModel
+                    ->data(index, TerminalInspectorEventModel::DetailsRole)
+                    .toString();
+            continue;
+        }
+        if (kind != QStringLiteral("Keybinding decision")) continue;
         QVERIFY(
             eventModel->data(index, TerminalInspectorEventModel::SummaryRole)
                 .toString()
@@ -5097,6 +5115,11 @@ void TerminalWorkspaceTest::inspectorQmlWindowTracksPaneLifetime()
                  .toString()
                  .contains(QStringLiteral("flags consumed")));
     }
+    QVERIFY(forwardedDetails.contains(
+        QStringLiteral("scan code 0x%1").arg(KEY_F1 + 8U, 0, 16)));
+    QVERIFY(forwardedDetails.contains(
+        QStringLiteral("XKB keysym 0x%1").arg(XKB_KEY_F25, 0, 16)));
+    QVERIFY(forwardedDetails.contains(QStringLiteral("XKB remapped")));
 
     // The detail view copies selected input text out of the bounded model.
     // Replacing that model at close/reopen is therefore also a privacy
@@ -7790,6 +7813,12 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
             .modifiers = modifiers,
         };
     };
+    const auto physical = [](QString name) {
+        return GhosttyKeybindTrigger{
+            .kind = GhosttyKeybindKeyKind::Physical,
+            .physicalName = std::move(name),
+        };
+    };
     GhosttyKeybindConfig config;
     config.root = {
         GhosttyKeybindDefinition{
@@ -7817,6 +7846,10 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
         GhosttyKeybindDefinition{
             .sequence = {unicode('&', GhosttyKeybindCtrl)},
             .actions = {QStringLiteral("ignore")},
+        },
+        GhosttyKeybindDefinition{
+            .sequence = {physical(QStringLiteral("escape"))},
+            .actions = {QStringLiteral("reload_config")},
         },
     };
     config.tables = {GhosttyKeybindTable{
@@ -7969,6 +8002,35 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
     QCOMPARE(qvariant_cast<ApplicationAction>(reload.constLast().constFirst()),
              ApplicationAction::Ignore);
     QCOMPARE(forwarded.count(), beforeLayoutBinding);
+
+    const int beforeRemappedBinding = forwarded.count();
+    const KeyboardLayoutTranslation capsToEscape{
+        .unshiftedCodepoint = 0x1b,
+        .resolvedKeysym = XKB_KEY_Escape,
+        .authoritative = true,
+    };
+    QKeyEvent remappedPress(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier,
+                            KEY_CAPSLOCK + 8U, XKB_KEY_Escape, 0);
+    {
+        const ScopedKeyboardLayoutTranslation scope(remappedPress,
+                                                    capsToEscape);
+        QCoreApplication::sendEvent(pane, &remappedPress);
+    }
+    QCOMPARE(reload.count(), 6);
+    QCOMPARE(qvariant_cast<ApplicationAction>(reload.constLast().constFirst()),
+             ApplicationAction::ReloadConfig);
+    QCOMPARE(forwarded.count(), beforeRemappedBinding);
+
+    QKeyEvent remappedRelease(QEvent::KeyRelease, Qt::Key_Escape,
+                              Qt::NoModifier, KEY_CAPSLOCK + 8U, XKB_KEY_Escape,
+                              0);
+    {
+        const ScopedKeyboardLayoutTranslation scope(remappedRelease,
+                                                    capsToEscape);
+        QCoreApplication::sendEvent(pane, &remappedRelease);
+    }
+    QCOMPARE(reload.count(), 6);
+    QCOMPARE(forwarded.count(), beforeRemappedBinding);
 
     const QModelIndex rootGlobal =
         decisionContaining(QStringLiteral("Root global binding"));
@@ -9212,6 +9274,7 @@ void TerminalWorkspaceTest::
     QStringList order;
     bool injected = false;
     std::optional<TerminalKeyInput> replayedC;
+    std::optional<TerminalKeyInput> replayedCRelease;
     connect(
         controller, &TerminalController::keyRequested, pane,
         [&](const TerminalKeyInput &input) {
@@ -9220,6 +9283,9 @@ void TerminalWorkspaceTest::
                              .arg(input.pressed ? QStringLiteral("press")
                                                 : QStringLiteral("release")));
             if (input.key == Qt::Key_C && input.pressed) replayedC = input;
+            if (input.key == Qt::Key_C && !input.pressed) {
+                replayedCRelease = input;
+            }
             if (injected || input.key != Qt::Key_C
                 || !input.pressed) {
                 return;
@@ -9258,6 +9324,7 @@ void TerminalWorkspaceTest::
             cPress,
             {
                 .unshiftedCodepoint = '&',
+                .resolvedKeysym = XKB_KEY_c,
                 .consumedModifiers = Qt::GroupSwitchModifier,
                 .capsLock = true,
                 .numLock = true,
@@ -9271,7 +9338,15 @@ void TerminalWorkspaceTest::
     QCoreApplication::sendEvent(pane, &oldInput);
     QKeyEvent cRelease(
         QEvent::KeyRelease, Qt::Key_C, Qt::NoModifier);
-    QCoreApplication::sendEvent(pane, &cRelease);
+    {
+        const ScopedKeyboardLayoutTranslation releaseScope(
+            cRelease,
+            {
+                .resolvedKeysym = XKB_KEY_c,
+                .authoritative = true,
+            });
+        QCoreApplication::sendEvent(pane, &cRelease);
+    }
     QKeyEvent dPress(
         QEvent::KeyPress, Qt::Key_D, Qt::NoModifier,
         QStringLiteral("d"));
@@ -9286,7 +9361,10 @@ void TerminalWorkspaceTest::
 
     QVERIFY(injected);
     QVERIFY(replayedC.has_value());
+    QVERIFY(replayedCRelease.has_value());
     QCOMPARE(replayedC->unshiftedCodepoint, std::uint32_t{'&'});
+    QCOMPARE(replayedC->resolvedKeysym, quint32{XKB_KEY_c});
+    QCOMPARE(replayedCRelease->resolvedKeysym, quint32{XKB_KEY_c});
     QCOMPARE(replayedC->consumedModifiers,
              static_cast<int>(Qt::GroupSwitchModifier));
     QVERIFY(replayedC->capsLock);

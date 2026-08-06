@@ -20,7 +20,8 @@ constexpr quint32 xkbKeycode(unsigned int evdevCode)
 
 class TestKeymap final {
 public:
-    explicit TestKeymap(const char *layout, const char *variant = nullptr)
+    explicit TestKeymap(const char *layout, const char *variant = nullptr,
+                        const char *options = "")
         : context_(xkb_context_new(XKB_CONTEXT_NO_ENVIRONMENT_NAMES))
     {
         if (context_ == nullptr) return;
@@ -30,7 +31,7 @@ public:
             .model = "pc105",
             .layout = layout,
             .variant = variant,
-            .options = "",
+            .options = options,
         };
         keymap_ = xkb_keymap_new_from_names(context_, &names,
                                             XKB_KEYMAP_COMPILE_NO_FLAGS);
@@ -73,6 +74,16 @@ public:
         return quint32{1} << index;
     }
 
+    [[nodiscard]] xkb_keysym_t keysym(quint32 keycode) const
+    {
+        if (keymap_ == nullptr) return XKB_KEY_NoSymbol;
+        xkb_state *const state = xkb_state_new(keymap_);
+        if (state == nullptr) return XKB_KEY_NoSymbol;
+        const xkb_keysym_t result = xkb_state_key_get_one_sym(state, keycode);
+        xkb_state_unref(state);
+        return result;
+    }
+
 private:
     xkb_context *context_ = nullptr;
     xkb_keymap *keymap_ = nullptr;
@@ -97,6 +108,7 @@ private Q_SLOTS:
     void translatesUsShiftAndCapsLock();
     void followsGermanLetterAndLevelThreeMappings();
     void followsFrenchShiftedDigitMapping();
+    void reportsFunctionalRemapsWithoutRelabelingWritingKeys();
     void switchesActiveLayoutGroups();
     void treatsDeadKeysAsAuthoritativeWithoutInventingText();
     void keepsValidMapAfterRejectedReplacement();
@@ -115,6 +127,17 @@ void KeyboardLayoutTest::translatesUsShiftAndCapsLock()
 
     XkbKeyboardLayout layout;
     QVERIFY(layout.installKeymap(keymap.serialized()));
+
+    verifyTranslation(layout.translate(xkbKeycode(KEY_ESC)), 0x1b,
+                      Qt::NoModifier);
+    verifyTranslation(layout.translate(xkbKeycode(KEY_ENTER)), 0x0d,
+                      Qt::NoModifier);
+    verifyTranslation(layout.translate(xkbKeycode(KEY_BACKSPACE)), 0x08,
+                      Qt::NoModifier);
+    verifyTranslation(layout.translate(xkbKeycode(KEY_TAB)), 0x09,
+                      Qt::NoModifier);
+    verifyTranslation(layout.translate(xkbKeycode(KEY_DELETE)), 0x7f,
+                      Qt::NoModifier);
 
     verifyTranslation(layout.translate(xkbKeycode(KEY_SEMICOLON)), ';',
                       Qt::NoModifier);
@@ -202,6 +225,38 @@ void KeyboardLayoutTest::followsFrenchShiftedDigitMapping()
                       Qt::ShiftModifier);
 }
 
+void KeyboardLayoutTest::reportsFunctionalRemapsWithoutRelabelingWritingKeys()
+{
+    const TestKeymap keymap("us", nullptr, "caps:swapescape");
+    QVERIFY(keymap.isValid());
+    QCOMPARE(keymap.keysym(xkbKeycode(KEY_CAPSLOCK)), XKB_KEY_Escape);
+    QCOMPARE(keymap.keysym(xkbKeycode(KEY_ESC)), XKB_KEY_Caps_Lock);
+
+    XkbKeyboardLayout layout;
+    QVERIFY(layout.installKeymap(keymap.serialized()));
+
+    const KeyboardLayoutTranslation caps = layout.translate(
+        xkbKeycode(KEY_CAPSLOCK), 0, keymap.keysym(xkbKeycode(KEY_CAPSLOCK)));
+    verifyTranslation(caps, 0x1b, Qt::NoModifier);
+    QCOMPARE(caps.resolvedKeysym, quint32{XKB_KEY_Escape});
+
+    const KeyboardLayoutTranslation escape = layout.translate(
+        xkbKeycode(KEY_ESC), 0, keymap.keysym(xkbKeycode(KEY_ESC)));
+    verifyTranslation(escape, 0, Qt::NoModifier);
+    QCOMPARE(escape.resolvedKeysym, quint32{XKB_KEY_Caps_Lock});
+
+    // Writing-system keys still expose their layout-resolved keysym. The
+    // downstream physical-key policy deliberately retains the native KeyY
+    // identity when a layout resolves that location to a different letter.
+    const TestKeymap german("de");
+    QVERIFY(german.isValid());
+    QVERIFY(layout.installKeymap(german.serialized()));
+    const KeyboardLayoutTranslation letter = layout.translate(
+        xkbKeycode(KEY_Y), 0, german.keysym(xkbKeycode(KEY_Y)));
+    verifyTranslation(letter, 'z', Qt::NoModifier);
+    QCOMPARE(letter.resolvedKeysym, quint32{XKB_KEY_z});
+}
+
 void KeyboardLayoutTest::switchesActiveLayoutGroups()
 {
     const TestKeymap keymap("us,de");
@@ -214,7 +269,10 @@ void KeyboardLayoutTest::switchesActiveLayoutGroups()
     verifyTranslation(layout.translate(xkbKeycode(KEY_Y)), 'y', Qt::NoModifier);
 
     layout.updateModifiers(0, 0, 0, 1);
-    verifyTranslation(layout.translate(xkbKeycode(KEY_Y)), 'z', Qt::NoModifier);
+    const KeyboardLayoutTranslation germanY =
+        layout.translate(xkbKeycode(KEY_Y));
+    verifyTranslation(germanY, 'z', Qt::NoModifier);
+    QCOMPARE(germanY.resolvedKeysym, quint32{XKB_KEY_z});
 
     layout.resetModifiers();
     verifyTranslation(layout.translate(xkbKeycode(KEY_Y)), 'y', Qt::NoModifier);
@@ -271,6 +329,7 @@ void KeyboardLayoutTest::preservesCapturedTranslationDuringReplay()
 
     const KeyboardLayoutTranslation captured{
         .unshiftedCodepoint = 'z',
+        .resolvedKeysym = XKB_KEY_Escape,
         .consumedModifiers = Qt::GroupSwitchModifier,
         .capsLock = true,
         .numLock = true,
@@ -282,6 +341,7 @@ void KeyboardLayoutTest::preservesCapturedTranslationDuringReplay()
         const KeyboardLayoutTranslation translated =
             translateKeyboardLayout(replay);
         QCOMPARE(translated.unshiftedCodepoint, std::uint32_t{'z'});
+        QCOMPARE(translated.resolvedKeysym, quint32{XKB_KEY_Escape});
         QCOMPARE(translated.consumedModifiers, Qt::GroupSwitchModifier);
         QVERIFY(translated.capsLock);
         QVERIFY(translated.numLock);

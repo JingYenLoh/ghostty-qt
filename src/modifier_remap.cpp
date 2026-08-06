@@ -1,5 +1,7 @@
 #include "modifier_remap.h"
 
+#include "ghostty_key_identity.h"
+
 #include <array>
 #include <cstdint>
 #include <linux/input-event-codes.h>
@@ -94,9 +96,33 @@ std::optional<SidedModifier> physicalModifier(quint32 nativeScanCode) noexcept
     }
 }
 
-std::optional<SidedModifier>
-eventModifier(const KeyEventSnapshot &event) noexcept
+std::optional<SidedModifier> eventModifier(const KeyEventSnapshot &event,
+                                           quint32 resolvedKeysym) noexcept
 {
+    if (resolvedKeysym != 0) {
+        const GhosttyKey effective = ghosttyEffectiveKey(
+            event.nativeScanCode, resolvedKeysym, event.key, event.modifiers);
+        switch (effective) {
+        case GHOSTTY_KEY_SHIFT_LEFT:
+            return SidedModifier{ModifierKey::Shift, ModifierSide::Left};
+        case GHOSTTY_KEY_SHIFT_RIGHT:
+            return SidedModifier{ModifierKey::Shift, ModifierSide::Right};
+        case GHOSTTY_KEY_CONTROL_LEFT:
+            return SidedModifier{ModifierKey::Ctrl, ModifierSide::Left};
+        case GHOSTTY_KEY_CONTROL_RIGHT:
+            return SidedModifier{ModifierKey::Ctrl, ModifierSide::Right};
+        case GHOSTTY_KEY_ALT_LEFT:
+            return SidedModifier{ModifierKey::Alt, ModifierSide::Left};
+        case GHOSTTY_KEY_ALT_RIGHT:
+            return SidedModifier{ModifierKey::Alt, ModifierSide::Right};
+        case GHOSTTY_KEY_META_LEFT:
+            return SidedModifier{ModifierKey::Super, ModifierSide::Left};
+        case GHOSTTY_KEY_META_RIGHT:
+            return SidedModifier{ModifierKey::Super, ModifierSide::Right};
+        default: return std::nullopt;
+        }
+    }
+
     if (const auto physical = physicalModifier(event.nativeScanCode)) {
         return physical;
     }
@@ -218,14 +244,15 @@ ModifierRemapEngine::remap(ModifierRemapState state) const noexcept
     return state;
 }
 
-ModifierRemapState ModifierRemapEngine::remapModifiers(
-    const KeyEventSnapshot &event) const noexcept
+ModifierRemapState
+ModifierRemapEngine::remapModifiers(const KeyEventSnapshot &event,
+                                    quint32 resolvedKeysym) const noexcept
 {
     ModifierRemapState state{
         .modifiers = event.modifiers,
         .rightSides = 0,
     };
-    if (const auto current = eventModifier(event)) {
+    if (const auto current = eventModifier(event, resolvedKeysym)) {
         const quint8 currentBit = modifierBit(current->key);
         if (event.pressed) {
             state.modifiers |= qtModifier(current->key);
@@ -240,9 +267,10 @@ ModifierRemapState ModifierRemapEngine::remapModifiers(
 }
 
 KeyEventSnapshot
-ModifierRemapEngine::remap(KeyEventSnapshot event) const noexcept
+ModifierRemapEngine::remap(KeyEventSnapshot event,
+                           quint32 resolvedKeysym) const noexcept
 {
-    event.modifiers = remapModifiers(event).modifiers;
+    event.modifiers = remapModifiers(event, resolvedKeysym).modifiers;
     return event;
 }
 
@@ -264,13 +292,14 @@ void ModifierRemapTracker::resetState() noexcept
 }
 
 KeyEventSnapshot
-ModifierRemapTracker::remapEvent(KeyEventSnapshot event) noexcept
+ModifierRemapTracker::remapEvent(KeyEventSnapshot event,
+                                 quint32 resolvedKeysym) noexcept
 {
     ModifierRemapState state{
         .modifiers = event.modifiers,
         .rightSides = rightSides_,
     };
-    if (const auto current = eventModifier(event)) {
+    if (const auto current = eventModifier(event, resolvedKeysym)) {
         const quint8 currentBit = modifierBit(current->key);
         if (event.pressed) {
             state.modifiers |= qtModifier(current->key);

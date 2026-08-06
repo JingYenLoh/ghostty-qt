@@ -1,5 +1,7 @@
 #include "terminal_inspector_model.h"
 
+#include "ghostty_key_identity.h"
+
 #include "terminal_controller.h"
 #include "terminal_kitty_graphics.h"
 #include "terminal_pane.h"
@@ -268,13 +270,23 @@ QString keySummary(const TerminalKeyInput &input)
 
 QString keyDetails(const TerminalKeyInput &input)
 {
+    const auto modifiers = Qt::KeyboardModifiers(input.modifiers);
+    const GhosttyKey rawKey =
+        ghosttyKeyFromNativeScanCode(input.nativeScanCode);
+    const GhosttyKey effectiveKey = ghosttyEffectiveKey(
+        input.nativeScanCode, input.resolvedKeysym, input.key, modifiers);
     QStringList fields{
         QStringLiteral("Qt key %1").arg(input.key),
         QStringLiteral("scan code 0x%1").arg(input.nativeScanCode, 0, 16),
+        QStringLiteral("XKB keysym 0x%1").arg(input.resolvedKeysym, 0, 16),
+        QStringLiteral("Ghostty key %1").arg(effectiveKey),
         QStringLiteral("consumed %1")
             .arg(modifierNames(Qt::KeyboardModifiers(input.consumedModifiers),
                                input.consumedCapsLock)),
     };
+    if (input.resolvedKeysym != 0 && rawKey != effectiveKey) {
+        fields.append(QStringLiteral("XKB remapped"));
+    }
     if (input.unshiftedCodepoint != 0) {
         fields.append(
             QStringLiteral("unshifted U+%1")

@@ -1205,14 +1205,17 @@ signals:
   destinations. This presentation policy does not change link detection,
   underline, copy, or activation behavior.
 - Focus changes are encoded only when the terminal requests focus reporting.
-  The worker also retains the post-remap Shift, Control, Alt, and Super
-  families from terminal-directed key events whose bytes actually crossed the
-  read-only and KAM input gates. Before a focus-out report it clears that
-  state and encodes Kitty releases in Ghostty's stable
-  Shift/Control/Alt/Super, right/left order, preventing a dropped physical
-  release from leaving a keyboard-reporting application stuck. Consumed
-  bindings and unresolved or dropped trie leaders never create held state;
-  leaders become observable only when their staged bytes are flushed.
+  From terminal-directed key events whose bytes actually crossed the read-only
+  and KAM input gates, the worker retains both the last PTY-observable key
+  event and its post-`key-remap` Shift, Control, Alt, and Super families. Before
+  a focus-out report it first encodes an exact release of that selected key,
+  preserving captured lock and consumed-modifier metadata, then clears the
+  remaining families in Ghostty's stable Shift/Control/Alt/Super, right/left
+  order while skipping a duplicate side. Keeping these two identities
+  separate is required when XKB turns Caps into Control and the frontend later
+  remaps Control into Alt. Consumed bindings and unresolved or dropped trie
+  leaders never create held state; leaders become observable only when their
+  staged bytes are flushed.
 - Paste classification, retained unsafe text, and encoding stay on
   `SessionWorker`. One adapter operation snapshots Ghostty's current
   bracketed-paste mode for both the exact safety decision and encoding.
@@ -2331,21 +2334,28 @@ before/after active-table name lists. This avoids two `QStringList`
 allocations on every keypress. Lookup prioritizes physical identity, then
 event Unicode, then the unshifted codepoint, then modifier-specific and bare
 catch-all entries at every depth. On Linux/Wayland, native XKB scan codes keep
-physical triggers and libghostty's
-physical-key encoding layout-independent, while distinguishing top-row/keypad
-and left/right modifier locations. Because `QKeyEvent` does not expose the
-compositor keymap's unmodified layout level, `WaylandKeyboardLayout` requests
-a second keyboard object from Qt's public native default Wayland seat and
-mirrors its XKB keymap, modifier masks, and active group. A protocol-free
-`XkbKeyboardLayout` derives the group-specific level-zero Unicode value and
-GTK-compatible consumed modifiers for both libghostty and the two trie
-matchers. Dead keys retain an authoritative zero result, AltGr remains Qt's
-non-terminal `GroupSwitchModifier`, and Caps/Num lock state reaches Kitty
-report-all encoding. Synthetic events and sessions without a usable Wayland
-keymap retain the conservative US-oriented Qt-key fallback. Translation is
-captured beside deferred events and restored with a scoped replay override, so
-changing layouts during an asynchronous action cannot reinterpret queued
-input.
+writing-system triggers and libghostty's physical-key encoding
+layout-independent, while distinguishing top-row/keypad and left/right
+modifier locations. A shared key-identity selector also mirrors Ghostty's GTK
+compromise for deliberate XKB remaps: a known resolved keysym wins when either
+the raw or resolved key is outside the W3C Writing System set. This makes
+functional mappings such as `caps:swapescape` apply consistently to terminal
+encoding, root and pane physical bindings, and sided modifier reconstruction,
+without turning German Y/Z or other writing-layout changes into physical-key
+remaps. Raw scan identity remains the press/release correlation key.
+
+Because `QKeyEvent` does not expose the compositor keymap's unmodified layout
+level, `WaylandKeyboardLayout` requests a second keyboard object from Qt's
+public native default Wayland seat and mirrors its XKB keymap, modifier masks,
+and active group. A protocol-free `XkbKeyboardLayout` derives the effective
+keysym, group-specific level-zero Unicode value, and GTK-compatible consumed
+modifiers for both libghostty and the two trie matchers. Dead keys retain an
+authoritative zero result, AltGr remains Qt's non-terminal
+`GroupSwitchModifier`, and Caps/Num lock state reaches Kitty report-all
+encoding. Synthetic events and sessions without a usable Wayland keymap retain
+the conservative US-oriented Qt-key fallback. Translation is captured beside
+deferred events and restored with a scoped replay override, so changing layouts
+during an asynchronous action cannot reinterpret queued input.
 
 Each compiled trie edge also retains the human-readable label of its
 configured trigger. A pane publishes labels from the edges actually matched,

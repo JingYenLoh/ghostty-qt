@@ -109,6 +109,7 @@ KeyboardLayoutTranslation fallbackTranslation(const QKeyEvent &event)
 {
     KeyboardLayoutTranslation result{
         .unshiftedCodepoint = fallbackUnshiftedCodepoint(event.key()),
+        .resolvedKeysym = event.nativeVirtualKey(),
     };
     const Qt::KeyboardModifiers modifiers =
         event.modifiers() & ~(Qt::KeypadModifier | Qt::GroupSwitchModifier);
@@ -307,9 +308,12 @@ XkbKeyboardLayout::translate(quint32 nativeScanCode,
                                                       XKB_STATE_MODS_EFFECTIVE);
     const bool consumedCapsLock =
         (consumed & active & impl_->modifierMask(XKB_MOD_NAME_CAPS)) != 0;
+    const quint32 resolvedKeysym =
+        xkb_state_key_get_one_sym(state, nativeScanCode);
     const auto result = [&](std::uint32_t codepoint) {
         return KeyboardLayoutTranslation{
             .unshiftedCodepoint = codepoint,
+            .resolvedKeysym = resolvedKeysym,
             .consumedModifiers = impl_->qtConsumedModifiers(consumed, active),
             .capsLock = capsLock,
             .numLock = numLock,

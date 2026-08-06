@@ -42,12 +42,14 @@ public:
     // itself is a physical modifier, its XKB scan code supplies the side and
     // its press/repeat/release action fixes that modifier's active bit.
     [[nodiscard]] ModifierRemapState
-    remapModifiers(const KeyEventSnapshot &event) const noexcept;
+    remapModifiers(const KeyEventSnapshot &event,
+                   quint32 resolvedKeysym = 0) const noexcept;
 
     // Convenience for consumers which already pass owning snapshots through
     // a deferred input pipeline. Text and native key identity are deliberately
     // unchanged: key-remap affects modifiers, not keyboard layout.
-    [[nodiscard]] KeyEventSnapshot remap(KeyEventSnapshot event) const noexcept;
+    [[nodiscard]] KeyEventSnapshot
+    remap(KeyEventSnapshot event, quint32 resolvedKeysym = 0) const noexcept;
 
 private:
     QVector<ModifierRemap> mappings_;
@@ -69,7 +71,8 @@ public:
     void replaceMappings(std::span<const ModifierRemap> orderedMappings);
     void resetState() noexcept;
 
-    [[nodiscard]] KeyEventSnapshot remapEvent(KeyEventSnapshot event) noexcept;
+    [[nodiscard]] KeyEventSnapshot
+    remapEvent(KeyEventSnapshot event, quint32 resolvedKeysym = 0) noexcept;
 
 private:
     ModifierRemapEngine engine_;

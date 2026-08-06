@@ -92,6 +92,17 @@ target_link_libraries(test-keyboard-layout PRIVATE
 add_test(NAME keyboard-layout COMMAND test-keyboard-layout)
 set_tests_properties(keyboard-layout PROPERTIES TIMEOUT 10)
 
+qt_add_executable(test-ghostty-key-identity
+    test_ghostty_key_identity.cpp
+)
+target_link_libraries(test-ghostty-key-identity PRIVATE
+    Qt6::Core
+    Qt6::Test
+    ghostty-qt-key-identity
+)
+add_test(NAME ghostty-key-identity COMMAND test-ghostty-key-identity)
+set_tests_properties(ghostty-key-identity PROPERTIES TIMEOUT 10)
+
 qt_add_executable(test-launch-options
     test_launch_options.cpp
     ghostty_config_export_fixture.h
@@ -647,6 +658,7 @@ target_link_libraries(ghostty-qt-render-test-support PUBLIC
     Qt6::Qml
     Qt6::Quick
     ghostty-qt-action-pipeline
+    ghostty-qt-key-identity
     ghostty-qt-keyboard-layout
     ghostty-qt-launch-options
     ghostty-qt-modifier-remap

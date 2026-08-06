@@ -388,6 +388,10 @@ struct TerminalKeyInput {
     QString text;
     // Qt Wayland/X11 expose XKB keycodes here (Linux evdev code + 8).
     quint32 nativeScanCode = 0;
+    // Effective XKB keysym captured alongside the event. The raw scan code is
+    // retained for press/release pairing and writing-system physical keys;
+    // libghostty consumers use both to honor functional-key remaps.
+    quint32 resolvedKeysym = 0;
     bool pressed = true;
     bool autoRepeat = false;
     bool composing = false;

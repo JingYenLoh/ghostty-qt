@@ -2,6 +2,7 @@
 
 #include <QTest>
 #include <linux/input-event-codes.h>
+#include <xkbcommon/xkbcommon-keysyms.h>
 
 #include <initializer_list>
 #include <type_traits>
@@ -99,6 +100,7 @@ private Q_SLOTS:
     void matchesNamedAndW3cPhysicalKeys();
     void physicalBindingsTakePrecedenceOverUnicode();
     void nativePhysicalBindingsAreLayoutIndependent();
+    void honorsFunctionalXkbRemapsForPhysicalBindings();
     void distinguishesKeypadAndModifierLocations();
     void matchesShiftedUnicodeByUnshiftedCodepoint();
     void matchesFullUnicodeCaseFoldsAndScalars();
@@ -358,17 +360,65 @@ void GhosttyKeybindStateTest::nativePhysicalBindingsAreLayoutIndependent()
     }).has_value());
 }
 
+void GhosttyKeybindStateTest::honorsFunctionalXkbRemapsForPhysicalBindings()
+{
+    GhosttyKeybindState set;
+    QCOMPARE(installProgram(set,
+                            {
+                                QStringLiteral("escape=escape_action"),
+                                QStringLiteral("caps_lock=caps_action"),
+                                QStringLiteral("key_a=a_action"),
+                                QStringLiteral("key_y=y_action"),
+                            })
+                 .count(Disposition::Installed),
+             4);
+
+    const auto actionFor = [&set](int qtKey, quint32 nativeScanCode,
+                                  quint32 resolvedKeysym) {
+        return serializedActions(requireMatch(set.match(GhosttyKeybindEvent{
+            .qtKey = qtKey,
+            .nativeScanCode = nativeScanCode,
+            .resolvedKeysym = resolvedKeysym,
+        })));
+    };
+
+    QCOMPARE(
+        actionFor(Qt::Key_Escape, xkbKeycode(KEY_CAPSLOCK), XKB_KEY_Escape),
+        QStringList({QStringLiteral("escape_action")}));
+    QCOMPARE(
+        actionFor(Qt::Key_CapsLock, xkbKeycode(KEY_ESC), XKB_KEY_Caps_Lock),
+        QStringList({QStringLiteral("caps_action")}));
+
+    // Either non-writing endpoint enables the remap.
+    QCOMPARE(actionFor(Qt::Key_Escape, xkbKeycode(KEY_A), XKB_KEY_Escape),
+             QStringList({QStringLiteral("escape_action")}));
+    QCOMPARE(actionFor(Qt::Key_A, xkbKeycode(KEY_ESC), XKB_KEY_a),
+             QStringList({QStringLiteral("a_action")}));
+
+    // Writing-to-writing layout changes remain tied to the physical key.
+    QCOMPARE(actionFor(Qt::Key_Z, xkbKeycode(KEY_Y), XKB_KEY_z),
+             QStringList({QStringLiteral("y_action")}));
+
+    // A keysym outside the pinned GTK mapping cannot destroy raw identity.
+    QCOMPARE(
+        actionFor(Qt::Key_unknown, xkbKeycode(KEY_ESC), XKB_KEY_Cyrillic_tse),
+        QStringList({QStringLiteral("escape_action")}));
+}
+
 void GhosttyKeybindStateTest::distinguishesKeypadAndModifierLocations()
 {
     GhosttyKeybindState set;
-    const GhosttyKeybindLoadReport report = installProgram(set, {
-        QStringLiteral("alt+digit_1=top_row"),
-        QStringLiteral("alt+numpad_1=keypad"),
-        QStringLiteral("control_left=left_control"),
-        QStringLiteral("control_right=right_control"),
-    });
-    QCOMPARE(report.count(Disposition::Installed), 4);
-    QCOMPARE(set.size(), 4);
+    const GhosttyKeybindLoadReport report =
+        installProgram(set,
+                       {
+                           QStringLiteral("alt+digit_1=top_row"),
+                           QStringLiteral("alt+numpad_1=keypad"),
+                           QStringLiteral("control_left=left_control"),
+                           QStringLiteral("control_right=right_control"),
+                           QStringLiteral("shift+semicolon=punctuation"),
+                       });
+    QCOMPARE(report.count(Disposition::Installed), 5);
+    QCOMPARE(set.size(), 5);
 
     QCOMPARE(serializedActions(requireMatch(set.match(GhosttyKeybindEvent{
                  .qtKey = Qt::Key_1,
@@ -409,6 +459,9 @@ void GhosttyKeybindStateTest::distinguishesKeypadAndModifierLocations()
                  Qt::AltModifier | Qt::KeypadModifier,
                  QStringLiteral("1")))),
              QStringList({QStringLiteral("keypad")}));
+    QCOMPARE(serializedActions(requireMatch(set.match(
+                 Qt::Key_Colon, Qt::ShiftModifier, QStringLiteral(":")))),
+             QStringList({QStringLiteral("punctuation")}));
 }
 
 void GhosttyKeybindStateTest::matchesShiftedUnicodeByUnshiftedCodepoint()
@@ -755,12 +808,13 @@ void GhosttyKeybindStateTest::preservesLocalFlags()
     QVERIFY(!copy.consumed);
     QVERIFY(copy.performable);
 
-    const GhosttyKeybindMatch &paste = requireMatch(
-        set.match(Qt::Key_Insert,
-                  Qt::ShiftModifier | Qt::KeypadModifier));
+    const GhosttyKeybindMatch &paste =
+        requireMatch(set.match(Qt::Key_Insert, Qt::ShiftModifier));
     QVERIFY(paste.consumed);
     QVERIFY(!paste.performable);
     QVERIFY(paste.physical);
+    QVERIFY(!set.match(Qt::Key_Insert, Qt::ShiftModifier | Qt::KeypadModifier)
+                 .has_value());
 }
 
 void GhosttyKeybindStateTest::supportsSequencesAndCatchAllWhileRejectingDeferredForms()

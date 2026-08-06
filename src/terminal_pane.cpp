@@ -334,6 +334,7 @@ TerminalKeyInput terminalKeyInput(const QKeyEvent *event, bool pressed,
         .consumedModifiers = static_cast<int>(layout.consumedModifiers),
         .text = event->text(),
         .nativeScanCode = event->nativeScanCode(),
+        .resolvedKeysym = layout.resolvedKeysym,
         .pressed = pressed,
         .autoRepeat = event->isAutoRepeat(),
         .capsLock = layout.capsLock,
@@ -3179,8 +3180,8 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
     const auto dispatchGuard = qScopeGuard([guard] {
         if (guard != nullptr) guard->endKeyEventDispatch();
     });
-    const KeyEventSnapshot remappedSnapshot =
-        modifierRemaps_.remapEvent(KeyEventSnapshot::capture(*event));
+    const KeyEventSnapshot remappedSnapshot = modifierRemaps_.remapEvent(
+        KeyEventSnapshot::capture(*event), layout.resolvedKeysym);
     QKeyEvent remappedEvent = remappedSnapshot.replay();
     const bool configuredKeybinds = keybinds_.program().isAvailable();
     const bool traceCapture = inspectorKeyboardTraceCaptureActive();
@@ -3253,8 +3254,8 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
     const auto dispatchGuard = qScopeGuard([guard] {
         if (guard != nullptr) guard->endKeyEventDispatch();
     });
-    const KeyEventSnapshot remappedSnapshot =
-        modifierRemaps_.remapEvent(KeyEventSnapshot::capture(*event));
+    const KeyEventSnapshot remappedSnapshot = modifierRemaps_.remapEvent(
+        KeyEventSnapshot::capture(*event), layout.resolvedKeysym);
     QKeyEvent remappedEvent = remappedSnapshot.replay();
     const bool traceCapture = inspectorKeyboardTraceCaptureActive();
     TerminalKeyInput currentInput;
@@ -3448,6 +3449,7 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
         .modifiers = event->modifiers(),
         .text = event->text(),
         .nativeScanCode = event->nativeScanCode(),
+        .resolvedKeysym = currentInput.resolvedKeysym,
         .unshiftedCodepoint = currentInput.unshiftedCodepoint,
     };
     const bool sequenceWasActive = keybinds_.sequenceActive();

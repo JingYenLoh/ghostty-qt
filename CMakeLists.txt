@@ -694,6 +694,19 @@ ghostty_qt_add_internal_library(ghostty-qt-application-identity
 )
 target_link_libraries(ghostty-qt-application-identity PUBLIC Qt6::Core)
 
+ghostty_qt_add_internal_library(ghostty-qt-key-identity
+    src/ghostty_key_identity.cpp
+    src/ghostty_key_identity.h
+)
+target_link_libraries(ghostty-qt-key-identity
+    PUBLIC
+        Qt6::Core
+        Qt6::Gui
+        ghostty-vt-static
+    PRIVATE
+        PkgConfig::XKBCommon
+)
+
 ghostty_qt_add_internal_library(ghostty-qt-keyboard-layout
     src/keyboard_layout.cpp
     src/keyboard_layout.h
@@ -765,6 +778,9 @@ ghostty_qt_add_internal_library(ghostty-qt-modifier-remap
 target_link_libraries(ghostty-qt-modifier-remap PUBLIC
     Qt6::Core
     Qt6::Gui
+)
+target_link_libraries(ghostty-qt-modifier-remap PRIVATE
+    ghostty-qt-key-identity
 )
 
 add_library(ghostty-qt-runtime-paths STATIC
@@ -896,6 +912,9 @@ target_include_directories(ghostty-qt-action-pipeline PUBLIC
 target_link_libraries(ghostty-qt-action-pipeline PUBLIC
     Qt6::Core
     Qt6::Gui
+)
+target_link_libraries(ghostty-qt-action-pipeline PRIVATE
+    ghostty-qt-key-identity
 )
 target_compile_options(ghostty-qt-action-pipeline PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
@@ -1051,6 +1070,7 @@ target_link_libraries(ghostty-qt-vt-adapter
         Qt6::Core
         Qt6::Gui
     PRIVATE
+        ghostty-qt-key-identity
         ghostty-vt-static
 )
 target_compile_options(ghostty-qt-vt-adapter PRIVATE
@@ -1128,6 +1148,7 @@ target_link_libraries(ghostty-qt-session-worker
     PRIVATE
         ghostty-qt-action-pipeline
         ghostty-qt-desktop-activation
+        ghostty-qt-key-identity
         ghostty-qt-linux-cgroup
         ghostty-qt-link-matcher
         ghostty-qt-posix-regular-file
@@ -1360,6 +1381,7 @@ target_link_libraries(ghostty-qt PRIVATE
     ghostty-qt-desktop-activation
     ghostty-qt-desktop-quick-controls-style
     ghostty-qt-frontend-config
+    ghostty-qt-key-identity
     ghostty-qt-keyboard-layout
     ghostty-qt-launch-options
     ghostty-qt-linux-cgroup

@@ -1,5 +1,6 @@
 #include "session_worker.h"
 #include "desktop_activation.h"
+#include "ghostty_key_identity.h"
 #include "ghostty_link_matcher.h"
 #include "ghostty_shell_integration.h"
 #include "ghostty_vt_adapter.h"
@@ -67,6 +68,42 @@ constexpr quint64 kSearchRowsPerCompressionPass = 64;
 constexpr qsizetype kMaximumInitialInputFileSize = 10 * 1024 * 1024;
 constexpr Qt::KeyboardModifiers kTrackedTerminalModifiers = Qt::ShiftModifier
     | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier;
+
+GhosttyKey terminalKeyIdentity(const TerminalKeyInput &input)
+{
+    return ghosttyEffectiveKey(input.nativeScanCode, input.resolvedKeysym,
+                               input.key,
+                               Qt::KeyboardModifiers(input.modifiers));
+}
+
+std::optional<TerminalKeyInput>
+terminalKeyAfterEvent(const std::optional<TerminalKeyInput> &previous,
+                      const TerminalKeyInput &input)
+{
+    TerminalKeyInput copy = input;
+    copy.text.clear();
+
+    if (!input.pressed) {
+        if (!previous.has_value()) return std::nullopt;
+        if (terminalKeyIdentity(*previous) == terminalKeyIdentity(input)) {
+            // Keep the post-event metadata even after the exact key becomes
+            // unidentified. Focus-loss family releases clone lock and
+            // consumed state from this event, matching upstream's stored
+            // KeyEvent rather than rebuilding a bare modifier event.
+            copy.key = Qt::Key_unknown;
+            copy.nativeScanCode = 0;
+            copy.resolvedKeysym = 0;
+            const auto modifiers =
+                static_cast<Qt::KeyboardModifiers>(copy.modifiers)
+                & kTrackedTerminalModifiers;
+            if (modifiers == Qt::NoModifier && !copy.capsLock
+                && !copy.numLock) {
+                return std::nullopt;
+            }
+        }
+    }
+    return copy;
+}
 
 QString initialInputPathLabel(QByteArrayView path)
 {
@@ -784,11 +821,13 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
     cursorBlinkResetPending_ = false;
     stagedSequenceBytes_.clear();
     stagedSequenceModifiers_ = Qt::NoModifier;
+    stagedSequenceLastKey_.reset();
     newestSequenceToken_ = 0;
     activeSequenceToken_ = 0;
     stagedSequencePotentialActivity_ = false;
     stagedSequenceTraceResults_.clear();
     heldTerminalModifiers_ = Qt::NoModifier;
+    lastTerminalKey_.reset();
     terminalContentRevision_ = 1;
     searchContentRevision_ = 1;
     publishedContentRevision_ = 0;
@@ -1805,6 +1844,7 @@ void SessionWorker::sendKey(const TerminalKeyInput &input)
                                encoded.bytes);
     if (!readOnly_) {
         heldTerminalModifiers_ = modifiersAfterTerminalKey(input);
+        lastTerminalKey_ = terminalKeyAfterEvent(lastTerminalKey_, input);
     }
     clearSelectionAfterKey(encoded.modifier, encoded.escape);
     scrollToBottomForKeystroke(encoded.modifier);
@@ -1834,6 +1874,7 @@ void SessionWorker::stageSequenceKey(quint64 token,
         activeSequenceToken_ = token;
         stagedSequenceBytes_.clear();
         stagedSequenceModifiers_ = heldTerminalModifiers_;
+        stagedSequenceLastKey_ = lastTerminalKey_;
         stagedSequencePotentialActivity_ = false;
     }
 
@@ -1858,6 +1899,8 @@ void SessionWorker::stageSequenceKey(quint64 token,
     }
     stagedSequenceBytes_.append(encoded.bytes);
     stagedSequenceModifiers_ = modifiersAfterTerminalKey(input);
+    stagedSequenceLastKey_ =
+        terminalKeyAfterEvent(stagedSequenceLastKey_, input);
     stagedSequencePotentialActivity_ =
         stagedSequencePotentialActivity_ || keyMayStartProcess(input);
     const std::optional<TerminalKeyboardTraceResult> result =
@@ -1890,10 +1933,12 @@ void SessionWorker::resolveSequence(quint64 token,
     QByteArray currentBytes;
     bool currentTracePublished = false;
     Qt::KeyboardModifiers modifiersAfterBytes = heldTerminalModifiers_;
+    std::optional<TerminalKeyInput> lastKeyAfterBytes = lastTerminalKey_;
     if (resolution == TerminalSequenceResolution::Flush
         || resolution == TerminalSequenceResolution::FlushAndSendCurrent) {
         bytes = std::move(stagedSequenceBytes_);
         modifiersAfterBytes = stagedSequenceModifiers_;
+        lastKeyAfterBytes = stagedSequenceLastKey_;
         potentialActivity =
             stagedSequencePotentialActivity_ && !bytes.isEmpty();
     }
@@ -1929,6 +1974,8 @@ void SessionWorker::resolveSequence(quint64 token,
                 currentEscape = encodedCurrent.escape;
                 currentEncoded = true;
                 modifiersAfterBytes = modifiersAfterTerminalKey(current);
+                lastKeyAfterBytes =
+                    terminalKeyAfterEvent(lastKeyAfterBytes, current);
             } else {
                 publishKeyboardTraceResult(
                     current, TerminalKeyboardTraceOperation::SequenceResolution,
@@ -1941,6 +1988,7 @@ void SessionWorker::resolveSequence(quint64 token,
     activeSequenceToken_ = 0;
     stagedSequenceBytes_.clear();
     stagedSequenceModifiers_ = heldTerminalModifiers_;
+    stagedSequenceLastKey_ = lastTerminalKey_;
     stagedSequencePotentialActivity_ = false;
 
     if (resolution == TerminalSequenceResolution::Drop) {
@@ -1984,6 +2032,7 @@ void SessionWorker::resolveSequence(quint64 token,
         }
         if (!readOnly_) {
             heldTerminalModifiers_ = modifiersAfterBytes;
+            lastTerminalKey_ = std::move(lastKeyAfterBytes);
         }
         if (currentEncoded) {
             clearSelectionAfterKey(currentModifier, currentEscape);
@@ -2106,6 +2155,8 @@ void SessionWorker::resetTerminal()
     stopSelectionAutoscroll();
     heldTerminalModifiers_ = Qt::NoModifier;
     stagedSequenceModifiers_ = Qt::NoModifier;
+    lastTerminalKey_.reset();
+    stagedSequenceLastKey_.reset();
     if (vt_ == nullptr) {
         return;
     }
@@ -2163,32 +2214,35 @@ bool SessionWorker::keyboardInputSuppressed() const
 Qt::KeyboardModifiers
 SessionWorker::modifiersAfterTerminalKey(const TerminalKeyInput &input) const
 {
-    Qt::KeyboardModifiers result =
-        static_cast<Qt::KeyboardModifiers>(input.modifiers)
+    // TerminalPane's tracker supplies the post-event, post-key-remap mask.
+    // The exact VT key identity is retained independently so a source
+    // modifier remapped to a different family is not widened to both sides.
+    return static_cast<Qt::KeyboardModifiers>(input.modifiers)
         & kTrackedTerminalModifiers;
-    Qt::KeyboardModifier triggered = Qt::NoModifier;
-    switch (input.key) {
-    case Qt::Key_Shift: triggered = Qt::ShiftModifier; break;
-    case Qt::Key_Control: triggered = Qt::ControlModifier; break;
-    case Qt::Key_Alt:
-    case Qt::Key_AltGr: triggered = Qt::AltModifier; break;
-    case Qt::Key_Meta: triggered = Qt::MetaModifier; break;
-    default: return result;
-    }
-
-    if (input.pressed) {
-        result |= triggered;
-    } else {
-        result &= ~triggered;
-    }
-    return result;
 }
 
 void SessionWorker::releaseHeldTerminalModifiers()
 {
+    std::optional<TerminalKeyInput> lastKey =
+        std::exchange(lastTerminalKey_, std::nullopt);
     Qt::KeyboardModifiers remaining =
         std::exchange(heldTerminalModifiers_, Qt::NoModifier);
-    if (remaining == Qt::NoModifier || vt_ == nullptr) {
+    if (vt_ == nullptr) return;
+
+    QByteArray encodedReleases;
+    GhosttyKey exactKey = GHOSTTY_KEY_UNIDENTIFIED;
+    if (lastKey.has_value()) {
+        exactKey = terminalKeyIdentity(*lastKey);
+        if (exactKey != GHOSTTY_KEY_UNIDENTIFIED) {
+            lastKey->pressed = false;
+            lastKey->autoRepeat = false;
+            lastKey->text.clear();
+            encodedReleases.append(vt_->encodeKey(*lastKey).bytes);
+        }
+    }
+
+    if (remaining == Qt::NoModifier) {
+        queuePtyWrite(encodedReleases);
         return;
     }
 
@@ -2209,20 +2263,26 @@ void SessionWorker::releaseHeldTerminalModifiers()
                         KEY_LEFTMETA + 8U},
     };
 
-    QByteArray encodedReleases;
     for (const ModifierRelease &release : releases) {
         if (!remaining.testFlag(release.modifier)) {
             continue;
         }
         remaining &= ~release.modifier;
-        TerminalKeyInput input;
+        TerminalKeyInput input = lastKey.value_or(TerminalKeyInput{});
         input.key = release.key;
-        input.modifiers = remaining;
+        input.modifiers = static_cast<int>(remaining);
         input.pressed = false;
+        input.autoRepeat = false;
+        input.text.clear();
+        input.resolvedKeysym = 0;
         input.nativeScanCode = release.rightScanCode;
-        encodedReleases.append(vt_->encodeKey(input).bytes);
+        if (terminalKeyIdentity(input) != exactKey) {
+            encodedReleases.append(vt_->encodeKey(input).bytes);
+        }
         input.nativeScanCode = release.leftScanCode;
-        encodedReleases.append(vt_->encodeKey(input).bytes);
+        if (terminalKeyIdentity(input) != exactKey) {
+            encodedReleases.append(vt_->encodeKey(input).bytes);
+        }
     }
     queuePtyWrite(encodedReleases);
 }
@@ -4361,6 +4421,7 @@ void SessionWorker::closePty()
     pendingWrites_.clear();
     pendingPastes_.clear();
     heldTerminalModifiers_ = Qt::NoModifier;
+    lastTerminalKey_.reset();
     // A keybinding leader may have been staged while the child was alive.
     // Ghostty closes a waited surface when the first post-exit continuation
     // resolves to encoded bytes, so retain that sequence across this one
@@ -4375,6 +4436,7 @@ void SessionWorker::closePty()
         }
         stagedSequenceBytes_.clear();
         stagedSequenceModifiers_ = Qt::NoModifier;
+        stagedSequenceLastKey_.reset();
         activeSequenceToken_ = 0;
         stagedSequencePotentialActivity_ = false;
     }

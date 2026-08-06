@@ -48,6 +48,7 @@
 #include <qqml.h>
 
 #include <linux/input-event-codes.h>
+#include <xkbcommon/xkbcommon-keysyms.h>
 
 #include <algorithm>
 #include <array>
@@ -8889,6 +8890,7 @@ void TerminalPaneTest::forwardsAuthoritativeLayoutMetadata()
                     0, QStringLiteral("z"));
     const KeyboardLayoutTranslation layout{
         .unshiftedCodepoint = 'z',
+        .resolvedKeysym = XKB_KEY_z,
         .consumedModifiers = Qt::GroupSwitchModifier,
         .capsLock = true,
         .numLock = true,
@@ -8904,11 +8906,33 @@ void TerminalPaneTest::forwardsAuthoritativeLayoutMetadata()
     QCOMPARE(input.nativeScanCode, quint32{KEY_Y + 8U});
     QCOMPARE(input.text, QStringLiteral("z"));
     QCOMPARE(input.unshiftedCodepoint, std::uint32_t{'z'});
+    QCOMPARE(input.resolvedKeysym, quint32{XKB_KEY_z});
     QCOMPARE(input.consumedModifiers,
              static_cast<int>(Qt::GroupSwitchModifier));
     QVERIFY(input.capsLock);
     QVERIFY(input.numLock);
     QVERIFY(input.consumedCapsLock);
+
+    // A non-writing XKB remap retains both identities through the pane. The
+    // adapter can therefore apply Ghostty's remappability rule consistently
+    // for releases as well as presses.
+    QKeyEvent remappedRelease(QEvent::KeyRelease, Qt::Key_Escape,
+                              Qt::NoModifier, KEY_CAPSLOCK + 8U, XKB_KEY_Escape,
+                              0);
+    const ScopedKeyboardLayoutTranslation releaseScope(
+        remappedRelease,
+        {
+            .resolvedKeysym = XKB_KEY_Escape,
+            .authoritative = true,
+        });
+    QCoreApplication::sendEvent(&pane, &remappedRelease);
+    QCOMPARE(forwarded.count(), 2);
+    const TerminalKeyInput releaseInput =
+        qvariant_cast<TerminalKeyInput>(forwarded.constLast().constFirst());
+    QCOMPARE(releaseInput.key, static_cast<int>(Qt::Key_Escape));
+    QCOMPARE(releaseInput.nativeScanCode, quint32{KEY_CAPSLOCK + 8U});
+    QCOMPARE(releaseInput.resolvedKeysym, quint32{XKB_KEY_Escape});
+    QVERIFY(!releaseInput.pressed);
 
     GhosttyKeybindConfig keybinds;
     keybinds.root = {
@@ -8937,6 +8961,51 @@ void TerminalPaneTest::forwardsAuthoritativeLayoutMetadata()
     QCoreApplication::sendEvent(&boundPane, &bindingEvent);
     QCOMPARE(newTabs.count(), 1);
     QCOMPARE(boundForwarded.count(), 0);
+
+    GhosttyKeybindConfig remappedKeybinds;
+    remappedKeybinds.root = {
+        generationTestBinding({GhosttyKeybindTrigger{
+                                  .kind = GhosttyKeybindKeyKind::Physical,
+                                  .physicalName = QStringLiteral("escape"),
+                              }},
+                              QStringLiteral("new_tab"))};
+    LaunchOptions remappedOptions = options;
+    remappedOptions.keybindSource =
+        GhosttyKeybindSource::structured(std::move(remappedKeybinds));
+    TerminalPane remappedPane(remappedOptions, nullptr, std::nullopt,
+                              TerminalSessionStartMode::Deferred);
+    auto *const remappedController =
+        remappedPane.findChild<TerminalController *>();
+    QVERIFY(remappedController != nullptr);
+    QSignalSpy remappedForwarded(remappedController,
+                                 &TerminalController::keyRequested);
+    QSignalSpy remappedNewTabs(&remappedPane, &TerminalPane::requestNewTab);
+
+    const KeyboardLayoutTranslation capsToEscape{
+        .unshiftedCodepoint = 0x1b,
+        .resolvedKeysym = XKB_KEY_Escape,
+        .authoritative = true,
+    };
+    QKeyEvent remappedPress(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier,
+                            KEY_CAPSLOCK + 8U, XKB_KEY_Escape, 0);
+    {
+        const ScopedKeyboardLayoutTranslation remappedScope(remappedPress,
+                                                            capsToEscape);
+        QCoreApplication::sendEvent(&remappedPane, &remappedPress);
+    }
+    QCOMPARE(remappedNewTabs.count(), 1);
+    QCOMPARE(remappedForwarded.count(), 0);
+
+    QKeyEvent remappedBindingRelease(QEvent::KeyRelease, Qt::Key_Escape,
+                                     Qt::NoModifier, KEY_CAPSLOCK + 8U,
+                                     XKB_KEY_Escape, 0);
+    {
+        const ScopedKeyboardLayoutTranslation remappedScope(
+            remappedBindingRelease, capsToEscape);
+        QCoreApplication::sendEvent(&remappedPane, &remappedBindingRelease);
+    }
+    QCOMPARE(remappedNewTabs.count(), 1);
+    QCOMPARE(remappedForwarded.count(), 0);
 }
 
 void TerminalPaneTest::remapsSidedModifiersAcrossBindingsAndTerminalInput()
@@ -10769,6 +10838,7 @@ void TerminalPaneTest::preservesDeferredInputFifoDuringReplayReentrancy()
     QStringList order;
     bool injected = false;
     std::optional<TerminalKeyInput> replayedC;
+    std::optional<TerminalKeyInput> replayedCRelease;
     connect(
         controller, &TerminalController::keyRequested, &pane,
         [&](const TerminalKeyInput &input) {
@@ -10777,6 +10847,9 @@ void TerminalPaneTest::preservesDeferredInputFifoDuringReplayReentrancy()
                              .arg(input.pressed ? QStringLiteral("press")
                                                 : QStringLiteral("release")));
             if (input.key == Qt::Key_C && input.pressed) replayedC = input;
+            if (input.key == Qt::Key_C && !input.pressed) {
+                replayedCRelease = input;
+            }
             if (injected || input.key != Qt::Key_C
                 || !input.pressed) {
                 return;
@@ -10814,6 +10887,7 @@ void TerminalPaneTest::preservesDeferredInputFifoDuringReplayReentrancy()
             cPress,
             {
                 .unshiftedCodepoint = '&',
+                .resolvedKeysym = XKB_KEY_Escape,
                 .consumedModifiers = Qt::GroupSwitchModifier,
                 .capsLock = true,
                 .numLock = true,
@@ -10827,7 +10901,15 @@ void TerminalPaneTest::preservesDeferredInputFifoDuringReplayReentrancy()
     QCoreApplication::sendEvent(&pane, &oldInput);
     QKeyEvent cRelease(
         QEvent::KeyRelease, Qt::Key_C, Qt::NoModifier);
-    QCoreApplication::sendEvent(&pane, &cRelease);
+    {
+        const ScopedKeyboardLayoutTranslation releaseScope(
+            cRelease,
+            {
+                .resolvedKeysym = XKB_KEY_Escape,
+                .authoritative = true,
+            });
+        QCoreApplication::sendEvent(&pane, &cRelease);
+    }
     QKeyEvent dPress(
         QEvent::KeyPress, Qt::Key_D, Qt::NoModifier,
         QStringLiteral("d"));
@@ -10844,7 +10926,11 @@ void TerminalPaneTest::preservesDeferredInputFifoDuringReplayReentrancy()
 
     QVERIFY(injected);
     QVERIFY(replayedC.has_value());
+    QVERIFY(replayedCRelease.has_value());
     QCOMPARE(replayedC->unshiftedCodepoint, std::uint32_t{'&'});
+    QCOMPARE(replayedC->resolvedKeysym, quint32{XKB_KEY_Escape});
+    QCOMPARE(replayedCRelease->resolvedKeysym, quint32{XKB_KEY_Escape});
+    QVERIFY(!replayedCRelease->pressed);
     QCOMPARE(replayedC->consumedModifiers,
              static_cast<int>(Qt::GroupSwitchModifier));
     QVERIFY(replayedC->capsLock);

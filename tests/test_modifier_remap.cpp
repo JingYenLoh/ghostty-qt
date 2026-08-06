@@ -7,6 +7,7 @@
 #include <QTest>
 
 #include <linux/input-event-codes.h>
+#include <xkbcommon/xkbcommon-keysyms.h>
 
 #include <cstdint>
 #include <span>
@@ -97,6 +98,7 @@ private Q_SLOTS:
     void preservesLayoutTextNativeIdentityAndUnrelatedFlags();
     void replacementTakesEffectWithoutRetainedState();
     void trackerRetainsSideAcrossChordAndPrunesMissedRelease();
+    void usesXkbRemappedModifierIdentityBeforeConfigRemaps();
     void trackerReplacementClearsObservedSide();
     void rootMatchingUsesTheSameAtomicRemapGeneration();
 };
@@ -302,6 +304,43 @@ void ModifierRemapTest::trackerRetainsSideAcrossChordAndPrunesMissedRelease()
         tracker.remapEvent(snapshot(true, Qt::Key_R, Qt::ControlModifier));
     QVERIFY(leftChord.modifiers.testFlag(Qt::ControlModifier));
     QVERIFY(!leftChord.modifiers.testFlag(Qt::AltModifier));
+}
+
+void ModifierRemapTest::usesXkbRemappedModifierIdentityBeforeConfigRemaps()
+{
+    ModifierRemapTracker tracker(QVector{
+        mapping(ModifierKey::Ctrl, ModifierSide::Left, ModifierKey::Alt,
+                ModifierSide::Right),
+    });
+
+    // XKB turns the physical Caps key into left Control. That selected key is
+    // established before Ghostty's separate key-remap transforms Ctrl to Alt.
+    const KeyEventSnapshot press =
+        tracker.remapEvent(snapshot(true, Qt::Key_Control, Qt::NoModifier,
+                                    xkbKeycode(KEY_CAPSLOCK)),
+                           XKB_KEY_Control_L);
+    QVERIFY(!press.modifiers.testFlag(Qt::ControlModifier));
+    QVERIFY(press.modifiers.testFlag(Qt::AltModifier));
+
+    const KeyEventSnapshot chord = tracker.remapEvent(
+        snapshot(true, Qt::Key_R, Qt::ControlModifier), XKB_KEY_r);
+    QVERIFY(!chord.modifiers.testFlag(Qt::ControlModifier));
+    QVERIFY(chord.modifiers.testFlag(Qt::AltModifier));
+
+    const KeyEventSnapshot release =
+        tracker.remapEvent(snapshot(false, Qt::Key_Control, Qt::ControlModifier,
+                                    xkbKeycode(KEY_CAPSLOCK)),
+                           XKB_KEY_Control_L);
+    QCOMPARE(release.modifiers, Qt::NoModifier);
+
+    // The inverse mapping must not resurrect Ctrl merely because its raw
+    // evdev location is a control key.
+    ModifierRemapTracker inverse;
+    const KeyEventSnapshot remappedCaps =
+        inverse.remapEvent(snapshot(true, Qt::Key_CapsLock, Qt::NoModifier,
+                                    xkbKeycode(KEY_RIGHTCTRL)),
+                           XKB_KEY_Caps_Lock);
+    QCOMPARE(remappedCaps.modifiers, Qt::NoModifier);
 }
 
 void ModifierRemapTest::trackerReplacementClearsObservedSide()

@@ -77,8 +77,10 @@ configuration, not the Qt-owned file. See
 - Restoring decorations on an existing Wayland window may use Qt client-side
   framing even when the window initially had compositor-side decorations.
 - Native Wayland input on Qt's default seat follows the compositor's active
-  XKB layout and group. Synthetic/offscreen or non-default-seat key events
-  without mirrored compositor metadata use a US-oriented fallback.
+  XKB layout, group, and functional remaps such as `caps:swapescape` while
+  retaining physical writing-key bindings across layouts. Synthetic/offscreen
+  or non-default-seat key events without mirrored compositor metadata use a
+  US-oriented fallback.
 
 ## Terminal API gaps
 

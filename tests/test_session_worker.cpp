@@ -16,6 +16,7 @@
 #include <QTimer>
 
 #include <linux/input-event-codes.h>
+#include <xkbcommon/xkbcommon-keysyms.h>
 
 #include <algorithm>
 #include <csignal>
@@ -4545,14 +4546,46 @@ void SessionWorkerTest::releasesHeldModifiersBeforeFocusOut()
             input.pressed = false;
             expected.append(expectedAdapter->encodeKey(input).bytes);
         };
+    TerminalKeyInput exactShiftRelease = shift;
+    exactShiftRelease.pressed = false;
+    expected.append(expectedAdapter->encodeKey(exactShiftRelease).bytes);
     appendRelease(Qt::Key_Shift, KEY_RIGHTSHIFT + 8U, Qt::ControlModifier);
-    appendRelease(Qt::Key_Shift, KEY_LEFTSHIFT + 8U, Qt::ControlModifier);
     appendRelease(Qt::Key_Control, KEY_RIGHTCTRL + 8U, Qt::NoModifier);
     appendRelease(Qt::Key_Control, KEY_LEFTCTRL + 8U, Qt::NoModifier);
     const QByteArray focusOnly = expectedAdapter->encodeFocus(false);
     expected.append(focusOnly);
     QVERIFY(!focusOnly.isEmpty());
     QVERIFY(!expected.isEmpty());
+
+    // Model the frontend state after XKB maps Caps Lock to left Control and
+    // Ghostty's later key-remap maps Control to Alt. Upstream first releases
+    // the exact Control identity, then clears the post-remap Alt family.
+    TerminalKeyInput remappedControl;
+    remappedControl.key = Qt::Key_Control;
+    remappedControl.modifiers = Qt::AltModifier;
+    remappedControl.nativeScanCode = KEY_CAPSLOCK + 8U;
+    remappedControl.resolvedKeysym = XKB_KEY_Control_L;
+    remappedControl.pressed = true;
+    remappedControl.capsLock = true;
+    QByteArray remappedExpected =
+        expectedAdapter->encodeKey(remappedControl).bytes;
+    TerminalKeyInput exactControlRelease = remappedControl;
+    exactControlRelease.pressed = false;
+    remappedExpected.append(
+        expectedAdapter->encodeKey(exactControlRelease).bytes);
+    const auto appendRemappedRelease = [&remappedExpected,
+                                        &expectedAdapter](quint32 scanCode) {
+        TerminalKeyInput input;
+        input.key = Qt::Key_Alt;
+        input.nativeScanCode = scanCode;
+        input.pressed = false;
+        input.capsLock = true;
+        remappedExpected.append(expectedAdapter->encodeKey(input).bytes);
+    };
+    appendRemappedRelease(KEY_RIGHTALT + 8U);
+    appendRemappedRelease(KEY_LEFTALT + 8U);
+    remappedExpected.append(focusOnly);
+    QVERIFY(!remappedExpected.isEmpty());
 
     QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
     QTemporaryDir controlDirectory(
@@ -4569,7 +4602,7 @@ void SessionWorkerTest::releasesHeldModifiersBeforeFocusOut()
         QStringLiteral(
             "stty raw -echo; "
             "printf '\\033[>11u\\033[?1004h\\033[2hkam-ready'; "
-            ": > \"$3\"; "
+            ": > \"$4\"; "
             "payload=$(dd bs=1 count=\"$1\" 2>/dev/null); "
             "printf '\\r\\nkam-bytes:'; "
             "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
@@ -4585,10 +4618,15 @@ void SessionWorkerTest::releasesHeldModifiersBeforeFocusOut()
             "payload=$(dd bs=1 count=\"$2\" 2>/dev/null); "
             "printf '\\r\\nmodifier-bytes:'; "
             "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
-            "printf '\\r\\nmodifier-done\\r\\n'"),
+            "printf '\\r\\nmodifier-done\\r\\nremapped-ready'; "
+            "payload=$(dd bs=1 count=\"$3\" 2>/dev/null); "
+            "printf '\\r\\nremapped-bytes:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "printf '\\r\\nremapped-done\\r\\n'"),
         QStringLiteral("focus-modifier-test"),
         QString::number(focusOnly.size()),
         QString::number(expected.size()),
+        QString::number(remappedExpected.size()),
         readyMarker,
     };
     options.hold = true;
@@ -4648,6 +4686,18 @@ void SessionWorkerTest::releasesHeldModifiersBeforeFocusOut()
         5000);
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updates, QStringLiteral("modifier-done")), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("remapped-ready")), 1000);
+
+    worker.sendKey(remappedControl);
+    worker.setFocused(false);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates,
+                       QStringLiteral("remapped-bytes:%1")
+                           .arg(QString::fromLatin1(remappedExpected.toHex()))),
+        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("remapped-done")), 1000);
     QVERIFY2(errors.isEmpty(),
              errors.isEmpty()
                  ? ""

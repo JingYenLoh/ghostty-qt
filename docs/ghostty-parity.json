@@ -878,7 +878,7 @@
         },
         "key-remap": {
           "status": "supported",
-          "note": "The finalized ordered sided modifier mappings apply one-way and non-transitively to both root/pane keybinding matching and terminal input encoding without changing layout text, logical key, or native identity. A stateful allocation-free Qt adapter retains the observed XKB left/right side across ordinary generic-modifier events, prunes missed releases from Qt's authoritative mask, and replaces mappings atomically with the keybinding generation on live reload."
+          "note": "The finalized ordered sided modifier mappings apply one-way and non-transitively to both root/pane keybinding matching and terminal input encoding without changing layout text, logical key, or native identity. Compositor XKB identity is resolved first with Ghostty's exact non-writing-key remap rule, so swaps such as Caps/Escape and Caps/Control also supply the correct selected modifier and side before the separate configured modifier transform. A stateful allocation-free Qt adapter retains that observed left/right side across ordinary generic-modifier events, prunes missed releases from Qt's authoritative mask, and replaces mappings atomically with the keybinding generation on live reload."
         },
         "language": {
           "status": "not_applicable",

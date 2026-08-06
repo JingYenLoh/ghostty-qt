@@ -1,5 +1,7 @@
 #include "ghostty_keybind_set.h"
 
+#include "ghostty_key_identity.h"
+
 #include <QChar>
 #include <QHash>
 #include <QLatin1StringView>
@@ -633,33 +635,29 @@ QString unicodeFromQtEvent(int qtKey, QStringView text)
     return found == punctuation.cend() ? QString{} : QString(*found);
 }
 
-bool couldBeKeypadKey(int qtKey)
-{
-    return (qtKey >= Qt::Key_0 && qtKey <= Qt::Key_9) || qtKey == Qt::Key_Plus
-        || qtKey == Qt::Key_Minus || qtKey == Qt::Key_Period
-        || qtKey == Qt::Key_Slash || qtKey == Qt::Key_Equal
-        || qtKey == Qt::Key_Asterisk;
-}
-
 bool physicalMatches(int configured, quint32 configuredScanCode,
                      bool configuredKeypad, int eventKey, quint32 eventScanCode,
+                     quint32 eventResolvedKeysym,
                      Qt::KeyboardModifiers eventModifiers)
 {
-    // A nonzero native code is authoritative. Never fall back to the layout-
-    // derived Qt key when both sides have native identities: that would make
-    // KeyA fire from whichever physical key the active layout maps to A.
-    if (configuredScanCode != 0 && eventScanCode != 0) {
-        return configuredScanCode == eventScanCode;
+    const Qt::KeyboardModifiers configuredModifiers =
+        configuredKeypad ? Qt::KeypadModifier : Qt::NoModifier;
+    GhosttyKey configuredIdentity =
+        ghosttyKeyFromNativeScanCode(configuredScanCode);
+    if (configuredIdentity == GHOSTTY_KEY_UNIDENTIFIED) {
+        configuredIdentity = ghosttyKeyFromQt(configured, configuredModifiers);
+    }
+    const GhosttyKey eventIdentity = ghosttyEffectiveKey(
+        eventScanCode, eventResolvedKeysym, eventKey, eventModifiers);
+    if (configuredIdentity != GHOSTTY_KEY_UNIDENTIFIED
+        && eventIdentity != GHOSTTY_KEY_UNIDENTIFIED) {
+        return configuredIdentity == eventIdentity;
     }
 
-    // Synthetic QKeyEvents often omit native information. Preserve logical
-    // matching, while using KeypadModifier to disambiguate keypad locations
-    // wherever Qt gives us enough information.
+    // Preserve a conservative Qt fallback for an identity outside the pinned
+    // Ghostty/GDK mapping.
     const bool eventKeypad = eventModifiers.testFlag(Qt::KeypadModifier);
-    if (configuredKeypad != eventKeypad
-        && (configuredKeypad || couldBeKeypadKey(eventKey))) {
-        return false;
-    }
+    if (configuredKeypad != eventKeypad) return false;
 
     // Qt reports Shift+Tab as Backtab even though both represent the same
     // physical Tab key in Ghostty's model.
@@ -1230,7 +1228,8 @@ GhosttyKeybindProgram::lookup(NodeId node, PreparedEvent &prepared) const
                 || trigger.modifiers == withoutSelf)
             && physicalMatches(trigger.qtKey, trigger.nativeScanCode,
                                trigger.keypad, event.qtKey,
-                               event.nativeScanCode, event.modifiers)) {
+                               event.nativeScanCode, event.resolvedKeysym,
+                               event.modifiers)) {
             return {&entry, true};
         }
     }

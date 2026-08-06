@@ -10,6 +10,7 @@
 #include <QUrl>
 
 #include <linux/input-event-codes.h>
+#include <xkbcommon/xkbcommon-keysyms.h>
 
 #include <algorithm>
 #include <array>
@@ -2826,6 +2827,68 @@ void GhosttyVtAdapterTest::encodesUsingTerminalModes()
     QVERIFY(!encodedEscape.bytes.isEmpty());
     QVERIFY(!encodedEscape.modifier);
     QVERIFY(encodedEscape.escape);
+
+    TerminalKeyInput syntheticControl;
+    syntheticControl.key = Qt::Key_Control;
+    syntheticControl.modifiers = Qt::ControlModifier;
+    const GhosttyVtAdapter::EncodedKey encodedSyntheticControl =
+        adapter->encodeKey(syntheticControl);
+    QVERIFY(!encodedSyntheticControl.bytes.isEmpty());
+    QVERIFY(encodedSyntheticControl.modifier);
+
+    // Match Ghostty's GTK/XKB compromise: functional-key remaps use the
+    // resolved keysym, while writing-to-writing layout changes retain the raw
+    // physical position.
+    TerminalKeyInput capsToEscape = physicalEscape;
+    capsToEscape.key = Qt::Key_Escape;
+    capsToEscape.nativeScanCode = KEY_CAPSLOCK + 8U;
+    capsToEscape.resolvedKeysym = XKB_KEY_Escape;
+    QCOMPARE(adapter->encodeKey(capsToEscape), encodedEscape);
+    TerminalKeyInput releasedEscape = physicalEscape;
+    releasedEscape.pressed = false;
+    TerminalKeyInput releasedCapsToEscape = capsToEscape;
+    releasedCapsToEscape.pressed = false;
+    QVERIFY(!adapter->encodeKey(releasedEscape).bytes.isEmpty());
+    QCOMPARE(adapter->encodeKey(releasedCapsToEscape),
+             adapter->encodeKey(releasedEscape));
+
+    TerminalKeyInput physicalCaps;
+    physicalCaps.key = Qt::Key_CapsLock;
+    physicalCaps.nativeScanCode = KEY_CAPSLOCK + 8U;
+    const GhosttyVtAdapter::EncodedKey encodedCaps =
+        adapter->encodeKey(physicalCaps);
+    TerminalKeyInput escapeToCaps = physicalCaps;
+    escapeToCaps.nativeScanCode = KEY_ESC + 8U;
+    escapeToCaps.resolvedKeysym = XKB_KEY_Caps_Lock;
+    QCOMPARE(adapter->encodeKey(escapeToCaps), encodedCaps);
+
+    TerminalKeyInput physicalY;
+    physicalY.key = Qt::Key_Y;
+    physicalY.nativeScanCode = KEY_Y + 8U;
+    const GhosttyVtAdapter::EncodedKey encodedY = adapter->encodeKey(physicalY);
+    TerminalKeyInput germanY = physicalY;
+    germanY.key = Qt::Key_Z;
+    germanY.resolvedKeysym = XKB_KEY_z;
+    QCOMPARE(adapter->encodeKey(germanY), encodedY);
+
+    // The OR is intentional: a non-writing key on either side makes the
+    // remap eligible.
+    TerminalKeyInput letterToEscape = physicalEscape;
+    letterToEscape.nativeScanCode = KEY_A + 8U;
+    letterToEscape.resolvedKeysym = XKB_KEY_Escape;
+    QCOMPARE(adapter->encodeKey(letterToEscape), encodedEscape);
+    TerminalKeyInput escapeToLetter = physicalY;
+    escapeToLetter.key = Qt::Key_A;
+    escapeToLetter.nativeScanCode = KEY_ESC + 8U;
+    escapeToLetter.resolvedKeysym = XKB_KEY_a;
+    TerminalKeyInput physicalA = escapeToLetter;
+    physicalA.nativeScanCode = KEY_A + 8U;
+    physicalA.resolvedKeysym = 0;
+    QCOMPARE(adapter->encodeKey(escapeToLetter), adapter->encodeKey(physicalA));
+
+    TerminalKeyInput unsupportedKeysym = physicalEscape;
+    unsupportedKeysym.resolvedKeysym = XKB_KEY_Cyrillic_tse;
+    QCOMPARE(adapter->encodeKey(unsupportedKeysym), encodedEscape);
 
     TerminalKeyInput releasedA = input;
     releasedA.nativeScanCode = KEY_A + 8U;

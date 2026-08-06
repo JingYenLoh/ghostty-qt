@@ -755,8 +755,8 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched, QEvent *event)
         return true;
     }
     const KeyboardLayoutTranslation layout = translateKeyboardLayout(*keyEvent);
-    const KeyEventSnapshot remapped =
-        modifierRemaps_.remapEvent(KeyEventSnapshot::capture(*keyEvent));
+    const KeyEventSnapshot remapped = modifierRemaps_.remapEvent(
+        KeyEventSnapshot::capture(*keyEvent), layout.resolvedKeysym);
     const auto publishRootTrace =
         [pane, &remapped, &layout](TerminalKeyboardTraceDecisionKind kind,
                                    const GhosttyKeybindMatch *match = nullptr) {
@@ -803,6 +803,7 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched, QEvent *event)
         .modifiers = remapped.modifiers,
         .text = remapped.text,
         .nativeScanCode = remapped.nativeScanCode,
+        .resolvedKeysym = layout.resolvedKeysym,
         .unshiftedCodepoint = layout.unshiftedCodepoint,
     });
     if (!match.has_value()) {

@@ -11,6 +11,10 @@
 
 struct KeyboardLayoutTranslation final {
     std::uint32_t unshiftedCodepoint = 0;
+    // Effective XKB keysym at the event's group and modifier state. This is
+    // kept separately from nativeScanCode so downstream consumers can apply
+    // Ghostty's narrowly scoped functional-key remapping rule.
+    quint32 resolvedKeysym = 0;
     Qt::KeyboardModifiers consumedModifiers = Qt::NoModifier;
     bool capsLock = false;
     bool numLock = false;
