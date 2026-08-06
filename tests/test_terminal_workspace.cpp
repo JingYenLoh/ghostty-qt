@@ -36,6 +36,8 @@
 #include <QUrl>
 #include <QtQml/qqml.h>
 
+#include <linux/input-event-codes.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -7812,6 +7814,10 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
             .actions = {QStringLiteral("ignore")},
             .flags = GhosttyKeybindFlags{.all = true},
         },
+        GhosttyKeybindDefinition{
+            .sequence = {unicode('&', GhosttyKeybindCtrl)},
+            .actions = {QStringLiteral("ignore")},
+        },
     };
     config.tables = {GhosttyKeybindTable{
         .name = QStringLiteral("modal"),
@@ -7945,6 +7951,24 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
     exerciseIgnore(Qt::Key_I, QChar(0x09), 2);
     exerciseIgnore(Qt::Key_G, QChar(0x07), 3);
     exerciseIgnore(Qt::Key_A, QChar(0x01), 4);
+
+    const int beforeLayoutBinding = forwarded.count();
+    QKeyEvent layoutPress(QEvent::KeyPress, Qt::Key_Ampersand,
+                          Qt::ControlModifier, KEY_1 + 8U, 0, 0,
+                          QString(QChar(0x1f)));
+    const KeyboardLayoutTranslation frenchNumberRow{
+        .unshiftedCodepoint = '&',
+        .authoritative = true,
+    };
+    {
+        const ScopedKeyboardLayoutTranslation scope(layoutPress,
+                                                    frenchNumberRow);
+        QCoreApplication::sendEvent(pane, &layoutPress);
+    }
+    QCOMPARE(reload.count(), 5);
+    QCOMPARE(qvariant_cast<ApplicationAction>(reload.constLast().constFirst()),
+             ApplicationAction::Ignore);
+    QCOMPARE(forwarded.count(), beforeLayoutBinding);
 
     const QModelIndex rootGlobal =
         decisionContaining(QStringLiteral("Root global binding"));
@@ -9187,14 +9211,15 @@ void TerminalWorkspaceTest::
 
     QStringList order;
     bool injected = false;
+    std::optional<TerminalKeyInput> replayedC;
     connect(
         controller, &TerminalController::keyRequested, pane,
         [&](const TerminalKeyInput &input) {
             order.append(QStringLiteral("%1-%2")
                              .arg(QChar(input.key))
-                             .arg(input.pressed
-                                      ? QStringLiteral("press")
-                                      : QStringLiteral("release")));
+                             .arg(input.pressed ? QStringLiteral("press")
+                                                : QStringLiteral("release")));
+            if (input.key == Qt::Key_C && input.pressed) replayedC = input;
             if (injected || input.key != Qt::Key_C
                 || !input.pressed) {
                 return;
@@ -9228,7 +9253,19 @@ void TerminalWorkspaceTest::
     QKeyEvent cPress(
         QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
         QStringLiteral("c"));
-    QCoreApplication::sendEvent(pane, &cPress);
+    {
+        const ScopedKeyboardLayoutTranslation scope(
+            cPress,
+            {
+                .unshiftedCodepoint = '&',
+                .consumedModifiers = Qt::GroupSwitchModifier,
+                .capsLock = true,
+                .numLock = true,
+                .consumedCapsLock = true,
+                .authoritative = true,
+            });
+        QCoreApplication::sendEvent(pane, &cPress);
+    }
     QInputMethodEvent oldInput;
     oldInput.setCommitString(QStringLiteral("old-ime"));
     QCoreApplication::sendEvent(pane, &oldInput);
@@ -9248,6 +9285,13 @@ void TerminalWorkspaceTest::
     QCoreApplication::processEvents();
 
     QVERIFY(injected);
+    QVERIFY(replayedC.has_value());
+    QCOMPARE(replayedC->unshiftedCodepoint, std::uint32_t{'&'});
+    QCOMPARE(replayedC->consumedModifiers,
+             static_cast<int>(Qt::GroupSwitchModifier));
+    QVERIFY(replayedC->capsLock);
+    QVERIFY(replayedC->numLock);
+    QVERIFY(replayedC->consumedCapsLock);
     QCOMPARE(
         order,
         QStringList({

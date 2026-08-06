@@ -391,6 +391,11 @@ struct TerminalKeyInput {
     bool pressed = true;
     bool autoRepeat = false;
     bool composing = false;
+    // Qt::KeyboardModifiers has no Caps/Num lock bits. The compositor XKB
+    // state supplies them separately for Kitty report-all encoding.
+    bool capsLock = false;
+    bool numLock = false;
+    bool consumedCapsLock = false;
     uint32_t unshiftedCodepoint = 0;
     // Zero keeps ordinary input free of diagnostic work. A non-zero pair is
     // allocated only while this pane's inspector is actively capturing; it is

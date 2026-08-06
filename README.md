@@ -46,8 +46,9 @@ current compatibility boundary.
   and user-selected color schemes; Fusion remains the portable fallback.
 - A C++23 compiler and standard library, CMake 3.24 or newer, and Ninja.
 - Zig exactly 0.16.0.
-- `pkg-config`, libxkbcommon and Fontconfig development files, Git, `patch`,
-  Python 3.10 or newer, `tic`, Linux PTY headers, and `libutil`.
+- `pkg-config`, libwayland-client, libxkbcommon and Fontconfig development
+  files, Git, `patch`, Python 3.10 or newer, `tic`, Linux PTY headers, and
+  `libutil`.
 
 Cgroup isolation additionally needs a user systemd manager on the session
 D-Bus. Its default soft-failure policy allows terminals to start when that

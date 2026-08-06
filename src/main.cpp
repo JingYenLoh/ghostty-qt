@@ -8,6 +8,7 @@
 #include "ghostty_cli_delegation.h"
 #include "ghostty_config_edit.h"
 #include "ghostty_config_service.h"
+#include "keyboard_layout.h"
 #include "launch_options.h"
 #include "single_instance_activation.h"
 #include "systemd_notify.h"
@@ -2011,6 +2012,11 @@ int main(int argc, char *argv[])
     // Ghostty owns last-window process lifetime, including disabled and
     // delayed modes. Qt's implicit auto-quit would bypass that policy.
     application.setQuitOnLastWindowClosed(false);
+
+    // Mirror the compositor's XKB keymap before any terminal surfaces can
+    // receive input. Stack lifetime releases the extra wl_keyboard while the
+    // QApplication and its Wayland display are still alive.
+    WaylandKeyboardLayout keyboardLayout;
 
     SystemdApplicationLifecycle systemdLifecycle;
     const auto reloadSignalInstalled = systemdLifecycle.installReloadSignal();

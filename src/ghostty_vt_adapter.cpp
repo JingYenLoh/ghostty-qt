@@ -1590,9 +1590,15 @@ public:
         }
 
         ghostty_key_event_set_key(keyEvent_, key);
-        ghostty_key_event_set_mods(keyEvent_, mapQtModifiers(input.modifiers));
-        ghostty_key_event_set_consumed_mods(
-            keyEvent_, mapQtModifiers(input.consumedModifiers));
+        GhosttyMods mods = mapQtModifiers(input.modifiers);
+        if (input.capsLock) mods |= GHOSTTY_MODS_CAPS_LOCK;
+        if (input.numLock) mods |= GHOSTTY_MODS_NUM_LOCK;
+        ghostty_key_event_set_mods(keyEvent_, mods);
+        GhosttyMods consumedMods = mapQtModifiers(input.consumedModifiers);
+        if (input.consumedCapsLock) {
+            consumedMods |= GHOSTTY_MODS_CAPS_LOCK;
+        }
+        ghostty_key_event_set_consumed_mods(keyEvent_, consumedMods);
         ghostty_key_event_set_composing(keyEvent_, input.composing);
         ghostty_key_event_set_unshifted_codepoint(keyEvent_,
                                                   input.unshiftedCodepoint);

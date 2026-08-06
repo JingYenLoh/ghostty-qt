@@ -18,42 +18,6 @@
 
 namespace {
 
-std::uint32_t unshiftedCodepoint(int key)
-{
-    if (key >= Qt::Key_A && key <= Qt::Key_Z) {
-        return static_cast<std::uint32_t>('a' + key - Qt::Key_A);
-    }
-    if (key >= Qt::Key_0 && key <= Qt::Key_9) {
-        return static_cast<std::uint32_t>('0' + key - Qt::Key_0);
-    }
-    switch (key) {
-    case Qt::Key_Space: return ' ';
-    case Qt::Key_QuoteLeft:
-    case Qt::Key_AsciiTilde: return '`';
-    case Qt::Key_Backslash:
-    case Qt::Key_Bar: return '\\';
-    case Qt::Key_BracketLeft:
-    case Qt::Key_BraceLeft: return '[';
-    case Qt::Key_BracketRight:
-    case Qt::Key_BraceRight: return ']';
-    case Qt::Key_Comma:
-    case Qt::Key_Less: return ',';
-    case Qt::Key_Equal:
-    case Qt::Key_Plus: return '=';
-    case Qt::Key_Minus:
-    case Qt::Key_Underscore: return '-';
-    case Qt::Key_Period:
-    case Qt::Key_Greater: return '.';
-    case Qt::Key_Apostrophe:
-    case Qt::Key_QuoteDbl: return '\'';
-    case Qt::Key_Semicolon:
-    case Qt::Key_Colon: return ';';
-    case Qt::Key_Slash:
-    case Qt::Key_Question: return '/';
-    default: return 0;
-    }
-}
-
 quint64 keyEventIdentity(const QKeyEvent *event)
 {
     const quint64 physical = static_cast<quint64>(event->nativeScanCode());
@@ -205,6 +169,8 @@ void GhosttyApplicationKeybindings::drainDeferredInputs()
                 continue;
             }
             QKeyEvent replay = key->event.replay();
+            const ScopedKeyboardLayoutTranslation layoutScope(replay,
+                                                              key->layout);
             guard->replayingDeferredKeyEvent_ = &replay;
             QCoreApplication::sendEvent(key->target, &replay);
             if (guard != nullptr) {
@@ -764,6 +730,8 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched, QEvent *event)
                 .target = watched,
                 .event =
                     KeyEventSnapshot::capture(*static_cast<QKeyEvent *>(event)),
+                .layout =
+                    translateKeyboardLayout(*static_cast<QKeyEvent *>(event)),
             });
         }
         event->accept();
@@ -786,39 +754,40 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched, QEvent *event)
         event->accept();
         return true;
     }
+    const KeyboardLayoutTranslation layout = translateKeyboardLayout(*keyEvent);
     const KeyEventSnapshot remapped =
         modifierRemaps_.remapEvent(KeyEventSnapshot::capture(*keyEvent));
-    const auto publishRootTrace = [pane, &remapped](
-                                      TerminalKeyboardTraceDecisionKind kind,
-                                      const GhosttyKeybindMatch *match =
-                                          nullptr) {
-        if (pane == nullptr || !pane->inspectorKeyboardTraceCaptureActive()) {
-            return true;
-        }
-        const QPointer<TerminalPane> paneGuard(pane);
-        QKeyEvent tracedEvent = remapped.replay();
-        TerminalKeyInput input =
-            pane->beginInspectorKeyboardTrace(tracedEvent, remapped.pressed);
-        TerminalKeyboardTraceDecision decision;
-        decision.input = std::move(input);
-        decision.kind = kind;
-        if (match != nullptr) {
-            decision.actions = match->actionChain.serializedActions();
-            decision.activeTables = pane->activeKeyTables();
-            decision.pendingSequence = pane->pendingKeySequence();
-            // Root application and global matches are consumed before
-            // surface lookup regardless of their raw unconsumed flag.
-            decision.consumed = true;
-            decision.performable = match->performable;
-            decision.all = match->all;
-            decision.global = match->global;
-            decision.physical = match->physical;
-        } else {
-            decision.consumed = true;
-        }
-        pane->publishInspectorKeyboardTrace(std::move(decision));
-        return paneGuard != nullptr;
-    };
+    const auto publishRootTrace =
+        [pane, &remapped, &layout](TerminalKeyboardTraceDecisionKind kind,
+                                   const GhosttyKeybindMatch *match = nullptr) {
+            if (pane == nullptr
+                || !pane->inspectorKeyboardTraceCaptureActive()) {
+                return true;
+            }
+            const QPointer<TerminalPane> paneGuard(pane);
+            QKeyEvent tracedEvent = remapped.replay();
+            TerminalKeyInput input = pane->beginInspectorKeyboardTrace(
+                tracedEvent, remapped.pressed, layout);
+            TerminalKeyboardTraceDecision decision;
+            decision.input = std::move(input);
+            decision.kind = kind;
+            if (match != nullptr) {
+                decision.actions = match->actionChain.serializedActions();
+                decision.activeTables = pane->activeKeyTables();
+                decision.pendingSequence = pane->pendingKeySequence();
+                // Root application and global matches are consumed before
+                // surface lookup regardless of their raw unconsumed flag.
+                decision.consumed = true;
+                decision.performable = match->performable;
+                decision.all = match->all;
+                decision.global = match->global;
+                decision.physical = match->physical;
+            } else {
+                decision.consumed = true;
+            }
+            pane->publishInspectorKeyboardTrace(std::move(decision));
+            return paneGuard != nullptr;
+        };
     if (keyRelease) {
         if (consumedKeys_.remove(keyEventIdentity(keyEvent))) {
             if (!publishRootTrace(
@@ -834,7 +803,7 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched, QEvent *event)
         .modifiers = remapped.modifiers,
         .text = remapped.text,
         .nativeScanCode = remapped.nativeScanCode,
-        .unshiftedCodepoint = unshiftedCodepoint(remapped.key),
+        .unshiftedCodepoint = layout.unshiftedCodepoint,
     });
     if (!match.has_value()) {
         return QObject::eventFilter(watched, event);

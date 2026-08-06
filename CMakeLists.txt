@@ -135,6 +135,7 @@ find_package(LayerShellQt REQUIRED)
 find_package(KF6WindowSystem QUIET)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(XKBCommon REQUIRED IMPORTED_TARGET xkbcommon)
+pkg_check_modules(WaylandClient REQUIRED IMPORTED_TARGET wayland-client)
 qt_standard_project_setup(REQUIRES 6.8)
 
 add_library(ghostty-qt-desktop-quick-controls-style STATIC
@@ -693,6 +694,20 @@ ghostty_qt_add_internal_library(ghostty-qt-application-identity
 )
 target_link_libraries(ghostty-qt-application-identity PUBLIC Qt6::Core)
 
+ghostty_qt_add_internal_library(ghostty-qt-keyboard-layout
+    src/keyboard_layout.cpp
+    src/keyboard_layout.h
+    src/unique_file_descriptor.h
+)
+target_link_libraries(ghostty-qt-keyboard-layout
+    PUBLIC
+        Qt6::Core
+        Qt6::Gui
+    PRIVATE
+        PkgConfig::WaylandClient
+        PkgConfig::XKBCommon
+)
+
 ghostty_qt_add_internal_library(ghostty-qt-systemd-notify
     src/systemd_notify.cpp
     src/systemd_notify.h
@@ -1189,6 +1204,7 @@ target_link_libraries(ghostty-qt-application-keybindings
         Qt6::Core
         Qt6::Gui
         ghostty-qt-action-pipeline
+        ghostty-qt-keyboard-layout
         ghostty-qt-launch-options
         ghostty-qt-modifier-remap
     PRIVATE
@@ -1344,6 +1360,7 @@ target_link_libraries(ghostty-qt PRIVATE
     ghostty-qt-desktop-activation
     ghostty-qt-desktop-quick-controls-style
     ghostty-qt-frontend-config
+    ghostty-qt-keyboard-layout
     ghostty-qt-launch-options
     ghostty-qt-linux-cgroup
     ghostty-qt-link-matcher

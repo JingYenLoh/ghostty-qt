@@ -79,6 +79,19 @@ target_link_libraries(test-pty-write-buffer PRIVATE
 add_test(NAME pty-write-buffer COMMAND test-pty-write-buffer)
 set_tests_properties(pty-write-buffer PROPERTIES TIMEOUT 10)
 
+qt_add_executable(test-keyboard-layout
+    test_keyboard_layout.cpp
+)
+target_link_libraries(test-keyboard-layout PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+    PkgConfig::XKBCommon
+    ghostty-qt-keyboard-layout
+)
+add_test(NAME keyboard-layout COMMAND test-keyboard-layout)
+set_tests_properties(keyboard-layout PROPERTIES TIMEOUT 10)
+
 qt_add_executable(test-launch-options
     test_launch_options.cpp
     ghostty_config_export_fixture.h
@@ -634,6 +647,7 @@ target_link_libraries(ghostty-qt-render-test-support PUBLIC
     Qt6::Qml
     Qt6::Quick
     ghostty-qt-action-pipeline
+    ghostty-qt-keyboard-layout
     ghostty-qt-launch-options
     ghostty-qt-modifier-remap
     ghostty-qt-tab-list-model

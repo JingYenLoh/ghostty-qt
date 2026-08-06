@@ -493,6 +493,7 @@ private Q_SLOTS:
     void routesEmergencyTabShortcuts();
     void compiledProgramAvailabilityControlsEmergencyShortcuts();
     void forwardsConsumedShiftForLayoutText();
+    void forwardsAuthoritativeLayoutMetadata();
     void remapsSidedModifiersAcrossBindingsAndTerminalInput();
     void routesConfiguredBindingsAndDisablesEmergencyFallback();
     void routesBroadConfiguredActionEffects();
@@ -8870,6 +8871,74 @@ void TerminalPaneTest::forwardsConsumedShiftForLayoutText()
     QCOMPARE(input.consumedModifiers, 0);
 }
 
+void TerminalPaneTest::forwardsAuthoritativeLayoutMetadata()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::structured({});
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    auto *const controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+
+    QKeyEvent event(QEvent::KeyPress, Qt::Key_Y, Qt::NoModifier, KEY_Y + 8U, 0,
+                    0, QStringLiteral("z"));
+    const KeyboardLayoutTranslation layout{
+        .unshiftedCodepoint = 'z',
+        .consumedModifiers = Qt::GroupSwitchModifier,
+        .capsLock = true,
+        .numLock = true,
+        .consumedCapsLock = true,
+        .authoritative = true,
+    };
+    const ScopedKeyboardLayoutTranslation scope(event, layout);
+    QCoreApplication::sendEvent(&pane, &event);
+
+    QCOMPARE(forwarded.count(), 1);
+    const TerminalKeyInput input =
+        qvariant_cast<TerminalKeyInput>(forwarded.constFirst().constFirst());
+    QCOMPARE(input.nativeScanCode, quint32{KEY_Y + 8U});
+    QCOMPARE(input.text, QStringLiteral("z"));
+    QCOMPARE(input.unshiftedCodepoint, std::uint32_t{'z'});
+    QCOMPARE(input.consumedModifiers,
+             static_cast<int>(Qt::GroupSwitchModifier));
+    QVERIFY(input.capsLock);
+    QVERIFY(input.numLock);
+    QVERIFY(input.consumedCapsLock);
+
+    GhosttyKeybindConfig keybinds;
+    keybinds.root = {
+        generationTestBinding({generationTestKey('&', GhosttyKeybindCtrl)},
+                              QStringLiteral("new_tab"))};
+    LaunchOptions boundOptions = options;
+    boundOptions.keybindSource =
+        GhosttyKeybindSource::structured(std::move(keybinds));
+    TerminalPane boundPane(boundOptions, nullptr, std::nullopt,
+                           TerminalSessionStartMode::Deferred);
+    auto *const boundController = boundPane.findChild<TerminalController *>();
+    QVERIFY(boundController != nullptr);
+    QSignalSpy boundForwarded(boundController,
+                              &TerminalController::keyRequested);
+    QSignalSpy newTabs(&boundPane, &TerminalPane::requestNewTab);
+
+    QKeyEvent bindingEvent(QEvent::KeyPress, Qt::Key_Ampersand,
+                           Qt::ControlModifier, KEY_1 + 8U, 0, 0,
+                           QString(QChar(0x1f)));
+    const KeyboardLayoutTranslation frenchNumberRow{
+        .unshiftedCodepoint = '&',
+        .authoritative = true,
+    };
+    const ScopedKeyboardLayoutTranslation bindingScope(bindingEvent,
+                                                       frenchNumberRow);
+    QCoreApplication::sendEvent(&boundPane, &bindingEvent);
+    QCOMPARE(newTabs.count(), 1);
+    QCOMPARE(boundForwarded.count(), 0);
+}
+
 void TerminalPaneTest::remapsSidedModifiersAcrossBindingsAndTerminalInput()
 {
     constexpr auto xkbKeycode = [](std::uint32_t evdevCode) {
@@ -10699,14 +10768,15 @@ void TerminalPaneTest::preservesDeferredInputFifoDuringReplayReentrancy()
 
     QStringList order;
     bool injected = false;
+    std::optional<TerminalKeyInput> replayedC;
     connect(
         controller, &TerminalController::keyRequested, &pane,
         [&](const TerminalKeyInput &input) {
             order.append(QStringLiteral("%1-%2")
                              .arg(QChar(input.key))
-                             .arg(input.pressed
-                                      ? QStringLiteral("press")
-                                      : QStringLiteral("release")));
+                             .arg(input.pressed ? QStringLiteral("press")
+                                                : QStringLiteral("release")));
+            if (input.key == Qt::Key_C && input.pressed) replayedC = input;
             if (injected || input.key != Qt::Key_C
                 || !input.pressed) {
                 return;
@@ -10739,7 +10809,19 @@ void TerminalPaneTest::preservesDeferredInputFifoDuringReplayReentrancy()
     QKeyEvent cPress(
         QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
         QStringLiteral("c"));
-    QCoreApplication::sendEvent(&pane, &cPress);
+    {
+        const ScopedKeyboardLayoutTranslation scope(
+            cPress,
+            {
+                .unshiftedCodepoint = '&',
+                .consumedModifiers = Qt::GroupSwitchModifier,
+                .capsLock = true,
+                .numLock = true,
+                .consumedCapsLock = true,
+                .authoritative = true,
+            });
+        QCoreApplication::sendEvent(&pane, &cPress);
+    }
     QInputMethodEvent oldInput;
     oldInput.setCommitString(QStringLiteral("old-ime"));
     QCoreApplication::sendEvent(&pane, &oldInput);
@@ -10761,6 +10843,13 @@ void TerminalPaneTest::preservesDeferredInputFifoDuringReplayReentrancy()
     QCoreApplication::processEvents();
 
     QVERIFY(injected);
+    QVERIFY(replayedC.has_value());
+    QCOMPARE(replayedC->unshiftedCodepoint, std::uint32_t{'&'});
+    QCOMPARE(replayedC->consumedModifiers,
+             static_cast<int>(Qt::GroupSwitchModifier));
+    QVERIFY(replayedC->capsLock);
+    QVERIFY(replayedC->numLock);
+    QVERIFY(replayedC->consumedCapsLock);
     QCOMPARE(
         order,
         QStringList({

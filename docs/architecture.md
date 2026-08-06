@@ -2333,10 +2333,19 @@ event Unicode, then the unshifted codepoint, then modifier-specific and bare
 catch-all entries at every depth. On Linux/Wayland, native XKB scan codes keep
 physical triggers and libghostty's
 physical-key encoding layout-independent, while distinguishing top-row/keypad
-and left/right modifier locations. Qt does not expose the compositor keymap's
-unmodified layout level through `QKeyEvent`, so the fallback unshifted
-codepoint remains US-layout-oriented for shifted punctuation. Reading Wayland
-keymap state directly is a later input-compatibility slice.
+and left/right modifier locations. Because `QKeyEvent` does not expose the
+compositor keymap's unmodified layout level, `WaylandKeyboardLayout` requests
+a second keyboard object from Qt's public native default Wayland seat and
+mirrors its XKB keymap, modifier masks, and active group. A protocol-free
+`XkbKeyboardLayout` derives the group-specific level-zero Unicode value and
+GTK-compatible consumed modifiers for both libghostty and the two trie
+matchers. Dead keys retain an authoritative zero result, AltGr remains Qt's
+non-terminal `GroupSwitchModifier`, and Caps/Num lock state reaches Kitty
+report-all encoding. Synthetic events and sessions without a usable Wayland
+keymap retain the conservative US-oriented Qt-key fallback. Translation is
+captured beside deferred events and restored with a scoped replay override, so
+changing layouts during an asynchronous action cannot reinterpret queued
+input.
 
 Each compiled trie edge also retains the human-readable label of its
 configured trigger. A pane publishes labels from the edges actually matched,

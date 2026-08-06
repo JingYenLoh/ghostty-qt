@@ -38,7 +38,8 @@ QString graphicsApiName(const QQuickWindow *window)
     return QStringLiteral("unknown");
 }
 
-QString modifierNames(Qt::KeyboardModifiers modifiers)
+QString modifierNames(Qt::KeyboardModifiers modifiers, bool capsLock = false,
+                      bool numLock = false)
 {
     QStringList names;
     if (modifiers.testFlag(Qt::ShiftModifier)) {
@@ -59,6 +60,8 @@ QString modifierNames(Qt::KeyboardModifiers modifiers)
     if (modifiers.testFlag(Qt::GroupSwitchModifier)) {
         names.append(QStringLiteral("Group switch"));
     }
+    if (capsLock) names.append(QStringLiteral("Caps Lock"));
+    if (numLock) names.append(QStringLiteral("Num Lock"));
     return names.isEmpty() ? QStringLiteral("none") : names.join(u'+');
 }
 
@@ -253,7 +256,8 @@ QString keySummary(const TerminalKeyInput &input)
     QStringList fields{
         keyActionName(input),
         keyName(input),
-        modifierNames(Qt::KeyboardModifiers(input.modifiers)),
+        modifierNames(Qt::KeyboardModifiers(input.modifiers), input.capsLock,
+                      input.numLock),
     };
     if (!input.text.isEmpty()) {
         fields.append(
@@ -268,7 +272,8 @@ QString keyDetails(const TerminalKeyInput &input)
         QStringLiteral("Qt key %1").arg(input.key),
         QStringLiteral("scan code 0x%1").arg(input.nativeScanCode, 0, 16),
         QStringLiteral("consumed %1")
-            .arg(modifierNames(Qt::KeyboardModifiers(input.consumedModifiers))),
+            .arg(modifierNames(Qt::KeyboardModifiers(input.consumedModifiers),
+                               input.consumedCapsLock)),
     };
     if (input.unshiftedCodepoint != 0) {
         fields.append(

@@ -3,6 +3,7 @@
 #include "application_action.h"
 #include "ghostty_keybind_set.h"
 #include "key_event_snapshot.h"
+#include "keyboard_layout.h"
 #include "launch_options.h"
 #include "modifier_remap.h"
 #include "revision_counter.h"
@@ -370,6 +371,7 @@ private:
     };
     struct DeferredKeyInput {
         KeyEventSnapshot event;
+        KeyboardLayoutTranslation layout;
         quint64 focusEpoch = 0;
         quint64 pointerActivityEpoch = 0;
     };
@@ -440,12 +442,10 @@ private:
     KeyHandling handleShortcut(QKeyEvent *event,
                                const QPointer<TerminalPane> &guard,
                                quint64 pointerActivityEpoch,
-                               int consumedModifiers,
                                const TerminalKeyInput &currentInput);
     KeyHandling handleConfiguredShortcut(QKeyEvent *event,
                                          const QPointer<TerminalPane> &guard,
                                          quint64 pointerActivityEpoch,
-                                         int consumedModifiers,
                                          const TerminalKeyInput &currentInput);
     [[nodiscard]] bool resolveActiveSequence(
         TerminalSequenceResolution resolution,
@@ -491,7 +491,7 @@ private:
     beginInspectorKeyboardTrace(const QKeyEvent &event, bool pressed);
     [[nodiscard]] TerminalKeyInput
     beginInspectorKeyboardTrace(const QKeyEvent &event, bool pressed,
-                                int consumedModifiers);
+                                KeyboardLayoutTranslation layout);
     void publishInspectorKeyboardTrace(TerminalKeyboardTraceDecision decision);
     void syncPointerCursor();
     [[nodiscard]] bool revealMouseForPointerPosition(const QPointF &position);

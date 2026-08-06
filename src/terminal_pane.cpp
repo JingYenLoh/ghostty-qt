@@ -288,82 +288,6 @@ Qt::KeyboardModifiers modifiersAfterKeyEvent(const QKeyEvent *event,
     return modifiers;
 }
 
-uint32_t unshiftedCodepoint(int key)
-{
-    if (key >= Qt::Key_A && key <= Qt::Key_Z) {
-        return static_cast<uint32_t>('a' + key - Qt::Key_A);
-    }
-    if (key >= Qt::Key_0 && key <= Qt::Key_9) {
-        return static_cast<uint32_t>('0' + key - Qt::Key_0);
-    }
-    switch (key) {
-    case Qt::Key_Space: return ' ';
-    case Qt::Key_QuoteLeft:
-    case Qt::Key_AsciiTilde: return '`';
-    case Qt::Key_Backslash:
-    case Qt::Key_Bar: return '\\';
-    case Qt::Key_BracketLeft:
-    case Qt::Key_BraceLeft: return '[';
-    case Qt::Key_BracketRight:
-    case Qt::Key_BraceRight: return ']';
-    case Qt::Key_Comma:
-    case Qt::Key_Less: return ',';
-    case Qt::Key_Equal:
-    case Qt::Key_Plus: return '=';
-    case Qt::Key_Minus:
-    case Qt::Key_Underscore: return '-';
-    case Qt::Key_Period:
-    case Qt::Key_Greater: return '.';
-    case Qt::Key_Apostrophe:
-    case Qt::Key_QuoteDbl: return '\'';
-    case Qt::Key_Semicolon:
-    case Qt::Key_Colon: return ';';
-    case Qt::Key_Slash:
-    case Qt::Key_Question: return '/';
-    default: return 0;
-    }
-}
-
-std::optional<char32_t> singlePrintableCodepoint(QStringView text)
-{
-    char32_t codepoint = 0;
-    if (text.size() == 1 && !text.front().isSurrogate()) {
-        codepoint = text.front().unicode();
-    } else if (text.size() == 2 && text.front().isHighSurrogate()
-               && text.back().isLowSurrogate()) {
-        codepoint = QChar::surrogateToUcs4(text.front(), text.back());
-    } else {
-        return std::nullopt;
-    }
-
-    if (codepoint < 0x20U || codepoint == 0x7fU) {
-        return std::nullopt;
-    }
-    return codepoint;
-}
-
-Qt::KeyboardModifiers consumedModifiersForText(const QKeyEvent &event)
-{
-    const Qt::KeyboardModifiers modifiers =
-        normalizedModifiers(event.modifiers());
-    if (!modifiers.testFlag(Qt::ShiftModifier)) {
-        return Qt::NoModifier;
-    }
-
-    const uint32_t unshifted = unshiftedCodepoint(event.key());
-    const std::optional<char32_t> produced =
-        singlePrintableCodepoint(event.text());
-    if (unshifted == 0 || !produced.has_value()
-        || static_cast<uint32_t>(*produced) == unshifted) {
-        return Qt::NoModifier;
-    }
-
-    // QKeyEvent has no public equivalent of GDK's consumed-modifier mask.
-    // Infer only the layout transformation we can prove from its text and
-    // level-zero key value. Other held modifiers remain effective.
-    return Qt::ShiftModifier;
-}
-
 quint64 keyEventIdentity(const QKeyEvent *event)
 {
     const quint64 physical = static_cast<quint64>(event->nativeScanCode());
@@ -401,18 +325,21 @@ std::optional<qint64> fractionalPageDelta(float fraction, int pageRows)
     return static_cast<qint64>(truncated);
 }
 
-TerminalKeyInput terminalKeyInput(const QKeyEvent *event, bool pressed = true,
-                                  int consumedModifiers = 0)
+TerminalKeyInput terminalKeyInput(const QKeyEvent *event, bool pressed,
+                                  const KeyboardLayoutTranslation &layout)
 {
     return {
         .key = event->key(),
         .modifiers = static_cast<int>(event->modifiers()),
-        .consumedModifiers = consumedModifiers,
+        .consumedModifiers = static_cast<int>(layout.consumedModifiers),
         .text = event->text(),
         .nativeScanCode = event->nativeScanCode(),
         .pressed = pressed,
         .autoRepeat = event->isAutoRepeat(),
-        .unshiftedCodepoint = unshiftedCodepoint(event->key()),
+        .capsLock = layout.capsLock,
+        .numLock = layout.numLock,
+        .consumedCapsLock = layout.consumedCapsLock,
+        .unshiftedCodepoint = layout.unshiftedCodepoint,
     };
 }
 
@@ -2079,16 +2006,15 @@ void TerminalPane::setInspectorKeyboardTraceCapture(bool enabled)
 TerminalKeyInput
 TerminalPane::beginInspectorKeyboardTrace(const QKeyEvent &event, bool pressed)
 {
-    return beginInspectorKeyboardTrace(
-        event, pressed, static_cast<int>(consumedModifiersForText(event)));
+    return beginInspectorKeyboardTrace(event, pressed,
+                                       translateKeyboardLayout(event));
 }
 
 TerminalKeyInput
 TerminalPane::beginInspectorKeyboardTrace(const QKeyEvent &event, bool pressed,
-                                          int consumedModifiers)
+                                          KeyboardLayoutTranslation layout)
 {
-    TerminalKeyInput input =
-        terminalKeyInput(&event, pressed, consumedModifiers);
+    TerminalKeyInput input = terminalKeyInput(&event, pressed, layout);
     if (inspectorKeyboardTraceGeneration_ == 0) return input;
 
     do {
@@ -3170,6 +3096,7 @@ void TerminalPane::deferKeyEvent(const QKeyEvent &event)
 {
     deferredInputs_.emplace_back(DeferredKeyInput{
         .event = KeyEventSnapshot::capture(event),
+        .layout = translateKeyboardLayout(event),
         .focusEpoch = keyFocusEpoch_,
         .pointerActivityEpoch = pointerActivityEpoch_,
     });
@@ -3190,6 +3117,8 @@ void TerminalPane::drainDeferredKeyEvents()
         guard->deferredInputs_.pop_front();
         if (const auto *key = std::get_if<DeferredKeyInput>(&input)) {
             QKeyEvent replay = key->event.replay();
+            const ScopedKeyboardLayoutTranslation layoutScope(replay,
+                                                              key->layout);
             guard->replayingDeferredKeyEvent_ = &replay;
             guard->replayingDeferredPointerActivityEpoch_ =
                 key->pointerActivityEpoch;
@@ -3208,13 +3137,12 @@ void TerminalPane::drainDeferredKeyEvents()
 
 void TerminalPane::keyPressEvent(QKeyEvent *event)
 {
+    const KeyboardLayoutTranslation layout = translateKeyboardLayout(*event);
     if (inspectorCellPicking_ && event->key() == Qt::Key_Escape) {
         const QPointer<TerminalPane> guard(this);
         if (inspectorKeyboardTraceCaptureActive()) {
             TerminalKeyboardTraceDecision decision;
-            decision.input = beginInspectorKeyboardTrace(
-                *event, true,
-                static_cast<int>(consumedModifiersForText(*event)));
+            decision.input = beginInspectorKeyboardTrace(*event, true, layout);
             decision.kind =
                 TerminalKeyboardTraceDecisionKind::PaneInspectorCancel;
             decision.consumed = true;
@@ -3229,8 +3157,6 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
         event->accept();
         return;
     }
-    const int consumedModifiers =
-        static_cast<int>(consumedModifiersForText(*event));
     const quint64 pointerActivityEpoch =
         replayingDeferredPointerActivityEpoch_.value_or(pointerActivityEpoch_);
     // The original interaction clears the alert before it may be deferred.
@@ -3260,12 +3186,10 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
     const bool traceCapture = inspectorKeyboardTraceCaptureActive();
     TerminalKeyInput currentInput;
     if (configuredKeybinds || traceCapture) {
-        currentInput =
-            beginInspectorKeyboardTrace(remappedEvent, true, consumedModifiers);
+        currentInput = beginInspectorKeyboardTrace(remappedEvent, true, layout);
     }
-    const KeyHandling handling =
-        handleShortcut(&remappedEvent, guard, pointerActivityEpoch,
-                       consumedModifiers, currentInput);
+    const KeyHandling handling = handleShortcut(
+        &remappedEvent, guard, pointerActivityEpoch, currentInput);
     // Lifecycle actions are owner-deferred, but an embedding application may
     // still attach a destructive direct observer to another pane signal.
     // Never resume ordinary key handling through a deleted QObject.
@@ -3306,8 +3230,7 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
     }
 
     if (!configuredKeybinds && !traceCapture) {
-        currentInput =
-            terminalKeyInput(&remappedEvent, true, consumedModifiers);
+        currentInput = terminalKeyInput(&remappedEvent, true, layout);
     }
     hideMouseForTerminalKey(currentInput, pointerActivityEpoch);
     if (guard == nullptr) {
@@ -3320,8 +3243,7 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
 
 void TerminalPane::keyReleaseEvent(QKeyEvent *event)
 {
-    const int consumedModifiers =
-        static_cast<int>(consumedModifiersForText(*event));
+    const KeyboardLayoutTranslation layout = translateKeyboardLayout(*event);
     if (deferKeyEventIfNeeded(*event)) {
         event->accept();
         return;
@@ -3337,8 +3259,8 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
     const bool traceCapture = inspectorKeyboardTraceCaptureActive();
     TerminalKeyInput currentInput;
     if (traceCapture) {
-        currentInput = beginInspectorKeyboardTrace(remappedEvent, false,
-                                                   consumedModifiers);
+        currentInput =
+            beginInspectorKeyboardTrace(remappedEvent, false, layout);
     }
     if (!controller_->keyboardInputSuppressed()) {
         updateHyperlinkModifiers(modifiersAfterKeyEvent(event, false));
@@ -3369,8 +3291,7 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
             return;
         }
     } else {
-        currentInput =
-            terminalKeyInput(&remappedEvent, false, consumedModifiers);
+        currentInput = terminalKeyInput(&remappedEvent, false, layout);
     }
     controller_->sendKey(currentInput);
     event->accept();
@@ -3378,12 +3299,11 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
 
 TerminalPane::KeyHandling TerminalPane::handleShortcut(
     QKeyEvent *event, const QPointer<TerminalPane> &guard,
-    quint64 pointerActivityEpoch, int consumedModifiers,
-    const TerminalKeyInput &currentInput)
+    quint64 pointerActivityEpoch, const TerminalKeyInput &currentInput)
 {
     if (keybinds_.program().isAvailable()) {
         return handleConfiguredShortcut(event, guard, pointerActivityEpoch,
-                                        consumedModifiers, currentInput);
+                                        currentInput);
     }
 
     const Qt::KeyboardModifiers modifiers =
@@ -3521,16 +3441,14 @@ bool TerminalPane::resolveExecutingSequence(
 
 TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     QKeyEvent *event, const QPointer<TerminalPane> &guard,
-    quint64 pointerActivityEpoch, int consumedModifiers,
-    const TerminalKeyInput &currentInput)
+    quint64 pointerActivityEpoch, const TerminalKeyInput &currentInput)
 {
-    Q_UNUSED(consumedModifiers);
     const GhosttyKeybindEvent bindingEvent{
         .qtKey = event->key(),
         .modifiers = event->modifiers(),
         .text = event->text(),
         .nativeScanCode = event->nativeScanCode(),
-        .unshiftedCodepoint = unshiftedCodepoint(event->key()),
+        .unshiftedCodepoint = currentInput.unshiftedCodepoint,
     };
     const bool sequenceWasActive = keybinds_.sequenceActive();
     const GhosttyKeybindStep step = keybinds_.advance(bindingEvent);

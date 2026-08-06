@@ -3,6 +3,7 @@
 #include "application_action.h"
 #include "ghostty_keybind_set.h"
 #include "key_event_snapshot.h"
+#include "keyboard_layout.h"
 #include "launch_options.h"
 #include "modifier_remap.h"
 #include "terminal_action_result.h"
@@ -62,6 +63,7 @@ private:
     struct DeferredKeyEvent {
         QPointer<QObject> target;
         KeyEventSnapshot event;
+        KeyboardLayoutTranslation layout;
     };
     struct DeferredInputMethodEvent {
         QPointer<QObject> target;

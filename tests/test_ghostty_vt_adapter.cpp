@@ -2899,6 +2899,13 @@ void GhosttyVtAdapterTest::encodesConsumedShiftTextInKittyMode()
     adapter->writeVt(QByteArrayLiteral("\033[>9u"));
     colon.consumedModifiers = Qt::ShiftModifier;
     QCOMPARE(adapter->encodeKey(colon).bytes, QByteArrayLiteral("\033[59;2u"));
+
+    // Qt has no keyboard-modifier flags for lock state. The mirrored XKB
+    // state carries both bits separately into Kitty's report-all mask.
+    q.capsLock = true;
+    q.numLock = true;
+    q.consumedCapsLock = true;
+    QCOMPARE(adapter->encodeKey(q).bytes, QByteArrayLiteral("\033[113;193u"));
 }
 
 void GhosttyVtAdapterTest::encodesAlternateScreenWheelRows()
