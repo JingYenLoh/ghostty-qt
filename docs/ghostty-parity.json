@@ -1368,7 +1368,7 @@
         },
         "navigate_search": {
           "status": "partial",
-          "note": "Supports exact previous/next grammar, cyclic newest-to-oldest navigation, selected-result highlighting, and off-viewport scrolling. Candidate highlights in older viewports can lag until the bottom-up scan reaches them; terminal-data mutation restarts that scan, and inactive-screen results are not preserved independently."
+          "note": "Supports exact previous/next grammar, cyclic newest-to-oldest navigation, selected-result highlighting, and off-viewport scrolling. An independent row-local probe provisionally highlights wholly contained matches in the current viewport without changing canonical counts or navigation; soft-wrap, newline, and viewport-edge-spanning candidates can still wait for the bottom-up scan. Terminal-data mutation restarts that scan, and inactive-screen results are not preserved independently."
         },
         "new_split": {
           "status": "supported",
@@ -1474,7 +1474,7 @@
         },
         "search": {
           "status": "partial",
-          "note": "Replaces the literal needle without changing search-UI visibility, and an empty needle stops matching while leaving the overlay alone. The generation-cancelled bottom-up scan uses public grid references, whose reads temporarily restore compressed pages and therefore interleave bounded recompression. Flat public rows cannot exactly reproduce internal page-boundary delimiters or every blank-cell point mapping; mutations restart the scan, older viewport highlights can lag, and only the active screen has results."
+          "note": "Replaces the literal needle without changing search-UI visibility, and an empty needle stops matching while leaving the overlay alone. An independent visible-row probe supplies provisional wholly row-local candidates without changing canonical progress, counts, ordering, completion, or navigation. The generation-cancelled bottom-up scan uses public grid references, whose reads temporarily restore compressed pages and therefore interleave bounded recompression. Flat public rows cannot exactly reproduce internal page-boundary delimiters or every blank-cell point mapping; mutations restart the scan, soft-wrap, newline, and viewport-edge-spanning candidates can await canonical discovery, and only the active screen has results."
         },
         "search_selection": {
           "status": "partial",

@@ -899,6 +899,22 @@ if(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
         ghostty-qt-vt-adapter
     )
 
+    qt_add_executable(bench-terminal-search
+        bench_terminal_search.cpp
+    )
+    target_include_directories(bench-terminal-search PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    )
+    target_compile_definitions(bench-terminal-search PRIVATE
+        GHOSTTY_QT_BENCH_TERMINFO="${GHOSTTY_QT_TERMINFO_DIR}"
+    )
+    target_link_libraries(bench-terminal-search PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        ghostty-qt-session-worker
+    )
+    add_dependencies(bench-terminal-search ghostty-qt-terminfo)
+
     qt_add_executable(bench-terminal-backdrop
         bench_terminal_backdrop.cpp
     )

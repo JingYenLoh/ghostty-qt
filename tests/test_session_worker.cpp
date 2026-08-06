@@ -302,6 +302,7 @@ private Q_SLOTS:
     void routesTypedViewportAndSelectionOperations();
     void resolvesCorrelatedSelectionActions();
     void searchesIncrementallyAndNavigates();
+    void prioritizesVisibleSearchResults();
     void preservesFormattedSearchBoundaries();
     void resetsTerminalStateAndWorkerCaches();
     void resolvesCorrelatedHyperlinkQueries();
@@ -1135,6 +1136,151 @@ void SessionWorkerTest::searchesIncrementallyAndNavigates()
     const int afterCancel = searchSpy.count();
     QTest::qWait(50);
     QCOMPARE(searchSpy.count(), afterCancel);
+
+    worker.shutdown();
+}
+
+void SessionWorkerTest::prioritizesVisibleSearchResults()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalSearchUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(24, 8, 8, 16, 192, 128);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy searchSpy(&worker, &SessionWorker::searchUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf 'old-probe-visible\\n'; "
+                       "i=0; while [ $i -lt 240 ]; do "
+                       "printf 'new-row-%03d\\n' \"$i\"; "
+                       "i=$((i + 1)); done"),
+    };
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+
+    worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
+    QTRY_VERIFY_WITH_TIMEOUT(frameText(accumulatedFrame(updateSpy))
+                                 .contains(QStringLiteral("old-probe-visible")),
+                             1000);
+
+    const auto driveVisibleProbe = [&worker, &searchSpy](quint64 generation) {
+        for (int chunk = 0; chunk < 16; ++chunk) {
+            if (!QMetaObject::invokeMethod(&worker, "processSearchChunk",
+                                           Qt::DirectConnection)) {
+                return false;
+            }
+            const std::optional<TerminalSearchUpdate> update =
+                latestSearchUpdate(searchSpy, generation);
+            if (update.has_value() && !update->complete
+                && update->visibleCellMask.count(true) > 0) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // The canonical scan starts at the newest row, far away from this old
+    // viewport. Bounded probe turns must nevertheless publish the visible
+    // candidate without assigning it a canonical count or navigation index.
+    // Instrumented cold-page reads can consume a whole 2 ms turn themselves.
+    worker.search(1, QByteArrayLiteral("old-probe"));
+    QVERIFY(driveVisibleProbe(1));
+    const std::optional<TerminalSearchUpdate> firstVisible =
+        latestSearchUpdate(searchSpy, 1);
+    QVERIFY(firstVisible.has_value());
+    QVERIFY(firstVisible->active);
+    QVERIFY(!firstVisible->complete);
+    QCOMPARE(firstVisible->totalMatches, quint64(0));
+    QCOMPARE(firstVisible->selectedMatch, qint64(-1));
+    QCOMPARE(firstVisible->scannedRows, quint64(0));
+    QVERIFY(firstVisible->visibleCellMask.count(true) > 0);
+    QCOMPARE(firstVisible->selectedCellMask.count(true), qsizetype(0));
+
+    worker.navigateSearch(1, TerminalSearchDirection::Next);
+    const TerminalSearchUpdate afterEarlyNavigation =
+        *latestSearchUpdate(searchSpy, 1);
+    QCOMPARE(afterEarlyNavigation.totalMatches, quint64(0));
+    QCOMPARE(afterEarlyNavigation.selectedMatch, qint64(-1));
+    QVERIFY(afterEarlyNavigation.visibleCellMask.count(true) > 0);
+
+    // Viewport-relative provisional bits must disappear rather than decorate
+    // unrelated live rows, then be recomputed when the old viewport returns.
+    worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Bottom});
+    const TerminalSearchUpdate atBottom = *latestSearchUpdate(searchSpy, 1);
+    QCOMPARE(atBottom.totalMatches, quint64(0));
+    QCOMPARE(atBottom.selectedMatch, qint64(-1));
+    QCOMPARE(atBottom.visibleCellMask.count(true), qsizetype(0));
+
+    worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
+    QVERIFY(driveVisibleProbe(1));
+    const TerminalSearchUpdate restoredViewport =
+        *latestSearchUpdate(searchSpy, 1);
+    QCOMPARE(restoredViewport.totalMatches, quint64(0));
+    QVERIFY(restoredViewport.visibleCellMask.count(true) > 0);
+
+    // A replacement clears the old provisional result immediately. Any
+    // already-queued zero timer now services only the replacement generation.
+    worker.search(2, QByteArrayLiteral("not-present-anywhere"));
+    const TerminalSearchUpdate replacement = *latestSearchUpdate(searchSpy, 2);
+    QVERIFY(replacement.active);
+    QVERIFY(!replacement.complete);
+    QCOMPARE(replacement.totalMatches, quint64(0));
+    QCOMPARE(replacement.visibleCellMask.count(true), qsizetype(0));
+    QVERIFY(QMetaObject::invokeMethod(&worker, "processSearchChunk",
+                                      Qt::DirectConnection));
+    QCOMPARE(latestSearchUpdate(searchSpy, 2)->visibleCellMask.count(true),
+             qsizetype(0));
+
+    // Recreate a provisional result and ensure cancellation publishes the
+    // authoritative empty masks and cannot be followed by stale work.
+    worker.search(3, QByteArrayLiteral("old-probe"));
+    QVERIFY(driveVisibleProbe(3));
+    QVERIFY(latestSearchUpdate(searchSpy, 3)->visibleCellMask.count(true) > 0);
+    worker.cancelSearch(4);
+    const TerminalSearchUpdate cancelled = *latestSearchUpdate(searchSpy, 4);
+    QVERIFY(!cancelled.active);
+    QVERIFY(cancelled.complete);
+    QCOMPARE(cancelled.totalMatches, quint64(0));
+    QVERIFY(cancelled.visibleCellMask.isEmpty());
+    QVERIFY(cancelled.selectedCellMask.isEmpty());
+    const int afterCancel = searchSpy.count();
+    QTest::qWait(30);
+    QCOMPARE(searchSpy.count(), afterCancel);
+
+    // A fresh run must converge to the exact canonical result exactly once.
+    worker.search(5, QByteArrayLiteral("old-probe"));
+    for (int chunk = 0; chunk < 128; ++chunk) {
+        const std::optional<TerminalSearchUpdate> update =
+            latestSearchUpdate(searchSpy, 5);
+        if (update.has_value() && update->complete) break;
+        QVERIFY(QMetaObject::invokeMethod(&worker, "processSearchChunk",
+                                          Qt::DirectConnection));
+    }
+    const TerminalSearchUpdate complete = *latestSearchUpdate(searchSpy, 5);
+    QVERIFY(complete.complete);
+    QCOMPARE(complete.totalMatches, quint64(1));
+    QCOMPARE(complete.selectedMatch, qint64(-1));
+    QVERIFY(complete.visibleCellMask.count(true) > 0);
+
+    worker.navigateSearch(5, TerminalSearchDirection::Next);
+    const TerminalSearchUpdate selected = *latestSearchUpdate(searchSpy, 5);
+    QCOMPARE(selected.totalMatches, quint64(1));
+    QCOMPARE(selected.selectedMatch, qint64(0));
+    QVERIFY(selected.selectedCellMask.count(true) > 0);
+    QVERIFY(maskIsSubset(selected.selectedCellMask, selected.visibleCellMask));
 
     worker.shutdown();
 }

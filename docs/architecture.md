@@ -1389,31 +1389,41 @@ ordinary literal, soft-wrap, and hard-line behavior, but it cannot exactly
 reproduce every page-boundary delimiter or the pinned formatter's blank-cell
 point-map quirks.
 
-The worker scans those snapshots from newest to oldest in bounded row/time
-chunks and yields to its Qt event loop between chunks. It coalesces progressive
-publication to roughly 30 Hz so deep history does not create one queued GUI
-event per scan chunk. A generation token cancels superseded needles without
-publishing stale results, while updates carry rows scanned, rows total, the
-match count, and only the currently visible candidate/selected cell masks.
-Literal UTF-8 byte matching is
+The worker keeps two search paths. The canonical path scans snapshots from
+newest to oldest in bounded row/time chunks and yields to its Qt event loop
+between chunks. It coalesces progressive publication to roughly 30 Hz so deep
+history does not create one queued GUI event per scan chunk. A generation token
+cancels superseded needles without publishing stale results, while updates
+carry rows scanned, rows total, the canonical match count, and only the
+currently visible candidate/selected cell masks. Literal UTF-8 byte matching is
 ASCII-case-insensitive, permits overlapping results, removes soft-wrap
 boundaries, and retains hard line boundaries as newline bytes. Next selects the
-newest result first and then walks older results; previous starts at the oldest
-and walks newer results. Both wrap, and selection scrolls only when the result
-is wholly outside the viewport. Unlike Ghostty's dedicated viewport search, the
-frontend derives candidate highlights from results already found by the global
-bottom-up scan. Scrolling into older history can therefore show candidates late,
-when that scan reaches the newly visible rows.
+newest canonical result first and then walks older results; previous starts at
+the oldest and walks newer results. Both wrap, and selection scrolls only when
+the result is wholly outside the viewport.
+
+An independent viewport-first path scans each visible physical row for matches
+wholly contained by that row. Its results are provisional candidate decorations
+only: they do not enter the canonical result vector or change rows scanned,
+match counts, completion, selected indices, or navigation order. A new needle
+or viewport movement refreshes this mask, so an ordinary row-local match in old
+scrollback can appear without waiting for the bottom-up scan to reach it. The
+conservative row-local pass does not infer formatter state outside each
+snapshot. Matches spanning a soft wrap, a hard-line newline, or a viewport edge
+therefore appear only after the canonical scan discovers them. Canonical
+results replace or agree with the provisional decoration as progress reaches
+the visible rows.
 
 Terminal-data mutation increments a search-specific revision and restarts the
 active query so no value result is applied to changed grid content. A viewport
-scroll only recomputes visible decorations and does not restart the scan. This
-is intentionally an incremental compatibility foundation: it can redo work
-during continuous output, searches only the currently active primary or
-alternate screen, and does not preserve independent result sets while the
-other screen is inactive. Together with the flat-row formatter and viewport-lag
-differences above, those gaps remain until a stable upstream search API is
-available or the public adapter can own tracked results across screen switches.
+scroll refreshes provisional and discovered visible decorations without
+restarting the canonical scan. This is intentionally an incremental
+compatibility foundation: it can redo work during continuous output, searches
+only the currently active primary or alternate screen, and does not preserve
+independent result sets while the other screen is inactive. Together with the
+flat-row formatter and conservative row-local provisional boundary above,
+those gaps remain until a stable upstream search API is available or the public
+adapter can own tracked results across screen switches.
 The byte matcher checks its cooperative time budget within a row, but the
 public adapter currently prepares one complete physical-row snapshot first;
 an adversarial maximum-width row or unusually large grapheme can therefore

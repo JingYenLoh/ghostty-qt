@@ -228,6 +228,8 @@ private:
     void scheduleSearchChunk();
     void publishSearchUpdate();
     void rebuildSearchVisibleCells();
+    void resetSearchViewportProbe(quint64 viewportOffset,
+                                  quint64 viewportLength);
     void refreshTrackedHyperlink(bool force = false);
     void processDeferredEffects();
     void drainPty(bool finalDrain);

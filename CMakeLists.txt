@@ -23,7 +23,7 @@ include(GNUInstallDirs)
 
 option(GHOSTTY_QT_BUILD_TESTS "Build ghostty-qt tests" ON)
 option(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS
-    "Build opt-in terminal renderer microbenchmarks" OFF)
+    "Build opt-in terminal performance microbenchmarks" OFF)
 option(GHOSTTY_QT_ALLOW_UNPINNED_GHOSTTY "Allow a Ghostty checkout other than the pinned revision" OFF)
 option(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG
     "Build the pinned Ghostty application config parser" ON)

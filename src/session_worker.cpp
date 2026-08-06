@@ -660,6 +660,19 @@ struct SessionWorker::SearchState {
     std::deque<TerminalSearchCell> recentCells;
     QVector<TerminalSearchRange> matches;
     QBitArray visibleCellMask;
+    // Viewport candidates are deliberately independent of the canonical
+    // newest-to-oldest scan. This mirrors Ghostty's ViewportSearch: candidate
+    // cells may become visible before their canonical index is known, without
+    // changing counts, navigation, progress, or completion.
+    QBitArray viewportProbeCellMask;
+    quint64 viewportProbeOffset = 0;
+    quint64 viewportProbeLength = 0;
+    qint64 nextViewportProbeScreenRow = -1;
+    std::optional<GhosttyVtAdapter::SearchRowSnapshot> viewportProbeRow;
+    qsizetype viewportProbeByteIndex = 0;
+    qsizetype viewportProbeMatched = 0;
+    std::deque<TerminalSearchCell> viewportProbeRecentCells;
+    bool viewportProbeComplete = true;
     QBitArray selectedCellMask;
     qint64 selectedMatch = -1;
     qint64 nextScreenRow = -1;
@@ -3073,7 +3086,8 @@ void SessionWorker::beginSearch(quint64 generation, const QByteArray &needle)
 
     const bool chunkScheduled = searchState_->chunkScheduled;
     if ((searchState_->rowsSinceCompressionPass > 0
-         || searchState_->currentRow.has_value())
+         || searchState_->currentRow.has_value()
+         || searchState_->viewportProbeRow.has_value())
         && compressionTimer_ != nullptr) {
         // Public screen-coordinate cell reads restore compressed pages. Start
         // an incremental verification pass when a query is replaced so those
@@ -3115,12 +3129,14 @@ void SessionWorker::beginSearch(quint64 generation, const QByteArray &needle)
     searchState_->viewportLength = extent->viewportLength;
     searchState_->activeScreen = extent->activeScreen;
     searchState_->visibleCellMask.resize(*cellCount);
+    searchState_->viewportProbeCellMask.resize(*cellCount);
     searchState_->selectedCellMask.resize(*cellCount);
     searchState_->nextScreenRow = extent->totalRows == 0
         ? -1
         : static_cast<qint64>(extent->totalRows - 1U);
     searchState_->reversedNeedle = reversedFoldedSearchNeedle(needle);
     searchState_->prefix = searchPrefixTable(searchState_->reversedNeedle);
+    resetSearchViewportProbe(extent->viewportOffset, extent->viewportLength);
     publishSearchUpdate();
     scheduleSearchChunk();
 }
@@ -3153,7 +3169,8 @@ void SessionWorker::cancelSearch(quint64 generation)
     }
     const bool chunkScheduled = searchState_->chunkScheduled;
     if ((searchState_->rowsSinceCompressionPass > 0
-         || searchState_->currentRow.has_value())
+         || searchState_->currentRow.has_value()
+         || searchState_->viewportProbeRow.has_value())
         && compressionTimer_ != nullptr) {
         scheduleRestoredPageCompression();
     }
@@ -3186,6 +3203,35 @@ void SessionWorker::scheduleSearchChunk()
     QTimer::singleShot(0, this, &SessionWorker::processSearchChunk);
 }
 
+void SessionWorker::resetSearchViewportProbe(quint64 viewportOffset,
+                                             quint64 viewportLength)
+{
+    SearchState &state = *searchState_;
+    state.viewportProbeCellMask.fill(false);
+    state.viewportProbeOffset = viewportOffset;
+    state.viewportProbeLength = viewportLength;
+    state.nextViewportProbeScreenRow = -1;
+    state.viewportProbeRow.reset();
+    state.viewportProbeByteIndex = 0;
+    state.viewportProbeMatched = 0;
+    state.viewportProbeRecentCells.clear();
+    state.viewportProbeComplete = true;
+
+    if (!state.active || state.complete || state.totalRows == 0
+        || viewportLength == 0 || viewportOffset >= state.totalRows) {
+        return;
+    }
+
+    const quint64 boundedLength =
+        std::min(viewportLength, state.totalRows - viewportOffset);
+    if (boundedLength == 0) return;
+
+    state.viewportProbeLength = boundedLength;
+    state.nextViewportProbeScreenRow =
+        static_cast<qint64>(viewportOffset + boundedLength - 1U);
+    state.viewportProbeComplete = false;
+}
+
 void SessionWorker::publishSearchUpdate()
 {
     TerminalSearchUpdate update;
@@ -3200,6 +3246,13 @@ void SessionWorker::publishSearchUpdate()
     update.columns = searchState_->columns;
     update.rows = searchState_->rows;
     update.visibleCellMask = searchState_->visibleCellMask;
+    if (searchState_->active && !searchState_->complete
+        && searchState_->viewportProbeOffset == searchState_->viewportOffset
+        && searchState_->viewportProbeLength == searchState_->viewportLength
+        && searchState_->viewportProbeCellMask.size()
+            == update.visibleCellMask.size()) {
+        update.visibleCellMask |= searchState_->viewportProbeCellMask;
+    }
     update.selectedCellMask = searchState_->selectedCellMask;
     Q_EMIT searchUpdated(update);
     searchState_->lastPublication.restart();
@@ -3220,8 +3273,16 @@ void SessionWorker::rebuildSearchVisibleCells()
         || extent->activeScreen != searchState_->activeScreen) {
         return;
     }
+    const bool viewportProbeStale = !searchState_->complete
+        && (searchState_->viewportProbeOffset != extent->viewportOffset
+            || searchState_->viewportProbeLength != extent->viewportLength);
     searchState_->viewportOffset = extent->viewportOffset;
     searchState_->viewportLength = extent->viewportLength;
+    if (viewportProbeStale) {
+        resetSearchViewportProbe(extent->viewportOffset,
+                                 extent->viewportLength);
+        scheduleSearchChunk();
+    }
     const quint64 viewportStart = extent->viewportOffset;
     const quint64 viewportEnd = viewportStart + extent->viewportLength;
     const auto firstVisibleCandidate = std::lower_bound(
@@ -3270,6 +3331,11 @@ void SessionWorker::processSearchChunk()
         restartSearch();
         return;
     }
+    if (searchState_->viewportProbeOffset != currentExtent->viewportOffset
+        || searchState_->viewportProbeLength != currentExtent->viewportLength) {
+        resetSearchViewportProbe(currentExtent->viewportOffset,
+                                 currentExtent->viewportLength);
+    }
     searchState_->viewportOffset = currentExtent->viewportOffset;
     searchState_->viewportLength = currentExtent->viewportLength;
 
@@ -3277,6 +3343,108 @@ void SessionWorker::processSearchChunk()
     budget.start();
     int rowsLoaded = 0;
     qsizetype bytesProcessed = 0;
+    bool chunkBudgetExhausted = false;
+    bool viewportProbeMaskChanged = false;
+    auto feedViewportProbeByte =
+        [this, extent = *currentExtent,
+         &viewportProbeMaskChanged](char byte, const TerminalSearchCell &cell) {
+            SearchState &state = *searchState_;
+            const char folded = foldSearchByte(byte);
+            while (state.viewportProbeMatched > 0
+                   && state.reversedNeedle.at(state.viewportProbeMatched)
+                       != folded) {
+                state.viewportProbeMatched =
+                    state.prefix.at(state.viewportProbeMatched - 1);
+            }
+            if (state.reversedNeedle.at(state.viewportProbeMatched) == folded) {
+                ++state.viewportProbeMatched;
+            }
+
+            state.viewportProbeRecentCells.push_back(cell);
+            if (state.viewportProbeRecentCells.size()
+                > static_cast<size_t>(state.reversedNeedle.size())) {
+                state.viewportProbeRecentCells.pop_front();
+            }
+            if (state.viewportProbeMatched != state.reversedNeedle.size()) {
+                return;
+            }
+
+            // The probe intentionally searches each physical row in
+            // isolation. A match found after trimming that row's ambiguous
+            // trailing blanks is a safe canonical subset; cross-wrap and
+            // newline-spanning matches wait for the full formatter scan.
+            const TerminalSearchRange range{
+                .start = cell,
+                .end = state.viewportProbeRecentCells.front(),
+            };
+            addVisibleSearchCells(state.viewportProbeCellMask, range, extent);
+            viewportProbeMaskChanged = true;
+            state.viewportProbeMatched =
+                state.prefix.at(state.viewportProbeMatched - 1);
+        };
+
+    while (!searchState_->viewportProbeComplete) {
+        if (!searchState_->viewportProbeRow.has_value()) {
+            if (searchState_->nextViewportProbeScreenRow
+                < static_cast<qint64>(searchState_->viewportProbeOffset)) {
+                searchState_->viewportProbeComplete = true;
+                break;
+            }
+            if (rowsLoaded >= kSearchRowsPerChunk) break;
+
+            const quint32 screenRow = static_cast<quint32>(
+                searchState_->nextViewportProbeScreenRow--);
+            std::optional<GhosttyVtAdapter::SearchRowSnapshot> row =
+                vt_->snapshotSearchRow(screenRow);
+            ++searchState_->rowsSinceCompressionPass;
+            ++rowsLoaded;
+            if (!row.has_value()) {
+                searchState_->viewportProbeComplete = true;
+                break;
+            }
+
+            // Whether a wrapped row's trailing blank run survives formatting
+            // depends on later continuation rows. Dropping it here prevents
+            // false provisional highlights while retaining every match wholly
+            // inside the row's unambiguous text.
+            while (!row->text.isEmpty()
+                   && row->text.at(row->text.size() - 1) == ' ') {
+                row->text.chop(1);
+                if (!row->byteCells.isEmpty()) row->byteCells.removeLast();
+            }
+            searchState_->viewportProbeByteIndex = row->text.size();
+            searchState_->viewportProbeRow = std::move(*row);
+        }
+
+        if (searchState_->viewportProbeByteIndex > 0) {
+            const qsizetype index = --searchState_->viewportProbeByteIndex;
+            feedViewportProbeByte(
+                searchState_->viewportProbeRow->text.at(index),
+                searchState_->viewportProbeRow->byteCells.at(index));
+            ++bytesProcessed;
+        } else {
+            // Do not carry KMP state across a physical-row boundary. The
+            // public row snapshots cannot reproduce all private PageFormatter
+            // boundary decisions cheaply enough for a provisional result.
+            searchState_->viewportProbeRow.reset();
+            searchState_->viewportProbeMatched = 0;
+            searchState_->viewportProbeRecentCells.clear();
+            continue;
+        }
+
+        if ((bytesProcessed & 63) == 0
+            && budget.elapsed() >= kSearchChunkBudgetMilliseconds) {
+            chunkBudgetExhausted = true;
+            break;
+        }
+    }
+
+    // Publish a newly discovered visible candidate before advancing the
+    // canonical stream. Besides minimizing highlight latency, this preserves
+    // the useful distinction between provisional decoration and a known
+    // newest-to-oldest result index for at least one event-loop turn.
+    const bool deferCanonicalScan = viewportProbeMaskChanged;
+
     auto feedByte = [this, extent = *currentExtent](
                         char byte, const TerminalSearchCell &cell) {
         SearchState &state = *searchState_;
@@ -3307,7 +3475,8 @@ void SessionWorker::processSearchChunk()
         state.matched = state.prefix.at(state.matched - 1);
     };
 
-    while (!searchState_->complete) {
+    while (!searchState_->complete && !chunkBudgetExhausted
+           && !deferCanonicalScan) {
         if (!searchState_->currentRow.has_value()) {
             if (searchState_->nextScreenRow < 0) {
                 // SlidingWindow appends one delimiter after the final
@@ -3405,6 +3574,16 @@ void SessionWorker::processSearchChunk()
         && !searchState_->currentRow.has_value()) {
         searchState_->complete = true;
     }
+    if (searchState_->complete) {
+        // Canonical results are now authoritative. Rebuild once so a
+        // conservative probe false-negative (for example a soft-wrap span)
+        // is replaced by the exact final viewport mask.
+        searchState_->viewportProbeCellMask.fill(false);
+        searchState_->viewportProbeRow.reset();
+        searchState_->viewportProbeRecentCells.clear();
+        searchState_->viewportProbeComplete = true;
+        rebuildSearchVisibleCells();
+    }
     if (compressionTimer_ != nullptr
         && (searchState_->complete
             || searchState_->rowsSinceCompressionPass
@@ -3416,7 +3595,8 @@ void SessionWorker::processSearchChunk()
         searchState_->rowsSinceCompressionPass = 0;
         scheduleRestoredPageCompression();
     }
-    if (searchState_->complete || !searchState_->lastPublication.isValid()
+    if (viewportProbeMaskChanged || searchState_->complete
+        || !searchState_->lastPublication.isValid()
         || searchState_->lastPublication.elapsed()
             >= kSearchPublishIntervalMilliseconds) {
         publishSearchUpdate();

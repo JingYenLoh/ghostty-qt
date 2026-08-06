@@ -62,8 +62,12 @@ for intentional upgrade procedure.
   expanded viewport data from `libghostty-vt`. Upstream must also fix the
   tracked screen-pin lifetime of budget-evicted placements.
 - Search is a cooperative frontend implementation over public terminal
-  snapshots. It does not use Ghostty's private `xev`-dependent search thread
-  and retains some documented paging and responsiveness differences.
+  snapshots. A row-local viewport probe publishes provisional visible
+  candidates without waiting for the canonical newest-to-oldest scan. It does
+  not use Ghostty's private `xev`-dependent search thread, and candidates that
+  span soft wraps, newlines, or viewport edges can still wait for the canonical
+  scan alongside the documented formatter, paging, and inactive-screen
+  differences.
 - Terminal-originated clipboard writes support `allow`, `deny`, and `ask`.
   Terminal-requested clipboard reads remain blocked by the public API, and
   exact styled VT/HTML selection copies need additional upstream formatting

@@ -1133,9 +1133,13 @@ standalone library because it depends on xev.
 The frontend implementation can inspect public grid rows, but flat rows do not
 expose Ghostty's exact formatter delimiters or stable multi-page highlights.
 Repeatedly restoring public grid references also cannot reproduce the private
-searcher's bounded feed/cache lifecycle. This causes delayed old-history
-highlights, approximate blank-cell mapping, and loss of inactive-screen search
-state.
+searcher's bounded feed/cache lifecycle. An independent provisional pass now
+finds matches wholly contained by each visible physical row, so ordinary
+row-local highlights in old history do not wait for the canonical bottom-up
+scan. That conservative pass does not join soft wraps, feed newline bytes, or
+inspect outside the viewport; spanning candidates can therefore still await
+canonical discovery. Approximate blank-cell mapping and loss of inactive-screen
+search state also remain.
 
 ### Required upstream contract
 

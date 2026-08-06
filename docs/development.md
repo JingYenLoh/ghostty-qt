@@ -35,19 +35,19 @@ cmake --build --preset dev -j"$(nproc)"
 ctest --preset dev -j"$(nproc)" --output-on-failure
 ```
 
-## Rendering microbenchmarks
+## Performance microbenchmarks
 
-The rendering benchmarks are opt-in and deliberately excluded from CTest. The
-pane benchmark measures metadata, one-row, cursor, full-frame, search, and
-Kitty graphics updates. Its software mode preserves the end-to-end
-`grabWindow()` baseline. OpenGL and Vulkan use `QQuickRenderControl` with a
-persistent offscreen QRhi target, exercising the production renderer through a
-single-threaded, production-like scene-graph path without a swapchain or
-present. Untimed initialization readbacks verify both terminal output and a
-known-color Kitty placement on the selected backend; measured frames do not
-read the target back. Damage counters assert that the text scenarios visit the
-intended number of cells, preventing a faster result caused by accidentally
-skipping work.
+The rendering and worker benchmarks are opt-in and deliberately excluded from
+CTest. The pane benchmark measures metadata, one-row, cursor, full-frame,
+search-decoration, and Kitty graphics updates. Its software mode preserves the
+end-to-end `grabWindow()` baseline. OpenGL and Vulkan use
+`QQuickRenderControl` with a persistent offscreen QRhi target, exercising the
+production renderer through a single-threaded, production-like scene-graph path
+without a swapchain or present. Untimed initialization readbacks verify both
+terminal output and a known-color Kitty placement on the selected backend;
+measured frames do not read the target back. Damage counters assert that the
+text scenarios visit the intended number of cells, preventing a faster result
+caused by accidentally skipping work.
 
 Use a Release build and compare results only on the same machine, Qt version,
 backend, dimensions, warmup, and iteration count:
@@ -59,6 +59,7 @@ cmake --build --preset release \
              bench-terminal-custom-shader-compiler \
              bench-terminal-custom-shader-rhi \
              bench-terminal-kitty-graphics \
+             bench-terminal-search \
              bench-terminal-backdrop \
     -j"$(nproc)"
 ./build/release/tests/bench-terminal-pane-renderer \
@@ -84,10 +85,22 @@ LIBGL_ALWAYS_SOFTWARE=1 \
 ./build/release/tests/bench-terminal-kitty-graphics \
     --pixel-format rgba32 \
     --width 640 --height 360 --warmup 10 --iterations 100
+./build/release/tests/bench-terminal-search \
+    --rows 25000 --viewport-rows 32 --warmup 1 --iterations 5
 ./build/release/tests/bench-terminal-backdrop \
     --source-format rgba8888 \
     --width 640 --height 360 --warmup 10 --iterations 100
 ```
+
+The terminal-search benchmark loads a deterministic fixed-width fixture once,
+scrolls to an older quarter of history, and excludes fixture construction from
+all timings. It reports time to the first visible highlight, canonical
+newest-to-oldest completion throughput, cancellation and resize-mutation
+latency, stale-update checks, and the incremental passes needed to recompress
+pages restored by each scan. Compression is enabled by default; pass
+`--resident` for a resident-history comparison, and keep row count, geometry,
+marker stride, Qt/libghostty versions, and build type identical when comparing
+runs.
 
 The pane RHI mode separately reports CPU synthetic-update preparation and
 delivery, scene-graph command recording, completion, and total timings, plus

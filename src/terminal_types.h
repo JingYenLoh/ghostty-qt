@@ -102,8 +102,11 @@ struct TerminalSearchUpdate {
     qint64 selectedMatch = -1;
     int columns = 0;
     int rows = 0;
-    // Row-major viewport masks. Active worker updates size both masks to
-    // columns * rows; inactive updates leave them empty.
+    // Row-major viewport masks. For active searches, the worker sizes both
+    // masks to columns * rows; inactive updates leave them empty. The visible
+    // mask may include independently probed viewport candidates whose
+    // canonical index is not reflected in totalMatches yet. The selected mask
+    // is canonical.
     QBitArray visibleCellMask;
     QBitArray selectedCellMask;
 };
