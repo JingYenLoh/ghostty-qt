@@ -2,6 +2,7 @@
 #include "application_controller.h"
 #include "application_identity.h"
 #include "desktop_activation.h"
+#include "desktop_quick_controls_style.h"
 #include "frontend_config_service.h"
 #include "ghostty_application_ipc.h"
 #include "ghostty_cli_delegation.h"
@@ -30,6 +31,7 @@
 #include <QPointer>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
+#include <QQuickStyle>
 #include <QQuickWindow>
 #include <QScopeGuard>
 #include <QStandardPaths>
@@ -1409,6 +1411,105 @@ bool verifyTabButtonWidths(QObject *tabBar, bool wide, const char *stage)
     return false;
 }
 
+bool verifyToolbarActionGeometry(QObject *rootObject, QObject *toolbar,
+                                 const char *stage)
+{
+    auto *const actionCluster = rootObject->findChild<QQuickItem *>(
+        QStringLiteral("windowToolbarActions"));
+    constexpr auto ActionNames = std::to_array<QLatin1StringView>({
+        QLatin1StringView("windowNewTabButton"),
+        QLatin1StringView("windowSplitRightButton"),
+        QLatin1StringView("windowSplitDownButton"),
+        QLatin1StringView("windowClosePaneButton"),
+    });
+    if (actionCluster == nullptr || !actionCluster->isVisible()) {
+        std::fprintf(
+            stderr,
+            "Toolbar-layout test hook found no visible action cluster at %s\n",
+            stage);
+        QCoreApplication::exit(1);
+        return false;
+    }
+
+    qreal expectedClusterWidth = 0.0;
+    for (const QLatin1StringView name : ActionNames) {
+        auto *const button = rootObject->findChild<QQuickItem *>(name);
+        if (button == nullptr || !button->isVisible()) {
+            std::fprintf(stderr,
+                         "Toolbar-layout test hook could not find %.*s at %s\n",
+                         static_cast<int>(name.size()), name.data(), stage);
+            QCoreApplication::exit(1);
+            return false;
+        }
+        const qreal naturalWidth =
+            std::max(button->implicitWidth(), button->implicitHeight());
+        const bool naturallySized = button->width() > 0.0
+            && button->height() > 0.0
+            && std::abs(button->width() - naturalWidth) <= 1.0
+            && std::abs(button->height() - button->implicitHeight()) <= 1.0;
+        if (!naturallySized) {
+            std::fprintf(stderr,
+                         "Toolbar-layout test hook stretched %.*s at %s: "
+                         "size=%gx%g implicit=%gx%g natural-width=%g\n",
+                         static_cast<int>(name.size()), name.data(), stage,
+                         button->width(), button->height(),
+                         button->implicitWidth(), button->implicitHeight(),
+                         naturalWidth);
+            QCoreApplication::exit(1);
+            return false;
+        }
+        expectedClusterWidth += naturalWidth;
+    }
+
+    const qreal spacing = actionCluster->property("spacing").toReal();
+    expectedClusterWidth +=
+        spacing * static_cast<qreal>(ActionNames.size() - 1);
+
+    auto *const toolbarItem = qobject_cast<QQuickItem *>(toolbar);
+    auto *const tabBar =
+        rootObject->findChild<QQuickItem *>(QStringLiteral("windowTabBar"));
+    if (toolbarItem == nullptr) {
+        qCritical() << "Toolbar-layout test hook received no toolbar item";
+        QCoreApplication::exit(1);
+        return false;
+    }
+    const QPointF clusterOrigin =
+        actionCluster->mapToItem(toolbarItem, QPointF{});
+    const qreal clusterStart = clusterOrigin.x();
+    const qreal clusterEnd = clusterStart + actionCluster->width();
+    const qreal toolbarWidth = toolbarItem->width();
+    const bool mirrored = toolbar->property("mirrored").toBool();
+    const qreal trailingPadding =
+        toolbar->property(mirrored ? "leftPadding" : "rightPadding").toReal();
+    const qreal trailingGap =
+        mirrored ? clusterStart : toolbarWidth - clusterEnd;
+    const bool atTrailingEdge =
+        trailingGap >= -1.0 && std::abs(trailingGap - trailingPadding) <= 2.0;
+    bool avoidsTabOverlap = true;
+    if (tabBar != nullptr && tabBar->isVisible()) {
+        const QPointF tabOrigin = tabBar->mapToItem(toolbarItem, QPointF{});
+        const qreal tabStart = tabOrigin.x();
+        const qreal tabEnd = tabStart + tabBar->width();
+        avoidsTabOverlap = mirrored ? tabStart >= clusterEnd - 1.0
+                                    : tabEnd <= clusterStart + 1.0;
+    }
+    const bool clusterIsCompact =
+        std::abs(actionCluster->width() - expectedClusterWidth) <= 1.0
+        && actionCluster->width() < toolbarWidth / 2.0 && atTrailingEdge
+        && avoidsTabOverlap;
+    if (clusterIsCompact) return true;
+
+    std::fprintf(stderr,
+                 "Toolbar-layout test hook stretched the action cluster at %s: "
+                 "width=%g expected=%g toolbar=%g start=%g end=%g "
+                 "trailing-gap=%g padding=%g mirrored=%d tab-overlap=%d\n",
+                 stage, actionCluster->width(), expectedClusterWidth,
+                 toolbarWidth, clusterStart, clusterEnd, trailingGap,
+                 trailingPadding, mirrored, !avoidsTabOverlap);
+    QCoreApplication::exit(1);
+    return false;
+}
+
 bool installTabBarVisibilityTestHook(QObject *rootObject,
                                      TerminalWorkspace *workspace)
 {
@@ -1433,8 +1534,8 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
         options.wideTabs = wide;
         workspace->applyLaunchOptions(options);
     };
-    const auto exercise = [workspace, tabBar, windowToolbar, applyMode,
-                           applyWideTabs] {
+    const auto exercise = [rootObject, workspace, tabBar, windowToolbar,
+                           applyMode, applyWideTabs] {
         auto *const timer = new QTimer(workspace);
         timer->setSingleShot(true);
         const auto stage = std::make_shared<int>(0);
@@ -1442,12 +1543,15 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
 
         QObject::connect(
             timer, &QTimer::timeout, workspace,
-            [workspace, tabBar, windowToolbar, applyMode, applyWideTabs, timer,
-             stage, quitObserved] {
+            [rootObject, workspace, tabBar, windowToolbar, applyMode,
+             applyWideTabs, timer, stage, quitObserved] {
                 switch (*stage) {
                 case 0:
                     if (!verifyTabBarTestState(workspace, tabBar, 1, false,
-                                               "auto with one tab")) {
+                                               "auto with one tab")
+                        || !verifyToolbarActionGeometry(
+                            rootObject, windowToolbar,
+                            "auto with one hidden tab")) {
                         return;
                     }
                     applyMode(WindowShowTabBar::Auto);
@@ -1459,15 +1563,20 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
                         return;
                     }
                     if (!workspace->wideTabs()
-                        || !verifyTabButtonWidths(tabBar, true, "wide tabs")) {
+                        || !verifyTabButtonWidths(tabBar, true, "wide tabs")
+                        || !verifyToolbarActionGeometry(
+                            rootObject, windowToolbar,
+                            "wide tabs with visible action cluster")) {
                         return;
                     }
                     applyWideTabs(false);
                     break;
                 case 2:
                     if (workspace->wideTabs()
-                        || !verifyTabButtonWidths(tabBar, false,
-                                                  "compact tabs")) {
+                        || !verifyTabButtonWidths(tabBar, false, "compact tabs")
+                        || !verifyToolbarActionGeometry(
+                            rootObject, windowToolbar,
+                            "compact tabs with visible action cluster")) {
                         return;
                     }
                     applyWideTabs(true);
@@ -1604,9 +1713,12 @@ bool installTabsLocationTestHook(QQuickWindow *window,
 
         const auto verify = [window, workspace, toolbar, topSlot, bottomSlot,
                              panes, locationSignals, windowSize, nativeWindowId,
-                             contentItem, chromeHeight](
-                                bool expectedBottom, int expectedSignals,
-                                const char *stage) {
+                             contentItem, chromeHeight](bool expectedBottom,
+                                                        int expectedSignals,
+                                                        const char *stage) {
+            if (!verifyToolbarActionGeometry(window, toolbar, stage)) {
+                return false;
+            }
             QQuickItem *const expectedParent =
                 expectedBottom ? bottomSlot : topSlot;
             const QColor topChromeColor =
@@ -1886,6 +1998,16 @@ int main(int argc, char *argv[])
     if (suppressUnavailableHostRegistration) {
         (void)qunsetenv(NoDesktopPortal);
     }
+
+    // Plasma's optional Qt Quick Controls bridge delegates control rendering
+    // to the user's active QStyle (normally Breeze, including custom themes).
+    // QApplication must exist before discovery so an application-local
+    // qt.conf and executable-relative import roots are visible. This remains
+    // safely before the first Qt Quick Controls QML module is loaded.
+    if (shouldSelectKdeDesktopQuickControlsStyle()) {
+        QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
+    }
+
     // Ghostty owns last-window process lifetime, including disabled and
     // delayed modes. Qt's implicit auto-quit would bypass that policy.
     application.setQuitOnLastWindowClosed(false);

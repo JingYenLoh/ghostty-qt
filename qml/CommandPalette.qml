@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -14,7 +16,7 @@ Popup {
     height: parent ? Math.min(520, Math.max(240, parent.height - 48)) : 520
     modal: true
     focus: visible
-    closePolicy: Popup.NoAutoClose
+    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     visible: uiController !== null
              && uiController.commandPaletteVisible
     padding: 12
@@ -49,11 +51,9 @@ Popup {
         })
     }
 
-    background: Rectangle {
-        radius: 10
-        color: "#f51e222a"
-        border.color: "#5d6470"
-        border.width: 1
+    onClosed: {
+        if (uiController !== null && uiController.commandPaletteVisible)
+            uiController.closeModal()
     }
 
     contentItem: ColumnLayout {
@@ -63,9 +63,9 @@ Popup {
             id: searchField
 
             Layout.fillWidth: true
-            placeholderText: "Search commands"
+            placeholderText: qsTr("Search commands")
             selectByMouse: true
-            Accessible.name: "Search commands"
+            Accessible.name: qsTr("Search commands")
 
             onTextEdited: {
                 if (root.uiController !== null)
@@ -155,7 +155,7 @@ Popup {
             Label {
                 anchors.centerIn: parent
                 visible: resultList.count === 0
-                text: "No matching commands"
+                text: qsTr("No matching commands")
                 opacity: 0.72
             }
         }

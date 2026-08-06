@@ -86,6 +86,7 @@ private:
     QString lastBody_;
     std::optional<qint64> lastAcceptedMilliseconds_;
     quint64 nextSequence_ = 1;
+    bool activationSignalsSubscribed_ = true;
     bool warned_ = false;
 };
 

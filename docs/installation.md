@@ -31,6 +31,21 @@ Relative GNU installation directories are finalized against the actual
 `cmake --install --prefix` value. The complete prefix can be moved afterward
 because runtime resources are resolved relative to the executable.
 
+## KDE control integration
+
+Install KDE's Qt Quick Controls desktop style (`qqc2-desktop-style` on common
+distributions) for controls that follow Plasma's active QWidget style. At
+startup, ghostty-qt selects `org.kde.desktop` only when all of the following
+are true:
+
+- the session identifies itself as KDE or Plasma;
+- the `org/kde/desktop` QML module is discoverable; and
+- `QT_QUICK_CONTROLS_STYLE` was not set by the user.
+
+This is an optional runtime integration rather than a build dependency. A
+missing module falls back to Qt's ordinary Linux style, and any explicit
+`QT_QUICK_CONTROLS_STYLE` value takes precedence. Kirigami is not required.
+
 ## Desktop activation
 
 Configuration-specific metadata is installed under:

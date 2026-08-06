@@ -57,6 +57,17 @@ target_link_libraries(test-frontend-config PRIVATE
 add_test(NAME frontend-config COMMAND test-frontend-config)
 set_tests_properties(frontend-config PROPERTIES TIMEOUT 15)
 
+qt_add_executable(test-desktop-quick-controls-style
+    test_desktop_quick_controls_style.cpp
+)
+target_link_libraries(test-desktop-quick-controls-style PRIVATE
+    Qt6::Core
+    Qt6::Test
+    ghostty-qt-desktop-quick-controls-style
+)
+add_test(NAME desktop-quick-controls-style
+    COMMAND test-desktop-quick-controls-style)
+
 qt_add_executable(test-pty-write-buffer
     test_pty_write_buffer.cpp
 )
@@ -1462,6 +1473,34 @@ set_tests_properties(application-tabs-location PROPERTIES
     FAIL_REGULAR_EXPRESSION
         "Binding loop detected;QQmlApplicationEngine failed"
 )
+
+# Qt may otherwise route diagnostics to journald when CTest captures a pipe.
+# Keep QT_FATAL_WARNINGS failures visible in the test log instead of reporting
+# only an opaque subprocess abort.
+set(_ghostty_qt_headless_application_tests
+    application-lifecycle
+    application-lifecycle-dash-e
+    application-close-dialog
+    application-tab-title-prompt
+    application-surface-title-prompt
+    application-context-menu-position
+    application-context-menu-action
+    application-fullscreen-action
+    application-maximize-action
+    application-window-decoration-action
+    application-tab-bar-visibility
+    application-tabs-location
+)
+if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+    list(APPEND _ghostty_qt_headless_application_tests
+        application-lifetime-resident
+        application-lifetime-explicit-quit
+        application-initial-window-state
+        application-initial-window-size
+    )
+endif()
+set_property(TEST ${_ghostty_qt_headless_application_tests} APPEND PROPERTY
+    ENVIRONMENT "QT_FORCE_STDERR_LOGGING=1")
 
 set_tests_properties(launch-options ghostty-smoke session-worker PROPERTIES
     TIMEOUT 20

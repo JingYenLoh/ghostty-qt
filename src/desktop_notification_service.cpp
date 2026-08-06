@@ -3,7 +3,6 @@
 #include <QDBusMessage>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
-#include <QMetaObject>
 #include <QPointer>
 
 #include <chrono>
@@ -53,15 +52,7 @@ DesktopNotificationService::DesktopNotificationService(
                             QString::fromLatin1(NotificationInterface),
                             QStringLiteral("NotificationClosed"), this,
                             SLOT(handleNotificationClosed(uint, uint)));
-    if (!actionConnected || !closedConnected) {
-        QMetaObject::invokeMethod(
-            this,
-            [this] {
-                warnOnce(QStringLiteral("Unable to subscribe to desktop "
-                                        "notification activation signals"));
-            },
-            Qt::QueuedConnection);
-    }
+    activationSignalsSubscribed_ = actionConnected && closedConnected;
 }
 
 DesktopNotificationService::DesktopNotificationService(Presenter presenter,
@@ -77,6 +68,16 @@ bool DesktopNotificationService::show(
     const TerminalDesktopNotification &notification, SurfaceTarget target)
 {
     if (!target.isValid() || !presenter_ || !clock_) return false;
+
+    // A missing session bus or notification host is irrelevant until a
+    // terminal actually requests this optional feature. Deferring the warning
+    // avoids noisy startup diagnostics in minimal sessions and headless UI
+    // tests while still reporting that an accepted notification cannot route
+    // a later click back to its pane.
+    if (!activationSignalsSubscribed_) {
+        warnOnce(QStringLiteral("Unable to subscribe to desktop notification "
+                                "activation signals"));
+    }
 
     const qint64 now = clock_();
     if (lastAcceptedMilliseconds_.has_value()) {

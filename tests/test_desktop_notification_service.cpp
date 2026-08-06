@@ -1,5 +1,6 @@
 #include "desktop_notification_service.h"
 
+#include <QCoreApplication>
 #include <QSignalSpy>
 #include <QTest>
 
@@ -14,6 +15,7 @@ private Q_SLOTS:
     void matchesGhosttySequentialRateLimits();
     void replacesBodyAndRoutesDefaultActivation();
     void ignoresStaleAsyncReplacementAndClosedNotifications();
+    void defersUnavailableBusWarningUntilFirstDelivery();
 };
 
 void DesktopNotificationServiceTest::presentsNativeShapeAndDefaultTitle()
@@ -151,6 +153,26 @@ void DesktopNotificationServiceTest::
     service.handleNotificationClosed(27, 2);
     service.handleActionInvoked(27, QStringLiteral("default"));
     QCOMPARE(activationSpy.size(), 0);
+}
+
+void DesktopNotificationServiceTest::
+    defersUnavailableBusWarningUntilFirstDelivery()
+{
+    DesktopNotificationService service(
+        QDBusConnection(QStringLiteral("ghostty-qt-missing-notification-bus")));
+    QSignalSpy warningSpy(&service,
+                          &DesktopNotificationService::warningOccurred);
+
+    QCoreApplication::processEvents();
+    QCOMPARE(warningSpy.size(), 0);
+
+    QVERIFY(service.show(
+        {.title = QStringLiteral("Build"), .body = QStringLiteral("Complete")},
+        {WindowId{1}, PaneId{2}}));
+    QCOMPARE(warningSpy.size(), 1);
+
+    QCoreApplication::processEvents();
+    QCOMPARE(warningSpy.size(), 1);
 }
 
 QTEST_GUILESS_MAIN(DesktopNotificationServiceTest)

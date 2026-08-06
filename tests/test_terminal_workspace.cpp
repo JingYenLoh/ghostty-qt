@@ -21,6 +21,7 @@
 #include <QKeyEvent>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QPalette>
 #include <QPointer>
 #include <QQmlComponent>
 #include <QQmlEngine>
@@ -28,6 +29,7 @@
 #include <QScopeGuard>
 #include <QSignalBlocker>
 #include <QSignalSpy>
+#include <QStyleHints>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QThread>
@@ -415,6 +417,7 @@ private Q_SLOTS:
     void closedDeferredFirstSurfaceDoesNotTransferOverrides();
     void failedFirstSurfaceOverrideReleasesInitialLease();
     void projectsWindowAppearanceAndSubtitle();
+    void tracksPlatformChromePaletteChanges();
     void typographyReloadReachesLiveAndFuturePanes();
     void backgroundOpacityReloadIsPaneLocalAndInherited();
     void backgroundImageAndPaddingReloadStayPaneLocalAndInherited();
@@ -815,6 +818,7 @@ void TerminalWorkspaceTest::projectsWindowAppearanceAndSubtitle()
 
     TerminalWorkspace workspace;
     QVERIFY(workspace.initialize(options, TerminalSessionStartMode::Deferred));
+    QVERIFY(!workspace.usesPlatformChromePalette());
     QCOMPARE(workspace.chromeBackground(), QColor(0x10, 0x20, 0x30));
     QCOMPARE(workspace.chromeForeground(), QColor(0xf0, 0xe0, 0xd0));
     QCOMPARE(workspace.chromeBackground().alpha(), 255);
@@ -837,8 +841,19 @@ void TerminalWorkspaceTest::projectsWindowAppearanceAndSubtitle()
     dark.windowAppearance.titlebarForeground =
         QColor(QStringLiteral("#00ff00"));
     workspace.applyLaunchOptions(dark);
-    QCOMPARE(workspace.chromeBackground(), QColor::fromRgba(0xff3b4252U));
-    QCOMPARE(workspace.chromeForeground(), QColor::fromRgba(0xffeceff4U));
+    const bool platformIsDark =
+        QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
+    QColor platformWindow =
+        QGuiApplication::palette().color(QPalette::Active, QPalette::Window);
+    QColor platformWindowText = QGuiApplication::palette().color(
+        QPalette::Active, QPalette::WindowText);
+    platformWindow.setAlpha(255);
+    platformWindowText.setAlpha(255);
+    QCOMPARE(workspace.chromeBackground(),
+             platformIsDark ? platformWindow : QColor::fromRgba(0xff3b4252U));
+    QCOMPARE(workspace.chromeForeground(),
+             platformIsDark ? platformWindowText
+                            : QColor::fromRgba(0xffeceff4U));
     QCOMPARE(appearanceChanged.count(), 1);
 
     LaunchOptions ignoredCustomColors = dark;
@@ -847,16 +862,22 @@ void TerminalWorkspaceTest::projectsWindowAppearanceAndSubtitle()
     ignoredCustomColors.windowAppearance.titlebarForeground =
         QColor(QStringLiteral("#abcdef"));
     workspace.applyLaunchOptions(ignoredCustomColors);
-    QCOMPARE(workspace.chromeBackground(), QColor::fromRgba(0xff3b4252U));
-    QCOMPARE(workspace.chromeForeground(), QColor::fromRgba(0xffeceff4U));
+    QCOMPARE(workspace.chromeBackground(),
+             platformIsDark ? platformWindow : QColor::fromRgba(0xff3b4252U));
+    QCOMPARE(workspace.chromeForeground(),
+             platformIsDark ? platformWindowText
+                            : QColor::fromRgba(0xffeceff4U));
     QCOMPARE(appearanceChanged.count(), 1);
 
     LaunchOptions light = ignoredCustomColors;
     light.colorScheme = TerminalColorScheme::Light;
     light.windowAppearance.theme = WindowTheme::Light;
     workspace.applyLaunchOptions(light);
-    QCOMPARE(workspace.chromeBackground(), QColor::fromRgba(0xffeceff4U));
-    QCOMPARE(workspace.chromeForeground(), QColor::fromRgba(0xff2e3440U));
+    QCOMPARE(workspace.chromeBackground(),
+             platformIsDark ? QColor::fromRgba(0xffeceff4U) : platformWindow);
+    QCOMPARE(workspace.chromeForeground(),
+             platformIsDark ? QColor::fromRgba(0xff2e3440U)
+                            : platformWindowText);
     QCOMPARE(appearanceChanged.count(), 2);
 
     LaunchOptions noSubtitle = light;
@@ -901,6 +922,49 @@ void TerminalWorkspaceTest::projectsWindowAppearanceAndSubtitle()
     QCOMPARE(workspace.tabCount(), 1);
     QCOMPARE(workspace.currentSubtitle(), options.workingDirectory);
     QCOMPARE(subtitleChanged.count(), beforeClose + 1);
+}
+
+void TerminalWorkspaceTest::tracksPlatformChromePaletteChanges()
+{
+    const QPalette originalPalette = QGuiApplication::palette();
+    const auto restorePalette = qScopeGuard(
+        [originalPalette] { QGuiApplication::setPalette(originalPalette); });
+
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.windowAppearance.theme = WindowTheme::System;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QVERIFY(workspace.initialize(options, TerminalSessionStartMode::Deferred));
+    QVERIFY(workspace.usesPlatformChromePalette());
+    QSignalSpy appearanceChanged(&workspace,
+                                 &TerminalWorkspace::windowAppearanceChanged);
+
+    QPalette changedPalette = originalPalette;
+    const QColor expectedWindow(QStringLiteral("#123456"));
+    const QColor expectedWindowText(QStringLiteral("#fedcba"));
+    changedPalette.setColor(QPalette::Active, QPalette::Window, expectedWindow);
+    changedPalette.setColor(QPalette::Active, QPalette::WindowText,
+                            expectedWindowText);
+    QGuiApplication::setPalette(changedPalette);
+
+    QTRY_VERIFY(!appearanceChanged.isEmpty());
+    QCOMPARE(workspace.chromeBackground(), expectedWindow);
+    QCOMPARE(workspace.chromeForeground(), expectedWindowText);
+
+    appearanceChanged.clear();
+    LaunchOptions matchingGhostty = options;
+    matchingGhostty.windowAppearance.theme = WindowTheme::Ghostty;
+    matchingGhostty.windowAppearance.titlebarBackground = expectedWindow;
+    matchingGhostty.windowAppearance.titlebarForeground = expectedWindowText;
+    workspace.applyLaunchOptions(matchingGhostty);
+    QVERIFY(!workspace.usesPlatformChromePalette());
+    QCOMPARE(workspace.chromeBackground(), expectedWindow);
+    QCOMPARE(workspace.chromeForeground(), expectedWindowText);
+    QCOMPARE(appearanceChanged.count(), 1);
 }
 
 void TerminalWorkspaceTest::typographyReloadReachesLiveAndFuturePanes()

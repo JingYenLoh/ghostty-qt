@@ -137,6 +137,17 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(XKBCommon REQUIRED IMPORTED_TARGET xkbcommon)
 qt_standard_project_setup(REQUIRES 6.8)
 
+add_library(ghostty-qt-desktop-quick-controls-style STATIC
+    src/desktop_quick_controls_style.cpp
+    src/desktop_quick_controls_style.h
+)
+target_link_libraries(ghostty-qt-desktop-quick-controls-style PUBLIC
+    Qt6::Core
+)
+target_include_directories(ghostty-qt-desktop-quick-controls-style PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+
 # Keep the Zig-built engine identical between ordinary Debug and Release C++
 # builds. Ghostty writes every configuration into its source-tree zig-out
 # directory, so presets must not be built concurrently in one checkout.
@@ -1289,6 +1300,7 @@ qt_add_qml_module(ghostty-qt
     QML_FILES
         qml/AbnormalExitOverlay.qml
         qml/BellBorderOverlay.qml
+        qml/ChromeToolButton.qml
         qml/CommandPalette.qml
         qml/ConfigDiagnosticsDialog.qml
         qml/KeyStateOverlay.qml
@@ -1302,6 +1314,15 @@ qt_add_qml_module(ghostty-qt
         qml/TerminalInspector.qml
         qml/TerminalShaderStage.qml
         qml/AppToast.qml
+    RESOURCES
+        qml/icons/cell-pick.svg
+        qml/icons/go-down.svg
+        qml/icons/go-up.svg
+        qml/icons/split-down.svg
+        qml/icons/split-right.svg
+        qml/icons/tab-new.svg
+        qml/icons/view-refresh.svg
+        qml/icons/window-close.svg
 )
 
 target_link_libraries(ghostty-qt PRIVATE
@@ -1321,6 +1342,7 @@ target_link_libraries(ghostty-qt PRIVATE
     ghostty-qt-config-export
     ghostty-qt-config-runtime
     ghostty-qt-desktop-activation
+    ghostty-qt-desktop-quick-controls-style
     ghostty-qt-frontend-config
     ghostty-qt-launch-options
     ghostty-qt-linux-cgroup

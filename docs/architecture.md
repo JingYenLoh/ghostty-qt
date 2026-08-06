@@ -368,6 +368,26 @@ rectangle, and unset split dividers paint an explicit opaque frontend fallback,
 so terminal transparency does not make application chrome or the interactive
 two-pixel split gaps translucent.
 
+Immediately after `QApplication` exists, but before any Controls QML is loaded,
+startup conditionally selects KDE's `org.kde.desktop` Quick Controls style.
+This timing lets Qt apply executable-relative import roots and an app-local
+`qt.conf`. Selection requires both a KDE/Plasma session identity and a
+discoverable `org/kde/desktop/qmldir`, and an explicit
+`QT_QUICK_CONTROLS_STYLE` always wins. The bridge is therefore a runtime
+enhancement rather than a Kirigami or KDE build dependency; Fusion remains the
+portable fallback. QML keeps the active platform palette's distinct Window,
+Button, Base, accent, disabled, and selection roles. Forced and Ghostty window
+themes replace the neutral chrome roles while retaining the platform accent.
+Theme changes reach existing workspaces through application-palette events.
+
+The toolbar layout has exactly one expanding region: the visible tab strip, or
+an inert spacer while the strip is hidden. Its trailing actions use a shared
+non-expanding tool-button contract and Freedesktop icon names; small bundled
+monochrome SVGs are used only when the active icon theme lacks an action. The
+same control is reused by pane overlays and the inspector, preventing a
+configured title font or a Quick Controls size policy from changing action
+alignment or consuming terminal width.
+
 `goto_window` keeps Ghostty's less obvious surface scope: each matched surface
 emits a typed previous/next request, then `ApplicationController` traverses its
 live root registry because only the process owner can see every window. The

@@ -1,0 +1,35 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+
+// A style-owned toolbar button with a deliberately non-expanding layout
+// contract. Qt 6.8 and newer may derive an expanding size policy from the
+// active Quick Controls style, which is useful for ordinary forms but makes a
+// trailing toolbar action consume all available width.
+ToolButton {
+    id: root
+
+    required property string accessibleName
+    property string toolTipText: accessibleName
+
+    display: AbstractButton.IconOnly
+    focusPolicy: Qt.NoFocus
+    hoverEnabled: true
+
+    icon.width: 16
+    icon.height: 16
+    icon.color: palette.buttonText
+
+    Layout.fillWidth: false
+    Layout.fillHeight: false
+    Layout.alignment: Qt.AlignVCenter
+    Layout.preferredWidth: Math.max(implicitWidth, implicitHeight)
+    Layout.preferredHeight: implicitHeight
+    Layout.maximumWidth: Layout.preferredWidth
+    Layout.maximumHeight: Layout.preferredHeight
+
+    Accessible.name: accessibleName
+    ToolTip.delay: 500
+    ToolTip.visible: hovered && enabled && toolTipText.length > 0
+    ToolTip.text: toolTipText
+}

@@ -5,6 +5,12 @@ import GhosttyQt 1.0
 
 ApplicationWindow {
     id: window
+
+    SystemPalette {
+        id: platformPalette
+        colorGroup: SystemPalette.Active
+    }
+
     property bool closeApproved: false
     // These are installed by ApplicationController before presentation. The
     // quick-terminal role remains immutable for the lifetime of this root,
@@ -78,16 +84,64 @@ ApplicationWindow {
     title: workspace.currentTitle
     palette.window: workspace.chromeBackground
     palette.windowText: workspace.chromeForeground
-    palette.button: workspace.chromeBackground
-    palette.buttonText: workspace.chromeForeground
-    palette.base: workspace.chromeBackground
-    palette.text: workspace.chromeForeground
-    palette.highlight: workspace.chromeForeground
-    palette.highlightedText: workspace.chromeBackground
+    palette.button: workspace.platformChromePalette
+                    ? platformPalette.button
+                    : workspace.chromeBackground
+    palette.buttonText: workspace.platformChromePalette
+                        ? platformPalette.buttonText
+                        : workspace.chromeForeground
+    palette.base: workspace.platformChromePalette
+                  ? platformPalette.base
+                  : workspace.chromeBackground
+    palette.alternateBase: workspace.platformChromePalette
+                           ? platformPalette.alternateBase
+                           : workspace.chromeBackground
+    palette.text: workspace.platformChromePalette
+                  ? platformPalette.text
+                  : workspace.chromeForeground
+    // Platform mode preserves KDE's distinct Window, Button, and Base roles.
+    // Forced and Ghostty themes replace only the neutral chrome roles; the
+    // platform still owns accent, selection, and other semantic colors.
     // Terminal panes paint their own effective background. Keep the window's
     // clear color fully transparent so those pane-local alpha values reach the
     // compositor instead of blending onto an opaque QML backing color first.
     color: "transparent"
+
+    Action {
+        id: newTabAction
+        text: qsTr("New Tab")
+        icon.name: "tab-new"
+        icon.source: Qt.resolvedUrl("icons/tab-new.svg")
+        enabled: !window.quickTerminal
+        onTriggered: workspace.newTab()
+    }
+
+    Action {
+        id: splitRightAction
+        text: qsTr("Split Right")
+        icon.name: "view-split-left-right"
+        icon.source: Qt.resolvedUrl("icons/split-right.svg")
+        enabled: !window.quickTerminal && workspace.tabCount > 0
+        onTriggered: workspace.splitRight()
+    }
+
+    Action {
+        id: splitDownAction
+        text: qsTr("Split Down")
+        icon.name: "view-split-top-bottom"
+        icon.source: Qt.resolvedUrl("icons/split-down.svg")
+        enabled: !window.quickTerminal && workspace.tabCount > 0
+        onTriggered: workspace.splitDown()
+    }
+
+    Action {
+        id: closePaneAction
+        text: qsTr("Close Pane")
+        icon.name: "window-close"
+        icon.source: Qt.resolvedUrl("icons/window-close.svg")
+        enabled: !window.quickTerminal && workspace.tabCount > 0
+        onTriggered: workspace.closeActivePane()
+    }
 
     Component {
         id: terminalSearchOverlayFactory
@@ -145,10 +199,35 @@ ApplicationWindow {
             objectName: "windowTabButton"
             required property int index
             required property string title
+            required property string currentDirectory
+            required property bool running
             required property bool attention
+            required property int progress
+            required property bool readOnly
+            readonly property string statusText: {
+                const states = []
+                if (running)
+                    states.push(qsTr("Running"))
+                if (readOnly)
+                    states.push(qsTr("Read only"))
+                if (progress >= 0)
+                    states.push(qsTr("%1% complete").arg(progress))
+                return states.join(" · ")
+            }
             text: title
             font.bold: attention
             focusPolicy: Qt.NoFocus
+            Accessible.description: statusText
+            ToolTip.visible: hovered
+            ToolTip.delay: 500
+            ToolTip.text: {
+                const lines = [title]
+                if (currentDirectory.length > 0)
+                    lines.push(currentDirectory)
+                if (statusText.length > 0)
+                    lines.push(statusText)
+                return lines.join("\n")
+            }
             onClicked: workspace.setCurrentIndex(index)
         }
     }
@@ -159,11 +238,36 @@ ApplicationWindow {
             objectName: "windowTabButton"
             required property int index
             required property string title
+            required property string currentDirectory
+            required property bool running
             required property bool attention
+            required property int progress
+            required property bool readOnly
+            readonly property string statusText: {
+                const states = []
+                if (running)
+                    states.push(qsTr("Running"))
+                if (readOnly)
+                    states.push(qsTr("Read only"))
+                if (progress >= 0)
+                    states.push(qsTr("%1% complete").arg(progress))
+                return states.join(" · ")
+            }
             text: title
             font.bold: attention
             width: Math.min(Math.max(130, implicitWidth), 240)
             focusPolicy: Qt.NoFocus
+            Accessible.description: statusText
+            ToolTip.visible: hovered
+            ToolTip.delay: 500
+            ToolTip.text: {
+                const lines = [title]
+                if (currentDirectory.length > 0)
+                    lines.push(currentDirectory)
+                if (statusText.length > 0)
+                    lines.push(statusText)
+                return lines.join("\n")
+            }
             onClicked: workspace.setCurrentIndex(index)
         }
     }
@@ -180,10 +284,10 @@ ApplicationWindow {
     header: Rectangle {
         id: topToolbarSlot
         objectName: "topToolbarSlot"
-        implicitHeight: terminalHeaderVisible
+        implicitHeight: window.terminalHeaderVisible
                         ? windowHeader.implicitHeight
                         : 0
-        visible: terminalHeaderVisible && !workspace.tabBarAtBottom
+        visible: window.terminalHeaderVisible && !workspace.tabBarAtBottom
         // The terminal viewport may be translucent, but application chrome is
         // intentionally opaque.
         color: workspace.chromeBackground
@@ -192,10 +296,10 @@ ApplicationWindow {
     footer: Rectangle {
         id: bottomToolbarSlot
         objectName: "bottomToolbarSlot"
-        implicitHeight: terminalHeaderVisible
+        implicitHeight: window.terminalHeaderVisible
                         ? windowHeader.implicitHeight
                         : 0
-        visible: terminalHeaderVisible && workspace.tabBarAtBottom
+        visible: window.terminalHeaderVisible && workspace.tabBarAtBottom
         color: workspace.chromeBackground
     }
 
@@ -204,7 +308,7 @@ ApplicationWindow {
         objectName: "windowToolbar"
         // Pinned Linux quick terminals hide their ordinary header bar but
         // retain the tab strip when multiple tabs make it visible.
-        visible: terminalHeaderVisible
+        visible: window.terminalHeaderVisible
         parent: workspace.tabBarAtBottom
                 ? bottomToolbarSlot
                 : topToolbarSlot
@@ -213,12 +317,9 @@ ApplicationWindow {
                   ? ToolBar.Footer
                   : ToolBar.Header
         font.family: workspace.titleFontFamily
-        background: Rectangle {
-            color: workspace.chromeBackground
-        }
-
-        RowLayout {
-            anchors.fill: parent
+        contentItem: RowLayout {
+            id: toolbarLayout
+            objectName: "windowToolbarLayout"
             spacing: 4
 
             TabBar {
@@ -242,7 +343,17 @@ ApplicationWindow {
                 }
             }
 
+            Item {
+                // An invisible TabBar is removed from layout negotiation.
+                // Keep one and only one expanding item so the action cluster
+                // remains naturally sized at the trailing edge.
+                visible: !tabs.visible
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+            }
+
             Label {
+                id: windowSubtitle
                 objectName: "windowSubtitle"
                 Layout.maximumWidth: 320
                 visible: !window.quickTerminal
@@ -252,41 +363,49 @@ ApplicationWindow {
                 color: workspace.chromeForeground
             }
 
-            ToolButton {
-                text: "+"
+            ToolSeparator {
                 visible: !window.quickTerminal
-                focusPolicy: Qt.NoFocus
-                Accessible.name: "New tab"
-                ToolTip.visible: hovered
-                ToolTip.text: "New tab (Ctrl+Shift+T)"
-                onClicked: workspace.newTab()
+                         && (tabs.visible || windowSubtitle.visible)
+                orientation: Qt.Vertical
+                Layout.fillHeight: true
             }
-            ToolButton {
-                text: "↔"
+
+            RowLayout {
+                id: toolbarActions
+                objectName: "windowToolbarActions"
                 visible: !window.quickTerminal
-                focusPolicy: Qt.NoFocus
-                Accessible.name: "Split right"
-                ToolTip.visible: hovered
-                ToolTip.text: "Split right (Ctrl+Shift+O)"
-                onClicked: workspace.splitRight()
-            }
-            ToolButton {
-                text: "↕"
-                visible: !window.quickTerminal
-                focusPolicy: Qt.NoFocus
-                Accessible.name: "Split down"
-                ToolTip.visible: hovered
-                ToolTip.text: "Split down (Ctrl+Shift+E)"
-                onClicked: workspace.splitDown()
-            }
-            ToolButton {
-                text: "×"
-                visible: !window.quickTerminal
-                focusPolicy: Qt.NoFocus
-                Accessible.name: "Close pane"
-                ToolTip.visible: hovered
-                ToolTip.text: "Close pane"
-                onClicked: workspace.closeActivePane()
+                spacing: 0
+                Layout.fillWidth: false
+                Layout.fillHeight: false
+                Layout.alignment: Qt.AlignVCenter
+
+                ChromeToolButton {
+                    objectName: "windowNewTabButton"
+                    action: newTabAction
+                    accessibleName: newTabAction.text
+                    toolTipText: qsTr("New Tab")
+                }
+
+                ChromeToolButton {
+                    objectName: "windowSplitRightButton"
+                    action: splitRightAction
+                    accessibleName: splitRightAction.text
+                    toolTipText: qsTr("Split Right")
+                }
+
+                ChromeToolButton {
+                    objectName: "windowSplitDownButton"
+                    action: splitDownAction
+                    accessibleName: splitDownAction.text
+                    toolTipText: qsTr("Split Down")
+                }
+
+                ChromeToolButton {
+                    objectName: "windowClosePaneButton"
+                    action: closePaneAction
+                    accessibleName: closePaneAction.text
+                    toolTipText: qsTr("Close Pane")
+                }
             }
         }
     }
@@ -385,6 +504,7 @@ ApplicationWindow {
         Action {
             objectName: "terminalContextMenuCopy"
             text: qsTr("Copy")
+            icon.name: "edit-copy"
             enabled: terminalContextMenu.selectionAvailable
             onTriggered: terminalContextMenu.pendingAction =
                          "copy_to_clipboard:mixed"
@@ -393,6 +513,7 @@ ApplicationWindow {
         Action {
             objectName: "terminalContextMenuPaste"
             text: qsTr("Paste")
+            icon.name: "edit-paste"
             onTriggered: terminalContextMenu.pendingAction =
                          "paste_from_clipboard"
         }
@@ -402,7 +523,8 @@ ApplicationWindow {
 
         Action {
             objectName: "terminalContextMenuReset"
-            text: qsTr("Reset")
+            text: qsTr("Reset Terminal")
+            icon.name: "view-refresh"
             onTriggered: terminalContextMenu.pendingAction = "reset"
         }
 
@@ -411,11 +533,13 @@ ApplicationWindow {
 
         Menu {
             objectName: "terminalContextMenuSplit"
-            title: qsTr("Split")
+            title: qsTr("Pane")
+            icon.name: "view-split-left-right"
 
             Action {
                 objectName: "terminalContextMenuChangeTitle"
                 text: qsTr("Change Title…")
+                icon.name: "edit-rename"
                 onTriggered: terminalContextMenu.pendingAction =
                              "prompt_surface_title"
             }
@@ -423,6 +547,7 @@ ApplicationWindow {
             Action {
                 objectName: "terminalContextMenuSplitUp"
                 text: qsTr("Split Up")
+                icon.name: "view-split-top-bottom"
                 onTriggered: terminalContextMenu.pendingAction =
                              "new_split:up"
             }
@@ -430,6 +555,7 @@ ApplicationWindow {
             Action {
                 objectName: "terminalContextMenuSplitDown"
                 text: qsTr("Split Down")
+                icon.name: "view-split-top-bottom"
                 onTriggered: terminalContextMenu.pendingAction =
                              "new_split:down"
             }
@@ -437,6 +563,7 @@ ApplicationWindow {
             Action {
                 objectName: "terminalContextMenuSplitLeft"
                 text: qsTr("Split Left")
+                icon.name: "view-split-left-right"
                 onTriggered: terminalContextMenu.pendingAction =
                              "new_split:left"
             }
@@ -444,13 +571,18 @@ ApplicationWindow {
             Action {
                 objectName: "terminalContextMenuSplitRight"
                 text: qsTr("Split Right")
+                icon.name: "view-split-left-right"
                 onTriggered: terminalContextMenu.pendingAction =
                              "new_split:right"
             }
 
+            MenuSeparator {
+            }
+
             Action {
                 objectName: "terminalContextMenuCloseSplit"
-                text: qsTr("Close Split")
+                text: qsTr("Close Pane")
+                icon.name: "window-close"
                 onTriggered: terminalContextMenu.pendingAction =
                              "close_surface"
             }
@@ -459,23 +591,30 @@ ApplicationWindow {
         Menu {
             objectName: "terminalContextMenuTab"
             title: qsTr("Tab")
-
-            Action {
-                objectName: "terminalContextMenuChangeTabTitle"
-                text: qsTr("Change Tab Title…")
-                onTriggered: terminalContextMenu.pendingAction =
-                             "prompt_tab_title"
-            }
+            icon.name: "tab-new"
 
             Action {
                 objectName: "terminalContextMenuNewTab"
                 text: qsTr("New Tab")
+                icon.name: "tab-new"
                 onTriggered: terminalContextMenu.pendingAction = "new_tab"
+            }
+
+            Action {
+                objectName: "terminalContextMenuChangeTabTitle"
+                text: qsTr("Change Tab Title…")
+                icon.name: "edit-rename"
+                onTriggered: terminalContextMenu.pendingAction =
+                             "prompt_tab_title"
+            }
+
+            MenuSeparator {
             }
 
             Action {
                 objectName: "terminalContextMenuCloseTab"
                 text: qsTr("Close Tab")
+                icon.name: "window-close"
                 onTriggered: terminalContextMenu.pendingAction =
                              "close_tab:this"
             }
@@ -484,16 +623,19 @@ ApplicationWindow {
         Menu {
             objectName: "terminalContextMenuWindow"
             title: qsTr("Window")
+            icon.name: "window-new"
 
             Action {
                 objectName: "terminalContextMenuNewWindow"
                 text: qsTr("New Window")
+                icon.name: "window-new"
                 onTriggered: terminalContextMenu.pendingAction = "new_window"
             }
 
             Action {
                 objectName: "terminalContextMenuCloseWindow"
                 text: qsTr("Close Window")
+                icon.name: "window-close"
                 onTriggered: terminalContextMenu.pendingAction =
                              "close_window"
             }
@@ -504,11 +646,13 @@ ApplicationWindow {
 
         Menu {
             objectName: "terminalContextMenuConfig"
-            title: qsTr("Config")
+            title: qsTr("Configuration")
+            icon.name: "configure"
 
             Action {
                 objectName: "terminalContextMenuOpenConfig"
                 text: qsTr("Open Configuration")
+                icon.name: "document-open"
                 onTriggered: terminalContextMenu.pendingAction =
                              "open_config"
             }
@@ -516,6 +660,7 @@ ApplicationWindow {
             Action {
                 objectName: "terminalContextMenuReloadConfig"
                 text: qsTr("Reload Configuration")
+                icon.name: "view-refresh"
                 onTriggered: terminalContextMenu.pendingAction =
                              "reload_config"
             }
@@ -553,10 +698,18 @@ ApplicationWindow {
         anchors.centerIn: parent
         width: Math.max(280, Math.min(460, window.width - 32))
         modal: true
-        title: "Confirm close"
-        standardButtons: Dialog.Ok | Dialog.Cancel
+        title: qsTr("Confirm Close")
         onAccepted: workspace.confirmClose(confirmationId)
         onRejected: workspace.cancelClose(confirmationId)
+
+        footer: DialogButtonBox {
+            standardButtons: DialogButtonBox.Cancel | DialogButtonBox.Ok
+            Component.onCompleted: {
+                const closeButton = standardButton(DialogButtonBox.Ok)
+                if (closeButton !== null)
+                    closeButton.text = qsTr("Close")
+            }
+        }
 
         Label {
             id: closeMessage
@@ -571,16 +724,24 @@ ApplicationWindow {
         anchors.centerIn: parent
         width: Math.max(320, Math.min(560, window.width - 32))
         modal: true
-        title: "Paste text containing a command break?"
-        standardButtons: Dialog.Ok | Dialog.Cancel
+        title: qsTr("Confirm Paste")
         onAccepted: workspace.confirmPaste(confirmationId)
         onRejected: workspace.cancelPaste(confirmationId)
+
+        footer: DialogButtonBox {
+            standardButtons: DialogButtonBox.Cancel | DialogButtonBox.Ok
+            Component.onCompleted: {
+                const pasteButton = standardButton(DialogButtonBox.Ok)
+                if (pasteButton !== null)
+                    pasteButton.text = qsTr("Paste")
+            }
+        }
 
         ColumnLayout {
             width: pasteDialog.availableWidth
             Label {
                 Layout.fillWidth: true
-                text: "The clipboard contains a newline or bracketed-paste terminator. Review it before pasting."
+                text: qsTr("The clipboard contains a newline or bracketed-paste terminator. Review it before pasting.")
                 wrapMode: Text.WordWrap
             }
             ScrollView {
@@ -603,7 +764,7 @@ ApplicationWindow {
         anchors.centerIn: parent
         width: Math.max(340, Math.min(600, window.width - 32))
         modal: true
-        title: "Authorize Clipboard Access"
+        title: qsTr("Authorize Clipboard Access")
         onAccepted: {
             const acceptedId = confirmationId
             confirmationId = 0
@@ -618,13 +779,14 @@ ApplicationWindow {
         }
 
         footer: DialogButtonBox {
-            Button {
-                text: "Deny"
-                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
-            }
-            Button {
-                text: "Allow"
-                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            standardButtons: DialogButtonBox.Cancel | DialogButtonBox.Ok
+            Component.onCompleted: {
+                const denyButton = standardButton(DialogButtonBox.Cancel)
+                if (denyButton !== null)
+                    denyButton.text = qsTr("Deny")
+                const allowButton = standardButton(DialogButtonBox.Ok)
+                if (allowButton !== null)
+                    allowButton.text = qsTr("Allow")
             }
         }
 
@@ -633,7 +795,7 @@ ApplicationWindow {
 
             Label {
                 Layout.fillWidth: true
-                text: "An application is attempting to write to the clipboard. The content to write is shown below."
+                text: qsTr("An application is attempting to write to the clipboard. The content to write is shown below.")
                 wrapMode: Text.WordWrap
             }
 
@@ -652,12 +814,12 @@ ApplicationWindow {
             CheckBox {
                 id: rememberClipboardChoice
                 objectName: "rememberClipboardChoice"
-                text: "Remember choice for this split"
+                text: qsTr("Remember choice for this pane")
             }
 
             Label {
                 Layout.fillWidth: true
-                text: "Reload configuration to show this prompt again."
+                text: qsTr("Reload the configuration to show this prompt again.")
                 wrapMode: Text.WordWrap
                 opacity: 0.75
             }
@@ -699,7 +861,7 @@ ApplicationWindow {
 
             Label {
                 Layout.fillWidth: true
-                text: "Leave blank to restore the default title."
+                text: qsTr("Leave blank to restore the default title.")
                 wrapMode: Text.WordWrap
             }
 

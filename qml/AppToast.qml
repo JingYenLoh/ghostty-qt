@@ -18,9 +18,9 @@ Rectangle {
     height: implicitHeight
     implicitWidth: toastLabel.implicitWidth + 28
     implicitHeight: toastLabel.implicitHeight + 18
-    radius: 8
-    color: "#f51e222a"
-    border.color: "#5d6470"
+    radius: 6
+    color: toastLabel.palette.toolTipBase
+    border.color: toastLabel.palette.mid
     border.width: 1
 
     Label {
@@ -31,7 +31,7 @@ Rectangle {
         text: root.uiController !== null
               ? root.uiController.toastMessage
               : ""
-        color: "#f2f2f2"
+        color: palette.toolTipText
         horizontalAlignment: Text.AlignHCenter
         elide: Text.ElideRight
     }

@@ -17,7 +17,7 @@ Dialog {
     closePolicy: Popup.NoAutoClose
     visible: uiController !== null
              && uiController.configurationDiagnosticsVisible
-    title: "Configuration errors"
+    title: qsTr("Configuration Errors")
 
     function ignore() {
         if (uiController !== null)
@@ -29,7 +29,7 @@ Dialog {
 
         Label {
             Layout.fillWidth: true
-            text: "The last valid configuration remains active. Fix the errors below, then retry."
+            text: qsTr("The last valid configuration remains active. Fix the errors below, then retry.")
             wrapMode: Text.WordWrap
         }
 
@@ -49,7 +49,7 @@ Dialog {
                 selectByMouse: true
                 wrapMode: TextEdit.WrapAnywhere
                 font.family: "monospace"
-                Accessible.name: "Configuration errors"
+                Accessible.name: qsTr("Configuration errors")
             }
         }
     }
@@ -57,14 +57,14 @@ Dialog {
     footer: DialogButtonBox {
         Button {
             objectName: "configurationDiagnosticsIgnore"
-            text: "Ignore"
+            text: qsTr("Ignore")
             DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
             onClicked: root.ignore()
         }
 
         Button {
             objectName: "configurationDiagnosticsRetry"
-            text: "Retry"
+            text: qsTr("Retry")
             DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
             onClicked: {
                 if (root.uiController !== null)

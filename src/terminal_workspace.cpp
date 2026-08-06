@@ -8,15 +8,18 @@
 
 #include <QCursor>
 #include <QDebug>
+#include <QEvent>
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QPalette>
 #include <QPointer>
 #include <QQmlComponent>
 #include <QQuickWindow>
 #include <QSGSimpleRectNode>
 #include <QScopeGuard>
 #include <QSet>
+#include <QStyleHints>
 #include <QTimer>
 
 #include <algorithm>
@@ -444,6 +447,9 @@ TerminalWorkspace::TerminalWorkspace(QQuickItem *parent)
     , effectiveOptions_(defaultOptions_)
 {
     setClip(true);
+    if (QGuiApplication::instance() != nullptr) {
+        QGuiApplication::instance()->installEventFilter(this);
+    }
     QTimer::singleShot(0, this, [this] {
         if (!initialized_) (void)initialize(effectiveOptions_);
     });
@@ -842,6 +848,7 @@ void TerminalWorkspace::applyLaunchOptions(const LaunchOptions &options,
     const WindowDecorationMode previousWindowDecoration = windowDecoration();
     const QColor previousChromeBackground = chromeBackground();
     const QColor previousChromeForeground = chromeForeground();
+    const bool hadPlatformChromePalette = usesPlatformChromePalette();
     const QString previousTitleFontFamily = titleFontFamily();
     const QString previousSubtitle = currentSubtitle();
     keybindProgram_ = std::move(keybindProgram);
@@ -855,6 +862,7 @@ void TerminalWorkspace::applyLaunchOptions(const LaunchOptions &options,
     };
     if (chromeBackground() != previousChromeBackground
         || chromeForeground() != previousChromeForeground
+        || usesPlatformChromePalette() != hadPlatformChromePalette
         || titleFontFamily() != previousTitleFontFamily) {
         Q_EMIT windowAppearanceChanged();
         if (!stillCurrentUpdate()) return;
@@ -939,6 +947,14 @@ QColor TerminalWorkspace::chromeBackground() const
                 effectiveOptions_.appearance.backgroundColor),
             darkChromeBackgroundRgb);
     }
+    if (usesPlatformChromePalette()) {
+        return opaqueColor(QGuiApplication::palette().color(QPalette::Active,
+                                                            QPalette::Window),
+                           effectiveOptions_.colorScheme
+                                   == TerminalColorScheme::Dark
+                               ? darkChromeBackgroundRgb
+                               : lightChromeBackgroundRgb);
+    }
     return QColor::fromRgba(effectiveOptions_.colorScheme
                                     == TerminalColorScheme::Dark
                                 ? darkChromeBackgroundRgb
@@ -953,10 +969,45 @@ QColor TerminalWorkspace::chromeForeground() const
                 effectiveOptions_.appearance.foregroundColor),
             darkChromeForegroundRgb);
     }
+    if (usesPlatformChromePalette()) {
+        return opaqueColor(
+            QGuiApplication::palette().color(QPalette::Active,
+                                             QPalette::WindowText),
+            effectiveOptions_.colorScheme == TerminalColorScheme::Dark
+                ? darkChromeForegroundRgb
+                : lightChromeForegroundRgb);
+    }
     return QColor::fromRgba(effectiveOptions_.colorScheme
                                     == TerminalColorScheme::Dark
                                 ? darkChromeForegroundRgb
                                 : lightChromeForegroundRgb);
+}
+
+bool TerminalWorkspace::usesPlatformChromePalette() const
+{
+    if (effectiveOptions_.windowAppearance.theme == WindowTheme::Ghostty) {
+        return false;
+    }
+    if (effectiveOptions_.windowAppearance.theme == WindowTheme::System) {
+        return true;
+    }
+    const TerminalColorScheme platformScheme =
+        QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark
+        ? TerminalColorScheme::Dark
+        : TerminalColorScheme::Light;
+    return effectiveOptions_.colorScheme == platformScheme;
+}
+
+bool TerminalWorkspace::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == QGuiApplication::instance()
+        && event->type() == QEvent::ApplicationPaletteChange
+        && usesPlatformChromePalette()) {
+        const QPointer<TerminalWorkspace> guard(this);
+        Q_EMIT windowAppearanceChanged();
+        if (guard == nullptr) return false;
+    }
+    return QQuickItem::eventFilter(watched, event);
 }
 
 QString TerminalWorkspace::titleFontFamily() const

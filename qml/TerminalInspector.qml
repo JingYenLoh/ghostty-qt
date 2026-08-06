@@ -221,39 +221,33 @@ Item {
                     }
                 }
 
-                ToolButton {
+                ChromeToolButton {
                     objectName: "terminalInspectorPickCell"
-                    text: "\u2316"
+                    icon.name: "crosshairs"
+                    icon.source: Qt.resolvedUrl("icons/cell-pick.svg")
                     highlighted: host.cell.picking === true
-                    focusPolicy: Qt.NoFocus
-                    Accessible.name: host.cell.picking
-                                     ? qsTr("Cancel cell picking")
-                                     : qsTr("Pick terminal cell")
-                    ToolTip.visible: hovered
-                    ToolTip.text: Accessible.name
+                    accessibleName: host.cell.picking
+                                    ? qsTr("Cancel Cell Picking")
+                                    : qsTr("Pick Terminal Cell")
                     onClicked: {
                         inspectorTabs.currentIndex = 1
                         host.toggleCellPick()
                     }
                 }
 
-                ToolButton {
+                ChromeToolButton {
                     objectName: "terminalInspectorRefresh"
-                    text: "\u21bb"
-                    focusPolicy: Qt.NoFocus
-                    Accessible.name: qsTr("Refresh inspector")
-                    ToolTip.visible: hovered
-                    ToolTip.text: qsTr("Refresh")
+                    icon.name: "view-refresh"
+                    icon.source: Qt.resolvedUrl("icons/view-refresh.svg")
+                    accessibleName: qsTr("Refresh Inspector")
                     onClicked: host.refresh()
                 }
 
-                ToolButton {
+                ChromeToolButton {
                     objectName: "terminalInspectorClose"
-                    text: "\u00d7"
-                    focusPolicy: Qt.NoFocus
-                    Accessible.name: qsTr("Close inspector")
-                    ToolTip.visible: hovered
-                    ToolTip.text: qsTr("Close")
+                    icon.name: "window-close"
+                    icon.source: Qt.resolvedUrl("icons/window-close.svg")
+                    accessibleName: qsTr("Close Inspector")
                     onClicked: host.closeInspector()
                 }
             }

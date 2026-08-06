@@ -78,6 +78,8 @@ class TerminalWorkspace : public QQuickItem {
                    windowAppearanceChanged)
     Q_PROPERTY(QColor chromeForeground READ chromeForeground NOTIFY
                    windowAppearanceChanged)
+    Q_PROPERTY(bool platformChromePalette READ usesPlatformChromePalette NOTIFY
+                   windowAppearanceChanged)
     Q_PROPERTY(QString titleFontFamily READ titleFontFamily NOTIFY
                    windowAppearanceChanged)
     Q_PROPERTY(int currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY
@@ -148,6 +150,7 @@ public:
     QString currentSubtitle() const;
     QColor chromeBackground() const;
     QColor chromeForeground() const;
+    [[nodiscard]] bool usesPlatformChromePalette() const;
     QString titleFontFamily() const;
     const TabListModel *tabModel() const { return &tabModel_; }
     int currentIndex() const { return currentIndex_; }
@@ -340,6 +343,7 @@ Q_SIGNALS:
     void customShaderDiagnosticsChanged(const QString &diagnostics);
 
 protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
     void geometryChange(const QRectF &newGeometry,
                         const QRectF &oldGeometry) override;
     void itemChange(ItemChange change, const ItemChangeData &value) override;

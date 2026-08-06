@@ -58,7 +58,10 @@ configuration, not the Qt-owned file. See
 ## Frontend behavior
 
 - Windows, controls, menus, dialogs, text shaping, and final rendering are
-  Qt-owned rather than GTK/libadwaita-owned.
+  Qt-owned rather than GTK/libadwaita-owned. In a Plasma session, an installed
+  KDE Qt Quick Controls desktop style is selected automatically unless
+  `QT_QUICK_CONTROLS_STYLE` is set explicitly; otherwise Qt's Linux fallback
+  style is used.
 - The quick terminal is a LayerShellQt surface. It uses the portable
   quick-terminal settings plus Qt-owned layer and namespace settings from
   `ghostty-qt/config`; the GTK-prefixed spellings do not apply.

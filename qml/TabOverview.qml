@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -17,7 +19,7 @@ Popup {
     height: parent ? Math.min(560, Math.max(240, parent.height - 48)) : 560
     modal: true
     focus: visible
-    closePolicy: Popup.NoAutoClose
+    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     visible: uiController !== null && uiController.tabOverviewVisible
     padding: 12
 
@@ -39,11 +41,9 @@ Popup {
             activate(item.stableTabId)
     }
 
-    background: Rectangle {
-        radius: 10
-        color: "#f51e222a"
-        border.color: "#5d6470"
-        border.width: 1
+    onClosed: {
+        if (uiController !== null && uiController.tabOverviewVisible)
+            uiController.closeModal()
     }
 
     contentItem: ColumnLayout {
@@ -51,7 +51,7 @@ Popup {
 
         Label {
             Layout.fillWidth: true
-            text: "Tabs"
+            text: qsTr("Tabs")
             font.bold: true
             font.pointSize: 14
             Accessible.role: Accessible.Heading
@@ -86,11 +86,11 @@ Popup {
                 readonly property string statusText: {
                     const states = []
                     if (running)
-                        states.push("Running")
+                        states.push(qsTr("Running"))
                     if (readOnly)
-                        states.push("Read only")
+                        states.push(qsTr("Read only"))
                     if (progress >= 0)
-                        states.push(progress + "%")
+                        states.push(qsTr("%1% complete").arg(progress))
                     return states.join(" · ")
                 }
                 readonly property string accessibleDescription: {
@@ -155,7 +155,7 @@ Popup {
             Label {
                 anchors.centerIn: parent
                 visible: tabs.count === 0
-                text: "No tabs"
+                text: qsTr("No tabs")
                 opacity: 0.72
             }
         }

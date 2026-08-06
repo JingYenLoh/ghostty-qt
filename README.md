@@ -41,6 +41,9 @@ current compatibility boundary.
 - LayerShellQt.
 - KF6 WindowSystem is optional; when present, it enables `background-blur` on
   KDE Plasma Wayland.
+- KDE's `qqc2-desktop-style` is an optional runtime integration. On Plasma it
+  makes Qt Quick Controls follow the active QWidget style, including Breeze
+  and user-selected color schemes; Fusion remains the portable fallback.
 - A C++23 compiler and standard library, CMake 3.24 or newer, and Ninja.
 - Zig exactly 0.16.0.
 - `pkg-config`, libxkbcommon and Fontconfig development files, Git, `patch`,

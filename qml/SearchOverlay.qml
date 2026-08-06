@@ -104,7 +104,7 @@ Pane {
                 preventStealing: true
                 cursorShape: pressed ? Qt.ClosedHandCursor
                                      : Qt.OpenHandCursor
-                Accessible.name: "Move search"
+                Accessible.name: qsTr("Move search")
 
                 function parentPoint(mouse) {
                     if (root.parent === null)
@@ -153,8 +153,8 @@ Pane {
             Layout.preferredWidth: 220
             Layout.minimumWidth: 80
             selectByMouse: true
-            placeholderText: "Find"
-            Accessible.name: "Search terminal"
+            placeholderText: qsTr("Find")
+            Accessible.name: qsTr("Search terminal")
 
             onTextEdited: searchDebounce.restart()
             onActiveFocusChanged: {
@@ -186,39 +186,36 @@ Pane {
             horizontalAlignment: Text.AlignRight
             text: root.terminalPane !== null
                   ? root.terminalPane.searchMatchLabel : ""
-            Accessible.name: "Search match count"
+            Accessible.name: qsTr("Search match count")
         }
 
-        ToolButton {
-            text: "↑"
-            focusPolicy: Qt.NoFocus
-            Accessible.name: "Previous match"
-            ToolTip.visible: hovered
-            ToolTip.text: "Previous match (Shift+Enter)"
+        ChromeToolButton {
+            icon.name: "go-up"
+            icon.source: Qt.resolvedUrl("icons/go-up.svg")
+            accessibleName: qsTr("Previous Match")
+            toolTipText: qsTr("Previous Match (Shift+Enter)")
             onClicked: {
                 root.submitText()
                 root.terminalPane.navigateSearch(-1)
             }
         }
 
-        ToolButton {
-            text: "↓"
-            focusPolicy: Qt.NoFocus
-            Accessible.name: "Next match"
-            ToolTip.visible: hovered
-            ToolTip.text: "Next match (Enter)"
+        ChromeToolButton {
+            icon.name: "go-down"
+            icon.source: Qt.resolvedUrl("icons/go-down.svg")
+            accessibleName: qsTr("Next Match")
+            toolTipText: qsTr("Next Match (Enter)")
             onClicked: {
                 root.submitText()
                 root.terminalPane.navigateSearch(1)
             }
         }
 
-        ToolButton {
-            text: "×"
-            focusPolicy: Qt.NoFocus
-            Accessible.name: "Close search"
-            ToolTip.visible: hovered
-            ToolTip.text: "Close search (Escape)"
+        ChromeToolButton {
+            icon.name: "window-close"
+            icon.source: Qt.resolvedUrl("icons/window-close.svg")
+            accessibleName: qsTr("Close Search")
+            toolTipText: qsTr("Close Search (Escape)")
             onClicked: root.closeSearch()
         }
     }
