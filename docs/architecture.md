@@ -3380,17 +3380,48 @@ driver and requires it to match that same device. The runner
 supplies a unique single-instance-disabled application identity and isolated
 configuration, cache, data, and state directories, but retains the host runtime
 directory because it owns the Wayland socket.
+The report fingerprints the actual Wayland socket peer executable through Linux
+`SO_PEERCRED` and `/proc`, rather than inferring a compositor from desktop
+environment variables. The production render thread snapshots the QRhi
+swapchain format, alpha flags, sample count, pixel size, and HDR limits; the GUI
+thread records Qt-reported connector geometry, scale, DPI, nominal refresh, and
+identity through `QScreen`. Output names, physical dimensions, DPI, and nominal
+refresh may be unknown when the compositor does not advertise them. This is
+client/output context, not an ICC profile or proof of compositor presentation.
 Results are written atomically after each child command so a driver reset or
 timeout cannot erase earlier evidence. Each child owns a process group; timeout,
 Ctrl+C, `SIGTERM`, or `SIGHUP` terminates that group, covering ordinary build,
 capture, and terminal descendants before the report is atomically finalized.
 
+`scripts/compare-renderer-qualification.py` consumes two immutable reports and
+first independently validates and then compares their benchmark contracts,
+complete identity matrices,
+configuration, Qt/RHI device, host, Wayland peer, and output/swapchain context.
+Only compatible records are paired. Pane and retained-shader CPU/GPU medians
+are absolute timing signals; retained-shader timing is also compared as a ratio
+to the same run's legacy renderer so common host load affects both sides. Short
+quick runs are advisory, while sufficiently sampled runs enforce
+relative-plus-absolute noise floors.
+Executable work counters form a separate deterministic gate, so additional
+row shaping, Kitty uploads/node mutations, or retained resource work cannot be
+hidden by noisy timing. Comparison results are sorted, atomic JSON artifacts
+with independent provenance hashes; the qualification reports are never
+modified.
+
 The hook does not claim access to pixels after compositor composition. Wayland
-does not let a normal client read KWin's blur, output transform, color
+does not let a normal client read compositor blur, output transform, color
 management, or other windows behind its surface. Those final effects remain an
 interactive qualification item; RenderDoc captures the client GPU work and the
 JSON report records the corresponding limitation rather than treating a Qt
 `grabWindow()` image as a desktop screenshot.
+Generic Wayland also exposes no compositor software-version query. The peer
+executable hash identifies the process serving the socket, but does not hash
+its dynamically loaded compositor libraries. Likewise, QRhi identifies the
+device but exposes no portable graphics-driver version; a driver-library update
+can therefore escape the current context checks when the kernel and OS metadata
+are unchanged. Full output ICC/HDR state and actual presentation timestamps
+require explicit color-management and `wp_presentation` protocol integration
+and remain outside this probe.
 
 ## Deliberate renderer-v1 limits
 

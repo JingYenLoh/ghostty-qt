@@ -36,3 +36,6 @@ ctest --test-dir build/sanitize --output-on-failure
 Keep using `ctest --preset sanitize` when LeakSanitizer has the required
 process-tracing support; disabling leak detection is only the managed-environment
 fallback.
+
+## Python formatting & linting
+Use `ruff` not `black`.

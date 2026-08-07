@@ -1566,7 +1566,7 @@ int main(int argc, char **argv)
     output.setRealNumberNotation(QTextStream::FixedNotation);
     output.setRealNumberPrecision(2);
     const QRhiDriverInfo driverInfo = rhi->driverInfo();
-    output << "qt=" << qVersion()
+    output << "qt=" << qVersion() << " benchmark_contract=1"
            << " platform=" << QGuiApplication::platformName()
            << " graphics_api=" << requestedGraphicsApi << " rhi_backend="
            << outputToken(QString::fromLatin1(rhi->backendName()))

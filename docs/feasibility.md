@@ -72,8 +72,10 @@ advanced text/graphics support, and distribution:
   only their GPU geometry; the software fallback keeps global node pools after
   benchmarking showed that row-node traversal was counterproductive there.
   Compatible text runs reduce layout count with exact-position fallback for
-  unsafe runs. Global invalidation cost and representative production-GPU
-  performance baselines remain the principal renderer performance risks.
+  unsafe runs. Reproducible host reports and a noise-aware comparator now gate
+  structural work and full-profile timing; collecting representative baselines
+  and reducing global invalidation cost remain the principal renderer
+  performance risks.
 - The libghostty revision should remain pinned; upgrades need focused ABI/API
   review and protocol regressions.
 - Color emoji and exact Ghostty font shaping still require explicit renderer
@@ -100,7 +102,8 @@ advanced text/graphics support, and distribution:
   distribution-specific packages remain.
 - Headless smoke tests use Qt's software scene graph. The hardware RHI path has
   a reproducible host matrix for OpenGL/Vulkan readbacks, invariant counters,
-  device/DPR metadata, and a production-window swapchain/frame-swap probe.
+  device/DPR metadata, a production-window swapchain/frame-swap probe, and
+  strict baseline/candidate comparison.
   Final compositor output and representative performance baselines still need
   interactive collection on target Wayland compositors and GPU drivers.
 

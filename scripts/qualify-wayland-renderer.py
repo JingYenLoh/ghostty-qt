@@ -20,7 +20,9 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -32,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SUPPORTED_BACKENDS = ("opengl", "vulkan")
 RENDER_ENVIRONMENT_KEYS = (
     "QT_QPA_PLATFORM",
@@ -55,6 +57,7 @@ SCRUBBED_RENDER_VARIABLES = (
     "QT_OPENGL",
 )
 DIMENSION_PATTERN = re.compile(r"^(\d+)x(\d+)$")
+RECT_PATTERN = re.compile(r"^-?\d+,-?\d+,(\d+)x(\d+)$")
 PANE_GRIDS = ("120x40", "240x80")
 SHADER_RENDERERS = ("legacy", "retained")
 SHADER_WORKLOADS = ("source-dirty", "effect-only")
@@ -191,6 +194,16 @@ def parse_positive_float(value: str | None) -> float | None:
     return parsed if math.isfinite(parsed) and parsed > 0.0 else None
 
 
+def parse_nonnegative_float(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except ValueError:
+        return None
+    return parsed if math.isfinite(parsed) and parsed >= 0.0 else None
+
+
 def parse_nonnegative_int(value: str | None) -> int | None:
     if value is None:
         return None
@@ -203,6 +216,13 @@ def parse_nonnegative_int(value: str | None) -> int | None:
 
 def parse_dimension(value: str | None) -> tuple[int, int] | None:
     if value is None or (match := DIMENSION_PATTERN.fullmatch(value)) is None:
+        return None
+    result = (int(match.group(1)), int(match.group(2)))
+    return result if result[0] > 0 and result[1] > 0 else None
+
+
+def parse_rect(value: str | None) -> tuple[int, int] | None:
+    if value is None or (match := RECT_PATTERN.fullmatch(value)) is None:
         return None
     result = (int(match.group(1)), int(match.group(2)))
     return result if result[0] > 0 and result[1] > 0 else None
@@ -431,6 +451,7 @@ def validate_pane_run(
     if (
         header.get("platform") != "wayland"
         or header.get("presentation") != "offscreen"
+        or header.get("benchmark_contract") != "1"
         or not header.get("qt_version")
     ):
         mark_run(run, "fail", "wrong_platform")
@@ -541,6 +562,7 @@ def validate_shader_run(
     if (
         header.get("platform") != "wayland"
         or not header.get("qt")
+        or header.get("benchmark_contract") != "1"
         or not header.get("rhi_backend")
         or header.get("completion") != "offscreen-end-frame"
         or dpr is None
@@ -630,6 +652,22 @@ def validate_swapchain_run(
         mark_run(run, "fail", "backend_fallback")
         return None
     frame_swaps = parse_nonnegative_int(record.get("frame_swaps"))
+    screen_count = parse_nonnegative_int(record.get("screen_count"))
+    screen_depth = parse_nonnegative_int(record.get("screen_depth"))
+    screen_refresh_millihz = parse_nonnegative_int(record.get("screen_refresh_millihz"))
+    screen_orientation = parse_nonnegative_int(record.get("screen_orientation"))
+    screen_primary = parse_nonnegative_int(record.get("screen_primary"))
+    swapchain_flags = parse_nonnegative_int(record.get("swapchain_flags"))
+    swapchain_samples = parse_nonnegative_int(record.get("swapchain_samples"))
+    swapchain_srgb = parse_nonnegative_int(record.get("swapchain_srgb"))
+    swapchain_premultiplied_alpha = parse_nonnegative_int(
+        record.get("swapchain_premultiplied_alpha")
+    )
+    swapchain_nonpremultiplied_alpha = parse_nonnegative_int(
+        record.get("swapchain_nonpremultiplied_alpha")
+    )
+    swapchain_no_vsync = parse_nonnegative_int(record.get("swapchain_no_vsync"))
+    swapchain_hdr = parse_nonnegative_int(record.get("swapchain_hdr"))
     alpha_bits = parse_nonnegative_int(record.get("alpha_buffer_bits"))
     clear_alpha = parse_nonnegative_int(record.get("clear_alpha"))
     image_alpha = parse_nonnegative_int(record.get("image_alpha"))
@@ -647,8 +685,62 @@ def validate_swapchain_run(
     dpr = parse_positive_float(record.get("dpr"))
     logical = parse_dimension(record.get("logical"))
     physical = parse_dimension(record.get("physical"))
+    screen_geometry = parse_rect(record.get("screen_geometry"))
+    screen_available_geometry = parse_rect(record.get("screen_available_geometry"))
+    swapchain_size = parse_dimension(record.get("swapchain_size"))
+    screen_dpr = parse_positive_float(record.get("screen_dpr"))
     median_interval = parse_positive_float(record.get("median_frame_interval_us"))
     p90_interval = parse_positive_float(record.get("p90_frame_interval_us"))
+    swapchain_format = record.get("swapchain_format")
+    hdr_limits = record.get("swapchain_hdr_limits")
+    hdr_behavior = record.get("swapchain_hdr_behavior")
+    hdr_minimum = record.get("swapchain_hdr_minimum")
+    hdr_maximum = record.get("swapchain_hdr_maximum")
+    hdr_maximum_potential = record.get("swapchain_hdr_maximum_potential")
+    hdr_sdr_white = record.get("swapchain_hdr_sdr_white")
+    alpha_flags_match = (
+        swapchain_flags is not None
+        and swapchain_srgb == int(bool(swapchain_flags & (1 << 2)))
+        and swapchain_premultiplied_alpha == int(bool(swapchain_flags & (1 << 0)))
+        and swapchain_nonpremultiplied_alpha == int(bool(swapchain_flags & (1 << 1)))
+        and swapchain_no_vsync == int(bool(swapchain_flags & (1 << 4)))
+    )
+    hdr_metadata_valid = False
+    if swapchain_hdr == 0 and swapchain_format == "sdr":
+        hdr_metadata_valid = all(
+            value == "na"
+            for value in (
+                hdr_limits,
+                hdr_behavior,
+                hdr_minimum,
+                hdr_maximum,
+                hdr_maximum_potential,
+                hdr_sdr_white,
+            )
+        )
+    elif swapchain_hdr == 1 and swapchain_format != "sdr":
+        parsed_maximum = parse_positive_float(hdr_maximum)
+        parsed_sdr_white = parse_nonnegative_float(hdr_sdr_white)
+        if hdr_limits == "nits":
+            parsed_minimum = parse_nonnegative_float(hdr_minimum)
+            hdr_metadata_valid = (
+                hdr_behavior in ("scene-referred", "display-referred")
+                and parsed_minimum is not None
+                and parsed_maximum is not None
+                and parsed_minimum <= parsed_maximum
+                and hdr_maximum_potential == "na"
+                and parsed_sdr_white is not None
+            )
+        elif hdr_limits == "color-component":
+            parsed_maximum_potential = parse_positive_float(hdr_maximum_potential)
+            hdr_metadata_valid = (
+                hdr_behavior in ("scene-referred", "display-referred")
+                and hdr_minimum == "na"
+                and parsed_maximum is not None
+                and parsed_maximum_potential is not None
+                and parsed_maximum <= parsed_maximum_potential
+                and parsed_sdr_white is not None
+            )
     expected_pixel_count = physical[0] * physical[1] if physical is not None else None
     expected_half_alpha_pixels = (
         max(1, expected_pixel_count // 20) if expected_pixel_count is not None else None
@@ -666,6 +758,39 @@ def validate_swapchain_run(
     if (
         frame_swaps is None
         or frame_swaps < expected_frames
+        or record.get("benchmark_contract") != "1"
+        or not record.get("qt_version")
+        or screen_count is None
+        or screen_count == 0
+        or screen_depth is None
+        or screen_depth == 0
+        or screen_refresh_millihz is None
+        or screen_orientation is None
+        or screen_primary not in (0, 1)
+        or screen_geometry is None
+        or screen_available_geometry is None
+        or screen_dpr is None
+        or dpr is None
+        or swapchain_format
+        not in (
+            "sdr",
+            "hdr-extended-srgb-linear",
+            "hdr10",
+            "hdr-extended-display-p3-linear",
+        )
+        or swapchain_flags is None
+        or swapchain_samples is None
+        or swapchain_samples == 0
+        or swapchain_size is None
+        or swapchain_size != physical
+        or swapchain_srgb not in (0, 1)
+        or swapchain_premultiplied_alpha not in (0, 1)
+        or swapchain_nonpremultiplied_alpha not in (0, 1)
+        or (swapchain_premultiplied_alpha + swapchain_nonpremultiplied_alpha) != 1
+        or swapchain_no_vsync != 0
+        or swapchain_hdr not in (0, 1)
+        or not alpha_flags_match
+        or not hdr_metadata_valid
         or alpha_bits is None
         or alpha_bits == 0
         or clear_alpha != 0
@@ -782,12 +907,116 @@ def git_output(root: Path, *arguments: str) -> str | None:
     return completed.stdout.strip() if completed.returncode == 0 else None
 
 
+def cpu_model(path: Path = Path("/proc/cpuinfo")) -> str | None:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for key in ("model name", "Hardware", "Processor"):
+        for line in lines:
+            field, separator, value = line.partition(":")
+            if separator and field.strip() == key and value.strip():
+                return value.strip()
+    return None
+
+
+def os_release_metadata() -> dict[str, str]:
+    try:
+        release = platform.freedesktop_os_release()
+    except OSError:
+        return {}
+    return {
+        key.lower(): release[key]
+        for key in ("ID", "VERSION_ID", "BUILD_ID", "PRETTY_NAME")
+        if release.get(key)
+    }
+
+
+def file_sha256(path: Path) -> str | None:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def process_identity(pid: int, proc_root: Path = Path("/proc")) -> dict[str, object]:
+    process_root = proc_root / str(pid)
+    result: dict[str, object] = {
+        "pid": pid,
+        "comm": None,
+        "executable": None,
+        "executable_sha256": None,
+        "executable_size": None,
+        "command": [],
+    }
+    try:
+        result["comm"] = (process_root / "comm").read_text(
+            encoding="utf-8", errors="replace"
+        ).strip() or None
+    except OSError:
+        pass
+    try:
+        executable_link = process_root / "exe"
+        executable = Path(os.readlink(executable_link))
+    except OSError:
+        executable = None
+    if executable is not None:
+        result["executable"] = str(executable)
+        result["executable_sha256"] = file_sha256(executable_link)
+        try:
+            result["executable_size"] = executable_link.stat().st_size
+        except OSError:
+            pass
+    try:
+        command = (process_root / "cmdline").read_bytes()[:16384]
+        result["command"] = [os.fsdecode(part) for part in command.split(b"\0") if part]
+    except OSError:
+        pass
+    return result
+
+
+def wayland_peer_metadata(environment: Mapping[str, str]) -> dict[str, object]:
+    result: dict[str, object] = {
+        "identity_source": "linux_so_peercred",
+        "peer": None,
+        "diagnostic": None,
+    }
+    path = wayland_socket_path(environment)
+    if path is None:
+        result["diagnostic"] = "missing_wayland_socket"
+        return result
+    peer_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    peer_socket.settimeout(2)
+    try:
+        peer_socket.connect(str(path))
+        credentials = peer_socket.getsockopt(
+            socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")
+        )
+        pid, uid, gid = struct.unpack("3i", credentials)
+        peer = process_identity(pid)
+        peer.update({"uid": uid, "gid": gid})
+        result["peer"] = peer
+    except OSError as error:
+        result["diagnostic"] = f"{type(error).__name__}: {error}"
+        return result
+    finally:
+        peer_socket.close()
+    return result
+
+
 def host_metadata(root: Path, environment: Mapping[str, str]) -> dict[str, object]:
     status = git_output(root, "status", "--porcelain")
     return {
         "uname": list(platform.uname()),
         "python": platform.python_version(),
         "processors": os.cpu_count(),
+        "cpu_model": cpu_model(),
+        "os_release": os_release_metadata(),
+        "wayland_peer": wayland_peer_metadata(environment),
         "repository_revision": git_output(root, "rev-parse", "HEAD"),
         "repository_dirty": bool(status) if status is not None else None,
         "ghostty_revision": git_output(root / "ghostty", "rev-parse", "HEAD"),
@@ -1050,6 +1279,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             "shader_iterations": shader_iterations,
             "renderdoc_scenarios": options.renderdoc_scenario,
             "allow_software_device": options.allow_software_device,
+            "build_performed": not options.skip_build,
         },
         "runs": [],
     }
@@ -1434,9 +1664,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         report["reason_code"] = "completed"
         exit_code = 0
     atomic_write_json(report_path, report)
-    print(
-        f"{report['status'].upper()}: {report['reason_code']}; " f"report={report_path}"
-    )
+    print(f"{report['status'].upper()}: {report['reason_code']}; report={report_path}")
     return exit_code
 
 

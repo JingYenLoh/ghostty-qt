@@ -76,6 +76,51 @@ class RendererQualificationTest(unittest.TestCase):
             self.assertFalse(wrong_type[0])
             self.assertEqual(wrong_type[1], "not_wayland_session")
 
+    def test_records_wayland_peer_process_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable = root / "compositor"
+            executable.write_bytes(b"test-compositor")
+            process_root = root / "proc" / "42"
+            process_root.mkdir(parents=True)
+            (process_root / "comm").write_text("test-wayland\n", encoding="utf-8")
+            (process_root / "cmdline").write_bytes(b"test-wayland\0--flag\0")
+            (process_root / "exe").symlink_to(executable)
+
+            identity = qualification.process_identity(42, root / "proc")
+            self.assertEqual(identity["comm"], "test-wayland")
+            self.assertEqual(identity["executable"], str(executable))
+            self.assertEqual(identity["command"], ["test-wayland", "--flag"])
+            self.assertRegex(str(identity["executable_sha256"]), r"^[0-9a-f]{64}$")
+
+            peer_socket = mock.Mock()
+            peer_socket.getsockopt.return_value = qualification.struct.pack(
+                "3i", 42, 1000, 1001
+            )
+            expected_identity = {"pid": 42, "comm": "test-wayland"}
+            with (
+                mock.patch.object(
+                    qualification.socket, "socket", return_value=peer_socket
+                ),
+                mock.patch.object(
+                    qualification,
+                    "process_identity",
+                    return_value=expected_identity,
+                ),
+            ):
+                metadata = qualification.wayland_peer_metadata(
+                    {
+                        "XDG_RUNTIME_DIR": directory,
+                        "WAYLAND_DISPLAY": "wayland-test",
+                    }
+                )
+            peer_socket.connect.assert_called_once_with(str(root / "wayland-test"))
+            peer_socket.close.assert_called_once()
+            self.assertEqual(
+                metadata["peer"],
+                {"pid": 42, "comm": "test-wayland", "uid": 1000, "gid": 1001},
+            )
+
     def test_environment_scrubs_renderer_overrides(self) -> None:
         environment, evidence = qualification.qualification_environment(
             {
@@ -119,7 +164,7 @@ class RendererQualificationTest(unittest.TestCase):
         scale = float(dpr)
         lines = [
             "qt_version=6.11.1 backend=opengl platform=wayland "
-            + "presentation=offscreen warmup=8 iterations=12"
+            + "presentation=offscreen benchmark_contract=1 warmup=8 iterations=12"
         ]
         for grid, logical in (("120x40", (960, 680)), ("240x80", (1920, 1360))):
             framebuffer = tuple(round(value * scale) for value in logical)
@@ -190,6 +235,7 @@ class RendererQualificationTest(unittest.TestCase):
             "".join(
                 (
                     "qt=6.11.1 platform=wayland graphics_api=vulkan ",
+                    "benchmark_contract=1 ",
                     "rhi_backend=Vulkan viewport=1280x720 ",
                     "rhi_device_name=Test%20GPU rhi_device_type=integrated ",
                     "rhi_vendor_id=0x1002 rhi_device_id=0x1234 ",
@@ -215,22 +261,62 @@ class RendererQualificationTest(unittest.TestCase):
             "records": qualification.parse_records("\n".join(lines)),
         }
 
+    @staticmethod
+    def swapchain_output(
+        *,
+        dpr: str = "1",
+        logical: str = "100x100",
+        physical: str = "100x100",
+        translucent_pixels: int = 6000,
+        half_alpha_pixels: int = 5500,
+        pixel_count: int = 10000,
+        minimum_half_alpha_pixels: int = 500,
+        screen_dpr: str | None = None,
+    ) -> str:
+        effective_screen_dpr = dpr if screen_dpr is None else screen_dpr
+        return (
+            "renderer_qualification benchmark_contract=1 qt_version=6.11.1 "
+            "platform=wayland graphics_api=vulkan "
+            f"dpr={dpr} logical={logical} physical={physical} frame_swaps=30 "
+            "median_frame_interval_us=16666 p90_frame_interval_us=17000 "
+            "screen_count=1 screen_name=eDP-1 screen_manufacturer=Test "
+            "screen_model=Panel screen_serial=123 "
+            "screen_geometry=0,0,1920x1080 "
+            "screen_available_geometry=0,0,1920x1040 "
+            "screen_physical_mm=300x170 screen_depth=24 "
+            f"screen_dpr={effective_screen_dpr} screen_logical_dpi_x=96 "
+            "screen_logical_dpi_y=96 screen_physical_dpi_x=160 "
+            "screen_physical_dpi_y=160 screen_refresh_millihz=60000 "
+            "screen_orientation=1 screen_primary=1 swapchain_format=sdr "
+            f"swapchain_flags=1 swapchain_samples=1 swapchain_size={physical} "
+            "swapchain_srgb=0 swapchain_premultiplied_alpha=1 "
+            "swapchain_nonpremultiplied_alpha=0 swapchain_no_vsync=0 "
+            "swapchain_hdr=0 swapchain_hdr_limits=na "
+            "swapchain_hdr_behavior=na swapchain_hdr_minimum=na "
+            "swapchain_hdr_maximum=na swapchain_hdr_maximum_potential=na "
+            "swapchain_hdr_sdr_white=na alpha_buffer_bits=8 clear_alpha=0 "
+            "image_alpha=1 nonuniform=1 min_alpha=128 max_alpha=255 "
+            f"translucent_pixels={translucent_pixels} "
+            f"half_alpha_pixels={half_alpha_pixels} pixel_count={pixel_count} "
+            f"minimum_half_alpha_pixels={minimum_half_alpha_pixels} "
+            "panes=1 running_panes=1 rhi_backend=Vulkan "
+            "rhi_device_name=Test%20GPU rhi_device_type=integrated "
+            "rhi_vendor_id=0x1002 rhi_device_id=0x1234"
+        )
+
     def test_validates_shader_and_swapchain_metadata(self) -> None:
         shader = self.shader_run()
         self.assertEqual(qualification.validate_shader_run(shader, "vulkan", 6), 1.25)
         self.assertEqual(shader["status"], "pass")
 
-        swapchain_output = (
-            "renderer_qualification platform=wayland graphics_api=vulkan "
-            "dpr=1.5 logical=1100x720 physical=1650x1080 frame_swaps=30 "
-            "median_frame_interval_us=16666 p90_frame_interval_us=17000 "
-            "alpha_buffer_bits=8 clear_alpha=0 image_alpha=1 nonuniform=1 "
-            "min_alpha=128 max_alpha=255 translucent_pixels=800000 "
-            "half_alpha_pixels=750000 pixel_count=1782000 "
-            "minimum_half_alpha_pixels=89100 panes=1 running_panes=1 "
-            "rhi_backend=Vulkan rhi_device_name=Test%20GPU "
-            "rhi_device_type=integrated rhi_vendor_id=0x1002 "
-            "rhi_device_id=0x1234"
+        swapchain_output = self.swapchain_output(
+            dpr="1.5",
+            logical="1100x720",
+            physical="1650x1080",
+            translucent_pixels=800000,
+            half_alpha_pixels=750000,
+            pixel_count=1782000,
+            minimum_half_alpha_pixels=89100,
         )
         swapchain: dict[str, object] = {
             "return_code": 0,
@@ -241,6 +327,39 @@ class RendererQualificationTest(unittest.TestCase):
             1.5,
         )
         self.assertEqual(swapchain["status"], "pass")
+
+        fractional_window_scale: dict[str, object] = {
+            "return_code": 0,
+            "records": qualification.parse_records(
+                self.swapchain_output(
+                    dpr="1.5",
+                    logical="1100x720",
+                    physical="1650x1080",
+                    translucent_pixels=800000,
+                    half_alpha_pixels=750000,
+                    pixel_count=1782000,
+                    minimum_half_alpha_pixels=89100,
+                    screen_dpr="2",
+                )
+            ),
+        }
+        self.assertEqual(
+            qualification.validate_swapchain_run(fractional_window_scale, "vulkan", 30),
+            1.5,
+        )
+
+        unnamed_unknown_refresh: dict[str, object] = {
+            "return_code": 0,
+            "records": qualification.parse_records(
+                self.swapchain_output()
+                .replace("screen_name=eDP-1", "screen_name=")
+                .replace("screen_refresh_millihz=60000", "screen_refresh_millihz=0")
+            ),
+        }
+        self.assertEqual(
+            qualification.validate_swapchain_run(unnamed_unknown_refresh, "vulkan", 30),
+            1,
+        )
 
     def test_rejects_incomplete_shader_matrix(self) -> None:
         missing = self.shader_run()
@@ -284,16 +403,10 @@ class RendererQualificationTest(unittest.TestCase):
         transparent: dict[str, object] = {
             "return_code": 0,
             "records": qualification.parse_records(
-                "renderer_qualification platform=wayland graphics_api=vulkan "
-                "dpr=1 logical=100x100 physical=100x100 frame_swaps=30 "
-                "median_frame_interval_us=16000 p90_frame_interval_us=17000 "
-                "alpha_buffer_bits=8 clear_alpha=0 image_alpha=1 nonuniform=1 "
-                "min_alpha=0 max_alpha=255 translucent_pixels=0 "
-                "half_alpha_pixels=0 pixel_count=10000 "
-                "minimum_half_alpha_pixels=500 panes=1 running_panes=1 "
-                "rhi_backend=Vulkan rhi_device_name=Test%20GPU "
-                "rhi_device_type=integrated rhi_vendor_id=0x1002 "
-                "rhi_device_id=0x1234"
+                self.swapchain_output(
+                    translucent_pixels=0,
+                    half_alpha_pixels=0,
+                )
             ),
         }
         qualification.validate_swapchain_run(transparent, "vulkan", 30)
@@ -302,16 +415,10 @@ class RendererQualificationTest(unittest.TestCase):
         edge_only: dict[str, object] = {
             "return_code": 0,
             "records": qualification.parse_records(
-                "renderer_qualification platform=wayland graphics_api=vulkan "
-                "dpr=1 logical=100x100 physical=100x100 frame_swaps=30 "
-                "median_frame_interval_us=16000 p90_frame_interval_us=17000 "
-                "alpha_buffer_bits=8 clear_alpha=0 image_alpha=1 nonuniform=1 "
-                "min_alpha=128 max_alpha=255 translucent_pixels=10 "
-                "half_alpha_pixels=1 pixel_count=10000 "
-                "minimum_half_alpha_pixels=500 panes=1 running_panes=1 "
-                "rhi_backend=Vulkan rhi_device_name=Test%20GPU "
-                "rhi_device_type=integrated rhi_vendor_id=0x1002 "
-                "rhi_device_id=0x1234"
+                self.swapchain_output(
+                    translucent_pixels=10,
+                    half_alpha_pixels=1,
+                )
             ),
         }
         qualification.validate_swapchain_run(edge_only, "vulkan", 30)
@@ -320,21 +427,61 @@ class RendererQualificationTest(unittest.TestCase):
         inconsistent_counts: dict[str, object] = {
             "return_code": 0,
             "records": qualification.parse_records(
-                "renderer_qualification platform=wayland graphics_api=vulkan "
-                "dpr=1 logical=100x100 physical=100x100 frame_swaps=30 "
-                "median_frame_interval_us=16000 p90_frame_interval_us=17000 "
-                "alpha_buffer_bits=8 clear_alpha=0 image_alpha=1 nonuniform=1 "
-                "min_alpha=128 max_alpha=255 translucent_pixels=400 "
-                "half_alpha_pixels=600 pixel_count=9999 "
-                "minimum_half_alpha_pixels=500 panes=1 running_panes=1 "
-                "rhi_backend=Vulkan rhi_device_name=Test%20GPU "
-                "rhi_device_type=integrated rhi_vendor_id=0x1002 "
-                "rhi_device_id=0x1234"
+                self.swapchain_output(
+                    translucent_pixels=400,
+                    half_alpha_pixels=600,
+                    pixel_count=9999,
+                )
             ),
         }
         qualification.validate_swapchain_run(inconsistent_counts, "vulkan", 30)
         self.assertEqual(
             inconsistent_counts["reason_code"], "invalid_presented_surface"
+        )
+
+    def test_rejects_internally_inconsistent_swapchain_metadata(self) -> None:
+        mutations = (
+            ("swapchain_format=sdr", "swapchain_format=hdr10"),
+            ("swapchain_flags=1", "swapchain_flags=0"),
+            (
+                "swapchain_nonpremultiplied_alpha=0",
+                "swapchain_nonpremultiplied_alpha=1",
+            ),
+            ("swapchain_srgb=0", "swapchain_srgb=1"),
+            ("swapchain_no_vsync=0", "swapchain_no_vsync=1"),
+            ("swapchain_hdr_limits=na", "swapchain_hdr_limits=nits"),
+        )
+        for original, replacement in mutations:
+            with self.subTest(replacement=replacement):
+                run: dict[str, object] = {
+                    "return_code": 0,
+                    "records": qualification.parse_records(
+                        self.swapchain_output().replace(original, replacement)
+                    ),
+                }
+                qualification.validate_swapchain_run(run, "vulkan", 30)
+                self.assertEqual(run["reason_code"], "invalid_presented_surface")
+
+    def test_accepts_coherent_hdr_swapchain_metadata(self) -> None:
+        output = self.swapchain_output()
+        replacements = (
+            ("swapchain_format=sdr", "swapchain_format=hdr10"),
+            ("swapchain_hdr=0", "swapchain_hdr=1"),
+            ("swapchain_hdr_limits=na", "swapchain_hdr_limits=nits"),
+            ("swapchain_hdr_behavior=na", "swapchain_hdr_behavior=display-referred"),
+            ("swapchain_hdr_minimum=na", "swapchain_hdr_minimum=0.01"),
+            ("swapchain_hdr_maximum=na", "swapchain_hdr_maximum=1000"),
+            ("swapchain_hdr_sdr_white=na", "swapchain_hdr_sdr_white=203"),
+        )
+        for original, replacement in replacements:
+            output = output.replace(original, replacement)
+        run: dict[str, object] = {
+            "return_code": 0,
+            "records": qualification.parse_records(output),
+        }
+        self.assertEqual(
+            qualification.validate_swapchain_run(run, "vulkan", 30),
+            1,
         )
 
     def test_backend_fallback_is_not_an_optional_skip(self) -> None:

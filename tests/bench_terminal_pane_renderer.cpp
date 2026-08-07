@@ -1801,6 +1801,7 @@ int main(int argc, char *argv[])
 
     QTextStream output(stdout);
     output << "qt_version=" << outputToken(QString::fromLatin1(qVersion()))
+           << " benchmark_contract=1"
            << " backend=" << graphicsApiName(*graphicsApi)
            << " platform=" << QGuiApplication::platformName()
            << " presentation=offscreen"

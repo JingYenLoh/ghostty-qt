@@ -82,13 +82,17 @@ for intentional upgrade procedure.
   geometry on RHI backends; the software fallback uses pooled global nodes.
   A host qualification runner combines the full offscreen OpenGL/Vulkan
   scenario matrix with a real production-window swapchain/frame-swap probe
-  and atomic machine-readable evidence. Final compositor blending, blur, and
-  color management still require interactive inspection on representative
-  Wayland systems.
+  and atomic machine-readable evidence. A strict baseline comparator validates
+  independently complete benchmark/device/host/output evidence, enforces
+  deterministic work regressions, and applies noise-aware full-profile timing
+  gates. Graphics-driver library fingerprints are not yet captured. Final
+  compositor blending, blur, color management, and presentation timing still
+  require interactive or dedicated Wayland-protocol inspection.
 - Custom shaders require Qt Quick's OpenGL or Vulkan RHI backend. Other
   backends keep terminal output unfiltered and expose a configuration
-  diagnostic; final compositor output and representative frame-cost baselines
-  still require qualification on target GPUs and Wayland compositors.
+  diagnostic; representative baseline collection still needs target GPUs and
+  Wayland compositors even though comparison and regression policy are now
+  automated.
 - Saved sessions, a theme editor, and distribution packaging remain future
   work.
 

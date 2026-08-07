@@ -40,6 +40,7 @@
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QScopeGuard>
+#include <QScreen>
 #include <QStandardPaths>
 #include <QStyleHints>
 #include <QSurfaceFormat>
@@ -1851,10 +1852,51 @@ QStringView rendererQualificationDeviceTypeName(QRhiDriverInfo::DeviceType type)
     return u"unknown";
 }
 
+QStringView
+rendererQualificationSwapchainFormatName(QRhiSwapChain::Format format)
+{
+    switch (format) {
+    case QRhiSwapChain::SDR: return u"sdr";
+    case QRhiSwapChain::HDRExtendedSrgbLinear:
+        return u"hdr-extended-srgb-linear";
+    case QRhiSwapChain::HDR10: return u"hdr10";
+    case QRhiSwapChain::HDRExtendedDisplayP3Linear:
+        return u"hdr-extended-display-p3-linear";
+    }
+    return u"unknown";
+}
+
+struct RendererQualificationSwapchainInfo {
+    QString format;
+    quint32 flags = 0;
+    int samples = 0;
+    QSize pixelSize;
+    bool srgb = false;
+    bool premultipliedAlpha = false;
+    bool nonPremultipliedAlpha = false;
+    bool noVsync = false;
+    bool hdr = false;
+    QString hdrLimits;
+    QString hdrBehavior;
+    double hdrMinimum = 0.0;
+    double hdrMaximum = 0.0;
+    double hdrMaximumPotential = 0.0;
+    double hdrSdrWhite = 0.0;
+};
+
 QString rendererQualificationOutputToken(QStringView value)
 {
     return QString::fromLatin1(
         QUrl::toPercentEncoding(value.toString(), QByteArrayLiteral("._-")));
+}
+
+QString rendererQualificationRectToken(const QRect &rect)
+{
+    return QStringLiteral("%1,%2,%3x%4")
+        .arg(rect.x())
+        .arg(rect.y())
+        .arg(rect.width())
+        .arg(rect.height());
 }
 
 struct RendererQualificationImageStatistics {
@@ -1915,6 +1957,7 @@ bool installRendererQualificationTestHook(QQuickWindow *window,
         int targetFrameCount = 0;
         QMutex driverInfoMutex;
         std::optional<QRhiDriverInfo> driverInfo;
+        std::optional<RendererQualificationSwapchainInfo> swapchainInfo;
         QString rhiBackend;
         bool complete = false;
         bool failed = false;
@@ -1962,8 +2005,52 @@ bool installRendererQualificationTestHook(QQuickWindow *window,
             auto *const rhi = static_cast<QRhi *>(renderer->getResource(
                 quickWindow, QSGRendererInterface::RhiResource));
             if (rhi == nullptr) return;
+            auto *const swapchain =
+                static_cast<QRhiSwapChain *>(renderer->getResource(
+                    quickWindow, QSGRendererInterface::RhiSwapchainResource));
+            if (swapchain == nullptr) return;
+            const QRhiSwapChain::Flags flags = swapchain->flags();
+            RendererQualificationSwapchainInfo swapchainInfo;
+            swapchainInfo.format =
+                rendererQualificationSwapchainFormatName(swapchain->format())
+                    .toString();
+            swapchainInfo.flags = static_cast<quint32>(flags.toInt());
+            swapchainInfo.samples = swapchain->sampleCount();
+            swapchainInfo.pixelSize = swapchain->currentPixelSize();
+            swapchainInfo.srgb = flags.testFlag(QRhiSwapChain::sRGB);
+            swapchainInfo.premultipliedAlpha =
+                flags.testFlag(QRhiSwapChain::SurfaceHasPreMulAlpha);
+            swapchainInfo.nonPremultipliedAlpha =
+                flags.testFlag(QRhiSwapChain::SurfaceHasNonPreMulAlpha);
+            swapchainInfo.noVsync = flags.testFlag(QRhiSwapChain::NoVSync);
+            swapchainInfo.hdr = swapchain->format() != QRhiSwapChain::SDR;
+            if (swapchainInfo.hdr) {
+                const QRhiSwapChainHdrInfo hdrInfo = swapchain->hdrInfo();
+                swapchainInfo.hdrSdrWhite = hdrInfo.sdrWhiteLevel;
+                swapchainInfo.hdrBehavior = hdrInfo.luminanceBehavior
+                        == QRhiSwapChainHdrInfo::SceneReferred
+                    ? QStringLiteral("scene-referred")
+                    : QStringLiteral("display-referred");
+                if (hdrInfo.limitsType
+                    == QRhiSwapChainHdrInfo::LuminanceInNits) {
+                    swapchainInfo.hdrLimits = QStringLiteral("nits");
+                    swapchainInfo.hdrMinimum =
+                        hdrInfo.limits.luminanceInNits.minLuminance;
+                    swapchainInfo.hdrMaximum =
+                        hdrInfo.limits.luminanceInNits.maxLuminance;
+                } else {
+                    swapchainInfo.hdrLimits = QStringLiteral("color-component");
+                    swapchainInfo.hdrMaximum =
+                        hdrInfo.limits.colorComponentValue
+                            .maxColorComponentValue;
+                    swapchainInfo.hdrMaximumPotential =
+                        hdrInfo.limits.colorComponentValue
+                            .maxPotentialColorComponentValue;
+                }
+            }
             const QMutexLocker lock(&state->driverInfoMutex);
             state->driverInfo = rhi->driverInfo();
+            state->swapchainInfo = std::move(swapchainInfo);
             state->rhiBackend = QString::fromLatin1(rhi->backendName());
         },
         Qt::DirectConnection);
@@ -2024,6 +2111,7 @@ bool installRendererQualificationTestHook(QQuickWindow *window,
                         <= 1;
                 const QList<TerminalPane *> panes =
                     terminalWorkspace->findChildren<TerminalPane *>();
+                QScreen *const screen = quickWindow->screen();
                 const qsizetype runningPaneCount =
                     std::ranges::count_if(panes, [](const TerminalPane *pane) {
                         return pane != nullptr && pane->isRunning();
@@ -2033,10 +2121,12 @@ bool installRendererQualificationTestHook(QQuickWindow *window,
                         "GHOSTTY_QT_TEST_RENDERER_EXPECT_TRANSLUCENT")
                     == 1;
                 std::optional<QRhiDriverInfo> driverInfo;
+                std::optional<RendererQualificationSwapchainInfo> swapchainInfo;
                 QString rhiBackend;
                 {
                     const QMutexLocker lock(&state->driverInfoMutex);
                     driverInfo = state->driverInfo;
+                    swapchainInfo = state->swapchainInfo;
                     rhiBackend = state->rhiBackend;
                 }
                 if (!quickWindow->isVisible() || !quickWindow->isExposed()
@@ -2049,44 +2139,57 @@ bool installRendererQualificationTestHook(QQuickWindow *window,
                     || quickWindow->color().alpha() != 0 || panes.isEmpty()
                     || runningPaneCount == 0 || !image.hasAlphaChannel()
                     || !imageStatistics.nonUniform || !driverInfo.has_value()
-                    || rhiBackend.isEmpty()
+                    || !swapchainInfo.has_value() || rhiBackend.isEmpty()
+                    || screen == nullptr
+                    || swapchainInfo->pixelSize != image.size()
                     || (expectTranslucentPixels
                         && (imageStatistics.translucentPixels > pixelCount
                             || imageStatistics.halfAlphaPixels
                                 > imageStatistics.translucentPixels
                             || imageStatistics.halfAlphaPixels
                                 < minimumHalfAlphaPixels))) {
-                    fail(QStringLiteral(
-                             "invalid client surface: visible=%1 exposed=%2 "
-                             "api=%3 image=%4x%5 expected=%6x%7 "
-                             "default-alpha=%8 alpha-bits=%9 clear-alpha=%10 "
-                             "image-alpha=%11 nonuniform=%12 min-alpha=%13 "
-                             "max-alpha=%14 translucent-pixels=%15 panes=%16 "
-                             "running-panes=%17 expect-translucent=%18 "
-                             "half-alpha-pixels=%19 pixel-count=%20 "
-                             "minimum-half-alpha-pixels=%21 driver=%22")
-                             .arg(quickWindow->isVisible())
-                             .arg(quickWindow->isExposed())
-                             .arg(rendererQualificationGraphicsApiName(api))
-                             .arg(image.width())
-                             .arg(image.height())
-                             .arg(expectedPhysicalSize.width())
-                             .arg(expectedPhysicalSize.height())
-                             .arg(QQuickWindow::hasDefaultAlphaBuffer())
-                             .arg(quickWindow->format().alphaBufferSize())
-                             .arg(quickWindow->color().alpha())
-                             .arg(image.hasAlphaChannel())
-                             .arg(imageStatistics.nonUniform)
-                             .arg(imageStatistics.minimumAlpha)
-                             .arg(imageStatistics.maximumAlpha)
-                             .arg(imageStatistics.translucentPixels)
-                             .arg(panes.size())
-                             .arg(runningPaneCount)
-                             .arg(expectTranslucentPixels)
-                             .arg(imageStatistics.halfAlphaPixels)
-                             .arg(pixelCount)
-                             .arg(minimumHalfAlphaPixels)
-                             .arg(driverInfo.has_value()));
+                    fail(
+                        QStringLiteral(
+                            "invalid client surface: visible=%1 exposed=%2 "
+                            "api=%3 image=%4x%5 expected=%6x%7 "
+                            "default-alpha=%8 alpha-bits=%9 clear-alpha=%10 "
+                            "image-alpha=%11 nonuniform=%12 min-alpha=%13 "
+                            "max-alpha=%14 translucent-pixels=%15 panes=%16 "
+                            "running-panes=%17 expect-translucent=%18 "
+                            "half-alpha-pixels=%19 pixel-count=%20 "
+                            "minimum-half-alpha-pixels=%21 driver=%22 "
+                            "swapchain=%23 swapchain-size=%24 screen=%25")
+                            .arg(quickWindow->isVisible())
+                            .arg(quickWindow->isExposed())
+                            .arg(rendererQualificationGraphicsApiName(api))
+                            .arg(image.width())
+                            .arg(image.height())
+                            .arg(expectedPhysicalSize.width())
+                            .arg(expectedPhysicalSize.height())
+                            .arg(QQuickWindow::hasDefaultAlphaBuffer())
+                            .arg(quickWindow->format().alphaBufferSize())
+                            .arg(quickWindow->color().alpha())
+                            .arg(image.hasAlphaChannel())
+                            .arg(imageStatistics.nonUniform)
+                            .arg(imageStatistics.minimumAlpha)
+                            .arg(imageStatistics.maximumAlpha)
+                            .arg(imageStatistics.translucentPixels)
+                            .arg(panes.size())
+                            .arg(runningPaneCount)
+                            .arg(expectTranslucentPixels)
+                            .arg(imageStatistics.halfAlphaPixels)
+                            .arg(pixelCount)
+                            .arg(minimumHalfAlphaPixels)
+                            .arg(driverInfo.has_value())
+                            .arg(swapchainInfo.has_value())
+                            .arg(
+                                swapchainInfo.has_value()
+                                    ? QStringLiteral("%1x%2")
+                                          .arg(swapchainInfo->pixelSize.width())
+                                          .arg(
+                                              swapchainInfo->pixelSize.height())
+                                    : QStringLiteral("unavailable"))
+                            .arg(screen != nullptr));
                     return;
                 }
 
@@ -2108,48 +2211,133 @@ bool installRendererQualificationTestHook(QQuickWindow *window,
                     static_cast<qsizetype>(
                         std::ceil(static_cast<double>(intervalCount) * 0.9)
                         - 1.0));
+                const QSizeF physicalSize = screen->physicalSize();
+                const bool physicalSizeKnown = physicalSize.width() > 0.0
+                    && physicalSize.height() > 0.0
+                    && std::isfinite(physicalSize.width())
+                    && std::isfinite(physicalSize.height());
+                const auto physicalDpiToken = [](qreal value) {
+                    return value > 0.0 && std::isfinite(value)
+                        ? QString::number(value, 'f', 2)
+                        : QStringLiteral("na");
+                };
 
                 QTextStream output(stdout);
                 output.setRealNumberNotation(QTextStream::FixedNotation);
                 output.setRealNumberPrecision(2);
-                output << "renderer_qualification"
-                       << " platform=" << QGuiApplication::platformName()
-                       << " graphics_api="
-                       << rendererQualificationGraphicsApiName(api)
-                       << " dpr=" << dpr << " logical=" << quickWindow->width()
-                       << 'x' << quickWindow->height()
-                       << " physical=" << image.width() << 'x' << image.height()
-                       << " frame_swaps=" << state->frameCount
-                       << " median_frame_interval_us=" << medianMicroseconds
-                       << " p90_frame_interval_us="
-                       << intervalMicroseconds(p90Index)
-                       << " alpha_buffer_bits="
-                       << quickWindow->format().alphaBufferSize()
-                       << " clear_alpha=" << quickWindow->color().alpha()
-                       << " image_alpha=" << image.hasAlphaChannel()
-                       << " nonuniform=" << imageStatistics.nonUniform
-                       << " min_alpha=" << imageStatistics.minimumAlpha
-                       << " max_alpha=" << imageStatistics.maximumAlpha
-                       << " translucent_pixels="
-                       << imageStatistics.translucentPixels
-                       << " half_alpha_pixels="
-                       << imageStatistics.halfAlphaPixels
-                       << " pixel_count=" << pixelCount
-                       << " minimum_half_alpha_pixels="
-                       << minimumHalfAlphaPixels << " panes=" << panes.size()
-                       << " running_panes=" << runningPaneCount
-                       << " rhi_backend="
-                       << rendererQualificationOutputToken(rhiBackend)
-                       << " rhi_device_name="
-                       << rendererQualificationOutputToken(
-                              QString::fromUtf8(driverInfo->deviceName))
-                       << " rhi_device_type="
-                       << rendererQualificationDeviceTypeName(
-                              driverInfo->deviceType)
-                       << " rhi_vendor_id=0x"
-                       << QString::number(driverInfo->vendorId, 16)
-                       << " rhi_device_id=0x"
-                       << QString::number(driverInfo->deviceId, 16) << '\n';
+                output
+                    << "renderer_qualification benchmark_contract=1"
+                    << " qt_version=" << qVersion()
+                    << " platform=" << QGuiApplication::platformName()
+                    << " graphics_api="
+                    << rendererQualificationGraphicsApiName(api)
+                    << " dpr=" << dpr << " logical=" << quickWindow->width()
+                    << 'x' << quickWindow->height()
+                    << " physical=" << image.width() << 'x' << image.height()
+                    << " frame_swaps=" << state->frameCount
+                    << " median_frame_interval_us=" << medianMicroseconds
+                    << " p90_frame_interval_us="
+                    << intervalMicroseconds(p90Index) << " alpha_buffer_bits="
+                    << quickWindow->format().alphaBufferSize()
+                    << " clear_alpha=" << quickWindow->color().alpha()
+                    << " image_alpha=" << image.hasAlphaChannel()
+                    << " nonuniform=" << imageStatistics.nonUniform
+                    << " min_alpha=" << imageStatistics.minimumAlpha
+                    << " max_alpha=" << imageStatistics.maximumAlpha
+                    << " translucent_pixels="
+                    << imageStatistics.translucentPixels
+                    << " half_alpha_pixels=" << imageStatistics.halfAlphaPixels
+                    << " pixel_count=" << pixelCount
+                    << " minimum_half_alpha_pixels=" << minimumHalfAlphaPixels
+                    << " panes=" << panes.size()
+                    << " running_panes=" << runningPaneCount
+                    << " screen_count=" << QGuiApplication::screens().size()
+                    << " screen_name="
+                    << rendererQualificationOutputToken(screen->name())
+                    << " screen_manufacturer="
+                    << rendererQualificationOutputToken(screen->manufacturer())
+                    << " screen_model="
+                    << rendererQualificationOutputToken(screen->model())
+                    << " screen_serial="
+                    << rendererQualificationOutputToken(screen->serialNumber())
+                    << " screen_geometry="
+                    << rendererQualificationRectToken(screen->geometry())
+                    << " screen_available_geometry="
+                    << rendererQualificationRectToken(
+                           screen->availableGeometry())
+                    << " screen_physical_mm="
+                    << (physicalSizeKnown
+                            ? QStringLiteral("%1x%2")
+                                  .arg(QString::number(physicalSize.width(),
+                                                       'f', 2))
+                                  .arg(QString::number(physicalSize.height(),
+                                                       'f', 2))
+                            : QStringLiteral("na"))
+                    << " screen_depth=" << screen->depth()
+                    << " screen_dpr=" << screen->devicePixelRatio()
+                    << " screen_logical_dpi_x=" << screen->logicalDotsPerInchX()
+                    << " screen_logical_dpi_y=" << screen->logicalDotsPerInchY()
+                    << " screen_physical_dpi_x="
+                    << physicalDpiToken(screen->physicalDotsPerInchX())
+                    << " screen_physical_dpi_y="
+                    << physicalDpiToken(screen->physicalDotsPerInchY())
+                    << " screen_refresh_millihz="
+                    << qRound64(screen->refreshRate() * 1'000.0)
+                    << " screen_orientation="
+                    << static_cast<int>(screen->orientation())
+                    << " screen_primary="
+                    << (screen == QGuiApplication::primaryScreen())
+                    << " swapchain_format=" << swapchainInfo->format
+                    << " swapchain_flags=" << swapchainInfo->flags
+                    << " swapchain_samples=" << swapchainInfo->samples
+                    << " swapchain_size=" << swapchainInfo->pixelSize.width()
+                    << 'x' << swapchainInfo->pixelSize.height()
+                    << " swapchain_srgb=" << swapchainInfo->srgb
+                    << " swapchain_premultiplied_alpha="
+                    << swapchainInfo->premultipliedAlpha
+                    << " swapchain_nonpremultiplied_alpha="
+                    << swapchainInfo->nonPremultipliedAlpha
+                    << " swapchain_no_vsync=" << swapchainInfo->noVsync
+                    << " swapchain_hdr=" << swapchainInfo->hdr
+                    << " swapchain_hdr_limits="
+                    << (swapchainInfo->hdr ? swapchainInfo->hdrLimits
+                                           : QStringLiteral("na"))
+                    << " swapchain_hdr_behavior="
+                    << (swapchainInfo->hdr ? swapchainInfo->hdrBehavior
+                                           : QStringLiteral("na"))
+                    << " swapchain_hdr_minimum="
+                    << (swapchainInfo->hdr
+                                && swapchainInfo->hdrLimits
+                                    == QStringLiteral("nits")
+                            ? QString::number(swapchainInfo->hdrMinimum)
+                            : QStringLiteral("na"))
+                    << " swapchain_hdr_maximum="
+                    << (swapchainInfo->hdr
+                            ? QString::number(swapchainInfo->hdrMaximum)
+                            : QStringLiteral("na"))
+                    << " swapchain_hdr_maximum_potential="
+                    << (swapchainInfo->hdr
+                                && swapchainInfo->hdrLimits
+                                    == QStringLiteral("color-component")
+                            ? QString::number(
+                                  swapchainInfo->hdrMaximumPotential)
+                            : QStringLiteral("na"))
+                    << " swapchain_hdr_sdr_white="
+                    << (swapchainInfo->hdr
+                            ? QString::number(swapchainInfo->hdrSdrWhite)
+                            : QStringLiteral("na"))
+                    << " rhi_backend="
+                    << rendererQualificationOutputToken(rhiBackend)
+                    << " rhi_device_name="
+                    << rendererQualificationOutputToken(
+                           QString::fromUtf8(driverInfo->deviceName))
+                    << " rhi_device_type="
+                    << rendererQualificationDeviceTypeName(
+                           driverInfo->deviceType)
+                    << " rhi_vendor_id=0x"
+                    << QString::number(driverInfo->vendorId, 16)
+                    << " rhi_device_id=0x"
+                    << QString::number(driverInfo->deviceId, 16) << '\n';
                 output.flush();
                 QCoreApplication::quit();
             });
