@@ -248,12 +248,11 @@ non-empty capture:
     vulkan kitty-replacement
 ```
 
-Accepted scenario names are `metadata`, `one-dirty-row`, `cursor-only`,
-`full-invalidation`, `search-update`, `search-selection-update`,
-`search-clear`, `kitty-first-upload`,
-`kitty-translucent-first-upload`, `kitty-retained-redraw`,
-`kitty-translucent-retained-redraw`, `kitty-movement`,
-`kitty-replacement`, `kitty-translucent-replacement`, and `kitty-eviction`.
+The helper obtains its accepted names from the benchmark's authoritative
+`--list-scenarios` output. The catalog includes metadata, dirty-row and
+full-frame ASCII/ligature shaping, cursor, full invalidation, all three search
+damage cases, and the opaque/translucent Kitty upload, retained redraw,
+movement, replacement, and eviction cases.
 Capture mode records one frame of the selected scenario on the 120×40 grid
 after warmup and intentionally suppresses its instrumented timings. The output
 texture is named
@@ -261,6 +260,82 @@ texture is named
 argument to select it instead; Vulkan is preferred. Set
 `QT_QPA_PLATFORM=xcb` or `wayland` before the command when automatic platform
 selection is unsuitable.
+
+### Native Wayland renderer qualification
+
+The offscreen benchmarks intentionally serialize every frame and never create
+a swapchain. Run the host qualification tool from a real Wayland session to
+combine their deterministic renderer invariants with evidence from a normal,
+shown ghostty-qt production window:
+
+```sh
+./scripts/qualify-wayland-renderer.py --profile quick
+```
+
+The runner configures and builds the Release application and renderer
+benchmarks with every processor reported by `nproc`. It exercises OpenGL and
+Vulkan, treating a genuinely unavailable optional backend as an explicit skip
+while preserving invariant, readback, backend-fallback, and presentation
+errors as failures. Devices reported by QRhi as CPU, plus recognized software
+rasterizer names such as llvmpipe and lavapipe, fail qualification unless
+`--allow-software-device` is explicitly supplied. At
+least one backend must complete the production-window probe. Repeat
+`--require-backend opengl` or `--require-backend vulkan` when a host is expected
+to support that API.
+
+Each backend runs the complete pane scenario catalog and custom-shader matrix
+at synthetic global scales. The quick profile uses 1 and 1.25 with short
+warmups; the full profile adds 1.5 and 2 and uses the documented long benchmark
+counts. These processes validate Qt's DPR/framebuffer propagation and remain
+distinct from compositor-negotiated fractional-scale protocol testing. The
+production-window probe removes every synthetic scale override, uses the
+compositor-selected DPR, waits for 30 Qt `frameSwapped` signals and a running
+terminal session, and requires the requested RHI, correct physical geometry,
+a nonuniform surface readback, an alpha channel, and intermediate-alpha pixels
+near the isolated terminal's configured 0.5 opacity over at least five percent
+of the client surface before exiting. Every synthetic-scale run and the
+production window's render-thread sample must report one identical QRhi device,
+preventing silent adapter changes on hybrid-GPU systems.
+
+An atomic report is updated after every command under:
+
+```text
+tmp/renderer-qualification/<timestamp>-<revision>-p<pid>/results.json
+```
+
+It records commands, bounded renderer environment overrides, raw stdout and
+stderr, parsed benchmark records, durations, revisions, SHA-256 fingerprints of
+the executed artifacts, Qt/RHI device metadata, DPR/framebuffer values,
+swapchain frame intervals, and pass/skip/fail reason codes. Exit 0 means at
+least one backend completed the complete matrix; exit 1
+means qualification failed; exit 77 means the current process cannot reach a
+Wayland socket or no selected backend is available. `--skip-build` reuses an
+already configured Release tree. Absolute frame-time thresholds are
+deliberately absent: compare reports from the same host and configuration,
+while executable-owned work counters and readbacks provide deterministic
+correctness gates.
+
+The runner prints a flushed start/completion line for every long-running child.
+A timeout, Ctrl+C, `SIGTERM`, or `SIGHUP` terminates the child's process group,
+covering the ordinary Ninja, RenderDoc, benchmark, and terminal descendants
+that could otherwise continue mutating artifacts after the report is
+finalized. Signal cancellation also atomically marks the report `aborted`
+instead of leaving an apparently running result.
+
+RenderDoc remains optional. For example, after each successful backend, capture
+the retained Kitty replacement case with:
+
+```sh
+./scripts/qualify-wayland-renderer.py \
+    --profile quick \
+    --renderdoc-scenario kitty-replacement
+```
+
+Missing RenderDoc is recorded as a skip unless `--require-renderdoc` is also
+present. The production hook's `grabWindow()` validates the client surface and
+Qt frame-swap path before compositor composition; it cannot capture KWin's final
+blur, color management, or blending with windows behind it. Inspect those
+effects and any requested `.rdc` interactively on the target desktop.
 
 The Kitty import benchmark separately feeds explicit-ID replacement frames
 through libghostty and the Qt snapshot boundary. `--pixel-format rgb24`

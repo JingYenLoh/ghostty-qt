@@ -3363,6 +3363,35 @@ production GPU driver's output or the desktop compositor's final composition.
 supported runtime configuration; GPU output and visible translucency must also
 be checked interactively in a real Wayland session.
 
+`scripts/qualify-wayland-renderer.py` closes the client-side production-surface
+part of that boundary without weakening the deterministic offscreen tests. It
+runs every pane and custom-shader scenario under native Wayland QPA, preserves
+their readback and renderer-work assertions, and records RHI device, DPR, and
+framebuffer metadata. It then launches the ordinary application with an inert
+test hook: the real QML window, terminal pane, alpha-buffer request, render
+loop, native surface, and swapchain remain the production path. The hook
+requests frames until 30 Qt `frameSwapped` signals have arrived and a terminal
+session is running. It then validates DPR/physical geometry, a nonuniform
+client-surface readback, an alpha channel, and intermediate-alpha pixels near
+the configured 0.5 opacity over at least five percent of the client surface
+while using an isolated terminal configuration. Every scaled offscreen run
+must use one QRhi device, and a render-thread sample records the shown window's
+driver and requires it to match that same device. The runner
+supplies a unique single-instance-disabled application identity and isolated
+configuration, cache, data, and state directories, but retains the host runtime
+directory because it owns the Wayland socket.
+Results are written atomically after each child command so a driver reset or
+timeout cannot erase earlier evidence. Each child owns a process group; timeout,
+Ctrl+C, `SIGTERM`, or `SIGHUP` terminates that group, covering ordinary build,
+capture, and terminal descendants before the report is atomically finalized.
+
+The hook does not claim access to pixels after compositor composition. Wayland
+does not let a normal client read KWin's blur, output transform, color
+management, or other windows behind its surface. Those final effects remain an
+interactive qualification item; RenderDoc captures the client GPU work and the
+JSON report records the corresponding limitation rather than treating a Qt
+`grabWindow()` image as a desktop screenshot.
+
 ## Deliberate renderer-v1 limits
 
 - Dirty-row value updates keep the thread boundary small for ordinary output,

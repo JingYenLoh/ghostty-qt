@@ -80,12 +80,15 @@ for intentional upgrade procedure.
   records this as blocked upstream rather than planned frontend work.
 - Renderer damage and text nodes are retained per row, as is cell-derived solid
   geometry on RHI backends; the software fallback uses pooled global nodes.
-  Production GPU and compositor output still requires interactive qualification
-  on real Wayland systems.
+  A host qualification runner combines the full offscreen OpenGL/Vulkan
+  scenario matrix with a real production-window swapchain/frame-swap probe
+  and atomic machine-readable evidence. Final compositor blending, blur, and
+  color management still require interactive inspection on representative
+  Wayland systems.
 - Custom shaders require Qt Quick's OpenGL or Vulkan RHI backend. Other
   backends keep terminal output unfiltered and expose a configuration
-  diagnostic; final multi-pass output and frame cost still require
-  qualification on the target GPU and Wayland compositor.
+  diagnostic; final compositor output and representative frame-cost baselines
+  still require qualification on target GPUs and Wayland compositors.
 - Saved sessions, a theme editor, and distribution packaging remain future
   work.
 

@@ -22,6 +22,7 @@
 #include <QStandardPaths>
 #include <QTest>
 #include <QTextStream>
+#include <QUrl>
 #include <rhi/qrhi.h>
 
 #if QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>)
@@ -55,6 +56,12 @@ enum class GraphicsApi {
     Vulkan,
 };
 
+enum class InitializationResult {
+    Success,
+    BackendUnavailable,
+    Failure,
+};
+
 QStringView graphicsApiName(GraphicsApi graphicsApi)
 {
     switch (graphicsApi) {
@@ -63,6 +70,25 @@ QStringView graphicsApiName(GraphicsApi graphicsApi)
     case GraphicsApi::Vulkan: return u"vulkan";
     }
     return {};
+}
+
+QStringView deviceTypeName(QRhiDriverInfo::DeviceType deviceType)
+{
+    switch (deviceType) {
+    case QRhiDriverInfo::UnknownDevice: return u"unknown";
+    case QRhiDriverInfo::IntegratedDevice: return u"integrated";
+    case QRhiDriverInfo::DiscreteDevice: return u"discrete";
+    case QRhiDriverInfo::ExternalDevice: return u"external";
+    case QRhiDriverInfo::VirtualDevice: return u"virtual";
+    case QRhiDriverInfo::CpuDevice: return u"cpu";
+    }
+    return u"unknown";
+}
+
+QString outputToken(QStringView value)
+{
+    return QString::fromLatin1(
+        QUrl::toPercentEncoding(value.toString(), QByteArrayLiteral("._-")));
 }
 
 struct TimingSummary {
@@ -357,34 +383,46 @@ public:
         colorBuffer_.reset();
     }
 
-    bool initialize(QString *error)
+    InitializationResult initialize(QString *error)
     {
         if (!fontError_.isEmpty()) {
             *error = fontError_;
-            return false;
+            return InitializationResult::Failure;
         }
         if (controller_ == nullptr) {
             *error = QStringLiteral("terminal controller was not created");
-            return false;
+            return InitializationResult::Failure;
         }
         if (renderControl_ == nullptr) {
             window_->show();
             if (!waitUntil([this] { return window_->isExposed(); }, 3'000)) {
                 *error =
                     QStringLiteral("software benchmark window was not exposed");
-                return false;
+                return InitializationResult::BackendUnavailable;
             }
-        } else if (!initializeRhi(error)) {
-            return false;
+            framebufferSize_ =
+                QSize(qMax(1,
+                           qRound(static_cast<qreal>(logicalSize_.width())
+                                  * window_->devicePixelRatio())),
+                      qMax(1,
+                           qRound(static_cast<qreal>(logicalSize_.height())
+                                  * window_->devicePixelRatio())));
+        } else {
+            const InitializationResult initialized = initializeRhi(error);
+            if (initialized != InitializationResult::Success) {
+                return initialized;
+            }
         }
         pane_->forceActiveFocus();
         publishFullFrame(false);
-        if (!renderUntimed(error, true)) return false;
+        if (!renderUntimed(error, true)) return InitializationResult::Failure;
 
         const QColor kittyValidationColor(23, 211, 149);
         publishKitty(makeKittySnapshot(
             makeKittyImage(++kittyGeneration_, kittyValidationColor), 0));
-        if (!renderUntimed(error, true, kittyValidationColor)) return false;
+        if (!renderUntimed(error, true, kittyValidationColor)) {
+            return InitializationResult::Failure;
+        }
 
         // Validate straight-alpha upload and source-over composition outside
         // the measured scenarios on every available RHI backend. The expected
@@ -395,10 +433,13 @@ public:
         publishKitty(makeKittySnapshot(
             makeKittyImage(++kittyGeneration_, translucentValidationColor, 128),
             1, 1));
-        if (!renderUntimed(error, true, translucentExpectedColor)) return false;
+        if (!renderUntimed(error, true, translucentExpectedColor)) {
+            return InitializationResult::Failure;
+        }
 
         publishKitty(nullptr);
-        return renderUntimed(error);
+        return renderUntimed(error) ? InitializationResult::Success
+                                    : InitializationResult::Failure;
     }
 
     QString rhiBackendName() const
@@ -406,6 +447,20 @@ public:
         return renderControl_ != nullptr && renderControl_->rhi() != nullptr
             ? QString::fromLatin1(renderControl_->rhi()->backendName())
             : QStringLiteral("software-scenegraph");
+    }
+
+    qreal devicePixelRatio() const noexcept
+    {
+        return window_->devicePixelRatio();
+    }
+
+    QSize framebufferSize() const noexcept { return framebufferSize_; }
+
+    QSize logicalSize() const noexcept { return logicalSize_; }
+
+    const std::optional<QRhiDriverInfo> &driverInfo() const noexcept
+    {
+        return driverInfo_;
     }
 
     ScenarioResult metadata(int warmupIterations, int measuredIterations,
@@ -820,7 +875,7 @@ private:
             capture, error);
     }
 
-    bool initializeRhi(QString *error)
+    InitializationResult initializeRhi(QString *error)
     {
 #if GHOSTTY_QT_PANE_BENCH_HAS_VULKAN
         if (graphicsApi_ == GraphicsApi::Vulkan) {
@@ -831,7 +886,7 @@ private:
                 *error = QStringLiteral(
                              "unable to create Vulkan instance (VkResult %1)")
                              .arg(vulkanInstance_->errorCode());
-                return false;
+                return InitializationResult::BackendUnavailable;
             }
             window_->setVulkanInstance(vulkanInstance_.get());
         }
@@ -841,7 +896,7 @@ private:
                          "QQuickRenderControl could not initialize %1 on %2")
                          .arg(graphicsApiName(graphicsApi_))
                          .arg(QGuiApplication::platformName());
-            return false;
+            return InitializationResult::BackendUnavailable;
         }
         const QSGRendererInterface::GraphicsApi expectedApi =
             graphicsApi_ == GraphicsApi::OpenGl ? QSGRendererInterface::OpenGL
@@ -852,14 +907,15 @@ private:
                     .arg(graphicsApiName(graphicsApi_))
                     .arg(static_cast<int>(
                         window_->rendererInterface()->graphicsApi()));
-            return false;
+            return InitializationResult::Failure;
         }
         QRhi *const rhi = renderControl_->rhi();
         if (rhi == nullptr) {
             *error =
                 QStringLiteral("QQuickRenderControl did not provide a QRhi");
-            return false;
+            return InitializationResult::Failure;
         }
+        driverInfo_ = rhi->driverInfo();
         const qreal dpr = window_->devicePixelRatio();
         const QSize physicalSize(
             qMax(1, qRound(static_cast<qreal>(logicalSize_.width()) * dpr)),
@@ -869,10 +925,11 @@ private:
             QRhiTexture::RenderTarget | QRhiTexture::UsedAsTransferSource));
         colorBuffer_->setName(
             QByteArrayLiteral("ghostty-qt terminal-pane benchmark output"));
+        framebufferSize_ = physicalSize;
         if (!colorBuffer_->create()) {
             *error =
                 QStringLiteral("unable to create pane benchmark color buffer");
-            return false;
+            return InitializationResult::Failure;
         }
         depthStencil_.reset(rhi->newRenderBuffer(QRhiRenderBuffer::DepthStencil,
                                                  physicalSize, 1));
@@ -881,7 +938,7 @@ private:
         if (!depthStencil_->create()) {
             *error = QStringLiteral(
                 "unable to create pane benchmark depth-stencil buffer");
-            return false;
+            return InitializationResult::Failure;
         }
         const QRhiTextureRenderTargetDescription description(
             QRhiColorAttachment(colorBuffer_.get()), depthStencil_.get());
@@ -896,13 +953,13 @@ private:
         if (!renderTarget_->create()) {
             *error =
                 QStringLiteral("unable to create pane benchmark render target");
-            return false;
+            return InitializationResult::Failure;
         }
         QQuickRenderTarget quickTarget =
             QQuickRenderTarget::fromRhiRenderTarget(renderTarget_.get());
         quickTarget.setDevicePixelRatio(dpr);
         window_->setRenderTarget(quickTarget);
-        return true;
+        return InitializationResult::Success;
     }
 
     TerminalRowUpdate makeRow(int row, const QColor &background) const
@@ -1355,6 +1412,8 @@ private:
     TerminalPane *pane_ = nullptr;
     TerminalController *controller_ = nullptr;
     QSize logicalSize_;
+    QSize framebufferSize_;
+    std::optional<QRhiDriverInfo> driverInfo_;
     QString fontError_;
     quint64 revision_ = 0;
     quint64 searchGeneration_ = 0;
@@ -1562,13 +1621,31 @@ int runGrid(GridSize grid, GraphicsApi graphicsApi, int warmupIterations,
 {
     QString error;
     RendererBenchmark benchmark(grid, graphicsApi, capture != nullptr);
-    if (!benchmark.initialize(&error)) {
-        output << "failed to initialize " << grid.columns << 'x' << grid.rows
-               << ": " << error << '\n';
-        return 1;
+    const InitializationResult initialized = benchmark.initialize(&error);
+    if (initialized != InitializationResult::Success) {
+        output << (initialized == InitializationResult::BackendUnavailable
+                       ? "backend unavailable for "
+                       : "failed to initialize ")
+               << grid.columns << 'x' << grid.rows << ": " << error << '\n';
+        return initialized == InitializationResult::BackendUnavailable ? 77 : 1;
     }
+    const QSize framebuffer = benchmark.framebufferSize();
+    const QSize logical = benchmark.logicalSize();
     output << "grid=" << grid.columns << 'x' << grid.rows
-           << " rhi_backend=" << benchmark.rhiBackendName() << '\n';
+           << " rhi_backend=" << outputToken(benchmark.rhiBackendName())
+           << " dpr=" << benchmark.devicePixelRatio()
+           << " logical=" << logical.width() << 'x' << logical.height()
+           << " framebuffer=" << framebuffer.width() << 'x'
+           << framebuffer.height();
+    if (benchmark.driverInfo().has_value()) {
+        const QRhiDriverInfo &driver = *benchmark.driverInfo();
+        output << " rhi_device_name="
+               << outputToken(QString::fromUtf8(driver.deviceName))
+               << " rhi_device_type=" << deviceTypeName(driver.deviceType)
+               << " rhi_vendor_id=0x" << QString::number(driver.vendorId, 16)
+               << " rhi_device_id=0x" << QString::number(driver.deviceId, 16);
+    }
+    output << '\n';
 
     for (const auto &[name, function] : scenarioFunctions()) {
         if (!captureScenario.isEmpty() && name != captureScenario) continue;
@@ -1591,7 +1668,9 @@ int main(int argc, char *argv[])
     if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM")) {
         qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
     }
-    qputenv("QT_SCALE_FACTOR", QByteArrayLiteral("1"));
+    if (qEnvironmentVariableIsEmpty("QT_SCALE_FACTOR")) {
+        qputenv("QT_SCALE_FACTOR", QByteArrayLiteral("1"));
+    }
     QStandardPaths::setTestModeEnabled(true);
 
     QGuiApplication application(argc, argv);
@@ -1622,12 +1701,25 @@ int main(int argc, char *argv[])
         QStringLiteral("renderdoc-capture-path"),
         QStringLiteral("UTF-8 RenderDoc capture filename template."),
         QStringLiteral("path"));
+    const QCommandLineOption listScenariosOption(
+        QStringLiteral("list-scenarios"),
+        QStringLiteral("List authoritative scenario names and exit."));
     parser.addOption(graphicsApiOption);
     parser.addOption(warmupOption);
     parser.addOption(iterationsOption);
     parser.addOption(renderDocCaptureOption);
     parser.addOption(renderDocCapturePathOption);
+    parser.addOption(listScenariosOption);
     parser.process(application);
+
+    if (parser.isSet(listScenariosOption)) {
+        QTextStream output(stdout);
+        for (const auto &[name, function] : scenarioFunctions()) {
+            Q_UNUSED(function);
+            output << name << '\n';
+        }
+        return 0;
+    }
 
     const std::optional<int> warmup =
         positiveInteger(parser.value(warmupOption));
@@ -1641,6 +1733,15 @@ int main(int argc, char *argv[])
     const std::optional<GraphicsApi> graphicsApi =
         parseGraphicsApi(parser.value(graphicsApiOption));
     if (!graphicsApi.has_value()) {
+#if !GHOSTTY_QT_PANE_BENCH_HAS_VULKAN
+        if (parser.value(graphicsApiOption)
+                .trimmed()
+                .compare(QStringLiteral("vulkan"), Qt::CaseInsensitive)
+            == 0) {
+            QTextStream(stderr) << "vulkan is unavailable in this Qt build\n";
+            return 77;
+        }
+#endif
         QTextStream(stderr)
             << "graphics-api must be software, opengl, or a supported vulkan "
                "build\n";
@@ -1699,8 +1800,10 @@ int main(int argc, char *argv[])
     }
 
     QTextStream output(stdout);
-    output << "backend=" << graphicsApiName(*graphicsApi)
+    output << "qt_version=" << outputToken(QString::fromLatin1(qVersion()))
+           << " backend=" << graphicsApiName(*graphicsApi)
            << " platform=" << QGuiApplication::platformName()
+           << " presentation=offscreen"
            << " warmup=" << *warmup
            << " iterations=" << (capture != nullptr ? 1 : *iterations)
            << " kitty_placements=" << kittyPlacementCount;

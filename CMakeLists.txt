@@ -1376,6 +1376,7 @@ target_link_libraries(ghostty-qt PRIVATE
     Qt6::Core
     Qt6::DBus
     Qt6::Gui
+    Qt6::GuiPrivate
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2

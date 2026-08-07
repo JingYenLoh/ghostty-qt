@@ -25,21 +25,31 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
 #include <QMetaEnum>
 #include <QMetaProperty>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QPointer>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QScopeGuard>
 #include <QStandardPaths>
 #include <QStyleHints>
+#include <QSurfaceFormat>
 #include <QTextStream>
 #include <QTimer>
+#include <QUrl>
+#include <QVector>
+#include <rhi/qrhi.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -1670,8 +1680,7 @@ bool installTabsLocationTestHook(QQuickWindow *window,
                                  TerminalWorkspace *workspace)
 {
     if (window == nullptr || workspace == nullptr) {
-        qCritical()
-            << "Tabs-location test hook could not find the QML window";
+        qCritical() << "Tabs-location test hook could not find the QML window";
         return false;
     }
     auto *const toolbar =
@@ -1697,8 +1706,7 @@ bool installTabsLocationTestHook(QQuickWindow *window,
         const QList<TerminalPane *> panes =
             workspace->findChildren<TerminalPane *>();
         if (panes.size() != 2) {
-            qCritical()
-                << "Tabs-location test hook could not create a split";
+            qCritical() << "Tabs-location test hook could not create a split";
             QCoreApplication::exit(1);
             return;
         }
@@ -1729,8 +1737,7 @@ bool installTabsLocationTestHook(QQuickWindow *window,
             const bool valid =
                 QQuickWindow::hasDefaultAlphaBuffer()
                 && window->requestedFormat().hasAlpha()
-                && window->format().hasAlpha()
-                && window->color().alpha() == 0
+                && window->format().hasAlpha() && window->color().alpha() == 0
                 && topChromeColor.isValid() && topChromeColor.alpha() == 255
                 && bottomChromeColor.isValid()
                 && bottomChromeColor.alpha() == 255
@@ -1756,10 +1763,8 @@ bool installTabsLocationTestHook(QQuickWindow *window,
                 << ", bottom-visible=" << bottomSlot->isVisible()
                 << ", stable-parent="
                 << (toolbar->parentItem() == expectedParent)
-                << ", alpha-default="
-                << QQuickWindow::hasDefaultAlphaBuffer()
-                << ", alpha-requested="
-                << window->requestedFormat().hasAlpha()
+                << ", alpha-default=" << QQuickWindow::hasDefaultAlphaBuffer()
+                << ", alpha-requested=" << window->requestedFormat().hasAlpha()
                 << ", alpha-actual=" << window->format().hasAlpha()
                 << ", clear-alpha=" << window->color().alpha()
                 << ", signals=" << *locationSignals;
@@ -1813,6 +1818,353 @@ bool installTabsLocationTestHook(QQuickWindow *window,
             },
             Qt::SingleShotConnection);
     }
+    return true;
+}
+
+QStringView
+rendererQualificationGraphicsApiName(QSGRendererInterface::GraphicsApi api)
+{
+    switch (api) {
+    case QSGRendererInterface::Software: return u"software";
+    case QSGRendererInterface::OpenGL: return u"opengl";
+    case QSGRendererInterface::Vulkan: return u"vulkan";
+    case QSGRendererInterface::OpenVG: return u"openvg";
+    case QSGRendererInterface::Direct3D11: return u"direct3d11";
+    case QSGRendererInterface::Direct3D12: return u"direct3d12";
+    case QSGRendererInterface::Metal: return u"metal";
+    case QSGRendererInterface::Null: return u"null";
+    case QSGRendererInterface::Unknown: return u"unknown";
+    }
+    return u"unknown";
+}
+
+QStringView rendererQualificationDeviceTypeName(QRhiDriverInfo::DeviceType type)
+{
+    switch (type) {
+    case QRhiDriverInfo::UnknownDevice: return u"unknown";
+    case QRhiDriverInfo::IntegratedDevice: return u"integrated";
+    case QRhiDriverInfo::DiscreteDevice: return u"discrete";
+    case QRhiDriverInfo::ExternalDevice: return u"external";
+    case QRhiDriverInfo::VirtualDevice: return u"virtual";
+    case QRhiDriverInfo::CpuDevice: return u"cpu";
+    }
+    return u"unknown";
+}
+
+QString rendererQualificationOutputToken(QStringView value)
+{
+    return QString::fromLatin1(
+        QUrl::toPercentEncoding(value.toString(), QByteArrayLiteral("._-")));
+}
+
+struct RendererQualificationImageStatistics {
+    bool nonUniform = false;
+    int minimumAlpha = 255;
+    int maximumAlpha = 0;
+    quint64 translucentPixels = 0;
+    quint64 halfAlphaPixels = 0;
+};
+
+RendererQualificationImageStatistics
+rendererQualificationImageStatistics(const QImage &image)
+{
+    RendererQualificationImageStatistics result;
+    if (image.isNull()) return result;
+
+    const QRgb firstPixel = image.pixel(0, 0);
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QRgb pixel = image.pixel(x, y);
+            const int alpha = qAlpha(pixel);
+            result.nonUniform |= pixel != firstPixel;
+            result.minimumAlpha = std::min(result.minimumAlpha, alpha);
+            result.maximumAlpha = std::max(result.maximumAlpha, alpha);
+            if (alpha > 0 && alpha < 255) ++result.translucentPixels;
+            if (alpha >= 120 && alpha <= 136) ++result.halfAlphaPixels;
+        }
+    }
+    return result;
+}
+
+bool installRendererQualificationTestHook(QQuickWindow *window,
+                                          TerminalWorkspace *workspace)
+{
+    if (window == nullptr || workspace == nullptr) {
+        qCritical()
+            << "Renderer-qualification test hook requires an initial window";
+        return false;
+    }
+
+    bool frameCountOk = false;
+    int targetFrameCount = qEnvironmentVariableIntValue(
+        "GHOSTTY_QT_TEST_RENDERER_QUALIFICATION_FRAMES", &frameCountOk);
+    if (!frameCountOk) targetFrameCount = 30;
+    if (targetFrameCount < 3 || targetFrameCount > 240) {
+        qCritical()
+            << "Renderer-qualification frame count must be between 3 and 240";
+        return false;
+    }
+
+    struct QualificationState {
+        QPointer<QQuickWindow> window;
+        QPointer<TerminalWorkspace> workspace;
+        QElapsedTimer timer;
+        QVector<qint64> frameIntervalsNanoseconds;
+        qint64 previousFrameNanoseconds = 0;
+        int frameCount = 0;
+        int targetFrameCount = 0;
+        QMutex driverInfoMutex;
+        std::optional<QRhiDriverInfo> driverInfo;
+        QString rhiBackend;
+        bool complete = false;
+        bool failed = false;
+    };
+    const auto state = std::make_shared<QualificationState>();
+    state->window = window;
+    state->workspace = workspace;
+    state->targetFrameCount = targetFrameCount;
+    state->frameIntervalsNanoseconds.reserve(targetFrameCount - 1);
+    state->timer.start();
+
+    const auto fail = [state](const QString &message) {
+        if (state->failed) return;
+        state->failed = true;
+        state->complete = true;
+        qCritical().noquote() << "Renderer-qualification test hook:" << message;
+        QCoreApplication::exit(1);
+    };
+    const auto unavailable = [state](const QString &message) {
+        if (state->complete) return;
+        state->complete = true;
+        qWarning().noquote()
+            << "Renderer-qualification backend unavailable:" << message;
+        QCoreApplication::exit(77);
+    };
+
+    QObject::connect(
+        window, &QQuickWindow::sceneGraphError, window,
+        [fail, unavailable](QQuickWindow::SceneGraphError error,
+                            const QString &message) {
+            if (error == QQuickWindow::ContextNotAvailable) {
+                unavailable(message);
+                return;
+            }
+            fail(QStringLiteral("scene graph error: %1").arg(message));
+        });
+    QObject::connect(
+        window, &QQuickWindow::beforeRendering, window,
+        [state] {
+            QQuickWindow *const quickWindow = state->window.data();
+            if (quickWindow == nullptr) return;
+            const QSGRendererInterface *const renderer =
+                quickWindow->rendererInterface();
+            if (renderer == nullptr) return;
+            auto *const rhi = static_cast<QRhi *>(renderer->getResource(
+                quickWindow, QSGRendererInterface::RhiResource));
+            if (rhi == nullptr) return;
+            const QMutexLocker lock(&state->driverInfoMutex);
+            state->driverInfo = rhi->driverInfo();
+            state->rhiBackend = QString::fromLatin1(rhi->backendName());
+        },
+        Qt::DirectConnection);
+    QObject::connect(
+        window, &QQuickWindow::frameSwapped, window, [state, fail] {
+            if (state->complete || state->window == nullptr
+                || state->workspace == nullptr) {
+                return;
+            }
+            const qint64 now = state->timer.nsecsElapsed();
+            if (state->previousFrameNanoseconds > 0) {
+                state->frameIntervalsNanoseconds.append(
+                    now - state->previousFrameNanoseconds);
+            }
+            state->previousFrameNanoseconds = now;
+            ++state->frameCount;
+            const QList<TerminalPane *> framePanes =
+                state->workspace->findChildren<TerminalPane *>();
+            const bool sessionRunning =
+                std::ranges::any_of(framePanes, [](const TerminalPane *pane) {
+                    return pane != nullptr && pane->isRunning();
+                });
+            if (state->frameCount < state->targetFrameCount
+                || !sessionRunning) {
+                state->window->update();
+                return;
+            }
+
+            state->complete = true;
+            QTimer::singleShot(0, state->window, [state, fail] {
+                QQuickWindow *const quickWindow = state->window.data();
+                TerminalWorkspace *const terminalWorkspace =
+                    state->workspace.data();
+                if (quickWindow == nullptr || terminalWorkspace == nullptr) {
+                    fail(
+                        QStringLiteral("window disappeared before validation"));
+                    return;
+                }
+                const QSGRendererInterface *const renderer =
+                    quickWindow->rendererInterface();
+                const QSGRendererInterface::GraphicsApi api =
+                    renderer != nullptr ? renderer->graphicsApi()
+                                        : QSGRendererInterface::Unknown;
+                const QImage image = quickWindow->grabWindow();
+                const RendererQualificationImageStatistics imageStatistics =
+                    rendererQualificationImageStatistics(image);
+                const quint64 pixelCount = static_cast<quint64>(image.width())
+                    * static_cast<quint64>(image.height());
+                const quint64 minimumHalfAlphaPixels =
+                    std::max<quint64>(1, pixelCount / 20);
+                const qreal dpr = quickWindow->devicePixelRatio();
+                const QSize expectedPhysicalSize(
+                    qMax(1, qRound(quickWindow->width() * dpr)),
+                    qMax(1, qRound(quickWindow->height() * dpr)));
+                const bool physicalSizeMatches =
+                    std::abs(image.width() - expectedPhysicalSize.width()) <= 1
+                    && std::abs(image.height() - expectedPhysicalSize.height())
+                        <= 1;
+                const QList<TerminalPane *> panes =
+                    terminalWorkspace->findChildren<TerminalPane *>();
+                const qsizetype runningPaneCount =
+                    std::ranges::count_if(panes, [](const TerminalPane *pane) {
+                        return pane != nullptr && pane->isRunning();
+                    });
+                const bool expectTranslucentPixels =
+                    qEnvironmentVariableIntValue(
+                        "GHOSTTY_QT_TEST_RENDERER_EXPECT_TRANSLUCENT")
+                    == 1;
+                std::optional<QRhiDriverInfo> driverInfo;
+                QString rhiBackend;
+                {
+                    const QMutexLocker lock(&state->driverInfoMutex);
+                    driverInfo = state->driverInfo;
+                    rhiBackend = state->rhiBackend;
+                }
+                if (!quickWindow->isVisible() || !quickWindow->isExposed()
+                    || api == QSGRendererInterface::Unknown
+                    || api == QSGRendererInterface::Null
+                    || api == QSGRendererInterface::Software || image.isNull()
+                    || !physicalSizeMatches
+                    || !QQuickWindow::hasDefaultAlphaBuffer()
+                    || quickWindow->format().alphaBufferSize() <= 0
+                    || quickWindow->color().alpha() != 0 || panes.isEmpty()
+                    || runningPaneCount == 0 || !image.hasAlphaChannel()
+                    || !imageStatistics.nonUniform || !driverInfo.has_value()
+                    || rhiBackend.isEmpty()
+                    || (expectTranslucentPixels
+                        && (imageStatistics.translucentPixels > pixelCount
+                            || imageStatistics.halfAlphaPixels
+                                > imageStatistics.translucentPixels
+                            || imageStatistics.halfAlphaPixels
+                                < minimumHalfAlphaPixels))) {
+                    fail(QStringLiteral(
+                             "invalid client surface: visible=%1 exposed=%2 "
+                             "api=%3 image=%4x%5 expected=%6x%7 "
+                             "default-alpha=%8 alpha-bits=%9 clear-alpha=%10 "
+                             "image-alpha=%11 nonuniform=%12 min-alpha=%13 "
+                             "max-alpha=%14 translucent-pixels=%15 panes=%16 "
+                             "running-panes=%17 expect-translucent=%18 "
+                             "half-alpha-pixels=%19 pixel-count=%20 "
+                             "minimum-half-alpha-pixels=%21 driver=%22")
+                             .arg(quickWindow->isVisible())
+                             .arg(quickWindow->isExposed())
+                             .arg(rendererQualificationGraphicsApiName(api))
+                             .arg(image.width())
+                             .arg(image.height())
+                             .arg(expectedPhysicalSize.width())
+                             .arg(expectedPhysicalSize.height())
+                             .arg(QQuickWindow::hasDefaultAlphaBuffer())
+                             .arg(quickWindow->format().alphaBufferSize())
+                             .arg(quickWindow->color().alpha())
+                             .arg(image.hasAlphaChannel())
+                             .arg(imageStatistics.nonUniform)
+                             .arg(imageStatistics.minimumAlpha)
+                             .arg(imageStatistics.maximumAlpha)
+                             .arg(imageStatistics.translucentPixels)
+                             .arg(panes.size())
+                             .arg(runningPaneCount)
+                             .arg(expectTranslucentPixels)
+                             .arg(imageStatistics.halfAlphaPixels)
+                             .arg(pixelCount)
+                             .arg(minimumHalfAlphaPixels)
+                             .arg(driverInfo.has_value()));
+                    return;
+                }
+
+                std::ranges::sort(state->frameIntervalsNanoseconds);
+                const auto intervalMicroseconds = [state](qsizetype index) {
+                    return static_cast<double>(
+                               state->frameIntervalsNanoseconds.at(index))
+                        / 1'000.0;
+                };
+                const qsizetype intervalCount =
+                    state->frameIntervalsNanoseconds.size();
+                const double medianMicroseconds = intervalCount % 2 == 0
+                    ? (intervalMicroseconds(intervalCount / 2 - 1)
+                       + intervalMicroseconds(intervalCount / 2))
+                        / 2.0
+                    : intervalMicroseconds(intervalCount / 2);
+                const qsizetype p90Index = std::min(
+                    intervalCount - 1,
+                    static_cast<qsizetype>(
+                        std::ceil(static_cast<double>(intervalCount) * 0.9)
+                        - 1.0));
+
+                QTextStream output(stdout);
+                output.setRealNumberNotation(QTextStream::FixedNotation);
+                output.setRealNumberPrecision(2);
+                output << "renderer_qualification"
+                       << " platform=" << QGuiApplication::platformName()
+                       << " graphics_api="
+                       << rendererQualificationGraphicsApiName(api)
+                       << " dpr=" << dpr << " logical=" << quickWindow->width()
+                       << 'x' << quickWindow->height()
+                       << " physical=" << image.width() << 'x' << image.height()
+                       << " frame_swaps=" << state->frameCount
+                       << " median_frame_interval_us=" << medianMicroseconds
+                       << " p90_frame_interval_us="
+                       << intervalMicroseconds(p90Index)
+                       << " alpha_buffer_bits="
+                       << quickWindow->format().alphaBufferSize()
+                       << " clear_alpha=" << quickWindow->color().alpha()
+                       << " image_alpha=" << image.hasAlphaChannel()
+                       << " nonuniform=" << imageStatistics.nonUniform
+                       << " min_alpha=" << imageStatistics.minimumAlpha
+                       << " max_alpha=" << imageStatistics.maximumAlpha
+                       << " translucent_pixels="
+                       << imageStatistics.translucentPixels
+                       << " half_alpha_pixels="
+                       << imageStatistics.halfAlphaPixels
+                       << " pixel_count=" << pixelCount
+                       << " minimum_half_alpha_pixels="
+                       << minimumHalfAlphaPixels << " panes=" << panes.size()
+                       << " running_panes=" << runningPaneCount
+                       << " rhi_backend="
+                       << rendererQualificationOutputToken(rhiBackend)
+                       << " rhi_device_name="
+                       << rendererQualificationOutputToken(
+                              QString::fromUtf8(driverInfo->deviceName))
+                       << " rhi_device_type="
+                       << rendererQualificationDeviceTypeName(
+                              driverInfo->deviceType)
+                       << " rhi_vendor_id=0x"
+                       << QString::number(driverInfo->vendorId, 16)
+                       << " rhi_device_id=0x"
+                       << QString::number(driverInfo->deviceId, 16) << '\n';
+                output.flush();
+                QCoreApplication::quit();
+            });
+        });
+
+    QTimer::singleShot(15'000, window, [state, fail] {
+        if (!state->complete) {
+            fail(QStringLiteral("timed out waiting for frame swaps"));
+        }
+    });
+    QTimer::singleShot(0, window, [state] {
+        if (!state->complete && state->window != nullptr) {
+            state->window->update();
+        }
+    });
     return true;
 }
 
@@ -2471,6 +2823,14 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_TABS_LOCATION") == 1) {
         if (!initialWindow
             || !installTabsLocationTestHook(applicationWindow, workspace)) {
+            return 1;
+        }
+    }
+    if (qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_RENDERER_QUALIFICATION")
+        == 1) {
+        if (!initialWindow
+            || !installRendererQualificationTestHook(applicationWindow,
+                                                     workspace)) {
             return 1;
         }
     }

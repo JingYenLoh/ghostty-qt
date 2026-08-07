@@ -26,6 +26,7 @@
 #include <QStringList>
 #include <QTemporaryDir>
 #include <QTextStream>
+#include <QUrl>
 #include <rhi/qrhi.h>
 
 #if QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>)
@@ -77,6 +78,25 @@ QStringView workloadName(Workload workload)
     case Workload::EffectOnly: return u"effect-only";
     }
     return {};
+}
+
+QStringView deviceTypeName(QRhiDriverInfo::DeviceType deviceType)
+{
+    switch (deviceType) {
+    case QRhiDriverInfo::UnknownDevice: return u"unknown";
+    case QRhiDriverInfo::IntegratedDevice: return u"integrated";
+    case QRhiDriverInfo::DiscreteDevice: return u"discrete";
+    case QRhiDriverInfo::ExternalDevice: return u"external";
+    case QRhiDriverInfo::VirtualDevice: return u"virtual";
+    case QRhiDriverInfo::CpuDevice: return u"cpu";
+    }
+    return u"unknown";
+}
+
+QString outputToken(QStringView value)
+{
+    return QString::fromLatin1(
+        QUrl::toPercentEncoding(value.toString(), QByteArrayLiteral("._-")));
 }
 
 struct PassTransform {
@@ -1013,7 +1033,7 @@ int main(int argc, char **argv)
 #else
         QTextStream(stderr)
             << "this build cannot provide the requested Vulkan API\n";
-        return 2;
+        return 3;
 #endif
     } else {
         QTextStream(stderr) << "graphics-api must be either opengl or vulkan\n";
@@ -1127,7 +1147,7 @@ int main(int argc, char **argv)
             << static_cast<int>(window.rendererInterface()->graphicsApi())
             << '\n';
         renderControl.invalidate();
-        return 3;
+        return 1;
     }
     QRhi *const rhi = renderControl.rhi();
     if (rhi == nullptr) {
@@ -1545,10 +1565,17 @@ int main(int argc, char **argv)
     QTextStream output(stdout);
     output.setRealNumberNotation(QTextStream::FixedNotation);
     output.setRealNumberPrecision(2);
+    const QRhiDriverInfo driverInfo = rhi->driverInfo();
     output << "qt=" << qVersion()
            << " platform=" << QGuiApplication::platformName()
-           << " graphics_api=" << requestedGraphicsApi
-           << " rhi_backend=" << rhi->backendName() << " gpu_timestamps="
+           << " graphics_api=" << requestedGraphicsApi << " rhi_backend="
+           << outputToken(QString::fromLatin1(rhi->backendName()))
+           << " rhi_device_name="
+           << outputToken(QString::fromUtf8(driverInfo.deviceName))
+           << " rhi_device_type=" << deviceTypeName(driverInfo.deviceType)
+           << " rhi_vendor_id=0x" << QString::number(driverInfo.vendorId, 16)
+           << " rhi_device_id=0x" << QString::number(driverInfo.deviceId, 16)
+           << " gpu_timestamps="
            << (rhi->isFeatureSupported(QRhi::Timestamps) ? "supported"
                                                          : "unavailable")
            << " viewport=" << logicalSize.width() << 'x' << logicalSize.height()

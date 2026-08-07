@@ -1215,6 +1215,13 @@ endif()
 
 find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
 add_test(
+    NAME renderer-qualification-harness
+    COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test_renderer_qualification.py"
+)
+set_tests_properties(renderer-qualification-harness PROPERTIES TIMEOUT 10)
+
+add_test(
     NAME ghostty-parity-manifest
     COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/test_parity_manifest.py"

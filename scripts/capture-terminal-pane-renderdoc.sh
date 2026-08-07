@@ -5,9 +5,6 @@ set -euo pipefail
 usage()
 {
     printf 'Usage: %s [opengl|vulkan] [scenario]\n' "${0##*/}" >&2
-    printf 'Scenarios: metadata one-dirty-row cursor-only full-invalidation search-update\n' >&2
-    printf '           kitty-first-upload kitty-retained-redraw kitty-movement\n' >&2
-    printf '           kitty-replacement kitty-eviction\n' >&2
     exit 2
 }
 
@@ -21,12 +18,7 @@ case "$graphics_api" in
     opengl | vulkan) ;;
     *) usage ;;
 esac
-case "$scenario" in
-    metadata | one-dirty-row | cursor-only | full-invalidation | search-update \
-        | kitty-first-upload | kitty-retained-redraw | kitty-movement \
-        | kitty-replacement | kitty-eviction) ;;
-    *) usage ;;
-esac
+[[ -n "$scenario" ]] || usage
 
 if ! command -v renderdoccmd >/dev/null 2>&1; then
     printf 'error: renderdoccmd is required; install RenderDoc first\n' >&2
@@ -46,6 +38,25 @@ benchmark="$root/build/release/tests/bench-terminal-pane-renderer"
 if [[ ! -x "$benchmark" ]]; then
     printf 'error: benchmark was not created at %s\n' "$benchmark" >&2
     exit 1
+fi
+
+if ! scenario_listing=$("$benchmark" --list-scenarios); then
+    printf 'error: unable to query benchmark scenarios\n' >&2
+    exit 1
+fi
+mapfile -t available_scenarios <<<"$scenario_listing"
+scenario_known=
+for available_scenario in "${available_scenarios[@]}"; do
+    if [[ "$available_scenario" == "$scenario" ]]; then
+        scenario_known=1
+        break
+    fi
+done
+if [[ -z "$scenario_known" ]]; then
+    printf 'error: unknown scenario %s\n' "$scenario" >&2
+    printf 'Available scenarios:\n' >&2
+    printf '  %s\n' "${available_scenarios[@]}" >&2
+    exit 2
 fi
 
 if [[ -z "${QT_QPA_PLATFORM:-}" ]]; then

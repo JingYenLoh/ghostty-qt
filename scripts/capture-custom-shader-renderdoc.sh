@@ -54,6 +54,17 @@ if [[ ! -x "$benchmark" ]]; then
     exit 1
 fi
 
+if [[ -z "${QT_QPA_PLATFORM:-}" ]]; then
+    if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+        export QT_QPA_PLATFORM=wayland
+    elif [[ -n "${DISPLAY:-}" ]]; then
+        export QT_QPA_PLATFORM=xcb
+    else
+        printf 'warning: no graphical session detected; trying Qt offscreen, which may not initialize this RHI\n' >&2
+        export QT_QPA_PLATFORM=offscreen
+    fi
+fi
+
 capture_directory="$root/tmp/renderdoc"
 mkdir -p "$capture_directory"
 capture_template="$capture_directory/custom-shader-${graphics_api}-${renderer}-${workload}-${passes}-$(date +%Y%m%d-%H%M%S-%N)"
