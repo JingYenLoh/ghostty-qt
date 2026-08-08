@@ -3057,7 +3057,7 @@ The default CTest suite has focused layers for each ownership boundary:
   Those semantic checks skip
   explicitly when Qt's offscreen platform selects its software adaptation, as
   it does in the managed headless sandbox; a green offscreen result alone must
-  not be mistaken for RHI pixel validation. A separate XCB plus OpenGL-RHI
+  not be mistaken for RHI pixel validation. A separate Wayland plus OpenGL-RHI
   llvmpipe run executes the complete material suite, including
   fractional-DPR seam and relative/global-opacity samples, with eight passes
   and no skips.
@@ -3065,14 +3065,15 @@ The default CTest suite has focused layers for each ownership boundary:
   cropping, then reflects both embedded QSBs and compares their exact 68-byte
   matrix/opacity block and single packed-RGBA sampler binding with the CPU
   write layout.
-  `terminal-pane-kitty-rhi` runs the retained end-to-end pane case through
-  XCB/Xvfb and OpenGL RHI, asserts that Qt did not select its software scene
+  `terminal-pane-kitty-wayland-rhi` runs the retained end-to-end pane case
+  through Wayland and OpenGL RHI, asserts that Qt did not select its software
+  scene
   graph, samples source texels and a varying-alpha interpolation boundary, and
   checks one-texture upload, reuse, replacement, and eviction.
-  The XCB integration case skips under ASan because the instrumented
-  executable crosses uninstrumented system XCB/XKB startup code before Qt
-  creates a window; the renderer-independent contract tests remain
-  instrumented.
+  CI provides a headless Weston compositor and requires this integration path
+  in Debug, Release, and ASan builds; local runs skip only when no reachable
+  Wayland compositor exists. The renderer-independent contract tests remain
+  compositor-agnostic.
 - `terminal-rect-batch` verifies that retained hardware geometry grows without
   shrinking, identical and smaller updates allocate nothing, software
   rectangle nodes are pooled and hidden rather than deleted, and switching
@@ -3415,7 +3416,7 @@ creation, inheritance, lifetime, and aggregate quit.
 The offscreen tests validate QML startup, close/recreate shutdown, dialog
 shutdown, scene-graph frame replacement, Qt's requested/created alpha format,
 the renderer's emitted alpha values, and pure background-image placement and
-composition in a headless environment. The dedicated XCB/OpenGL-RHI run
+composition in a headless environment. The dedicated Wayland/OpenGL-RHI run
 separately validates the public-QSG background material through llvmpipe,
 including straight-alpha filtering and repeat seams. Neither route validates a
 production GPU driver's output or the desktop compositor's final composition.

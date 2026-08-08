@@ -71,8 +71,7 @@ jobs:
             ncurses-bin \
             ninja-build \
             wayland-protocols \
-            xauth \
-            xvfb \
+            weston \
             xz-utils
 
       - name: Install Qt
@@ -105,4 +104,27 @@ jobs:
         run: cmake --build --preset "${{ matrix.preset }}" -j"$(nproc)"
 
       - name: Test
-        run: ctest --preset "${{ matrix.preset }}"
+        run: |
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/wayland-runtime"
+          export WAYLAND_DISPLAY=wayland-ci
+          export GHOSTTY_QT_REQUIRE_WAYLAND_RHI=1
+          export LIBGL_ALWAYS_SOFTWARE=1
+          install -d -m 700 "$XDG_RUNTIME_DIR"
+          weston \
+            --backend=headless-backend.so \
+            --renderer=gl \
+            --socket="$WAYLAND_DISPLAY" \
+            --idle-time=0 \
+            --log="$RUNNER_TEMP/weston.log" &
+          weston_pid=$!
+          trap 'kill "$weston_pid" 2>/dev/null || true; wait "$weston_pid" 2>/dev/null || true' EXIT
+          for _ in {1..100}; do
+            [[ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]] && break
+            kill -0 "$weston_pid" 2>/dev/null || break
+            sleep 0.1
+          done
+          if [[ ! -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]]; then
+            cat "$RUNNER_TEMP/weston.log"
+            exit 1
+          fi
+          ctest --preset "${{ matrix.preset }}"

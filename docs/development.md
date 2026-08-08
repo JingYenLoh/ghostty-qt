@@ -222,9 +222,7 @@ software scene graph. Pass `--graphics-api vulkan` to select Vulkan. Compare
 results only with the same graphics API, device, platform plugin, framebuffer
 size, and build. `QT_QPA_PLATFORM=offscreen` is usable when that plugin can
 initialize the requested RHI. Otherwise run the invisible benchmark inside a
-graphical session with `QT_QPA_PLATFORM=wayland` or
-`QT_QPA_PLATFORM=xcb`; replace `xcb` in the examples above when native Wayland
-works with the selected backend.
+Wayland session with `QT_QPA_PLATFORM=wayland`.
 
 Set `GHOSTTY_QT_CUSTOM_SHADER_PIPELINE=legacy` when reproducing an application
 issue specifically against the old nested implementation. The benchmark
@@ -267,14 +265,14 @@ Inspect the named offscreen output texture rather than looking for a presented
 backbuffer or capture thumbnail. Use a Release build and the host GPU; setting
 `LIBGL_ALWAYS_SOFTWARE=1` would profile Mesa's software renderer. If Vulkan
 capture fails, check the layer with `renderdoccmd vulkanlayer --explain`. If
-OpenGL injection fails under native Wayland EGL, retry the launcher with
-`QT_QPA_PLATFORM=xcb`.
+OpenGL injection fails under native Wayland EGL, prefer the Vulkan capture
+path and inspect RenderDoc's Vulkan layer status.
 
 The pane benchmark can capture one warmed scenario through the same injected
 RenderDoc bridge. The helper builds the benchmark, creates the output
-directory, selects the current Wayland/X11 platform when possible, verifies
-the benchmark's post-capture success record, and checks that RenderDoc wrote a
-non-empty capture:
+directory, requires the current Wayland platform, verifies the benchmark's
+post-capture success record, and checks that RenderDoc wrote a non-empty
+capture:
 
 ```sh
 ./scripts/capture-terminal-pane-renderdoc.sh \
@@ -1151,13 +1149,12 @@ config-parser build remains `ReleaseFast` and is also not
 sanitizer-instrumented; its process boundary is intentional containment, not a
 replacement for upstream testing.
 
-The XCB/OpenGL Kitty integration test uses Xvfb in CI and a live X display
-locally. Sanitizer builds explicitly skip it because Qt reaches the
-distribution's uninstrumented XCB/XKB keymap setup before creating a window;
-shader reflection, placement geometry, explicit-replacement protocol input,
-and the software renderer remain covered by the sanitizer suite. With X or
-Xvfb available, Debug and Release CTest runs still require and verify the real
-OpenGL RHI path.
+The OpenGL integration tests use a headless Weston compositor in CI and the
+current Wayland compositor locally. CI marks the Wayland RHI path as required,
+so a missing compositor or unreachable socket fails instead of silently
+skipping it. Debug, Release, and sanitizer CTest runs all exercise the real
+OpenGL RHI path; deterministic shader reflection, placement geometry, protocol
+input, and software-renderer tests remain independent of compositor access.
 
 Ghostty's CMake wrapper does not encode the revision, Zig version, target, or
 optimization flags in its shared `ghostty/zig-out` path. The top-level build

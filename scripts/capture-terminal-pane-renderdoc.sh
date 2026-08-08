@@ -62,12 +62,15 @@ fi
 if [[ -z "${QT_QPA_PLATFORM:-}" ]]; then
     if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
         export QT_QPA_PLATFORM=wayland
-    elif [[ -n "${DISPLAY:-}" ]]; then
-        export QT_QPA_PLATFORM=xcb
     else
-        printf 'warning: no graphical session detected; trying Qt offscreen, which may not initialize this RHI\n' >&2
-        export QT_QPA_PLATFORM=offscreen
+        printf 'error: a Wayland session is required for RenderDoc capture\n' >&2
+        exit 1
     fi
+fi
+if [[ "$QT_QPA_PLATFORM" != wayland ]]; then
+    printf 'error: QT_QPA_PLATFORM must be wayland, got %s\n' \
+        "$QT_QPA_PLATFORM" >&2
+    exit 1
 fi
 
 capture_directory="$root/tmp/renderdoc"
