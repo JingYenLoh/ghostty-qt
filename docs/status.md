@@ -1,123 +1,76 @@
 # Project status
 
-ghostty-qt is a usable but still evolving Linux/Wayland frontend. It uses
-public `libghostty-vt` for terminal state and a narrow private helper around
-the pinned Ghostty application parser. It is not yet a drop-in replacement for
-every Ghostty frontend feature.
+ghostty-qt is a usable Linux/Wayland terminal frontend under active
+development. It covers the core terminal, workspace, configuration, and Linux
+desktop feature set, but does not yet claim complete Ghostty frontend parity.
 
 ## Supported target
 
-- Linux only.
-- Wayland only; X11 is outside the parity target.
+- Linux and Wayland only; X11 and other operating systems are outside scope.
 - Qt Quick 6.8 or newer with LayerShellQt.
-- Portable and Linux Ghostty configuration names where their behavior maps to
-  this frontend.
-- Qt-specific settings in a separate `ghostty-qt/config` domain instead of
-  accepting `gtk-*` aliases.
+- Public `libghostty-vt` for terminal behavior, plus a private helper around
+  the pinned Ghostty application parser.
+- Portable and Linux Ghostty configuration settings where behavior maps to Qt.
+- Qt-specific policy in `ghostty-qt/config`, without GTK-prefixed aliases.
 
-The project already covers the core terminal, renderer, tabs and splits,
-multiwindow lifecycle, quick terminal, configuration, keybindings, search,
-links, clipboard writes, shell integration, terminfo, desktop activation,
-systemd service readiness and reload coordination, ordinary Kitty graphics
-placements, custom-shader post-processing, and substantial appearance
-behavior.
+Implemented areas include PTYs and process lifecycle, retained rendering, tabs
+and recursive splits, multiple windows, quick terminal, configuration and
+keybindings, search, links, clipboard writes, shell integration, terminfo,
+desktop activation, systemd integration, custom shaders, and ordinary Kitty
+graphics placements.
 
 ## Parity source of truth
 
 [`ghostty-parity.json`](ghostty-parity.json) inventories every configuration
-key, keybinding action, and CLI action in the pinned Ghostty revision. Each
-entry is explicitly classified as:
+key, keybinding action, and CLI action in the pinned Ghostty revision. Entries
+are classified as `supported`, `partial`, `planned`, `blocked_upstream`, or
+`not_applicable`. The classifications are deliberately conservative.
 
-- `supported`;
-- `partial`;
-- `planned`;
-- `blocked_upstream`; or
-- `not_applicable`.
-
-The ledger is deliberately conservative. “Partial” means useful behavior
-exists but some upstream semantics or interface are incomplete; it is not
-silently counted as full parity.
-
-Run the inventory and revision check with:
+Run the revision and inventory check with:
 
 ```sh
 python3 scripts/check-ghostty-parity.py
 ```
 
-The check requires the Ghostty checkout, `GHOSTTY_REVISION`, CMake pin, and
-manifest to refer to the same commit. See [Development and CI](development.md)
-for intentional upgrade procedure.
+The checker requires `GHOSTTY_REVISION`, the submodule checkout, CMake pin, and
+manifest to describe the same commit. See [Development and CI](development.md)
+for the intentional upgrade procedure.
 
-## Notable remaining gaps
+## Remaining gaps
 
-- Exact font fallback, synthesis, generated box/icon glyphs, positioned
-  shaping, and color emoji cannot be reproduced through the current public
-  terminal API. Qt owns the final shaping result.
-- Kitty graphics renders ordinary placements, including foreground and
-  background z layers. Direct RGB24 continuation streams used by mpv are
-  covered end to end through OpenGL RHI; exact opaque overlap culling keeps
-  their Qt-side steady-state mirror to the visible frame, while every mirrored
-  asset uses one packed straight-alpha RGBA image and one retained texture.
-  Unicode virtual placements used by applications such as yazi still need
-  expanded viewport data from `libghostty-vt`. Upstream must also fix the
-  tracked screen-pin lifetime of budget-evicted placements.
-- Search is a cooperative frontend implementation over public terminal
-  snapshots. A row-local viewport probe publishes provisional visible
-  candidates without waiting for the canonical newest-to-oldest scan. It does
-  not use Ghostty's private `xev`-dependent search thread, and candidates that
-  span soft wraps, newlines, or viewport edges can still wait for the canonical
-  scan alongside the documented formatter, paging, and inactive-screen
-  differences.
-- Terminal-originated clipboard writes support `allow`, `deny`, and `ask`.
-  Terminal-requested clipboard reads remain blocked by the public API, and
-  exact styled VT/HTML selection copies need additional upstream formatting
-  support.
-- Semantic prompt navigation, semantic screen clearing, some terminal-state
-  queries, and several notification/reporting behaviors require public
-  Ghostty APIs that do not yet exist.
-- User-defined `link` expressions are not implemented because the pinned
-  upstream parser does not implement their CLI grammar; the parity ledger
-  records this as blocked upstream rather than planned frontend work.
-- Renderer damage, general text nodes, printable-ASCII glyph batches, and
-  cell-derived solid geometry are retained per row on OpenGL and Vulkan. One
-  font/DPR/render-context-scoped compact CPU Alpha8 atlas and explicit RGBA
-  coverage texture are reused across dirty rows and compatible global
-  invalidations. Compatible paint changes are intersected with cached per-row
-  dependencies, so rows unaffected by palette, default-color, selection/search
-  style, bold, faint, contrast, or explicit-cell-opacity changes perform no
-  cell scan or shaping. A dependent solid row rebuilds text only when its
-  effective glyph colors changed. Compatible rebuilds retain row containers
-  and glyph batches, and row-count changes preserve their common prefix without
-  new allocation.
-  Rows that remain fully batched allocate no native text node; unsafe or
-  complex text creates the Qt fallback lazily and retains it cleared for reuse,
-  while the software renderer retains Qt's general path. A host
-  qualification runner combines
-  the full offscreen OpenGL/Vulkan scenario matrix with a real production-window
-  swapchain/frame-swap probe and atomic machine-readable evidence. A strict
-  baseline comparator validates
-  independently complete benchmark/device/host/output evidence, enforces
-  deterministic text, glyph-batch, atlas, and Kitty work regressions, and
-  applies noise-aware full-profile timing gates. The production probe
-  fingerprints its actually mapped userspace graphics driver, loader,
-  compiler, and injected-layer libraries. Final compositor blending, blur,
-  color management, and presentation timing still require interactive or
-  dedicated Wayland-protocol inspection.
-- Custom shaders require Qt Quick's OpenGL or Vulkan RHI backend. Other
-  backends keep terminal output unfiltered and expose a configuration
-  diagnostic; representative baseline collection still needs target GPUs and
-  Wayland compositors even though comparison and regression policy are now
-  automated.
-- Saved sessions, a theme editor, and distribution packaging remain future
-  work.
+- **Text and fonts:** Qt owns final shaping. Exact Ghostty fallback, synthesis,
+  generated box/icon glyphs, positioned shaping, and color emoji need a wider
+  public font/render contract.
+- **Kitty graphics:** ordinary RGB/RGBA transmissions, including mpv-style
+  RGB24 continuation frames, are supported. Unicode virtual placements and
+  safe handling of some upstream eviction lifetimes require libghostty
+  changes.
+- **Search:** the frontend performs a cooperative public-grid scan. Some
+  cross-boundary and exact formatting semantics differ from Ghostty's private
+  search implementation.
+- **Clipboard and files:** terminal clipboard writes support
+  `allow`/`deny`/`ask`, and plain terminal-file actions work.
+  Terminal-requested reads, exact styled VT/HTML selection copies, and styled
+  VT/HTML file variants need upstream APIs.
+- **Semantic and diagnostic state:** prompt navigation, semantic clearing, and
+  several terminal-state queries and notification/reporting semantics remain
+  partial or blocked on public libghostty state.
+- **Links:** OSC 8 and the pinned default URL/path matcher work. User-defined
+  link expressions remain blocked because the pinned upstream parser does not
+  implement their CLI grammar.
+- **Qualification and distribution:** renderer correctness is covered across
+  software, OpenGL, and Vulkan, but compositor-specific blending, blur, color
+  management, and presentation timing still require representative hardware
+  runs. Distribution packages, saved sessions, and a theme editor are not yet
+  provided.
 
-The exact API gaps and acceptance criteria are maintained in
-[Features requiring upstream Ghostty changes](../REQUIRES_UPSTREAM.md).
-Renderer and configuration tradeoffs are described in
-[Architecture](architecture.md).
+Exact upstream contracts and acceptance criteria live in
+[Features requiring upstream Ghostty APIs](../REQUIRES_UPSTREAM.md).
+Renderer state, benchmarks, and optimization work are summarized in
+[Performance](performance.md).
 
 ## Scope exclusions
 
 X11, macOS, iOS, FreeBSD, GTK/libadwaita implementation details, and
-platform-specific behaviors without a meaningful Linux/Wayland/Qt mapping are
-recorded as not applicable rather than as unfinished work.
+platform-specific behavior without a meaningful Linux/Wayland/Qt mapping are
+recorded as not applicable rather than unfinished.

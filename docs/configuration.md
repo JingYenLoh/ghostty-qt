@@ -23,10 +23,7 @@ Qt-owned settings live in:
 $XDG_CONFIG_HOME/ghostty-qt/config
 ```
 
-That file owns `single-instance`, `tabs-location`, `wide-tabs`,
-`horizontal-tab-scroll`, `quick-terminal-layer`, and
-`quick-terminal-namespace`. Its strict grammar and complete semantics are
-documented in
+Its closed key set, strict grammar, and reload semantics are documented in
 [Frontend configuration](frontend-configuration.md).
 
 If `XDG_CONFIG_HOME` is unset or not absolute, both domains fall back to
@@ -67,10 +64,8 @@ The supported slice includes common settings across these areas:
 | Quick terminal | position, screen, size, autohide, and keyboard interactivity |
 | Actions | `keybind`, `key-remap`, and command-palette entries |
 
-This table is a guide, not a compatibility ledger. The
-[parity manifest](ghostty-parity.json) is authoritative for every upstream
-configuration key and records whether its behavior is supported, partial,
-planned, blocked by an upstream API, or outside this frontend's scope.
+This table is only a guide. The [parity manifest](ghostty-parity.json) is the
+authoritative per-key compatibility ledger.
 
 For example:
 
@@ -90,13 +85,9 @@ quick-terminal-size = 40%,100%
 quick-terminal-autohide = true
 ```
 
-The two scrollback limits are independent and active at the same time. History
-is pruned when either finite limit is reached; the line limit counts physical
-rows, so soft wraps count more than once. `unlimited` removes only that axis,
-while a byte limit of zero disables history. A line limit of zero requests the
-minimum page-granular history target and can retain one standard page. As in
-Ghostty, reloading either setting affects newly created panes rather than
-resizing existing history.
+The two scrollback limits are independent; history is pruned when either finite
+limit is reached. Reloading them affects new panes rather than reallocating
+existing history.
 
 Use the pinned CLI implementations to inspect or validate the standard
 configuration:
@@ -108,9 +99,8 @@ ghostty-qt +explain-config
 ghostty-qt +edit-config
 ```
 
-These actions run before Qt starts. Their output describes the pinned Ghostty
-configuration; an item appearing in an upstream catalog does not by itself
-mean that ghostty-qt implements its frontend behavior.
+These actions run before Qt starts and describe the pinned Ghostty
+configuration. Catalog presence alone does not imply frontend support.
 
 ## Keybindings
 
@@ -129,19 +119,17 @@ keybind = global:super+grave=toggle_quick_terminal
 ```
 
 Eligible direct root `global:` bindings register through the XDG Global
-Shortcuts portal. Registration depends on the compositor or desktop and fails
-nonfatally; there is no focus-only shortcut fallback.
+Shortcuts portal. Registration depends on the portal backend and compositor
+and fails nonfatally.
 
 The [keybinding-action inventory](ghostty-parity.json) is the source of truth
 for implemented actions.
 
 ## Reload and failures
 
-Both configuration domains are watched. Changes are debounced and parsed away
-from the GUI thread; successful snapshots apply to existing state where the
-setting has live semantics and become defaults for newly created surfaces.
-Settings that inherently describe process startup or surface construction take
-effect only for later processes, windows, tabs, or splits.
+Both domains are watched and parsed away from the GUI thread. Live settings
+update existing state; launch and construction settings become defaults for
+later processes or surfaces.
 
 `reload_config` explicitly requests both domains. Each publishes
 independently. A malformed or unreadable update retains the last valid snapshot
@@ -150,5 +138,5 @@ window; a missing file restores its defaults. Successful post-startup
 generations enqueue the window-local reload toast when `app-notifications`
 enables `config-reload`.
 
-The detailed parser/helper boundary and per-setting ownership rules are in
+The parser/helper and runtime ownership boundaries are in
 [Architecture](architecture.md).

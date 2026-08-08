@@ -20,6 +20,20 @@ Unless a section records a newer comparison, the contracts below were checked
 against official pinned Ghostty commit
 `48d85eaeb06ac9fc49073815bda5bac97de655ca` on 2026-08-05.
 
+Most items share this landing procedure once an official upstream commit
+provides the contract:
+
+1. update `GHOSTTY_REVISION` and the submodule gitlink together;
+2. integrate through the existing typed ownership boundary without parsing PTY
+   bytes or exposing Ghostty handles across threads;
+3. add upstream-contract and frontend regression coverage; and
+4. update the parity manifest only after the complete behavior passes.
+
+Sections expand that checklist where a blocker instead belongs to the
+configuration helper, renderer, or upstream-internal lifetime. Detailed current
+architecture and implemented approximations belong in `docs/architecture.md`
+and `docs/status.md`, not in this blocker ledger.
+
 ## Terminal XTSHIFTESCAPE state query
 
 **Status:** the four-value `mouse-shift-capture` configuration and the
@@ -41,9 +55,7 @@ Public libghostty-vt exposes whether any DEC mouse tracking mode is active, but
 does not expose the separate unset/false/true `XTSHIFTESCAPE` state. The public
 parser consumes valid `CSI > s`, `CSI > 0 s`, and `CSI > 1 s` input into the
 private flag, so the information already exists at the correct terminal-model
-boundary. It is unavailable to an embedding frontend after parsing. This was
-last verified against official upstream commit
-`48d85eaeb06ac9fc49073815bda5bac97de655ca` on 2026-08-05.
+boundary. It is unavailable to an embedding frontend after parsing.
 
 ghostty-qt therefore transports and reloads all four configuration values and
 implements the capture-routing branches of `always` and `never` exactly. Its
@@ -160,9 +172,7 @@ Its private `Terminal.mouse_shape` receives recognized OSC 22 values, but
 `GhosttyTerminalData` has no mouse-shape member and the public OSC command-data
 API does not expose the parsed name. The similarly named enum and action in
 `ghostty.h` belong to Ghostty's full application-runtime API, not the
-`ghostty/vt.h` embedding API used here. This was last verified against official
-upstream commit `48d85eaeb06ac9fc49073815bda5bac97de655ca` on
-2026-08-05.
+`ghostty/vt.h` embedding API used here.
 
 There is an additional contract gap: the standalone VT stream handler stores
 OSC 22 values but does not mirror full Ghostty's mouse-mode and RIS shape
@@ -272,10 +282,7 @@ the required internal prompt traversal:
   `Ctrl+Shift+Down` to `jump_to_prompt:-1` and `jump_to_prompt:1`.
 
 The public `GhosttyTerminalScrollViewportTag` currently exposes top, bottom,
-row-delta, and absolute-row scrolling, but not prompt-delta scrolling. This was
-last verified against official upstream commit
-`48d85eaeb06ac9fc49073815bda5bac97de655ca` on 2026-08-05. The
-ghostty-qt submodule remains at that official revision.
+row-delta, and absolute-row scrolling, but not prompt-delta scrolling.
 
 ### Why ghostty-qt does not scan prompts itself
 
@@ -376,8 +383,6 @@ expose the live semantic-click mode, `cursorIsAtPrompt`, the prompt-relative
 movement calculation, or a composite prompt-click operation. Reconstructing
 those decisions from a public grid would duplicate terminal-owned navigation
 and could race terminal mutation or diverge as the shell protocol evolves.
-This was verified against official upstream commit
-`48d85eaeb06ac9fc49073815bda5bac97de655ca` on 2026-08-05.
 
 ### Required upstream contract
 
@@ -507,9 +512,7 @@ on the alternate screen. On the primary screen it delegates to
 Official `libghostty-vt` exposes neither this composite mutation nor enough
 stable primitives to reproduce it exactly. In particular, an embedder cannot
 invoke the private prompt test, erase the precise internal ranges, or apply
-the operation's Kitty-image and selection policy through the public API. This
-was verified against official upstream commit
-`48d85eaeb06ac9fc49073815bda5bac97de655ca` on 2026-08-05.
+the operation's Kitty-image and selection policy through the public API.
 
 ### Why ghostty-qt does not send an escape sequence
 
@@ -702,48 +705,14 @@ surface model, but adopting it would replace ghostty-qt's Qt scene graph,
 session worker, pane, split, and PTY ownership. It is not an incremental public
 font API for the standalone terminal.
 
-At official revision `48d85eaeb06ac9fc49073815bda5bac97de655ca`,
-ghostty-qt therefore implements the largest safe frontend-owned subset:
-
-- schema v4 transports Ghostty's finalized ordered feature list, four ordered
-  variation lists as exact f64 bit patterns, u21 codepoint maps, three
-  synthesis booleans, cursor shaping-break policy, and five FreeType flags;
-- a weak-cached immutable GUI-thread font program shares its metric and
-  shaping-face arrays across panes, DPRs, and layout-only generations, and
-  invalidates every live pane when Qt's font database changes;
-- codepoint maps compile in O(n log n) into sorted disjoint
-  later-entry-wins intervals and an interned face table, avoiding quadratic
-  overlay copies and duplicate resolved faces;
-- unrelated, metric-only, shaping-break-only, and transport-only FreeType
-  reloads skip font discovery through an effective program key;
-- a pure planner forms maximal row runs at every observable text-style,
-  selection, font, invisible-cell, defensive ligature, and configured cursor
-  boundary while retaining wide spacers with their head;
-- Qt shapes those runs with `QTextLayout`;
-- an all-boundary device-pixel check handles ordinary runs without inspecting
-  glyph metadata. If only internal caret positions differ, Qt's glyph string
-  indexes identify shaping clusters and the renderer instead validates their
-  starts plus the run endpoint. Incomplete metadata or a remaining mismatch
-  keeps exact per-cell placement for the complete run; and
-- on OpenGL and Vulkan, runs accepted by the exact all-boundary path can extract
-  one-glyph-per-cell printable ASCII from the already-shaped line, rasterize it
-  through `QRawFont` into a compact CPU Alpha8 atlas, expand it once to an
-  explicit RGBA coverage texture, and emit it through retained per-row indexed
-  batches. The atlas is retained across frontend-only palette, color, alpha,
-  and grid-shape invalidations when its font program, DPR, window, and graphics
-  API remain compatible. Those compatible invalidations also retain row
-  containers, glyph-batch nodes, existing geometry capacity, and any cleared
-  native fallback node. Global paint deltas are intersected with cached row
-  dependencies, so unrelated rows perform no cell scan or shaping and affected
-  rows rebuild text only when their effective foreground changes; row-count
-  changes preserve the common prefix. Every other row keeps a lazily created
-  general Qt text path.
-
-This gives visible feature and ligature support without allowing a platform
-shaper to move later cells off-grid. The parity ledger remains conservative:
-all four `font-family*` keys, all four `font-style*` keys, `font-feature`, the
-four `font-variation*` keys, `font-codepoint-map`, `font-synthetic-style`,
-`font-shaping-break`, and `freetype-load-flags` are partial rather than exact.
+ghostty-qt currently consumes the finalized typography projection, resolves
+Qt faces, shapes safe runs with `QTextLayout`, validates physical cell
+boundaries, and uses a narrow printable-ASCII RHI batch where one-glyph-per-cell
+placement is proven. This provides useful font, feature, variation, mapping,
+and ligature behavior without claiming Ghostty's authoritative face or glyph
+plan. The affected typography keys remain partial in the parity ledger.
+Implementation and caching details belong in `docs/architecture.md` and
+`docs/performance.md`.
 
 ### Why ghostty-qt does not copy Ghostty's private font stack
 
@@ -1279,11 +1248,10 @@ and promote `cursor-style-blink` without changing renderer timers.
 
 ## Normalized standalone VT effects and policy controls
 
-**Status:** dynamic light/dark scheme reporting is implemented through the
-existing public callbacks and mode helpers. Desktop-notification and progress
-effects are public at the current pin and are now frontend implementation work.
-Title-report policy, command-finished notifications, color-report format, and
-initial grapheme-width policy remain blocked on standalone public
+**Status:** dynamic light/dark scheme reporting, desktop notifications, and
+progress effects are implemented through existing public callbacks and mode
+helpers. Title-report policy, command-finished notifications, color-report
+format, and initial grapheme-width policy remain blocked on standalone public
 `libghostty-vt` contracts.
 
 ghostty-qt links the public standalone terminal library described by
@@ -1292,8 +1260,7 @@ ghostty-qt links the public standalone terminal library described by
 adopting that runtime would replace the project's terminal/session ownership
 model rather than extend the standalone terminal it already uses.
 
-At official revision `48d85eaeb06ac9fc49073815bda5bac97de655ca`, the
-standalone stream still has the following gaps:
+The standalone stream still has the following gaps:
 
 - It records OSC 133 semantic prompt rows, but does not publish Ghostty's exact
   ordered command-start/command-finished lifecycle. In full Ghostty the stream
@@ -1316,26 +1283,6 @@ The affected configuration keys are:
 - `notify-on-command-finish-after`;
 - `osc-color-report-format`; and
 - `grapheme-width-method`.
-
-### Newly unblocked frontend work
-
-The current header exposes
-`GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION`, whose callback receives a sized
-`GhosttyTerminalDesktopNotification` with borrowed, explicit-length title and
-body strings. It also exposes `GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT`, whose
-sized value carries remove, set, error, indeterminate, and pause states plus a
-0-through-100 percentage or `-1` when omitted. Both callbacks are synchronous
-during `ghostty_terminal_vt_write` and use the terminal's shared userdata.
-
-No further upstream work is required for `desktop-notifications` or
-`progress-style`. Their finalized booleans cross the strict schema-v4 boundary
-into live application policy. ghostty-qt now copies
-the sized callback data into a bounded ordered worker effect, routes it by
-stable `PaneId`, presents it through the standard Linux notification D-Bus
-interface, and revalidates its surface target on activation. The progress
-callback likewise crosses the ordered worker/controller boundary into a
-pane-local top overlay, with the shared live policy and stale-report expiry
-owned entirely by the Qt frontend.
 
 ### Why ghostty-qt does not inspect PTY bytes
 

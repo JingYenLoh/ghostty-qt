@@ -1,33 +1,36 @@
 # Development and CI
 
-The checked-in CMake presets are the supported developer entry points. Each
-preset uses the project-local Zig executable at `.local/bin/zig` and builds in
-its own directory. The top-level build requires C++23 for every C++ target and
-disables compiler-specific language extensions. Custom-shader compilation uses
-Qt's versioned GuiPrivate and ShaderToolsPrivate interfaces, so their
-development headers must exactly match the Qt runtime used by the build.
+The checked-in CMake presets are the supported entry points. All builds require
+C++23 and use the project-local Zig executable at `.local/bin/zig`.
 
-| Preset | C++ toolchain | Purpose |
+| Preset | Toolchain | Purpose |
 | --- | --- | --- |
 | `dev` | Default compiler, Debug | Normal development and tests |
-| `release` | Default compiler, Release | Optimized build and release-mode tests |
+| `release` | Default compiler, Release | Optimized application and tests; opt-in benchmarks |
 | `sanitize` | Clang, Debug | AddressSanitizer and UndefinedBehaviorSanitizer |
 
-Bootstrap the exact Zig version required by the pinned Ghostty revision with:
+## Bootstrap
+
+Initialize the pinned Ghostty checkout and install the required Zig version:
 
 ```sh
+git submodule update --init --recursive
 ./scripts/bootstrap-zig.sh
+./.local/bin/zig version
 ```
 
-The script supports x86-64 and AArch64 Linux. It downloads Zig 0.16.0 from the
-official Zig release directory, verifies the architecture-specific SHA-256
-published in Zig's release index, extracts it under `.local/toolchains`, and
-creates `.local/bin/zig`. A downloaded archive is cached under `.cache/zig` and
-is verified again before extraction. `ZIG_DOWNLOAD_CACHE` can select another
-cache directory and `ZIG_DOWNLOAD_BASE_URL` can select an HTTPS mirror; the
-expected checksum cannot be overridden.
+The bootstrap script supports x86-64 and AArch64 Linux. It downloads the exact
+version required by the project, verifies the published SHA-256, and installs
+under the ignored `.local/toolchains` directory. Archives are cached under
+`.cache/zig`.
 
-Configure, build, and test a preset as one sequence:
+`ZIG_DOWNLOAD_CACHE` can select another cache directory and
+`ZIG_DOWNLOAD_BASE_URL` can select an HTTPS mirror. The expected checksum
+cannot be overridden.
+
+## Build and test
+
+Configure, build, and test the developer preset:
 
 ```sh
 cmake --preset dev
@@ -35,483 +38,80 @@ cmake --build --preset dev -j"$(nproc)"
 ctest --preset dev -j"$(nproc)" --output-on-failure
 ```
 
-## Performance microbenchmarks
+Use all available processors for every CMake build. Replace `dev` with
+`release` or `sanitize` as needed.
 
-The rendering and worker benchmarks are opt-in and deliberately excluded from
-CTest. The pane benchmark measures metadata, one-row, cursor, full-frame,
-search-decoration, and Kitty graphics updates. Its software mode preserves the
-end-to-end `grabWindow()` baseline. OpenGL and Vulkan use
-`QQuickRenderControl` with a persistent offscreen QRhi target, exercising the
-production renderer through a single-threaded, production-like scene-graph path
-without a swapchain or present. Untimed initialization readbacks verify both
-terminal output and a known-color Kitty placement on the selected backend;
-measured frames do not read the target back. Damage counters assert that the
-scenarios rebuild the intended text rows and visit the intended number of solid
-cells, preventing a faster result caused by accidentally skipping work. Text
-telemetry distinguishes layouts submitted to the native Qt text node from
-glyphs emitted by the terminal-owned batch; both paths still begin with
-`QTextLayout` shaping. Before cursor, search, or Kitty measurement, the
-benchmark renders the same cursor-free, search-free, Kitty-free native control
-frame. Scenario work is therefore independent of catalog order and a single
-RenderDoc capture exercises the same retained base as the complete run.
-`search-update` moves one candidate highlight between rows and requires two
-text-row builds and `2 * columns` solid-cell visits per frame.
-`search-selection-update` toggles a candidate between ordinary and selected
-presentation on one row, while `search-clear` toggles one row of highlights on
-and off. Both require one text-row build and `columns` solid-cell visits per
-frame. These sparse scenarios deliberately use the native control content;
-the explicit ASCII text scenarios instead require batched glyphs and no native
-text submissions on OpenGL/Vulkan. Every scenario validates native submissions,
-batched glyphs, glyph geometry, and atlas churn in addition to its row/layout
-counts, prohibiting extra work or silent path changes. The terminal-pane
-row-damage tests separately assert the affected row identities and retention of
-every unaffected row. The global-color cases use the source provenance retained
-on each cell. The `text-explicit-color-global-noop` frame has only direct-RGB
-foregrounds and cell-owned backgrounds, so alternating the default foreground,
-default background, and palette must paint without building a text row,
-visiting a solid cell, submitting text, writing geometry, allocating a batch,
-or uploading the atlas. `text-selective-color-change` alternates the same
-global state on a mixed frame and requires only the even rows whose bold text
-depends on palette promotion or default-foreground equality to rebuild. Both
-cases preserve exact atlas and per-row scene-graph identities. Geometry and
-other global style invalidations remain outside these sparse benchmark
-scenarios.
-
-Use a Release build and compare results only on the same machine, Qt version,
-backend, dimensions, warmup, and iteration count:
+List tests or run a focused subset with:
 
 ```sh
-cmake --preset release -DGHOSTTY_QT_BUILD_RENDER_BENCHMARKS=ON
-cmake --build --preset release \
-    --target bench-terminal-pane-renderer \
-             bench-terminal-custom-shader-compiler \
-             bench-terminal-custom-shader-rhi \
-             bench-terminal-kitty-graphics \
-             bench-terminal-search \
-             bench-terminal-backdrop \
-    -j"$(nproc)"
-./build/release/tests/bench-terminal-pane-renderer \
-    --graphics-api software --warmup 20 --iterations 200
-./build/release/tests/bench-terminal-pane-renderer \
-    --graphics-api software --scenario cursor-only \
-    --warmup 20 --iterations 200
-QT_QPA_PLATFORM=wayland \
-    ./build/release/tests/bench-terminal-pane-renderer \
-    --graphics-api opengl --warmup 200 --iterations 200
-QT_QPA_PLATFORM=wayland \
-    ./build/release/tests/bench-terminal-pane-renderer \
-    --graphics-api vulkan --warmup 200 --iterations 200
-LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=wayland \
-    ./build/release/tests/bench-terminal-pane-renderer \
-    --graphics-api opengl --warmup 200 --iterations 200
-./build/release/tests/bench-terminal-custom-shader-compiler \
-    --cold-iterations 5 --warm-iterations 100
-LIBGL_ALWAYS_SOFTWARE=1 \
-    ./build/release/tests/bench-terminal-custom-shader-rhi \
-    --graphics-api opengl \
-    --width 1280 --height 720 --warmup 200 --iterations 100
-./build/release/tests/bench-terminal-kitty-graphics \
-    --pixel-format rgb24 \
-    --width 640 --height 360 --warmup 10 --iterations 100
-./build/release/tests/bench-terminal-kitty-graphics \
-    --pixel-format rgba32 \
-    --width 640 --height 360 --warmup 10 --iterations 100
-./build/release/tests/bench-terminal-search \
-    --rows 25000 --viewport-rows 32 --warmup 1 --iterations 5
-./build/release/tests/bench-terminal-backdrop \
-    --source-format rgba8888 \
-    --width 640 --height 360 --warmup 10 --iterations 100
+ctest --preset dev --show-only
+ctest --preset dev -j"$(nproc)" --output-on-failure \
+    -R 'session-worker|terminal-pane|terminal-workspace'
 ```
 
-`--scenario NAME` runs one authoritative pane scenario without requiring
-RenderDoc. It uses the same isolated setup as `--renderdoc-capture NAME`, which
-makes it useful for checking a capture workload and its deterministic counters
-before collecting GPU evidence.
+CTest is the maintained test inventory. Broadly, the suite covers:
 
-The terminal-search benchmark loads a deterministic fixed-width fixture once,
-scrolls to an older quarter of history, and excludes fixture construction from
-all timings. It reports time to the first visible highlight, canonical
-newest-to-oldest completion throughput, cancellation and resize-mutation
-latency, stale-update checks, and the incremental passes needed to recompress
-pages restored by each scan. Compression is enabled by default; pass
-`--resident` for a resident-history comparison, and keep row count, geometry,
-marker stride, Qt/libghostty versions, and build type identical when comparing
-runs.
+- libghostty adaptation and PTY lifecycle;
+- input, rendering, search, links, clipboard, and Kitty graphics;
+- tabs, splits, windows, keybindings, and application lifetime;
+- shared and frontend configuration services;
+- D-Bus, portal, systemd, cgroup, and desktop integration;
+- staged installation, CLI delegation, and parity checks.
 
-The pane RHI mode separately reports CPU synthetic-update preparation and
-delivery, scene-graph command recording, completion, and total timings, plus
-whole-command-buffer GPU timestamps where supported. Each scenario also reports
-and validates paint and cell-visit counts, native text submissions and cells,
-batched glyphs, glyph-batch geometry writes, node creation and buffer
-allocation, atlas uploads and resource identity, retained row-container and
-glyph-batch topology, native fallback-node residency and topology, final atlas
-entries and logical GPU atlas bytes at four RGBA bytes per texel, plus Kitty
-texture
-uploads, live generation-keyed texture-set cache entries, texture-set
-evictions, placement-node creation/deletion, geometry writes, and node material
-assignments. Upload count and resource identity expose accidental atlas churn;
-entry and byte deltas describe residency changes but cannot by themselves
-distinguish same-sized recreation. The compact CPU Alpha8 staging image is not
-included in that GPU figure. Untimed
-initialization readbacks first force a printable-ASCII frame through the glyph
-shader, then verify straight-alpha Kitty upload and composition on the selected
-RHI backend. The `text-atlas-retained-rebuild` case alternates row-affecting
-palette state on a canonical ASCII frame and requires zero atlas uploads,
-glyph-batch node creations, and buffer allocations while preserving the exact
-row-container, glyph-batch, and already-resident native fallback identities
-for the compatible font/DPR/render context. The explicit-color no-op and mixed
-dependency cases additionally make global-color row selection observable:
-unaffected rows perform no cell or shaping work, while affected rows retain
-their scene-graph resources and glyph-buffer capacity. The Kitty cases use
-512 placements sharing assets and separately
-exercise opaque and translucent first upload, same-snapshot redraw, and same-ID
-replacement, plus opaque movement and eviction.
-Their churn guards require retained redraws to perform no scene-graph work,
-movement to rewrite geometry only, same-ID replacement to rebind materials
-only, and eviction to delete the placements and texture set. Offscreen
-`endFrame()` waits for completion, so it is suitable for comparing renderer
-work but does not model pipelined on-screen throughput. Software mode reports
-CPU update and end-to-end total timing.
+Tests isolate configuration homes and external protocol services where
+possible. Full Wayland RHI tests require a reachable compositor; CI supplies a
+headless Weston instance rather than using X11.
 
-The custom-shader compiler benchmark reports one-, two-, four-, and eight-pass
-cold `QShaderBaker` latency and content-addressed QSB cache-hit latency. Its
-compiled/cache-hit counters guard the two paths against accidental
-misclassification. It measures configuration-time compilation and cache I/O,
-not GPU pass time.
-
-The custom-shader RHI benchmark compares the retained and legacy pipelines at
-zero, one, two, four, and eight full-screen passes on either OpenGL or Vulkan.
-It runs both source-dirty and effect-only workloads. Distinct noncommutative
-affine color transforms validate pass order with one untimed texture readback
-per recreated measurement round. Source paint counters verify that effect-only
-animation does not repaint the terminal source. Retained telemetry also
-verifies draw counts and the absence of target, pipeline, or resource-binding
-creation in the measured steady state.
-
-The benchmark renders through `QQuickRenderControl` into a persistent QRhi
-texture, so measured frames do not perform a readback. It reports:
-
-- `cpu_record_*` for polish, synchronization, and command recording;
-- `cpu_completion_*` for `endFrame()`, including the offscreen GPU wait;
-- `cpu_total_*` for their sum; and
-- `gpu_*` for the whole QRhi command buffer when the backend supports
-  timestamps.
-
-Offscreen `endFrame()` serializes each frame, which makes its GPU timestamp
-unambiguous but does not model pipelined on-screen throughput. QRhi exposes no
-portable per-pass timestamp, so use `gpu_median_delta_us`, which subtracts the
-pooled zero-pass samples for the same workload, to estimate shader work. Treat
-small or negative deltas as measurement noise. When at least two iterations are
-requested, each workload/pass pair is measured in two recreated rounds with
-legacy-retained and retained-legacy ordering. Warmup and measured samples are
-split across the rounds without increasing their totals. This balances local
-order bias exactly for even iteration counts; for odd counts the first round
-receives the extra sample, as reported by `measured_frames_per_round`. Longer
-runs can still experience clock or thermal drift between different pass counts
-and workloads. If any measured frame lacks a valid timestamp, that scenario
-reports GPU timing as unavailable while retaining its CPU results.
-
-GPU clock ramp can bias the first scenarios. The default 200 warm-up frames
-are intentional; raise that count when otherwise-identical zero-pass results
-do not converge. `gpu_vs_legacy_ratio` compares whole-frame medians directly
-and is more stable than taking a ratio of two baseline-subtracted deltas.
-The `baseline` lines report the absolute and relative gap between the duplicate
-zero-pass controls; a large gap relative to the shader delta invalidates that
-run's baseline-subtracted result.
-
-The deterministic target counts and memory figures remain useful
-independently: legacy owns one full-size layer per pass, while retained owns
-one source layer plus at most two internal textures. Retained shader-resource
-bindings are likewise bounded by unique inputs: one source binding plus at
-most two ping-texture bindings, reported as `live_bindings`.
-
-The normal benchmark provider returns one immutable uniform snapshot shared by
-all stages. Pass `--distinct-stage-uniforms` to force one snapshot per stage
-as an A/B control for retained uniform-slot sharing. Compare
-`uniform_slots`, `uniform_buffer_bytes`, and
-`uniform_upload_bytes_per_frame`; the distinct mode intentionally disables
-identity-based sharing without changing the shader values.
-
-Remove `LIBGL_ALWAYS_SOFTWARE=1` to measure the host GPU. The variable selects
-Mesa's software implementation behind the OpenGL RHI; it is not Qt Quick's
-software scene graph. Pass `--graphics-api vulkan` to select Vulkan. Compare
-results only with the same graphics API, device, platform plugin, framebuffer
-size, and build. `QT_QPA_PLATFORM=offscreen` is usable when that plugin can
-initialize the requested RHI. Otherwise run the invisible benchmark inside a
-Wayland session with `QT_QPA_PLATFORM=wayland`.
-
-Set `GHOSTTY_QT_CUSTOM_SHADER_PIPELINE=legacy` when reproducing an application
-issue specifically against the old nested implementation. The benchmark
-constructs both implementations directly and does not consult this variable.
-
-Set `GHOSTTY_QT_DISABLE_GLYPH_BATCH=1` to force the application's general
-`QSGTextNode` path when comparing rendering or performance against the
-printable-ASCII batch. The pane benchmark honors the same switch and adjusts
-its native-versus-batched work expectations. This is a diagnostic A/B control,
-not a supported user configuration setting; Qt's software scene graph already
-uses the general path.
-
-### RenderDoc captures
-
-Install RenderDoc so that both `renderdoccmd` and `qrenderdoc` are available,
-then capture a warmed, untimed benchmark frame with:
+For a diagnostic startup without a Wayland compositor, the application has an
+explicitly unsupported offscreen escape hatch:
 
 ```sh
-./scripts/capture-custom-shader-renderdoc.sh \
-    vulkan retained effect-only 8
+GHOSTTY_QT_ALLOW_NON_WAYLAND=1 \
+QT_QPA_PLATFORM=offscreen \
+QT_QUICK_BACKEND=software \
+timeout 3s ./build/dev/ghostty-qt --hold -e /bin/sh -c 'printf "smoke\n"'
 ```
 
-The four arguments select the graphics API, renderer, workload, and pass count.
-They default to the values above. Captures are written below `tmp/renderdoc/`,
-which is ignored by Git. Use `opengl`, `legacy`, `source-dirty`, or one of
-`0`, `1`, `2`, `4`, and `8` to select another case.
+Exit status 124 is expected because `--hold` keeps the process alive until
+`timeout` stops it. This checks startup only; it does not qualify native
+Wayland behavior or the hardware renderer.
 
-The benchmark renders offscreen and has no swapchain present with which
-RenderDoc could delimit a frame. Its capture mode therefore resolves the API
-injected by `renderdoccmd`, explicitly starts and ends one frame after warmup,
-and exits without reporting timings. Capture mode explicitly disables Qt
-timestamps and enables debug markers. The retained path emits a scoped group
-for every intermediate and final pass; the legacy material API has no safe
-post-draw hook, so it emits a message at each layer instead. Marker support is
-backend-dependent; Vulkan is the preferred capture backend. The benchmark's
-offscreen target and retained-pipeline resources have stable `ghostty-qt`
-names; Qt owns the legacy path's nested layer resources.
+## Sanitizers
 
-Inspect the named offscreen output texture rather than looking for a presented
-backbuffer or capture thumbnail. Use a Release build and the host GPU; setting
-`LIBGL_ALWAYS_SOFTWARE=1` would profile Mesa's software renderer. If Vulkan
-capture fails, check the layer with `renderdoccmd vulkanlayer --explain`. If
-OpenGL injection fails under native Wayland EGL, prefer the Vulkan capture
-path and inspect RenderDoc's Vulkan layer status.
-
-The pane benchmark can capture one warmed scenario through the same injected
-RenderDoc bridge. The helper builds the benchmark, creates the output
-directory, requires the current Wayland platform, verifies the benchmark's
-post-capture success record, and checks that RenderDoc wrote a non-empty
-capture:
+Configure and build once, then use the sanitizer preset normally:
 
 ```sh
-./scripts/capture-terminal-pane-renderdoc.sh \
-    vulkan kitty-replacement
+cmake --preset sanitize
+cmake --build --preset sanitize -j"$(nproc)"
+ctest --preset sanitize -j"$(nproc)" --output-on-failure
 ```
 
-The helper obtains its accepted names from the benchmark's authoritative
-`--list-scenarios` output. The catalog includes metadata, dirty-row and
-full-frame ASCII/ligature shaping, cursor, full invalidation, all three search
-damage cases, and the opaque/translucent Kitty upload, retained redraw,
-movement, replacement, and eviction cases. On OpenGL and Vulkan the ASCII
-cases exercise the terminal-owned glyph batch, while the ligature cases are a
-deliberate control for the native Qt fallback.
-Capture mode records one frame of the selected scenario on the 120×40 grid
-after that scenario's own untimed base setup and warmup, and intentionally
-suppresses its instrumented timings. The output texture is named
-`ghostty-qt terminal-pane benchmark output`. Pass `opengl` as the first
-argument to select it instead; Vulkan is preferred. Set
-Set `QT_QPA_PLATFORM=wayland` before the command when automatic platform
-selection is unsuitable.
+The preset enables ASan and UBSan for project C/C++ targets and uses Ghostty's
+`ReleaseSafe` Zig mode. Zig archives and the private configuration helper are
+not Clang-instrumented, although failures may still surface at an instrumented
+C++ boundary.
 
-### Native Wayland renderer qualification
-
-The offscreen benchmarks intentionally serialize every frame and never create
-a swapchain. Run the host qualification tool from a real Wayland session to
-combine their deterministic renderer invariants with evidence from a normal,
-shown ghostty-qt production window:
+LeakSanitizer requires process-tracing support. In a managed environment that
+prevents its `ptrace` use, the test preset's own environment would override a
+shell assignment. Run the already-built suite directly instead:
 
 ```sh
-./scripts/qualify-wayland-renderer.py --profile quick
+ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:strict_string_checks=1 \
+UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+ctest --test-dir build/sanitize --output-on-failure
 ```
 
-The runner configures and builds the Release application and renderer
-benchmarks with every processor reported by `nproc`. It exercises OpenGL and
-Vulkan, treating a genuinely unavailable optional backend as an explicit skip
-while preserving invariant, readback, backend-fallback, and presentation
-errors as failures. Devices reported by QRhi as CPU, plus recognized software
-rasterizer names such as llvmpipe and lavapipe, fail qualification unless
-`--allow-software-device` is explicitly supplied. At
-least one backend must complete the production-window probe. Repeat
-`--require-backend opengl` or `--require-backend vulkan` when a host is expected
-to support that API.
+Disabling leak detection is only an environment workaround; keep it enabled on
+ordinary hosts.
 
-Each backend runs the complete pane scenario catalog and custom-shader matrix
-at synthetic global scales. The quick profile uses 1 and 1.25 with short
-warmups; the full profile adds 1.5 and 2 and uses the documented long benchmark
-counts. These processes validate Qt's DPR/framebuffer propagation and remain
-distinct from compositor-negotiated fractional-scale protocol testing. The
-production-window probe removes every synthetic scale override, uses the
-compositor-selected DPR, waits for 30 Qt `frameSwapped` signals and a running
-terminal session, and requires the requested RHI, correct physical geometry,
-a nonuniform surface readback, an alpha channel, and intermediate-alpha pixels
-near the isolated terminal's configured 0.5 opacity over at least five percent
-of the client surface before exiting. Every synthetic-scale run and the
-production window's render-thread sample must report one identical QRhi device,
-preventing silent adapter changes on hybrid-GPU systems.
+## Formatting
 
-An atomic report is updated after every command under:
-
-```text
-tmp/renderer-qualification/<timestamp>-<revision>-p<pid>/results.json
-```
-
-It records commands, bounded renderer environment overrides, raw stdout and
-stderr, parsed benchmark records, durations, revisions, SHA-256 fingerprints of
-the executed artifacts, Qt/RHI device metadata, DPR/framebuffer values,
-swapchain frame intervals, Qt-reported output context, and pass/skip/fail reason
-codes. On Linux it also identifies the process at the other end of the Wayland
-socket with `SO_PEERCRED` and fingerprints `/proc/<pid>/exe`; this records the
-actual socket peer executable even under a nested compositor or proxy, where
-desktop environment names would be ambiguous. The production render thread
-snapshots the live QRhi swapchain's pixel size, SDR/HDR format, alpha flags,
-sample count, and HDR metadata alongside public `QScreen` connector metadata.
-Connector name, physical size/DPI, or nominal refresh may be unknown when
-Wayland does not provide them. After frame timing finishes, the process
-fingerprints the active mapped graphics driver, vendor dispatch, API loader,
-compiler, and injected layer libraries. The manifest records only roles,
-basenames, byte sizes, and content hashes; absolute paths are deliberately
-omitted.
-
-Exit 0 means at least one backend completed the complete matrix; exit 1 means
-qualification failed; exit 77 means the current process cannot reach a Wayland
-socket or no selected backend is available. `--skip-build` reuses an already
-configured Release tree. Whether the runner built the artifacts is part of the
-report because a just-completed build can change the host's thermal state.
-Absolute frame-time thresholds remain outside qualification itself;
-executable-owned work counters and readbacks are its deterministic correctness
-gates.
-
-The runner prints a flushed start/completion line for every long-running child.
-A timeout, Ctrl+C, `SIGTERM`, or `SIGHUP` terminates the child's process group,
-covering the ordinary Ninja, RenderDoc, benchmark, and terminal descendants
-that could otherwise continue mutating artifacts after the report is
-finalized. Signal cancellation also atomically marks the report `aborted`
-instead of leaving an apparently running result.
-
-RenderDoc remains optional. For example, after each successful backend, capture
-the retained Kitty replacement case with:
-
-```sh
-./scripts/qualify-wayland-renderer.py \
-    --profile quick \
-    --renderdoc-scenario kitty-replacement
-```
-
-Missing RenderDoc is recorded as a skip unless `--require-renderdoc` is also
-present. The production hook's `grabWindow()` validates the client surface and
-Qt frame-swap path before compositor composition; it cannot capture the
-compositor's final blur, color management, or blending with windows behind it.
-Inspect those effects and any requested `.rdc` interactively on the target
-desktop.
-
-### Comparing renderer qualification reports
-
-Use the standalone comparator for a baseline and candidate collected with the
-same effective qualification settings:
-
-```sh
-./scripts/compare-renderer-qualification.py \
-    tmp/renderer-baseline/results.json \
-    tmp/renderer-candidate/results.json \
-    --output tmp/renderer-candidate/comparison.json
-```
-
-The comparator independently verifies each report's schema, benchmark
-contracts, complete scenario and run matrices, Qt version, RHI device, scales,
-framebuffers, warmup/iteration counts, build/no-build state, host CPU and
-kernel, Wayland peer fingerprint,
-and output/swapchain mode before comparing measurements. Repository revisions,
-harness hashes, and executable hashes are preserved as provenance and may
-differ—the changed executable is normally the subject of the comparison.
-`--allow-context-changes` permits an exploratory comparison while retaining
-every context difference in the result; it never permits a device, benchmark
-contract, or workload-matrix mismatch.
-
-The loaded-library contract is fail-closed. A device/inode identity must have
-an executable mapping before it counts as a loaded library. Each candidate is
-kept open while its inode is checked and its `fdinfo` mount ID is resolved
-through `mountinfo` to the exact device from `/proc/self/maps`; this avoids
-trusting `st_dev`, which managed supervisors can virtualize. Identity, size, and
-timestamps are checked again after hashing. Deleted mappings require the
-ptrace-gated `map_files` fallback. Inaccessible, replaced, or otherwise
-unverifiable libraries make the report incomplete. Strict comparison
-recomputes the aggregate SHA-256 from the decoded manifest and treats a
-graphics-stack change as environmental context drift.
-
-Timing mode defaults to `auto`. Quick-profile CPU/GPU medians are reported as
-advisory because their short sample sets exhibit substantial run-to-run noise.
-Reports with at least 100 warmup and measured iterations for both benchmark
-families enforce timing gates. The full profile satisfies that contract;
-`--timing-mode advisory` or `enforce` selects either behavior
-explicitly. Pane medians require both a 15% increase and an absolute increase
-over 100 µs CPU or 50 µs GPU. Retained custom-shader absolute medians use
-15%/+100 µs CPU and 12%/+50 µs GPU gates. They are also normalized against the
-legacy renderer from the same run; those CPU/GPU ratio gates use 15%/+0.10 and
-12%/+0.08 respectively. Improvements use the same noise floors as regressions,
-so ordinary jitter is neutral. Losing GPU timestamp evidence is always a
-regression. Deterministic increases in row/native-text/Kitty work, glyph-batch
-geometry or atlas uploads/residency, or retained shader resource work are also
-enforced in every timing mode. Losing expected batched glyphs is likewise a
-regression even if frame timing appears faster.
-
-The comparison document is written atomically and contains sorted per-metric
-baseline, candidate, delta, percentage, limits, classification, provenance,
-and compatibility evidence. Exit 0 means no enforced regression, exit 1 means
-compatible evidence contains a regression, exit 2 means malformed or
-incompatible evidence, and exit 77 propagates a skipped candidate
-qualification. Production `frameSwapped` intervals remain informational
-because they primarily describe compositor/vsync cadence rather than renderer
-cost.
-
-For an enforceable performance baseline, use the long profile on an otherwise
-idle host after building Release once:
-
-```sh
-./scripts/qualify-wayland-renderer.py \
-    --profile full \
-    --skip-build \
-    --output-directory tmp/renderer-full-baseline
-```
-
-The full profile has at least 100 warmup and measured iterations for both
-benchmark families, so `auto` timing comparisons enforce the documented noise
-floors. The graphics-library manifest closes ordinary userspace driver and
-loader drift, but it does not fingerprint kernel modules, firmware, anonymous
-JIT code, or shader caches; keep the rest of the host stable and use
-`--allow-context-changes` only for exploratory results.
-
-The Kitty import benchmark separately feeds explicit-ID replacement frames
-through libghostty and the Qt snapshot boundary. `--pixel-format rgb24`
-provides an opaque comparison stream; `rgba32` uses deterministic varying
-alpha. It reports
-parse/materialization latency, raw and wire throughput, the exact retained
-packed Qt bytes, the former two-plane reference cost, and Linux resident-set
-growth. Its one-placement, opacity, and `RGBA8888` checks guard the intended
-replacement and storage paths. RSS includes libghostty and allocator behavior,
-so compare it only with identical dimensions, frame counts, storage limits,
-and builds.
-
-The backdrop benchmark measures the shipped post-decode asset preparation and
-CPU/software-fallback composition paths using deterministic varying-alpha
-pixels. Preparation is reported side by side with a frozen copy of the former
-two-plane algorithm; decoded input allocation is outside both timed regions,
-and order alternates to reduce systematic bias. `--source-format rgba8888`
-isolates the packed transfer fast path, while `argb32` includes conversion into
-straight RGBA. Composition is reported separately and this is not an RHI
-draw-time benchmark. Exact logical packed `RGBA8888` asset storage and the
-former two-plane byte cost accompany the timings. Compare results only with
-the same machine, source format, dimensions, Qt build, warmup, and iteration
-count; the byte reduction is exactly four bytes per source pixel.
-
-## C++ formatting
-
-Install `clang-format` as a development dependency; version 18 or newer is
-recommended. The repository's `.clang-format` captures the existing Qt/C++
-style. Format the changed lines in tracked C and C++ files before committing:
+The repository uses `.clang-format`; version 18 or newer is recommended.
+Format changed lines with:
 
 ```sh
 ./scripts/check-format.sh --fix
 ```
-
-Use `clang-format -i <files...>` for new files or intentional whole-file
-formatting.
 
 Enable the tracked pre-commit hook once per checkout:
 
@@ -519,677 +119,92 @@ Enable the tracked pre-commit hook once per checkout:
 git config core.hooksPath .githooks
 ```
 
-The hook checks the exact changed lines in staged file contents, including
-partially staged files, without modifying the worktree. Run the same check
-directly with `./scripts/check-format.sh --staged`, check unstaged changes with
-`./scripts/check-format.sh --diff`, or format all tracked changes since `HEAD`
-with `./scripts/check-format.sh --fix`. The fix leaves the index untouched, so
-review and stage the result again before committing.
-
-## Wayland decoration qualification
-
-The automated application test uses Qt's offscreen platform and verifies the
-requested window flags, state, geometry, and pane/session identity. It cannot
-observe xdg-decoration negotiation. Changes to the decoration mapping should
-also be checked under a real Wayland compositor with:
-
-```text
-window-decoration = server
-keybind = ctrl+shift+d=toggle_window_decorations
-```
-
-Run `QT_QPA_PLATFORM=wayland ./build/dev/ghostty-qt`, toggle the frame twice in
-normal, maximized, and fullscreen states, and verify the terminal sessions
-remain intact. The current public-Qt boundary is expected: the initial window
-may receive compositor-side decoration, the first toggle is frameless, and the
-second uses Qt client-side decoration because the existing native surface
-cannot renegotiate its destroyed xdg-decoration object.
-
-The suite includes focused contracts for the libghostty adapter, workspace
-identity/action foundation, Ghostty action catalog, dirty-update transport,
-typed config/appearance overlays, watched reload, structured keybinding trie
-matching, shared immutable keybinding generations, independent pane state,
-named tables, all-surface dispatch, portal registration, and replay,
-one-shot host-window effects during broad fanout, directional/default-auto
-split placement, stable per-tab title overrides and queued title prompts,
-typed originating-tab close modes with correlated frozen-target confirmation,
-reentrant-model guards, natural-exit pruning, focus preservation, actual
-all/global keybinding fanout, and overlapping shutdown grace periods,
-exact surface-scoped previous/next window traversal with wrapped
-registration-order selection, hidden/closing filtering, destination-pane
-focus, reentrant traversal and queued-retirement guards, and per-surface
-broad fanout,
-exact-source close-surface grammar, adjacent split focus, recursive collapse,
-stable correlated read-only/running pane confirmation, atomic resolution,
-final-tab escalation, irreversible typed-workspace quit gating,
-application/pane-local chain completion, and atomic all/global workspace-close
-events, composite process-level window sources, zero-window recreation,
-multiwindow lifetime and aggregate quit coordination, standard
-`org.freedesktop.Application` owner arbitration, warm/cold service activation,
-staged desktop metadata, two-process resident reactivation, exact one-shot
-activation platform-data handoff and shell-child scrubbing, reentrant
-window/workspace creation teardown,
-replaceable per-surface base titles with explicit-empty and OSC-cache coverage,
-stable per-surface prompt overrides and a mixed title-prompt FIFO,
-per-pane BEL latching, title/border derivation, inactive-tab and native-window
-attention, system/custom audio dispatch, interaction clearing, and live
-bell-feature/path/volume reload,
-terminal appearance and OSC 8/default-regex interaction rendering, the pinned
-Oniguruma matcher boundary, and the config-helper process protocol, as well as
-raw pre-Qt CLI process replacement, PTY, renderer, application-lifecycle,
-parity, exact-parser smoke, and
-relocatable-install coverage. List or run individual tests with:
+The hook checks staged changed C/C++ lines without modifying the worktree.
+Other useful modes are:
 
 ```sh
-ctest --preset dev --show-only
-ctest --preset dev -j"$(nproc)" -R 'ghostty-vt-adapter|ghostty-link-matcher|terminal-pane-render|launch-options|application-(controller|lifetime)|workspace-foundation|terminal-workspace|ghostty-action-catalog|ghostty-keybind-set|ghostty-global-shortcut-portal|ghostty-config|ghostty-cli-delegation|ghostty-parity-manifest'
+./scripts/check-format.sh --staged
+./scripts/check-format.sh --diff
 ```
 
-For a headless QML startup smoke test, use the explicitly unsupported-backend
-escape hatch:
+Review and stage formatting changes again after `--fix`, because it deliberately
+does not alter the index.
+
+For Python maintenance, use Ruff rather than Black. The repository does not
+currently define a repo-wide automated Ruff gate, so do not document or assume
+one until its configuration is checked in.
+
+## Performance work
+
+Performance targets are opt-in and excluded from CTest. Their build commands,
+benchmark selection, renderer qualification, RenderDoc capture, comparison
+policy, and measured optimization backlog are in
+[Performance](performance.md).
+
+## Configuration-helper boundary
+
+The complete Ghostty application parser is not exported by `libghostty-vt`.
+When `GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=ON` (the default), CMake builds a private
+revision-matched runtime used only by `ghostty-qt-config-helper`. The main
+application consumes a strict typed projection through a child-process
+protocol.
+
+The same helper is the process-replacement target for supported pinned `+`
+actions. It also supplies Fontconfig-backed font commands, themes, SSH
+wrappers, and shell-integration finalization. The official Ghostty submodule is
+not patched; project overlays and source shadows are generated in ignored
+cache directories.
+
+To work on the Qt application without the private parser, configure with:
 
 ```sh
-GHOSTTY_QT_ALLOW_NON_WAYLAND=1 \
-QT_QPA_PLATFORM=offscreen \
-QT_QUICK_BACKEND=software \
-timeout 3s ./build/dev/ghostty-qt --hold -- /bin/sh -c 'printf "smoke\n"'
+cmake --preset dev -DGHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=OFF
 ```
 
-The timeout status is expected because `--hold` keeps the window alive. This
-path is for CI and smoke diagnostics only; normal use remains Wayland-only.
+This is a development configuration, not the normal feature set.
 
-## ghostty-qt frontend configuration
+Generated caches live below `.cache`. Ghostty's main Zig wrapper also writes
+to `ghostty/zig-out`, which is shared by all CMake presets. Sequential preset
+switches rebuild incompatible outputs automatically; concurrent preset builds
+in one checkout are unsupported.
 
-Qt-owned application settings live in the independent strict UTF-8 file
-`$XDG_CONFIG_HOME/ghostty-qt/config`, falling back to
-`$HOME/.config/ghostty-qt/config` when `XDG_CONFIG_HOME` is unset or relative.
-The parser and `FrontendConfigService` are always built, including when
-`GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=OFF`; that option controls only the shared
-Ghostty parser/helper boundary.
+## Parity and upstream upgrades
 
-The frontend parser accepts the closed `single-instance`, `tabs-location`,
-`wide-tabs`, `horizontal-tab-scroll`, `quick-terminal-layer`, and
-`quick-terminal-namespace` schema described in
-[Frontend configuration](frontend-configuration.md). It rejects malformed,
-unknown, or duplicate assignments transactionally. The descriptor-first loader
-requires a regular file and enforces a 1 MiB bound even across concurrent
-growth. The service watches the file and nearest existing directory, debounces
-changes, reloads off the GUI thread, and retains the last-good snapshot after a
-failed reload. A missing file successfully restores typed defaults.
-
-The application retains the latest successful Ghostty and frontend snapshots
-independently. On either publication it rebuilds effective launch options from
-built-in defaults, the shared Ghostty snapshot, the disjoint frontend snapshot,
-and explicit CLI overrides. The `reload_config` action requests both services.
-The `frontend-config` test covers the strict parser and watched-service
-lifecycle; `application-tabs-location` covers live QML placement, tab
-presentation coverage verifies retained wide/compact resizing, terminal-pane
-tests cover horizontal precision gestures and discrete pass-through, and the
-single-instance integration cases isolate the frontend file explicitly.
-
-## Ghostty configuration parser
-
-Configuration is enabled by default with
-`GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=ON`. Because the exact Ghostty application
-parser is outside `libghostty-vt`, the build produces a private
-`ghostty-internal` shared library and links it only into
-`ghostty-qt-config-helper`. Each load is a four-process transaction: validate,
-request the private schema-v4 `+show-config-json` projection with the concrete
-light/dark scheme, validate again, and request the same scheme and projection
-again. The two JSON byte streams must match, so each document carries one
-finalized current configuration together with its platform-default keybinding
-baseline. The loader does not parse or merge the human-oriented
-`+show-config` output.
-
-The same private executable is the transparent process-replacement target for
-`+edit-config`, `+explain-config`, `+help`, `+list-actions`, `+list-colors`,
-`+list-fonts`, `+list-keybinds`, `+list-themes`, `+show-config`, `+show-face`,
-`+ssh`, `+ssh-cache`, `+validate-config`, and `+version`. One shared catalog
-records every pinned action spelling and its explicit frontend support
-decision, so known-but-unsupported actions remain distinguishable from invalid
-spellings without maintaining parallel allowlists.
-The frontend classifies raw arguments and uses Linux `execv` before QString
-conversion or Qt initialization; it does not reuse the buffered, timeout-bound
-`QProcess` configuration protocol. Therefore public CLI streams, TTY/pager
-state, environment, PID, process/signal relationship, and exit status remain
-caller-owned. The helper's embedded application runtime is `none`, so
-runtime-specific config finalization can differ from GTK even though the action
-implementation is the exact pinned code. Its Linux
-`fontconfig_freetype` backend gives font CLI actions Ghostty's native
-Fontconfig discovery while keeping the private font stack outside the Qt
-process. The build explicitly uses the system Fontconfig library so its parser
-matches the host configuration. Focused tests point Fontconfig at one pinned
-Fira Code face so `+list-fonts` and `+show-face` output is independent of the
-developer's installed fonts.
-
-One narrow, zero-fuzz source-shadow patch makes the `app-runtime=none` Zig
-build emit only its lazy pinned theme archive, avoiding
-the unrelated host-side generators in Ghostty's complete resource target.
-CMake stages the bundle under `build/<preset>/themes` and installs it under
-`${CMAKE_INSTALL_DATADIR}/ghostty-qt/themes`. `+list-themes` remains the exact
-pinned action: its path, plain, and color filters are unchanged, non-TTY output
-uses the upstream plain format, and a TTY may launch the upstream interactive
-selector. User themes still come from `$XDG_CONFIG_HOME/ghostty/themes`. The
-helper honors a non-empty `GHOSTTY_RESOURCES_DIR`; otherwise it locates the
-build or installed bundle relative to `/proc/self/exe`. This also gives private
-configuration queries the resource root needed to finalize bundled theme
-names.
-
-`+ssh` remains Ghostty's wrapper: the helper spawns and waits for the selected
-SSH child, prepends the pinned TERM/SendEnv options, optionally installs the
-built-in terminfo payload, and maps a child signal to `128 + signal`.
-`+ssh-cache` operates on Ghostty's standard
-`${XDG_STATE_HOME}/ghostty/ssh_cache`; tests must isolate `XDG_STATE_HOME`,
-`HOME`, and `TMPDIR` beneath repository-local `./tmp`. Explicit action support
-is also used by the staged Bash, Elvish, Fish, Nushell, and Zsh integrations:
-their ordinary `ssh` wrappers route through the same `ghostty-qt +ssh` action.
-
-`+edit-config` continues through the pinned helper into `/bin/sh -c` using the
-first non-empty `VISUAL` or `EDITOR` value and a shell-escaped standard config
-path. Tests must always remove inherited editor variables or install a
-deterministic fake editor; invoking this action with a developer's environment
-can intentionally replace the test process with their interactive editor.
-
-The schema-v4 projection includes the finalized non-empty raw-byte `term`
-child identity, the finalized ordered raw-byte `env` override map, the
-finalized binary-safe `enquiry-response`, finalized working-directory,
-split/tab/window directory inheritance policies, new-window/tab font-size policy,
-and the canonical `current`/`end` new-tab position plus the
-`always`/`auto`/`never` tab-bar visibility policy, the complete effective
-256-entry palette after Ghostty's exact generation gate and derivation, the
-canonical `navigation`/`no-navigation` split-preserve-zoom policy,
-four ordered regular/bold/italic/bold-italic family lists and their tagged
-automatic/disabled/named styles, the ordered OpenType feature list, four
-ordered variation lists whose f64 values use exact decimal-encoded bit
-patterns, finalized u21 codepoint-map ranges, the three synthetic-style
-permissions, cursor shaping-break policy, five FreeType load booleans, the f32
-font size, eleven nullable tagged absolute-pixel/percentage metric modifiers,
-selection colors, cursor
-color/style/blink/opacity/text, bold-color, faint-opacity, the finalized
-minimum-contrast threshold, the nullable
-frontend-only unfocused-split fill, finalized unfocused-split opacity,
-split-divider color, the boolean `link-url` setting plus the three-state
-`link-previews` policy, the exact `system`/`never` scrollbar policy, the five
-finalized `bell-features` booleans, the live default-true
-`desktop-notifications` and `progress-style` policies, nullable finalized
-bell-audio path and its required/optional provenance, raw finite bell-audio
-volume, independently
-finalized finite precision/discrete mouse-scroll multipliers, the finalized
-four-state `mouse-shift-capture` value, the exact `mouse-hide-while-typing`
-and `focus-follows-mouse` booleans, the finalized
-whole-millisecond `click-repeat-interval` including the Linux 500 ms default,
-the exact live default-false `vt-kam-allowed` boolean,
-the finalized `scroll-to-bottom` object with its default-true `keystroke` and
-default-false `output` fields,
-`selection-word-chars` numeric Unicode-scalar array including Ghostty's
-mandatory U+0000 boundary, the exact live `ask`/`allow`/`deny`
-`clipboard-write` policy, the exact five-state `right-click-action`, the raw
-false/true/detect `gtk-single-instance` startup mode, the boolean
-`initial-window` startup decision, and the exact boolean/nullable-millisecond
-application lifetime policy. The
-export and process-loader tests verify exact wire validation, typed semantic
-values, nullable alternatives, Unicode scalar range/surrogate rejection,
-transaction consistency, and default-aware keybinding diagnostics;
-launch-option and process-loader tests verify live desktop-notification policy
-and that binary `enquiry-response` values reach runtime options unchanged and
-explicit
-font CLI arguments enter both structured queries before Ghostty finalization,
-preserving f32 and styled-role defaults while the public
-`+validate-config` action retains its exact action-specific grammar.
-Terminal-cell-metric and
-pane tests verify four-role selection, ordered features, first-tag variation
-semantics, later-entry-wins codepoint maps, FreeType approximations, maximal
-compatible row shaping, device-pixel boundary fallback, physical-pixel/DPR
-projection, decoration and cursor geometry, live reload, and manual zoom.
-Adapter tests
-verify binary ENQ callbacks at empty, 1, 255, 256, and 4096-byte boundaries,
-ordered terminal replies, and config-default changes preserving
-OSC/DECSCUSR terminal overrides; and
-`terminal-pane-render` verifies
-frontend-only terminal color/style, retained split dimming, live link-matcher
-rules, and live preview policy. Workspace render tests cover dimming's actual
-focus and search predicate, configured-background fallback, live reload,
-split/tab/zoom/window/scene lifecycle, divider recoloring, unset restoration,
-handle lifecycle, and logical-to-physical scaling at 1× and 2×.
-This division keeps parser, terminal state, and renderer responsibilities
-independently testable.
-
-The configuration exporter and its C API overlay are compiled from the
-project-local revision shadow. They do not modify or create commits in the
-official pinned Ghostty submodule; a change that truly requires an upstream
-public API remains documented in `REQUIRES_UPSTREAM.md`.
-
-The additional Zig outputs and global package/artifact cache live under:
-
-```text
-.cache/ghostty-internal/<ghostty-revision>/
-.cache/ghostty-link-matcher/<ghostty-revision>/<optimization>/
-.cache/zig-global/
-```
-
-Both paths are project-local and ignored by Git. Revision-shadow creation and
-the config-parser install transaction are serialized across presets. The main
-Ghostty VT build still shares source-tree outputs, so presets must not build concurrently. A
-cold config-parser build is much larger and slower than an ordinary incremental C++ rebuild. To
-work on the application without this integration, configure manually with
-`-DGHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=OFF`; that is a development option, not the
-normal feature set.
-
-The matcher cache is independent of the private configuration library.
-`libghostty-vt` intentionally disables Oniguruma, so CMake builds the small
-`zig/link_matcher` C ABI from Ghostty's pinned `src/config/url.zig` and vendored
-Oniguruma package. `ghostty-link-matcher` tests the C++ byte-range boundary;
-`ghostty-link-matcher-upstream-corpus` compiles and executes Ghostty's complete
-URL/path corpus against that same engine. Both searches and the application use
-Ghostty's 100,000-step retry budget.
-
-The five focused config tests have distinct boundaries:
-
-- `ghostty-config-service` exercises filesystem discovery/watch/debounce,
-  missing optional includes, generation-safe asynchronous reload, and last-good
-  snapshot behavior with an injected loader.
-- `ghostty-config-export` exercises the strict schema-v4 decoder independently
-  of process execution, including finalized non-empty byte-valued `term`, the
-  ordered raw-byte `env` key/value pairs and their duplicate/empty/equals/NUL
-  rejection, empty and binary `enquiry-response` values, the exact cgroup
-  enum/boolean and nullable canonical-decimal uint64 limits, typography role
-  lists, tagged style and metric alternatives, feature/variation ordering and
-  exact variation bits, u21 codepoint ranges, synthesis/shaping/FreeType
-  objects, fields and types, the full unsigned scrollback range, nullable
-  values, and malformed keybinding trees.
-- `ghostty-config-process-loader` uses a fake helper to make protocol ordering,
-  post-query validation, byte-for-byte consistency, warnings, timeouts,
-  crashes, and failures deterministic; real-helper cases verify finalized
-  surface-inheritance booleans, default/custom/empty and non-UTF-8 `term`
-  finalization, repeated `env` replacement, configured-map removal/reset,
-  include precedence and raw-byte transport, empty/custom binary
-  `enquiry-response` finalization, default/custom/empty Linux cgroup settings
-  and maximum-width limits, exact font CLI forwarding and role finalization,
-  real-parser typography feature/variation/map policies, Ghostty's effective
-  `clear`/`unbind` result, and structured sequences, chains, catch-all
-  triggers, flags, and named-table transport.
-- `ghostty-config-helper-smoke` runs the actual helper against the exact pinned
-  parser with an isolated `XDG_CONFIG_HOME`; the delegation matrix compares
-  `+version` byte-for-byte between direct-helper and frontend execution.
-- `ghostty-cli-delegation` combines allocation-free classifier cases with a
-  byte-framed fake helper, every delegated real action, invalid and reordered
-  action options, the pinned editor exec and selection contract, deterministic
-  SSH argument/stream/exit/signal and terminfo/cache phases, isolated SSH-cache
-  lifecycle and mode repair, deterministic bundled/user theme listing,
-  filtering, paths, and explicit-resource overrides,
-  missing/unexecutable-helper failure, the config-off boundary, and
-  moved-prefix main-to-helper discovery. Theme coverage also runs after
-  relocating an installed prefix. Every fixture lives under the
-  repository-local `./tmp` or build tree.
-
-`linux-cgroup` registers a virtual systemd manager on an isolated private
-session bus. It validates the exact `StartTransientUnit` wire and typed
-properties, never/always/single-instance gating, method/reply failures, cgroup
-path parsing, and 25 ms/250 ms membership polling against a temporary fake
-`/proc` tree. It never contacts or mutates the developer's real user manager.
-The worker tests separately inject the scope mover to prove that the child
-cannot execute before successful placement, soft failure releases it, hard
-failure prevents exec and reaps it, and disabled policy never calls the mover.
-
-The app lifecycle test also uses an isolated config home, so it never reads a
-developer's real Ghostty configuration.
-
-`ghostty-keybind-set` covers finalized root and named-table tries, including
-Linux native physical locations, shifted punctuation lookup, sequences,
-catch-all fallback, table precedence/one-shot activation, direct stack-change
-reporting without active-table list snapshots, action chains, and exact local
-`unconsumed`/`performable` behavior. It also checks compile-on-load
-owning chains, exact positional spellings, cached scope/effect/application-only
-metadata, inert unsupported entries, and match lifetime across program
-replacement. Shared-program coverage verifies one immutable program generation
-can back independent noncopyable matcher states, that sequence and table state
-remain surface-local, and that an old program remains usable after another
-matcher changes generation. It also distinguishes the unavailable fallback
-sentinel from an available empty Ghostty binding set, verifies that reinstalling
-the same program generation preserves mutable state, and verifies that a
-different generation resets it.
-The same executable includes a pathological 32,768-key sequence to ensure
-binding counting and serialization remain iterative rather than consuming one
-C++ stack frame per configured key.
-
-Session and pane tests cover payload-specific typed execution without
-keypress-time reparsing, byte staging, invalid-sequence replay, table reset,
-launch-only TERM/environment/cgroup snapshot reload, inherited and injected
-environment override order, concrete `PWD` precedence, parent-`PATH`
-executable lookup, invalid raw environment rejection, pre-exec cgroup gating,
-soft/hard scope failures, full/fractional/line/absolute viewport movement,
-selection-target scrolling, default and configured discrete wheel movement,
-precision pixel scrolling, independent horizontal pixel and discrete-step
-normalization, simultaneous-axis routing, DEC buttons 6/7 with vertical-first
-ordering, fractional/reversing accumulation, identical local and DEC-captured
-row counts, worker-rechecked fractional-capture selection clearing,
-horizontal-only alternate-scroll consumption, bounded per-axis extreme
-dispatch with retained precision debt, live multiplier reload,
-four-state shift-capture defaults and live reload, exact override-independent
-`always`/`never` routing, configured `true`/`false` fallback, and consistent
-press/release/held-drag/middle/right/link decisions with wheel and buttonless
-DEC-motion reporting exclusion,
-typing-hide defaults and reload, terminal-bound key and IME eligibility,
-invalid-sequence and asynchronous `performable` fallback, stale
-pointer-activity-epoch suppression, physical-pixel movement filtering, reveal
-interactions, blank/hyperlink/rectangle/base cursor priority, raw DEC
-arrow-to-Shift-I-beam transitions, focus-follow defaults
-and live reload, inactive-window gating, same-position/sub-pixel focus
-suppression, and destructive focus-publication observers, finalized default
-and custom ASCII/NUL/non-BMP word boundaries, worker-owned timestamp,
-interval, and distance repeat classification with checked Qt timestamp
-conversion, inclusive consecutive-time and original-anchor Euclidean-distance
-thresholds, triple-count clamping, single/word/line and Ctrl semantic-output
-behavior, duplicate Qt double-click suppression, ordinary-release history
-retention, strict-after-interval Shift extension with retained anchor,
-behavior, and press time, conservative missing/reversed-time fallback, Linux
-Ctrl+Alt rectangle mode, valid-anchor collapse versus inactive-screen
-preservation, raw-DEC-aware crosshair transitions, dragged-link suppression,
-distinct button/motion/wheel reporting side effects, word-drag
-behavior, live interval/boundary reload during an active pane, select-all,
-endpoint adjustment/autoscroll, continuous one-row selection edge autoscroll
-with deterministic timer ticks, capture-loss preservation, and lifecycle
-cancellation, worker-authoritative
-selection-dependent performability across stale-false and stale-true GUI
-cache windows, exact empty/nonempty selection-search effects, byte-exact
-CSI/ESC/text actions, binary/repeated ENQ responses through the protocol write
-path, live response replacement, read-only reply behavior, default and
-live-reloaded scroll-to-bottom keystroke and output policy, non-modifier
-ordinary/IME qualification, staged-leader
-exclusion, unconditional raw-action and accepted-paste scrolling,
-active-screen bottom-node/row tracking, same-line and metadata-only output
-stability, synchronized-output deferral, and stale-anchor behavior after
-disabled output,
-full-reset cache synchronization, long OSC 8 URI extraction across viewport
-and alternate-screen state, tracked output/reflow/scroll/pruning behavior,
-latest-request coalescing, stale-result rejection, stable live-output hover,
-logical-line UTF-8 mapping, default-regex matching across graphemes and soft
-wraps, OSC 8 precedence, live `link-url` reload, byte-exact copy, relative-path
-opening, range mutation invalidation, release-only tracked activation, exact
-`link-previews` policy, frontend-only reload without replacement queries while
-the pointer remains on the link, occupied-guard release back to physical hit
-testing, left/right overlay relocation, and bounded/escaped destination
-presentation.
-
-Workspace tests cover application-action precedence, inactive-surface fanout,
-typed all/global chain reuse without per-pane parsing,
-application -> workspace -> pane shared-program distribution, current and
-future panes sharing one program while retaining independent matcher state,
-same-generation preservation, different-generation sequence/table cleanup,
-and direct pane/workspace fallback compilation. Reentrant update coverage
-installs newer options from synchronous window-factory, workspace, pane, and
-sequence-staging callbacks and verifies that the older outer transaction
-stops. Initialization observers may supersede configuration or destroy their
-workspace without stale geometry or lifetime access, while owning matched
-action-chain snapshots remain valid across replacement. Source destruction
-safely stops guarded dispatch. Available-empty coverage verifies that an empty
-Ghostty program remains distinct from the unavailable legacy-fallback state.
-These contracts remove per-pane trie/action recompilation: keybinding
-compilation and immutable trie/action storage scale with configuration
-generations, while runtime-option propagation remains proportional to the
-number of open panes. Cross-window tests inject a complete global key event
-while a later workspace still has the old generation and verify FIFO replay
-only after process-wide fanout. Nested-reload coverage also verifies that a
-root release waits for its outer press bookkeeping. Pane-publication tests
-reload from QML overlay completion during both new-tab and split construction,
-and destruction tests cover model insertion, tab-title publication, and
-tab-bar visibility callbacks. Context-menu coverage verifies exact fixed-action
-admission, one-shot post-close dispatch to the stable originating pane,
-supersession and removal cancellation, and focus ordering across Reset, Change
-Title, all four directional splits, Close Split, Change Tab Title, New Tab,
-Close Tab, New Window, Close Window, Open Configuration, and Reload
-Configuration. The application fixture also exercises chrome-adjusted popup
-placement and fixed submenu action staging with the real embedded QML.
-Workspace tests also cover
-owner-delayed lifecycle publication, final-surface and final-tab action-chain
-completion, synchronous host destruction after local/all/global key events,
-direct all-pane fanout unwinding under both normal close and unexpected
-observer destruction, ordered application-quit escalation, protected
-multiwindow confirmation re-hosting, and deferred open/reload callbacks that
-destroy their originating workspace. They also cover stable tab
-insertion/reordering/index selection, wrapped split
-traversal, mutable and equalized layouts, future-only split working-directory
-policy reloads with explicit and nested sources, source-stable new-tab
-directory/font inheritance across explicit, QML-style, reset, reload, and
-broad-fanout paths, exact
-`current`/`end` new-tab placement across live reload and broad fanout, live
-`always`/`auto`/`never` tab-strip visibility across one/two-tab transitions
-without hiding the surrounding toolbar, and split zoom lifecycle. Zoom coverage
-also verifies the exact `navigation`/`no-navigation` config values, live policy
-reload, transfer on successful spatial and tree-order `goto_split`, inert failed
-navigation, and unchanged direct-activation and structural unzooming.
-Direct tab-title coverage verifies Ghostty's canonical byte-string escape
-grammar and UTF-8 validation, inactive and broad-action source-tab targeting by
-stable identity, empty payload reset, effective/raw model-role notifications,
-and preservation across pane focus, OSC title updates, tab insertion, and
-reordering. Surface and tab prompt coverage verifies exact void grammars,
-raw override/base versus current-display snapshots (including modeled tab
-zoom), exclusion of tab/fallback text from surface prompts, focused
-caret-at-end editing without select-all, exact OK/blank/Cancel behavior,
-masked live base updates, stable targets across tab movement and pane removal,
-target deletion and stale-ID safety, and one mixed FIFO with one request per
-broad-target surface and no split-tab deduplication. Title-copy coverage checks
-strict grammar and finalized helper transport, local performability, absent
-and explicit-empty no-ops, exact Unicode/whitespace, override/base precedence,
-tab/fallback exclusion, standard-versus-primary destination, and stable broad
-Qt last-writer behavior without focus or selection changes. Application tests
-exercise both headings and exact Unicode text through the shared real QML
-dialog and verify focus restoration. Process-controller tests cover duplicate
-PaneIds in separate windows, live and stale source inheritance, one-shot
-command removal including the first lazy surface after suppressed startup,
-live/replacement config, delayed-exit cancellation and factory failure, clean
-zero-window residence, application-wide confirmation and shutdown,
-cancellation, dialog re-hosting, ownership-contract rejection, and synchronous
-destruction during presentation and creation observers. Private session-D-Bus
-integration also covers a false launcher that leaves a false-started primary
-at zero windows,
-followed by a true launcher that creates exactly one primary-owned surface.
-The same isolated-bus suite invokes the real pre-Qt `+new-window` and
-`+toggle-quick-terminal` clients against both an already-running zero-window
-owner and a cold D-Bus service. Focused protocol tests cover exact
-`org.gtk.Actions` variants, sender path/class/`-e` rewriting, receiver
-last-value and command grammar, the sibling standard action interface,
-malformed-request rejection, FIFO queuing, and GTK-versus-standard failure
-acknowledgement.
-On a host Wayland compositor, the suite also substitutes a private portal and
-launches the real application as a child. It checks the child's standard error,
-proves host registration precedes global-shortcut session creation when a
-matching desktop entry is discoverable, and proves a missing entry skips only
-that registration without leaking `QT_NO_XDG_DESKTOP_PORTAL` into the terminal
-child.
-With shared Ghostty configuration enabled, the same suite forces the exact
-service bootstrap flags over a contradictory frontend file; the config-off
-build proves that activation does not depend on the parser helper. Both call
-the standard endpoint against a warm zero-window process and let the bus
-discover, start, activate, retire, and restart a cold service using only its
-starter-bus environment. Focused activation tests also verify exact D-Bus
-string filtering, FIFO platform-data retention, pre-Qt launcher capture,
-scoped window-show projection, cached race-free worker snapshots,
-fallback-executable forwarding, cleanup, removal from inherited terminal child
-environments, and explicit reintroduction through finalized `env` overrides.
-The same full-process fixture gives the retained primary an abstract
-`NOTIFY_SOCKET`, verifies that a remote secondary emits no readiness, and maps
-`SIGUSR2` to ordered reload and completion datagrams. The focused
-`systemd-notify` test also covers filesystem sockets, malformed addresses,
-overlapping configuration epochs, burst coalescing, and restoration of the
-previous signal disposition.
-Controller coverage adds first-surface-only command/cwd/title overrides,
-inherit mode, duplicate pane IDs in different windows, dynamic rows for hidden
-quick terminals, cross-tab focus, and stale composite-target rejection. The
-DESTDIR-staged desktop integration test checks
-configuration-specific IDs, relative or absolute final executable paths,
-distinct desktop fallback/service-host arguments, `TryExec`, the New Window
-desktop action, supported `X-TerminalArgExec`/`AppId`/`Dir` mappings, deliberate
-`Title`/`Hold` mappings, the shared desktop/icon/AppStream identity, the
-matching systemd user unit and D-Bus delegation, XML and AppStream validity,
-SVG rendering from 16 through 512 pixels, service-specific special-character
-path serialization, optional `desktop-file-validate`, live activation of the
-installed service on a private D-Bus, and config-helper presence.
-BEL coverage keeps the worker event and GUI presentation boundaries separate:
-pane cases verify transition-only latch notification versus every-event bell
-publication, active title and border derivation, live feature changes without
-state loss, and clearing on focus, non-modifier key/IME interaction, or any
-mouse press. Workspace cases verify that only the active surface decorates the
-raw effective title, inactive split latches remain independent, inactive tabs
-publish and clear their stable attention role, and repeated eligible bells
-request native host attention only while the window is inactive. Real QML
-coverage checks the full-pane, non-hit-testing border overlay without changing
-pane, terminal-grid, or PTY geometry. Config export, process-loader, and launch
-option cases cover the strict five-boolean feature object, nullable finalized
-path with required/optional provenance, raw finite volume, and defaults.
-Device-injected tests require no audio hardware while proving every-event
-system/audio dispatch, path-cache reuse and replacement, playback-time volume
-clamping, missing-source retry, invalid-media recovery, independent per-pane
-players, live next-BEL reload, and safe completion after a destructive bell
-observer. Automated tests do not claim that an offscreen environment emitted
-sound; real Wayland system-bell and media-backend playback remain manual smoke
-boundaries.
-Terminal clipboard-write coverage injects libghostty-normalized clear,
-single-format, and binary multi-MIME requests; verifies ask/allow/deny live
-policy and DA1 feature 52; and checks ordered atomic GUI commits, Linux
-standard-versus-selection routing, FIFO confirmation, remembered per-split
-decisions, reload reset, and stale-pane removal. The implementation separately
-bounds the retained workspace queue at 64 requests / 64 MiB. Clipboard-read
-remains an upstream boundary because the public terminal API intentionally
-ignores OSC 52 read requests.
-Per-pane read-only coverage exercises local and stable broad toggles, active-pane
-model and input-transparent badge publication, suppressed keyboard/IME/mouse,
-paste, and raw-action writes, live terminal replies and focus bookkeeping,
-clean input resumption, and unconditional pane/tab/workspace close confirmation
-for idle and exited children. Plain file-action coverage checks the exact
-three-location and three-disposition grammar, shorthand versus explicit
-`,plain`, rejection of malformed parameters, and the recognized-but-unsupported
-VT/HTML formats. Adapter cases verify full active-page, primary-history, and
-exact selection ranges, including alternate-screen behavior, soft-wrap
-unwrapping, preserved trailing spaces, trailing blank-row removal, and the
-ready-empty versus unavailable distinction. Worker and pane cases verify exact
-basenames and bytes, persistent owner-only artifacts, copy and desktop-open
-effects, raw FIFO-ordered path writes without paste framing, read-only
-suppression after creation, no-data effects, correlated success/unavailable/
-failure completion, and receiver teardown safety. Pane chains verify exact-ID
-matching, correlated select-all copy-on-select, clipboard/open commitment
-before continuation, duplicate-ID rejection, nested-loop early completion,
-worker-performed state across a rejected GUI opener, replay-reentrant key/IME
-FIFO order, focus-epoch handling, destruction during finalization, and
-cancellation before deferred session startup. Lifecycle cases additionally
-hold both queued and delayed search/file effects across session exit or
-graceful shutdown, verify that no stale GUI effect is published, and verify
-that suspended chains still resolve their input barriers. Broad coverage
-starts every pane before waiting, resolves workers in reverse order, commits
-effects in stable snapshot order, holds later actions and input behind the
-barrier, preserves replay-reentrant process input order, waits for
-configuration fanout, and treats synchronously or asynchronously destroyed
-targets as resolved without redirecting their effects. Selection-specific
-cases cover action-major adjust/scroll/search/copy barriers and resumable
-search-effect publication when an observer destroys a workspace, without
-duplicating earlier effects or advancing during teardown. A buffered broad
-search effect also expires if its originating pane exits before the remaining
-targets resolve. Tests that inspect
-persistent artifacts remove their temporary directories explicitly.
-Other adapter and worker tests
-also cover local/remote OSC 7 filtering, encoded and raw paths, and stale launch
-directory fallback. They additionally verify same-batch valid/invalid OSC 7
-ordering, inherited logical `PWD`, exact symlink-sensitive concrete paths, and
-child-directory lookup for relative `PATH` entries. PATH tests also cover the
-pinned empty-entry and unset defaults plus exec-time candidate fallback. Worker
-tests also verify Ghostty's stale requested `PWD` and non-fatal `chdir` behavior
-for missing and existing non-directory launch paths.
-`ghostty-global-shortcut-portal`
-uses pure registry tests plus a private
-D-Bus daemon to exercise response races, reload, cleanup, and activation.
-Palette derivation happens inside the private helper before this boundary,
-while Ghostty's finalized explicit-entry mask is still available. It mirrors
-`termio.DerivedConfig`: `palette-generate` requires a nonempty mask, configured
-indices remain untouched, and `palette-harmonious` changes orientation only
-for generated light-theme palettes. The exported palette is therefore already
-effective, and the ordinary live appearance path preserves terminal OSC 4
-overrides while OSC 104 reveals its newest defaults. Conditional light/dark
-themes are finalized for the concrete Qt color scheme, and generation-safe
-reload tests cover scheme changes, watched files for both branches, and
-last-known-good failure handling. Real-helper regression coverage includes
-disabled generation, the nonempty-mask gate, preservation of explicit base and
-extended entries, the dark-theme harmonious no-op, and both light-theme
-orientations. The remaining public terminal option limitation here is cursor
-blink: it is boolean rather than Ghostty's configuration tri-state, so the
-parity ledger keeps that key partial.
-
-## Ghostty parity manifest
-
-`docs/ghostty-parity.json` is the machine-checked coverage ledger for the
-pinned Ghostty snapshot. It records the Linux/Wayland/Qt scope and tracks every
-upstream configuration key, keybinding action, and CLI action as supported,
-partial, planned, blocked upstream, or not applicable. A planned entry means
-only that it is in scope; it does not claim the feature is implemented.
-
-Run the check without compiling the application:
+Check the pinned inventory without compiling:
 
 ```sh
 python3 scripts/check-ghostty-parity.py
 ```
 
-The checker requires the pinned Ghostty submodule. It verifies that the
-manifest and CMake reference `GHOSTTY_REVISION` and that the checkout matches
-it, then derives fresh inventories from the upstream Zig declarations and
-reports deterministic drift. CTest runs the same contract as
-`ghostty-parity-manifest`. Update `GHOSTTY_REVISION`, the submodule gitlink,
-the extractor (if upstream declarations changed shape), and the manifest
-inventory in one reviewed change when intentionally advancing the snapshot.
+The checker verifies that `GHOSTTY_REVISION`, the submodule checkout, CMake,
+and `docs/ghostty-parity.json` agree, then derives configuration and action
+inventories from upstream declarations.
 
-For a sanitizer run, install Clang and use:
+For an intentional Ghostty upgrade:
 
-```sh
-cmake --preset sanitize
-cmake --build --preset sanitize --target clean -j"$(nproc)"
-cmake --build --preset sanitize -j"$(nproc)"
-ctest --preset sanitize -j"$(nproc)" --output-on-failure
-```
+1. update the submodule and `GHOSTTY_REVISION` together;
+2. inspect public C API, private helper/schema, required Zig version, and
+   bootstrap checksums;
+3. update project overlays, inventory extraction, and the parity manifest where
+   required;
+4. run the parity checker and focused adapter/configuration tests;
+5. qualify complete Debug, Release, and sanitizer builds;
+6. keep the upstream submodule free of local commits.
 
-LeakSanitizer itself requires ptrace support. In a restricted container that
-denies ptrace, keep ASan/UBSan enabled but disable only leak detection and avoid
-the test preset's overriding environment:
-
-```sh
-ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:strict_string_checks=1 \
-UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
-ctest --test-dir build/sanitize -j"$(nproc)" --output-on-failure
-```
-
-The sanitizer preset instruments the project's C and C++ targets with ASan and
-UBSan, enables frame pointers, and stops on undefined behavior. It also changes
-the pinned Ghostty and link-matcher builds from `ReleaseFast` to `ReleaseSafe`,
-retaining Zig's safety checks. The `libghostty-vt` archive, the Zig matcher,
-and its C Oniguruma archive are not Clang ASan/UBSan-instrumented. Failures can
-still be visible at an instrumented C++ API boundary, but this preset does not
-provide complete sanitizer coverage inside those archives. The private
-config-parser build remains `ReleaseFast` and is also not
-sanitizer-instrumented; its process boundary is intentional containment, not a
-replacement for upstream testing.
-
-The OpenGL integration tests use a headless Weston compositor in CI and the
-current Wayland compositor locally. CI marks the Wayland RHI path as required,
-so a missing compositor or unreachable socket fails instead of silently
-skipping it. Debug, Release, and sanitizer CTest runs all exercise the real
-OpenGL RHI path; deterministic shader reflection, placement geometry, protocol
-input, and software-renderer tests remain independent of compositor access.
-
-Ghostty's CMake wrapper does not encode the revision, Zig version, target, or
-optimization flags in its shared `ghostty/zig-out` path. The top-level build
-therefore records that complete contract and verifies it before any consumer;
-switching presets sequentially rebuilds the archive and headers automatically
-when the contract differs. A manual clean is not required. The shared output
-still makes concurrent preset builds unsupported.
+Do not implement a missing public terminal contract by inspecting PTY bytes or
+copying Ghostty internals into the frontend. Record such work in
+[`REQUIRES_UPSTREAM.md`](../REQUIRES_UPSTREAM.md).
 
 ## Continuous integration
 
-GitHub Actions runs Debug, Release, and Clang ASan+UBSan against the minimum Qt
-6.8 line, currently pinned to Qt 6.8.3. A fourth Debug job checks compatibility
-with the current Qt line, pinned to Qt 6.11.1. Every job has its own Ubuntu
-24.04 checkout, including the pinned Ghostty submodule, so Ghostty's source-tree
-`zig-out` directory is never shared between simultaneous configurations. CI
-verifies the Qt and Zig versions and Ghostty commit before configuring, then
-runs the matching CMake build and CTest presets.
+GitHub Actions currently covers:
 
-Do not build multiple presets concurrently in the same checkout. Although the
-CMake output directories are separate, the embedded Ghostty build writes to
-`ghostty/zig-out`, and the config-parser integration writes to the shared
-project-local `.cache` directories.
+- GCC Debug and Release against the minimum Qt 6.8 line;
+- Clang ASan+UBSan against the minimum Qt line;
+- GCC Debug against the current Qt line;
+- GCC Debug with the private Ghostty configuration parser disabled.
+
+Each job uses an independent checkout and verifies Qt, Zig, and Ghostty
+revisions before configuring. A private headless Weston compositor is used for
+required OpenGL/Wayland tests. The workflow file is the authoritative version
+matrix.

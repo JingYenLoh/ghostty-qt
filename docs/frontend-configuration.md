@@ -1,45 +1,29 @@
 # Frontend configuration
 
-ghostty-qt has a small configuration domain for behavior owned by the Qt
-frontend. It is intentionally separate from the shared Ghostty configuration:
+Qt-owned application policy has a small independent configuration file:
 
 ```text
 $XDG_CONFIG_HOME/ghostty-qt/config
 ```
 
-If `XDG_CONFIG_HOME` is unset or is not an absolute path, the file is
-`$HOME/.config/ghostty-qt/config`.
-
-The standard Ghostty files remain the source for portable terminal settings,
-keybindings, and Linux settings shared with upstream Ghostty:
-
-```text
-$XDG_CONFIG_HOME/ghostty/config
-$XDG_CONFIG_HOME/ghostty/config.ghostty
-```
-
-Do not place ghostty-qt frontend keys in either Ghostty file. The pinned
-Ghostty parser correctly reports them as unknown. Conversely, GTK-prefixed
-settings in a Ghostty file do not configure their Qt-owned equivalents.
+If `XDG_CONFIG_HOME` is unset or relative, the path is
+`$HOME/.config/ghostty-qt/config`. Portable terminal settings remain in the
+standard Ghostty files; see [Configuration](configuration.md). The two domains
+have disjoint keys, and GTK-prefixed settings are not Qt aliases.
 
 ## Precedence
 
-Effective launch options are rebuilt from immutable process arguments whenever
-either configuration domain reloads:
+Effective options use this precedence:
 
 1. built-in defaults;
 2. the finalized shared Ghostty configuration;
 3. the ghostty-qt frontend configuration for its disjoint, Qt-owned keys;
 4. explicit ghostty-qt command-line overrides.
 
-The two files do not provide competing spellings for the same setting. In
-particular, frontend `single-instance` owns Qt process arbitration;
-Ghostty's `gtk-single-instance` does not participate. An explicit
-`--single-instance=false|true|detect` command-line value has the highest
-precedence. The shared `linux-cgroup=single-instance` policy consumes the
-actual primary role established by that startup arbitration. Reloading this
-frontend key cannot reclassify the running process; a fresh process samples the
-new value.
+Frontend `single-instance` owns Qt process arbitration; Ghostty's
+`gtk-single-instance` does not participate. Reload cannot reclassify a running
+process, while a fresh launch samples the newest value. An explicit
+`--single-instance=false|true|detect` value has highest precedence.
 
 ## Grammar
 
@@ -94,44 +78,21 @@ quick-terminal-namespace = ghostty-quick-terminal
 ## Reload and failure behavior
 
 The frontend service loads synchronously before single-instance arbitration and
-before the first window is created. It watches both the file and its nearest
-existing parent directory, so creating, deleting, or atomically replacing the
-file is detected. File-system bursts are debounced for 75 milliseconds and
-watched reloads run on a dedicated worker.
+before the first window. It watches the file and nearest existing parent, so
+creation, deletion, and atomic replacement are detected. Reload runs away from
+the GUI thread after a short debounce.
 
-Each generation opens the path once, validates that opened descriptor as a
-regular file, and reads at most 1 MiB. FIFOs and other non-regular inputs are
-rejected without blocking, and a file that grows past the limit while being
-read fails transactionally instead of publishing a truncated snapshot.
+The loader accepts only a regular file and reads at most 1 MiB. A missing file
+successfully restores defaults. Syntax or I/O failure retains the last good
+snapshot and opens source-labelled Retry/Ignore diagnostics; no partial
+document is published.
 
-The `reload_config` application action requests both the shared Ghostty reload
-and the frontend reload. Each domain publishes independently, and the
-application resolves the latest successful snapshot from each one.
-`open_config` continues to open the shared Ghostty file; edit the frontend file
-at the path above directly.
+`reload_config` requests both configuration domains, which publish
+independently. `open_config` still opens the shared Ghostty file, so edit this
+frontend file directly.
 
-A missing frontend file is a successful load of built-in frontend defaults.
-Deleting an existing file therefore restores those defaults. Syntax and I/O
-failures retain the last successful frontend snapshot and are retried
-periodically; at initial startup, where no last-good snapshot exists, built-in
-and explicit command-line values remain active. Hard failures open
-source-labelled Retry/Ignore diagnostics in every window. Successful
-post-startup generations enqueue the window-local reload toast when the shared
-`app-notifications` setting enables `config-reload`.
-
-The pinned private JSON schema-v4 export carries the upstream
-`gtk-single-instance` value for source fidelity, but the Qt launch-option
-resolver deliberately ignores it. The decoder accepts schema v4 only; this is
-not a backwards-compatibility branch for an older frontend schema.
-
-The pre-GUI `+new-window` and `+toggle-quick-terminal` clients do not load the
-launching process's frontend file or consult its `single-instance` policy.
-They contact a D-Bus service through `org.gtk.Actions`, allowing an existing
-primary or the installed zero-window service host to handle the request with
-its latest live window and quick-terminal policy. `+new-window --class=...`
-selects a custom service identity; pinned `+toggle-quick-terminal` ignores
-`--class` and always uses the build identity. Neither client depends on the
-config-enabled Ghostty helper.
+The pre-GUI `+new-window` and `+toggle-quick-terminal` clients contact the
+application service directly and do not load the launcher's frontend file.
 
 ## Command-line migration
 
