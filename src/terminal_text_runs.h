@@ -75,12 +75,17 @@ struct TerminalTextRun {
     int column = 0;
     int columnSpan = 0;
     QVector<TerminalTextBoundary> boundaries;
-    // Exact cell starts used when Qt's shaped advances do not land on the
-    // terminal grid. Empty placeholders never need a fallback layout.
-    QVector<TerminalTextFallbackCell> fallbackCells;
 
     bool operator==(const TerminalTextRun &) const = default;
 };
+
+// Reconstructs exact cell text and grid geometry only for the native fallback
+// path. Interior placeholders remain in TerminalTextRun::text for shaping but
+// never produce a fallback cell.
+[[nodiscard]] QVector<TerminalTextFallbackCell>
+terminalTextFallbackCells(const TerminalTextRun &run);
+
+[[nodiscard]] qsizetype terminalTextCellCount(const TerminalTextRun &run);
 
 // Plans maximal compatible row runs. Empty interior cells become spaces so
 // shaping observes their grid separation, while invisible cells and explicit

@@ -716,18 +716,22 @@ appendTerminalShapedTextRun(QSGTextNode *node, TerminalShapedTextRun &shaped,
         return {};
     }
 
-    const quint64 nativeCellCount =
-        static_cast<quint64>(shaped.run.fallbackCells.size());
     if (shaped.line.isValid() && shaped.fit != TerminalTextGridFit::Rejected) {
         node->addTextLayout(shaped.origin, &shaped.layout);
-        return {.layoutCount = 1, .nativeCellCount = nativeCellCount};
+        return {
+            .layoutCount = 1,
+            .nativeCellCount =
+                static_cast<quint64>(terminalTextCellCount(shaped.run)),
+        };
     }
 
+    const QVector<TerminalTextFallbackCell> fallbackCells =
+        terminalTextFallbackCells(shaped.run);
     TerminalRunLayoutResult result;
-    result.layoutCount = nativeCellCount;
-    result.fallbackCellCount = nativeCellCount;
-    result.nativeCellCount = nativeCellCount;
-    for (const TerminalTextFallbackCell &cell : shaped.run.fallbackCells) {
+    result.layoutCount = static_cast<quint64>(fallbackCells.size());
+    result.fallbackCellCount = static_cast<quint64>(fallbackCells.size());
+    result.nativeCellCount = static_cast<quint64>(fallbackCells.size());
+    for (const TerminalTextFallbackCell &cell : fallbackCells) {
         appendTextLayout(
             node, cell.text, shaped.run.font, shaped.run.color,
             QPointF(static_cast<qreal>(cell.column) * cellWidth, top), baseline,
@@ -929,10 +933,7 @@ struct OverlayTextRenderState {
     TerminalAlphaBlending alphaBlending = TerminalAlphaBlending::Native;
     QVarLengthArray<TextLayoutSpec, 2> layouts;
 
-    void append(TextLayoutSpec layout)
-    {
-        layouts.append(std::move(layout));
-    }
+    void append(TextLayoutSpec layout) { layouts.append(std::move(layout)); }
 
     [[nodiscard]] std::span<const TextLayoutSpec> activeLayouts() const
     {
@@ -961,10 +962,8 @@ struct TerminalGlyphStyle {
             .selectionBackground = appearance.selectionBackground,
             .searchForeground = appearance.searchForeground,
             .searchBackground = appearance.searchBackground,
-            .searchSelectedForeground =
-                appearance.searchSelectedForeground,
-            .searchSelectedBackground =
-                appearance.searchSelectedBackground,
+            .searchSelectedForeground = appearance.searchSelectedForeground,
+            .searchSelectedBackground = appearance.searchSelectedBackground,
             .boldColor = appearance.boldColor,
             .faintOpacity = appearance.faintOpacity,
             .minimumContrast = appearance.minimumContrast,
@@ -3152,20 +3151,18 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                 .text = linkPreview,
                 .font = baseFont,
                 .color = previewForeground,
-                .position =
-                    QPointF(
+                .position = QPointF(
                     linkPreviewRect.left()
                         + TerminalPaneRenderer::linkPreviewHorizontalPadding,
                     linkPreviewRect.top()
                         + TerminalPaneRenderer::linkPreviewVerticalPadding),
                 .baseline = std::ceil(fontMetrics.ascent()),
                 .lineWidth =
-                    std::max<qreal>(
-                        1.0,
-                        linkPreviewRect.width()
-                            - 2.0
-                                * TerminalPaneRenderer::
-                                    linkPreviewHorizontalPadding),
+                    std::max<qreal>(1.0,
+                                    linkPreviewRect.width()
+                                        - 2.0
+                                            * TerminalPaneRenderer::
+                                                linkPreviewHorizontalPadding),
             });
         }
     }

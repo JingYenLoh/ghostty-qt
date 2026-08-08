@@ -17,8 +17,7 @@ TerminalTextCell cell(QString text, int column)
 {
     QFont font(QStringLiteral("monospace"));
     font.setFixedPitch(true);
-    const quint32 codepoint =
-        text.size() == 1 ? text.front().unicode() : 0;
+    const quint32 codepoint = text.size() == 1 ? text.front().unicode() : 0;
     return {
         .text = std::move(text),
         .font = std::move(font),
@@ -31,9 +30,8 @@ TerminalTextCell cell(QString text, int column)
     };
 }
 
-QVector<TerminalTextRun>
-plan(std::initializer_list<TerminalTextCell> cells,
-     bool breakAtCursor = true)
+QVector<TerminalTextRun> plan(std::initializer_list<TerminalTextCell> cells,
+                              bool breakAtCursor = true)
 {
     return planTerminalTextRuns(
         std::span<const TerminalTextCell>(cells.begin(), cells.size()),
@@ -71,6 +69,7 @@ class TerminalTextRunsTest : public QObject {
 private Q_SLOTS:
     void combinesCompatibleCells();
     void keepsInteriorButNotTrailingEmptyCells();
+    void reconstructsUnicodeWideAndPlaceholderFallbackCells();
     void ignoresLeadingEmptyAndEmptyRows();
     void breaksOnSelectionStyleFontAndInvisibility();
     void skipsWideSpacersWithoutBreaking();
@@ -100,7 +99,13 @@ void TerminalTextRunsTest::combinesCompatibleCells()
                  {.textPosition = 2, .column = 2},
                  {.textPosition = 3, .column = 3},
              }));
-    QCOMPARE(run.fallbackCells.size(), 3);
+    QCOMPARE(terminalTextCellCount(run), qsizetype{3});
+    QCOMPARE(terminalTextFallbackCells(run),
+             QVector<TerminalTextFallbackCell>({
+                 {.text = QStringLiteral("a"), .column = 0},
+                 {.text = QStringLiteral("b"), .column = 1},
+                 {.text = QStringLiteral("c"), .column = 2},
+             }));
 }
 
 void TerminalTextRunsTest::keepsInteriorButNotTrailingEmptyCells()
@@ -117,7 +122,53 @@ void TerminalTextRunsTest::keepsInteriorButNotTrailingEmptyCells()
     QCOMPARE(run.boundaries.at(1),
              TerminalTextBoundary(
                  {.textPosition = 2, .column = 2, .placeholder = true}));
-    QCOMPARE(run.fallbackCells.size(), 2);
+    QCOMPARE(terminalTextCellCount(run), qsizetype{2});
+    QCOMPARE(terminalTextFallbackCells(run),
+             QVector<TerminalTextFallbackCell>({
+                 {.text = QStringLiteral("a"), .column = 0},
+                 {.text = QStringLiteral("b"), .column = 2},
+             }));
+}
+
+void TerminalTextRunsTest::reconstructsUnicodeWideAndPlaceholderFallbackCells()
+{
+    const char32_t supplementaryCodepoint = U'\U0001f642';
+    TerminalTextCell supplementary =
+        cell(QString::fromUcs4(&supplementaryCodepoint, 1), 0);
+    supplementary.columnSpan = 2;
+    supplementary.plainCodepoint = false;
+    supplementary.extendedGrapheme = true;
+
+    TerminalTextCell spacer = cell({}, 1);
+    spacer.spacer = true;
+
+    TerminalTextCell grapheme = cell(QStringLiteral("e\u0301"), 3);
+    grapheme.plainCodepoint = false;
+    grapheme.extendedGrapheme = true;
+
+    const QVector<TerminalTextRun> runs =
+        plan({supplementary, spacer, cell({}, 2), grapheme, cell({}, 4)});
+    QCOMPARE(runs.size(), 1);
+    const TerminalTextRun &run = runs.front();
+    QCOMPARE(run.text,
+             QString::fromUcs4(&supplementaryCodepoint, 1)
+                 + QStringLiteral(" e\u0301"));
+    QCOMPARE(run.columnSpan, 4);
+    QCOMPARE(run.boundaries.size(), 3);
+    QVERIFY(run.boundaries.at(1).placeholder);
+    QCOMPARE(terminalTextCellCount(run), qsizetype{2});
+    QCOMPARE(terminalTextFallbackCells(run),
+             QVector<TerminalTextFallbackCell>({
+                 {
+                     .text = QString::fromUcs4(&supplementaryCodepoint, 1),
+                     .column = 0,
+                     .columnSpan = 2,
+                 },
+                 {
+                     .text = QStringLiteral("e\u0301"),
+                     .column = 3,
+                 },
+             }));
 }
 
 void TerminalTextRunsTest::ignoresLeadingEmptyAndEmptyRows()
@@ -170,6 +221,15 @@ void TerminalTextRunsTest::skipsWideSpacersWithoutBreaking()
     QCOMPARE(runs.front().columnSpan, 3);
     QCOMPARE(runs.front().boundaries.at(0).column, 2);
     QCOMPARE(runs.front().boundaries.at(1).column, 3);
+    QCOMPARE(terminalTextFallbackCells(runs.front()),
+             QVector<TerminalTextFallbackCell>({
+                 {
+                     .text = QStringLiteral("界"),
+                     .column = 0,
+                     .columnSpan = 2,
+                 },
+                 {.text = QStringLiteral("x"), .column = 2},
+             }));
 }
 
 void TerminalTextRunsTest::blocksDefensiveLigaturesOnlyForPlainCodepoints()
@@ -200,8 +260,7 @@ void TerminalTextRunsTest::blocksDefensiveLigaturesOnlyForPlainCodepoints()
     QCOMPARE(programmingRuns.front().text, QStringLiteral("!=>==->"));
 }
 
-void TerminalTextRunsTest::
-    isolatesCursorCellsWithoutExtraGraphemesWhenEnabled()
+void TerminalTextRunsTest::isolatesCursorCellsWithoutExtraGraphemesWhenEnabled()
 {
     TerminalTextCell cursor = cell(QStringLiteral("b"), 1);
     cursor.cursor = true;
@@ -412,6 +471,7 @@ void TerminalTextRunsTest::rejectsMalformedBoundaryMap()
 
     QCOMPARE(terminalTextGridFit(line, run, 10.0, 1.0),
              TerminalTextGridFit::Rejected);
+    QVERIFY(terminalTextFallbackCells(run).isEmpty());
 }
 
 QTEST_MAIN(TerminalTextRunsTest)

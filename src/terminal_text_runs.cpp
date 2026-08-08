@@ -13,14 +13,12 @@ namespace {
         return false;
     }
     return (left.baseCodepoint == U'f'
-            && (right.baseCodepoint == U'i'
-                || right.baseCodepoint == U'l'))
+            && (right.baseCodepoint == U'i' || right.baseCodepoint == U'l'))
         || (left.baseCodepoint == U's' && right.baseCodepoint == U't');
 }
 
 [[nodiscard]] bool cursorBoundary(const TerminalTextCell &left,
-                                  const TerminalTextCell &right,
-                                  bool enabled)
+                                  const TerminalTextCell &right, bool enabled)
 {
     return enabled
         && ((left.cursor && !left.extendedGrapheme)
@@ -28,13 +26,12 @@ namespace {
 }
 
 [[nodiscard]] bool compatible(const TerminalTextCell &left,
-                              const TerminalTextCell &right,
-                              bool breakAtCursor)
+                              const TerminalTextCell &right, bool breakAtCursor)
 {
     const int leftSpan = std::max(1, left.columnSpan);
-    return left.column + leftSpan == right.column
-        && left.font == right.font && left.color == right.color
-        && left.style == right.style && left.selected == right.selected
+    return left.column + leftSpan == right.column && left.font == right.font
+        && left.color == right.color && left.style == right.style
+        && left.selected == right.selected
         && !defensiveLigatureBoundary(left, right)
         && !cursorBoundary(left, right, breakAtCursor);
 }
@@ -56,7 +53,7 @@ void trimAndAppend(std::optional<TerminalTextRun> &pending,
             : run.boundaries.constLast().textPosition;
         run.text.truncate(textSize);
     }
-    if (run.text.isEmpty() || run.fallbackCells.isEmpty()) {
+    if (run.text.isEmpty() || run.boundaries.isEmpty()) {
         return;
     }
     run.columnSpan = run.boundaries.constLast().column;
@@ -75,13 +72,6 @@ void appendCell(TerminalTextRun &run, const TerminalTextCell &cell)
         .placeholder = placeholder,
     });
     run.columnSpan = endColumn;
-    if (!placeholder) {
-        run.fallbackCells.append({
-            .text = cell.text,
-            .column = cell.column,
-            .columnSpan = std::max(1, cell.columnSpan),
-        });
-    }
 }
 
 } // namespace
@@ -103,6 +93,49 @@ TerminalShapingStyle terminalShapingStyle(const TerminalCell &cell)
         .strikeThrough = cell.strikeThrough(),
         .overline = cell.overline(),
     };
+}
+
+QVector<TerminalTextFallbackCell>
+terminalTextFallbackCells(const TerminalTextRun &run)
+{
+    QVector<TerminalTextFallbackCell> result;
+    result.reserve(run.boundaries.size());
+
+    int previousTextPosition = 0;
+    int previousColumn = 0;
+    for (const TerminalTextBoundary &boundary : run.boundaries) {
+        if (boundary.textPosition <= previousTextPosition
+            || boundary.textPosition > run.text.size()
+            || boundary.column <= previousColumn
+            || boundary.column > run.columnSpan) {
+            return {};
+        }
+
+        if (!boundary.placeholder) {
+            result.append({
+                .text = run.text.sliced(previousTextPosition,
+                                        boundary.textPosition
+                                            - previousTextPosition),
+                .column = run.column + previousColumn,
+                .columnSpan = boundary.column - previousColumn,
+            });
+        }
+        previousTextPosition = boundary.textPosition;
+        previousColumn = boundary.column;
+    }
+    if (previousTextPosition != run.text.size()
+        || previousColumn != run.columnSpan) {
+        return {};
+    }
+    return result;
+}
+
+qsizetype terminalTextCellCount(const TerminalTextRun &run)
+{
+    return static_cast<qsizetype>(std::ranges::count_if(
+        run.boundaries, [](const TerminalTextBoundary &boundary) {
+            return !boundary.placeholder;
+        }));
 }
 
 QVector<TerminalTextRun>
