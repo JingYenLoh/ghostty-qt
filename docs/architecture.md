@@ -709,9 +709,10 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    public QSG texture sampling does not portably expose Alpha8 coverage on both
    OpenGL and Vulkan. The atlas resource is keyed only by its immutable font
    program, device scale, window, and graphics API. Palette, color, alpha,
-   grid-shape, and other row-state rebuilds replace row topology while retaining
-   the compatible atlas and texture; font, DPR, window, or backend changes
-   replace it after the old non-owning batch references have been destroyed.
+   grid-shape, and other row-state rebuilds update the retained row containers
+   and batches in place; compatible row-count changes preserve the common row
+   prefix. Font, DPR, window, or backend changes replace both topology and
+   atlas after the old non-owning batch references have been destroyed.
    The fallback node uses `QtRendering`, which stores distance-field glyphs in
    Qt's GPU atlases on hardware RHI backends.
 
@@ -923,7 +924,10 @@ public vertex-color material, so the test/fallback path retains one reusable
 No full-frame raster-image upload sits between the frame and the scene graph.
 The glyph fast path performs one compact RGBA coverage upload from its CPU
 Alpha8 atlas for each font/DPR/render-context resource generation, then reuses
-it across row damage and unrelated full-row invalidations. Qt's implicitly
+it across row damage and unrelated full-row invalidations. Compatible global
+invalidations also reuse the row containers and existing-capacity glyph
+batches, avoiding scene-node and geometry-buffer allocation while still
+rewriting changed vertex colors. Qt's implicitly
 shared frame snapshot is normally an O(1)
 reference-count operation rather than a deep cell copy. During ordinary sparse
 updates, the renderer resolves solid presentation and shapes text only for rows
@@ -3090,8 +3094,9 @@ The default CTest suite has focused layers for each ownership boundary:
   never-uploaded output. The pane RHI integration case additionally verifies
   that all-ASCII rows allocate no native text nodes, a rejected row lazily
   allocates exactly one, returning to ASCII clears stale native content, and
-  palette/grid invalidations retain atlas identity while a font change replaces
-  it.
+  palette/grid invalidations retain atlas identity, row containers, glyph
+  batches, and dormant native fallback nodes; compatible row-count changes
+  preserve the common prefix, while a font change replaces those resources.
 - `ghostty-smoke` exercises terminal parsing/render-state iteration, CJK wide
   cells, key and 1002 mouse-drag encoding, bracketed paste, and terminal query
   callbacks directly through the C API.
@@ -3480,9 +3485,10 @@ to the same run's legacy renderer so common host load affects both sides. Short
 quick runs are advisory, while sufficiently sampled runs enforce
 relative-plus-absolute noise floors.
 Executable work counters form a separate deterministic gate, so additional
-row shaping or native text submissions, lost ASCII batching, glyph-batch
-geometry rewrites, atlas uploads/residency changes, Kitty uploads/node
-mutations, or retained resource work cannot be hidden by noisy timing.
+row shaping or native text submissions, lost ASCII batching, glyph-batch node
+creation or buffer allocation, unexpected geometry rewrites, topology churn,
+atlas uploads/residency changes, Kitty uploads/node mutations, or retained
+resource work cannot be hidden by noisy timing.
 Comparison results are sorted, atomic JSON artifacts with independent
 provenance hashes; the qualification reports are never modified.
 
@@ -3517,9 +3523,11 @@ actual presentation timestamps require explicit color-management and
   solid damage boundary. The software fallback still flattens cached solid
   plans into global node pools because per-row scene-node traversal costs more
   than it saves there. A global appearance, geometry, palette, search-style, or
-  renderer-backend change can still rebuild every visible row, but it retains
-  the atlas whenever the immutable font program, DPR, window, and graphics API
-  are unchanged.
+  renderer-backend change can still rebuild every visible row. Compatible
+  appearance, geometry, palette, and search-style changes retain row
+  containers, glyph batches, dormant native nodes, and the atlas; compatible
+  row-count changes preserve the common prefix. Font-program, DPR, window, or
+  backend changes replace those resources at an explicit lifetime boundary.
 - Qt still shapes every run. The custom atlas consumes only Qt-owned exact
   one-glyph-per-cell printable ASCII; Qt's distance-field text path handles
   ligatures, fallback faces, complex text, and other rejected rows. Neither

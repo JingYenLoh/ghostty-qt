@@ -731,8 +731,10 @@ ghostty-qt therefore implements the largest safe frontend-owned subset:
   explicit RGBA coverage texture, and emit it through retained per-row indexed
   batches. The atlas is retained across frontend-only palette, color, alpha,
   and grid-shape invalidations when its font program, DPR, window, and graphics
-  API remain compatible. Every other row keeps a lazily created general Qt text
-  path.
+  API remain compatible. Those compatible invalidations also retain row
+  containers, glyph-batch nodes, existing geometry capacity, and any cleared
+  native fallback node; row-count changes preserve the common prefix. Every
+  other row keeps a lazily created general Qt text path.
 
 This gives visible feature and ligature support without allowing a platform
 shaper to move later cells off-grid. The parity ledger remains conservative:

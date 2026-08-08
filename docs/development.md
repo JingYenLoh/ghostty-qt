@@ -133,9 +133,11 @@ The pane RHI mode separately reports CPU synthetic-update preparation and
 delivery, scene-graph command recording, completion, and total timings, plus
 whole-command-buffer GPU timestamps where supported. Each scenario also reports
 and validates paint and cell-visit counts, native text submissions and cells,
-batched glyphs, glyph-batch geometry writes, atlas uploads and resource identity,
-native fallback-node residency, final atlas entries and logical GPU atlas bytes
-at four RGBA bytes per texel, plus Kitty texture
+batched glyphs, glyph-batch geometry writes, node creation and buffer
+allocation, atlas uploads and resource identity, retained row-container and
+glyph-batch topology, native fallback-node residency and topology, final atlas
+entries and logical GPU atlas bytes at four RGBA bytes per texel, plus Kitty
+texture
 uploads, live generation-keyed texture-set cache entries, texture-set
 evictions, placement-node creation/deletion, geometry writes, and node material
 assignments. Upload count and resource identity expose accidental atlas churn;
@@ -145,8 +147,10 @@ included in that GPU figure. Untimed
 initialization readbacks first force a printable-ASCII frame through the glyph
 shader, then verify straight-alpha Kitty upload and composition on the selected
 RHI backend. The `text-atlas-retained-rebuild` case alternates row-affecting
-palette state on a canonical ASCII frame and requires zero atlas uploads while
-the compatible font/DPR/render context remains live. The Kitty cases use 512
+palette state on a canonical ASCII frame and requires zero atlas uploads,
+glyph-batch node creations, and buffer allocations while preserving the exact
+row-container, glyph-batch, and already-resident native fallback identities
+for the compatible font/DPR/render context. The Kitty cases use 512
 placements sharing assets and separately
 exercise opaque and translucent first upload, same-snapshot redraw, and same-ID
 replacement, plus opaque movement and eviction.

@@ -69,6 +69,8 @@ struct TerminalPaneRenderProbeSnapshot {
     // Zero means that the row has never required a native QSGTextNode since
     // its current row topology was created.
     QVector<quint64> rowNodeSerials;
+    QVector<quint64> rowContainerSerials;
+    QVector<quint64> rowGlyphBatchSerials;
     qsizetype nativeTextNodeCount = 0;
     // Cumulative rebuilds by visible row for the current scene-graph root.
     QVector<quint64> rowBuildCounts;
@@ -93,6 +95,8 @@ struct TerminalPaneRenderProbeSnapshot {
     quint64 nativeTextCellCount = 0;
     quint64 batchedGlyphCount = 0;
     quint64 glyphBatchGeometryWriteCount = 0;
+    quint64 glyphBatchNodeCreationCount = 0;
+    quint64 glyphBatchAllocationCount = 0;
     quint64 glyphAtlasUploadCount = 0;
     // Identity of the current atlas resource; stable across compatible row
     // rebuilds and zero when no hardware atlas is resident.

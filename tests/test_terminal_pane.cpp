@@ -2307,6 +2307,7 @@ void TerminalPaneTest::retainsGlyphAtlasAndLazilyCreatesNativeTextRows()
 
     constexpr int columns = 6;
     constexpr int rows = 3;
+    constexpr int frameRows = rows + 1;
     const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
     QQuickWindow window;
     window.setColor(Qt::black);
@@ -2332,7 +2333,7 @@ void TerminalPaneTest::retainsGlyphAtlasAndLazilyCreatesNativeTextRows()
 
     TerminalUpdate full;
     full.columns = columns;
-    full.rows = rows;
+    full.rows = frameRows;
     full.fullFrame = true;
     full.colorsChanged = true;
     full.foreground = Qt::white;
@@ -2340,7 +2341,7 @@ void TerminalPaneTest::retainsGlyphAtlasAndLazilyCreatesNativeTextRows()
     full.cursorColor = Qt::white;
     full.cursorVisible = false;
     full.contentRevision = 1;
-    for (int row = 0; row < rows; ++row) {
+    for (int row = 0; row < frameRows; ++row) {
         TerminalRowUpdate rowUpdate;
         rowUpdate.row = row;
         rowUpdate.cells.resize(columns);
@@ -2370,6 +2371,14 @@ void TerminalPaneTest::retainsGlyphAtlasAndLazilyCreatesNativeTextRows()
     QVERIFY(initial.glyphAtlasUploadCount > 0);
     QCOMPARE(initial.nativeTextNodeCount, qsizetype{0});
     QCOMPARE(initial.rowNodeSerials, QVector<quint64>(rows, 0));
+    QCOMPARE(initial.rowContainerSerials.size(), rows);
+    QCOMPARE(initial.rowGlyphBatchSerials.size(), rows);
+    for (int row = 0; row < rows; ++row) {
+        QVERIFY(initial.rowContainerSerials.at(row) != 0);
+        QVERIFY(initial.rowGlyphBatchSerials.at(row) != 0);
+    }
+    QCOMPARE(initial.glyphBatchNodeCreationCount, static_cast<quint64>(rows));
+    QCOMPARE(initial.glyphBatchAllocationCount, static_cast<quint64>(rows));
     QCOMPARE(initial.rowLayoutCounts, QVector<quint64>(rows, 0));
     QCOMPARE(initial.rowFallbackCellCounts, QVector<quint64>(rows, 0));
     QCOMPARE(initial.rowBatchedGlyphCounts, QVector<quint64>(rows, columns));
@@ -2385,14 +2394,20 @@ void TerminalPaneTest::retainsGlyphAtlasAndLazilyCreatesNativeTextRows()
     QCOMPARE(unchanged.glyphAtlasUploadCount, initial.glyphAtlasUploadCount);
     QCOMPARE(unchanged.rowBuildCounts, initial.rowBuildCounts);
     QCOMPARE(unchanged.rowNodeSerials, initial.rowNodeSerials);
+    QCOMPARE(unchanged.rowContainerSerials, initial.rowContainerSerials);
+    QCOMPARE(unchanged.rowGlyphBatchSerials, initial.rowGlyphBatchSerials);
     QCOMPARE(unchanged.rowLayoutCounts, initial.rowLayoutCounts);
     QCOMPARE(unchanged.rowBatchedGlyphCounts, initial.rowBatchedGlyphCounts);
     QCOMPARE(unchanged.glyphBatchGeometryWriteCount,
              initial.glyphBatchGeometryWriteCount);
+    QCOMPARE(unchanged.glyphBatchNodeCreationCount,
+             initial.glyphBatchNodeCreationCount);
+    QCOMPARE(unchanged.glyphBatchAllocationCount,
+             initial.glyphBatchAllocationCount);
 
     TerminalUpdate fallback;
     fallback.columns = columns;
-    fallback.rows = rows;
+    fallback.rows = frameRows;
     fallback.contentRevision = 2;
     TerminalRowUpdate fallbackRow;
     fallbackRow.row = 1;
@@ -2411,6 +2426,12 @@ void TerminalPaneTest::retainsGlyphAtlasAndLazilyCreatesNativeTextRows()
         terminalPaneRenderProbe(pane.get());
     QCOMPARE(native.glyphAtlasSerial, initial.glyphAtlasSerial);
     QCOMPARE(native.glyphAtlasUploadCount, initial.glyphAtlasUploadCount);
+    QCOMPARE(native.rowContainerSerials, initial.rowContainerSerials);
+    QCOMPARE(native.rowGlyphBatchSerials, initial.rowGlyphBatchSerials);
+    QCOMPARE(native.glyphBatchNodeCreationCount,
+             initial.glyphBatchNodeCreationCount);
+    QCOMPARE(native.glyphBatchAllocationCount,
+             initial.glyphBatchAllocationCount);
     QCOMPARE(native.nativeTextNodeCount, qsizetype{1});
     QCOMPARE(native.rowNodeSerials.at(0), quint64{0});
     QVERIFY(native.rowNodeSerials.at(1) != 0);
@@ -2440,7 +2461,7 @@ void TerminalPaneTest::retainsGlyphAtlasAndLazilyCreatesNativeTextRows()
 
     TerminalUpdate restore;
     restore.columns = columns;
-    restore.rows = rows;
+    restore.rows = frameRows;
     restore.contentRevision = 3;
     TerminalRowUpdate restoredRow;
     restoredRow.row = 1;
@@ -2459,6 +2480,12 @@ void TerminalPaneTest::retainsGlyphAtlasAndLazilyCreatesNativeTextRows()
         terminalPaneRenderProbe(pane.get());
     QCOMPARE(restored.glyphAtlasSerial, initial.glyphAtlasSerial);
     QCOMPARE(restored.glyphAtlasUploadCount, initial.glyphAtlasUploadCount);
+    QCOMPARE(restored.rowContainerSerials, initial.rowContainerSerials);
+    QCOMPARE(restored.rowGlyphBatchSerials, initial.rowGlyphBatchSerials);
+    QCOMPARE(restored.glyphBatchNodeCreationCount,
+             initial.glyphBatchNodeCreationCount);
+    QCOMPARE(restored.glyphBatchAllocationCount,
+             initial.glyphBatchAllocationCount);
     QCOMPARE(restored.nativeTextNodeCount, qsizetype{1});
     QCOMPARE(restored.rowLayoutCounts, QVector<quint64>(rows, 0));
     QCOMPARE(restored.rowFallbackCellCounts, QVector<quint64>(rows, 0));
@@ -2471,7 +2498,7 @@ void TerminalPaneTest::retainsGlyphAtlasAndLazilyCreatesNativeTextRows()
 
     TerminalUpdate colors;
     colors.columns = columns;
-    colors.rows = rows;
+    colors.rows = frameRows;
     colors.colorsChanged = true;
     colors.foreground = Qt::white;
     colors.background = Qt::black;
@@ -2485,7 +2512,14 @@ void TerminalPaneTest::retainsGlyphAtlasAndLazilyCreatesNativeTextRows()
     QCOMPARE(paletteChanged.glyphAtlasSerial, initial.glyphAtlasSerial);
     QCOMPARE(paletteChanged.glyphAtlasUploadCount,
              initial.glyphAtlasUploadCount);
-    QCOMPARE(paletteChanged.nativeTextNodeCount, qsizetype{0});
+    QCOMPARE(paletteChanged.rowContainerSerials, initial.rowContainerSerials);
+    QCOMPARE(paletteChanged.rowGlyphBatchSerials, initial.rowGlyphBatchSerials);
+    QCOMPARE(paletteChanged.glyphBatchNodeCreationCount,
+             initial.glyphBatchNodeCreationCount);
+    QCOMPARE(paletteChanged.glyphBatchAllocationCount,
+             initial.glyphBatchAllocationCount);
+    QCOMPARE(paletteChanged.nativeTextNodeCount, qsizetype{1});
+    QCOMPARE(paletteChanged.rowNodeSerials, restored.rowNodeSerials);
     QCOMPARE(paletteChanged.rowLayoutCounts, QVector<quint64>(rows, 0));
     QCOMPARE(paletteChanged.rowBatchedGlyphCounts,
              QVector<quint64>(rows, columns));
@@ -2498,21 +2532,83 @@ void TerminalPaneTest::retainsGlyphAtlasAndLazilyCreatesNativeTextRows()
         terminalPaneRenderProbe(pane.get());
     QCOMPARE(faint.glyphAtlasSerial, initial.glyphAtlasSerial);
     QCOMPARE(faint.glyphAtlasUploadCount, initial.glyphAtlasUploadCount);
-    QCOMPARE(faint.nativeTextNodeCount, qsizetype{0});
+    QCOMPARE(faint.rowContainerSerials, initial.rowContainerSerials);
+    QCOMPARE(faint.rowGlyphBatchSerials, initial.rowGlyphBatchSerials);
+    QCOMPARE(faint.glyphBatchNodeCreationCount,
+             initial.glyphBatchNodeCreationCount);
+    QCOMPARE(faint.glyphBatchAllocationCount,
+             initial.glyphBatchAllocationCount);
+    QCOMPARE(faint.nativeTextNodeCount, qsizetype{1});
+    QCOMPARE(faint.rowNodeSerials, restored.rowNodeSerials);
     QCOMPARE(faint.rowLayoutCounts, QVector<quint64>(rows, 0));
 
     pane->setWidth(std::max(1.0, pane->width() - initial.metrics.cellWidth));
-    QVERIFY(!window.grabWindow().isNull());
+    const QImage gridChangedImage = window.grabWindow();
+    QVERIFY(!gridChangedImage.isNull());
     const TerminalPaneRenderProbeSnapshot gridChanged =
         terminalPaneRenderProbe(pane.get());
     QCOMPARE(gridChanged.glyphAtlasSerial, initial.glyphAtlasSerial);
     QCOMPARE(gridChanged.glyphAtlasUploadCount, initial.glyphAtlasUploadCount);
-    QCOMPARE(gridChanged.nativeTextNodeCount, qsizetype{0});
+    QCOMPARE(gridChanged.rowContainerSerials, initial.rowContainerSerials);
+    QCOMPARE(gridChanged.rowGlyphBatchSerials, initial.rowGlyphBatchSerials);
+    QCOMPARE(gridChanged.glyphBatchNodeCreationCount,
+             initial.glyphBatchNodeCreationCount);
+    QCOMPARE(gridChanged.glyphBatchAllocationCount,
+             initial.glyphBatchAllocationCount);
+    QCOMPARE(gridChanged.nativeTextNodeCount, qsizetype{1});
+    QCOMPARE(gridChanged.rowNodeSerials, restored.rowNodeSerials);
     QCOMPARE(gridChanged.rowLayoutCounts, QVector<quint64>(rows, 0));
     for (const quint64 glyphCount : gridChanged.rowBatchedGlyphCounts) {
         QVERIFY(glyphCount > 0);
         QVERIFY(glyphCount < static_cast<quint64>(columns));
     }
+    QVERIFY2(
+        !approximatelyEqual(
+            itemPixel(window, *pane, gridChangedImage, fallbackCenter),
+            Qt::red),
+        "The dormant native text node regained its cleared fallback glyphs");
+
+    const qreal initialPaneHeight = pane->height();
+    const int grownHeight = qCeil(initial.metrics.cellHeight * frameRows);
+    window.resize(window.width(), grownHeight);
+    pane->setHeight(grownHeight);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot grown =
+        terminalPaneRenderProbe(pane.get());
+    QCOMPARE(grown.glyphAtlasSerial, initial.glyphAtlasSerial);
+    QCOMPARE(grown.glyphAtlasUploadCount, initial.glyphAtlasUploadCount);
+    QCOMPARE(grown.rowContainerSerials.size(), frameRows);
+    QCOMPARE(grown.rowGlyphBatchSerials.size(), frameRows);
+    QCOMPARE(grown.rowContainerSerials.mid(0, rows),
+             gridChanged.rowContainerSerials);
+    QCOMPARE(grown.rowGlyphBatchSerials.mid(0, rows),
+             gridChanged.rowGlyphBatchSerials);
+    QVERIFY(grown.rowContainerSerials.constLast() != 0);
+    QVERIFY(grown.rowGlyphBatchSerials.constLast() != 0);
+    QCOMPARE(grown.rowNodeSerials.mid(0, rows), gridChanged.rowNodeSerials);
+    QCOMPARE(grown.rowNodeSerials.constLast(), quint64{0});
+    QCOMPARE(grown.nativeTextNodeCount, qsizetype{1});
+    QCOMPARE(grown.glyphBatchNodeCreationCount,
+             gridChanged.glyphBatchNodeCreationCount + 1);
+    QCOMPARE(grown.glyphBatchAllocationCount,
+             gridChanged.glyphBatchAllocationCount + 1);
+    QCOMPARE(grown.rowLayoutCounts, QVector<quint64>(frameRows, 0));
+
+    window.resize(window.width(), qCeil(initialPaneHeight));
+    pane->setHeight(initialPaneHeight);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot shrunk =
+        terminalPaneRenderProbe(pane.get());
+    QCOMPARE(shrunk.glyphAtlasSerial, initial.glyphAtlasSerial);
+    QCOMPARE(shrunk.glyphAtlasUploadCount, initial.glyphAtlasUploadCount);
+    QCOMPARE(shrunk.rowContainerSerials, gridChanged.rowContainerSerials);
+    QCOMPARE(shrunk.rowGlyphBatchSerials, gridChanged.rowGlyphBatchSerials);
+    QCOMPARE(shrunk.rowNodeSerials, gridChanged.rowNodeSerials);
+    QCOMPARE(shrunk.nativeTextNodeCount, qsizetype{1});
+    QCOMPARE(shrunk.glyphBatchNodeCreationCount,
+             grown.glyphBatchNodeCreationCount);
+    QCOMPARE(shrunk.glyphBatchAllocationCount, grown.glyphBatchAllocationCount);
+    QCOMPARE(shrunk.rowLayoutCounts, QVector<quint64>(rows, 0));
 
     LaunchOptions fontChanged = faintChanged;
     fontChanged.typography.pointSize += 2.0;
@@ -2520,14 +2616,33 @@ void TerminalPaneTest::retainsGlyphAtlasAndLazilyCreatesNativeTextRows()
     QVERIFY(!window.grabWindow().isNull());
     const TerminalPaneRenderProbeSnapshot replacement =
         terminalPaneRenderProbe(pane.get());
-    QVERIFY(replacement.metrics.fontProgram != gridChanged.metrics.fontProgram);
+    QVERIFY(replacement.metrics.fontProgram != shrunk.metrics.fontProgram);
     QVERIFY(replacement.glyphAtlasSerial != 0);
-    QVERIFY(replacement.glyphAtlasSerial != gridChanged.glyphAtlasSerial);
+    QVERIFY(replacement.glyphAtlasSerial != shrunk.glyphAtlasSerial);
     QCOMPARE(replacement.glyphAtlasUploadCount,
-             gridChanged.glyphAtlasUploadCount + 1);
+             shrunk.glyphAtlasUploadCount + 1);
     QVERIFY(replacement.glyphAtlasEntryCount > 0);
     QVERIFY(replacement.glyphAtlasBytes > 0);
     QCOMPARE(replacement.nativeTextNodeCount, qsizetype{0});
+    const qsizetype replacementRows = replacement.rowContainerSerials.size();
+    QVERIFY(replacementRows > 0);
+    QVERIFY(replacementRows <= shrunk.rowContainerSerials.size());
+    QCOMPARE(replacement.rowNodeSerials, QVector<quint64>(replacementRows, 0));
+    QCOMPARE(replacement.rowGlyphBatchSerials.size(), replacementRows);
+    for (qsizetype row = 0; row < replacementRows; ++row) {
+        QVERIFY(replacement.rowContainerSerials.at(row) != 0);
+        QVERIFY(replacement.rowGlyphBatchSerials.at(row) != 0);
+        QVERIFY(replacement.rowContainerSerials.at(row)
+                != shrunk.rowContainerSerials.at(row));
+        QVERIFY(replacement.rowGlyphBatchSerials.at(row)
+                != shrunk.rowGlyphBatchSerials.at(row));
+    }
+    QCOMPARE(replacement.glyphBatchNodeCreationCount,
+             shrunk.glyphBatchNodeCreationCount
+                 + static_cast<quint64>(replacementRows));
+    QCOMPARE(replacement.glyphBatchAllocationCount,
+             shrunk.glyphBatchAllocationCount
+                 + static_cast<quint64>(replacementRows));
     for (const quint64 layoutCount : replacement.rowLayoutCounts) {
         QCOMPARE(layoutCount, quint64{0});
     }

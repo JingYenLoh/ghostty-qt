@@ -82,9 +82,11 @@ for intentional upgrade procedure.
   cell-derived solid geometry are retained per row on OpenGL and Vulkan. One
   font/DPR/render-context-scoped compact CPU Alpha8 atlas and explicit RGBA
   coverage texture are reused across dirty rows and compatible global
-  invalidations. Rows that remain fully batched allocate no native text node;
-  unsafe or complex text creates the Qt fallback lazily and retains it cleared
-  for reuse, while the software renderer retains Qt's general path. A host
+  invalidations. Compatible rebuilds retain row containers and glyph batches,
+  and row-count changes preserve their common prefix without new allocation.
+  Rows that remain fully batched allocate no native text node; unsafe or
+  complex text creates the Qt fallback lazily and retains it cleared for reuse,
+  while the software renderer retains Qt's general path. A host
   qualification runner combines
   the full offscreen OpenGL/Vulkan scenario matrix with a real production-window
   swapchain/frame-swap probe and atomic machine-readable evidence. A strict

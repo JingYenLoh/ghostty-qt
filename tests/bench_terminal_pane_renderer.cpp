@@ -125,6 +125,8 @@ struct ProbeDelta {
     quint64 nativeTextCells = 0;
     quint64 batchedGlyphs = 0;
     quint64 glyphBatchGeometryWrites = 0;
+    quint64 glyphBatchNodeCreations = 0;
+    quint64 glyphBatchAllocations = 0;
     quint64 glyphAtlasUploads = 0;
     qint64 glyphAtlasEntryCount = 0;
     qint64 glyphAtlasBytes = 0;
@@ -147,6 +149,8 @@ struct ProbeDelta {
         nativeTextCells += other.nativeTextCells;
         batchedGlyphs += other.batchedGlyphs;
         glyphBatchGeometryWrites += other.glyphBatchGeometryWrites;
+        glyphBatchNodeCreations += other.glyphBatchNodeCreations;
+        glyphBatchAllocations += other.glyphBatchAllocations;
         glyphAtlasUploads += other.glyphAtlasUploads;
         glyphAtlasEntryCount += other.glyphAtlasEntryCount;
         glyphAtlasBytes += other.glyphAtlasBytes;
@@ -180,6 +184,12 @@ struct ScenarioResult {
     std::optional<qsizetype> expectedFinalNativeTextNodeCount;
     quint64 finalGlyphAtlasSerial = 0;
     std::optional<quint64> expectedFinalGlyphAtlasSerial;
+    QVector<quint64> finalRowContainerSerials;
+    std::optional<QVector<quint64>> expectedFinalRowContainerSerials;
+    QVector<quint64> finalRowGlyphBatchSerials;
+    std::optional<QVector<quint64>> expectedFinalRowGlyphBatchSerials;
+    QVector<quint64> finalRowNativeTextNodeSerials;
+    std::optional<QVector<quint64>> expectedFinalRowNativeTextNodeSerials;
     qsizetype finalGlyphAtlasEntryCount = 0;
     quint64 finalGlyphAtlasBytes = 0;
     int measuredFrames = 0;
@@ -199,6 +209,10 @@ ProbeDelta operator-(const TerminalPaneRenderProbeSnapshot &after,
         .batchedGlyphs = after.batchedGlyphCount - before.batchedGlyphCount,
         .glyphBatchGeometryWrites = after.glyphBatchGeometryWriteCount
             - before.glyphBatchGeometryWriteCount,
+        .glyphBatchNodeCreations = after.glyphBatchNodeCreationCount
+            - before.glyphBatchNodeCreationCount,
+        .glyphBatchAllocations =
+            after.glyphBatchAllocationCount - before.glyphBatchAllocationCount,
         .glyphAtlasUploads =
             after.glyphAtlasUploadCount - before.glyphAtlasUploadCount,
         .glyphAtlasEntryCount = static_cast<qint64>(after.glyphAtlasEntryCount)
@@ -252,6 +266,8 @@ ProbeDelta operator*(ProbeDelta delta, quint64 count)
     delta.nativeTextCells *= count;
     delta.batchedGlyphs *= count;
     delta.glyphBatchGeometryWrites *= count;
+    delta.glyphBatchNodeCreations *= count;
+    delta.glyphBatchAllocations *= count;
     delta.glyphAtlasUploads *= count;
     delta.glyphAtlasEntryCount *= static_cast<qint64>(count);
     delta.glyphAtlasBytes *= static_cast<qint64>(count);
@@ -646,7 +662,9 @@ public:
              .nativeTextSubmissions = expectBatch ? 0 : rows,
              .nativeTextCells = expectBatch ? 0 : cells,
              .batchedGlyphs = expectBatch ? cells : 0,
-             .glyphBatchGeometryWrites = expectBatch ? rows : 0},
+             .glyphBatchGeometryWrites = 0,
+             .glyphBatchNodeCreations = 0,
+             .glyphBatchAllocations = 0},
             0, 0, {},
             [this, &alternatePalette] {
                 alternatePalette = !alternatePalette;
@@ -655,9 +673,12 @@ public:
             capture, error);
         if (result.name.isEmpty()) return result;
 
-        result.expectedFinalNativeTextNodeCount =
-            expectBatch ? qsizetype{0} : static_cast<qsizetype>(grid_.rows);
+        result.expectedFinalNativeTextNodeCount = baseline.nativeTextNodeCount;
         result.expectedFinalGlyphAtlasSerial = baseline.glyphAtlasSerial;
+        result.expectedFinalRowContainerSerials = baseline.rowContainerSerials;
+        result.expectedFinalRowGlyphBatchSerials =
+            baseline.rowGlyphBatchSerials;
+        result.expectedFinalRowNativeTextNodeSerials = baseline.rowNodeSerials;
 
         return result;
     }
@@ -1522,6 +1543,9 @@ private:
         quint64 finalTextureBytes = 0;
         qsizetype finalNativeTextNodeCount = 0;
         quint64 finalGlyphAtlasSerial = 0;
+        QVector<quint64> finalRowContainerSerials;
+        QVector<quint64> finalRowGlyphBatchSerials;
+        QVector<quint64> finalRowNativeTextNodeSerials;
         qsizetype finalGlyphAtlasEntryCount = 0;
         quint64 finalGlyphAtlasBytes = 0;
         for (int iteration = 0; iteration < frameCount; ++iteration) {
@@ -1553,6 +1577,9 @@ private:
             finalTextureBytes = after.kittyGraphicsTextureBytes;
             finalNativeTextNodeCount = after.nativeTextNodeCount;
             finalGlyphAtlasSerial = after.glyphAtlasSerial;
+            finalRowContainerSerials = after.rowContainerSerials;
+            finalRowGlyphBatchSerials = after.rowGlyphBatchSerials;
+            finalRowNativeTextNodeSerials = after.rowNodeSerials;
             finalGlyphAtlasEntryCount = after.glyphAtlasEntryCount;
             finalGlyphAtlasBytes = after.glyphAtlasBytes;
             if (timing.cpuUpdateNanoseconds.has_value()) {
@@ -1600,6 +1627,10 @@ private:
             .expectedFinalKittyTextureBytes = expectedFinalKittyTextureBytes,
             .finalNativeTextNodeCount = finalNativeTextNodeCount,
             .finalGlyphAtlasSerial = finalGlyphAtlasSerial,
+            .finalRowContainerSerials = std::move(finalRowContainerSerials),
+            .finalRowGlyphBatchSerials = std::move(finalRowGlyphBatchSerials),
+            .finalRowNativeTextNodeSerials =
+                std::move(finalRowNativeTextNodeSerials),
             .finalGlyphAtlasEntryCount = finalGlyphAtlasEntryCount,
             .finalGlyphAtlasBytes = finalGlyphAtlasBytes,
             .measuredFrames = frameCount,
@@ -1726,6 +1757,26 @@ void printSummary(QTextStream &output, QStringView prefix,
 bool printResult(GridSize grid, const ScenarioResult &result,
                  QTextStream &output)
 {
+    const QStringView rowContainerTopologyStatus =
+        !result.expectedFinalRowContainerSerials.has_value() ? u"unvalidated"
+        : result.finalRowContainerSerials
+            == *result.expectedFinalRowContainerSerials
+        ? u"true"
+        : u"false";
+    const QStringView rowGlyphBatchTopologyStatus =
+        !result.expectedFinalRowGlyphBatchSerials.has_value() ? u"unvalidated"
+        : result.finalRowGlyphBatchSerials
+            == *result.expectedFinalRowGlyphBatchSerials
+        ? u"true"
+        : u"false";
+    const QStringView rowNativeTextTopologyStatus =
+        !result.expectedFinalRowNativeTextNodeSerials.has_value()
+        ? u"unvalidated"
+        : result.finalRowNativeTextNodeSerials
+            == *result.expectedFinalRowNativeTextNodeSerials
+        ? u"true"
+        : u"false";
+
     output << grid.columns << 'x' << grid.rows << ' ' << result.name;
     if (result.captureFrame) {
         output << " capture_frame=true";
@@ -1769,6 +1820,13 @@ bool printResult(GridSize grid, const ScenarioResult &result,
            << " batched_glyphs=" << result.probeDelta.batchedGlyphs
            << " glyph_batch_geometry_writes="
            << result.probeDelta.glyphBatchGeometryWrites
+           << " glyph_batch_node_creations="
+           << result.probeDelta.glyphBatchNodeCreations
+           << " glyph_batch_allocations="
+           << result.probeDelta.glyphBatchAllocations
+           << " row_container_topology_stable=" << rowContainerTopologyStatus
+           << " row_glyph_batch_topology_stable=" << rowGlyphBatchTopologyStatus
+           << " row_native_text_topology_stable=" << rowNativeTextTopologyStatus
            << " glyph_atlas_uploads=" << result.probeDelta.glyphAtlasUploads
            << " glyph_atlas_serial_final=" << result.finalGlyphAtlasSerial
            << " glyph_atlas_entry_count_delta="
@@ -1825,6 +1883,12 @@ bool printResult(GridSize grid, const ScenarioResult &result,
     requireEqual(result.probeDelta.glyphBatchGeometryWrites,
                  result.expectedProbeDelta.glyphBatchGeometryWrites,
                  u"glyph-batch geometry write count");
+    requireEqual(result.probeDelta.glyphBatchNodeCreations,
+                 result.expectedProbeDelta.glyphBatchNodeCreations,
+                 u"glyph-batch node creation count");
+    requireEqual(result.probeDelta.glyphBatchAllocations,
+                 result.expectedProbeDelta.glyphBatchAllocations,
+                 u"glyph-batch allocation count");
     requireEqual(result.probeDelta.glyphAtlasUploads,
                  result.expectedProbeDelta.glyphAtlasUploads,
                  u"glyph-atlas upload count");
@@ -1854,6 +1918,38 @@ bool printResult(GridSize grid, const ScenarioResult &result,
                      *result.expectedFinalGlyphAtlasSerial,
                      u"final glyph-atlas serial");
     }
+    const auto requireStableTopology =
+        [&](const QVector<quint64> &actual,
+            const std::optional<QVector<quint64>> &expected,
+            QStringView field) {
+            if (!expected.has_value() || actual == *expected) return;
+            qsizetype mismatch = 0;
+            const qsizetype sharedSize =
+                std::min(actual.size(), expected->size());
+            while (mismatch < sharedSize
+                   && actual.at(mismatch) == expected->at(mismatch)) {
+                ++mismatch;
+            }
+            output << "unstable " << field << " for " << result.name
+                   << ": actual_rows=" << actual.size()
+                   << " expected_rows=" << expected->size();
+            if (mismatch < sharedSize) {
+                output << " first_mismatch_row=" << mismatch
+                       << " actual_serial=" << actual.at(mismatch)
+                       << " expected_serial=" << expected->at(mismatch);
+            }
+            output << '\n';
+            valid = false;
+        };
+    requireStableTopology(result.finalRowContainerSerials,
+                          result.expectedFinalRowContainerSerials,
+                          u"row-container topology");
+    requireStableTopology(result.finalRowGlyphBatchSerials,
+                          result.expectedFinalRowGlyphBatchSerials,
+                          u"row glyph-batch topology");
+    requireStableTopology(result.finalRowNativeTextNodeSerials,
+                          result.expectedFinalRowNativeTextNodeSerials,
+                          u"row native-text topology");
     requireEqual(result.probeDelta.kittyTextureUploads,
                  result.expectedProbeDelta.kittyTextureUploads,
                  u"Kitty texture upload count");

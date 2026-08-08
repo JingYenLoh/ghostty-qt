@@ -47,10 +47,10 @@ scaffolding them:
   OpenGL and Vulkan render exact one-glyph-per-cell printable ASCII through a
   compact terminal-owned CPU Alpha8 atlas, one explicit RGBA coverage texture,
   and retained indexed row batches. Compatible palette and grid invalidations
-  retain that font/DPR/render-context resource, and public `QSGTextNode` objects
-  are created lazily for the general fallback while preserving the software
-  path. Batched colored geometry handles backgrounds, selection, cursors, and
-  decorations.
+  retain that font/DPR/render-context resource plus row scene-graph topology
+  and geometry capacity, and public `QSGTextNode` objects are created lazily
+  for the general fallback while preserving the software path. Batched colored
+  geometry handles backgrounds, selection, cursors, and decorations.
 - Key, mouse, focus, paste, and tracked selection-gesture paths use Ghostty's
   encoders and terminal modes.
 - A narrow project-owned Zig/C matcher imports Ghostty's pinned default URL/path
