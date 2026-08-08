@@ -49,18 +49,23 @@ these layouts reduce `TerminalCell` from 112 to 48 bytes on the current x86-64
 Qt ABI and lower queued-update, retained-frame, and detach-copy pressure without
 relying on C++ bitfield layout.
 
-The retained `TerminalFrame` deliberately still stores every row in one flat
-`QVector<TerminalCell>`. A render pass takes a shallow frame snapshot; mutating
-the shared vector for a later dirty-row update can therefore detach and copy
-the whole grid. Row sharding was explicitly deferred from the current struct
-optimization stage: it changes retained-frame ownership and renderer traversal,
-rather than only representation. Before implementing it, extend
-`bench-terminal-frame-materialization` to retain a shallow render snapshot
-while applying one-row, several-row, and full-frame updates and report apply
-time, allocations, and copied cell bytes. Renderer benchmarks must also show
-that noncontiguous rows do not regress scan and paint costs. Only then should
-the flat vector be replaced with implicitly shared row payloads whose dirty
-rows detach independently.
+The retained `TerminalFrame` stores an implicitly shared vector payload per
+physical row. A render pass can retain a shallow frame snapshot while the next
+update detaches only the small outer row table and installs the incoming dirty
+row payloads. Clean rows remain shared; neither partial nor full updates copy
+`TerminalCell` objects while being merged into the retained frame. The
+renderer traverses each row payload directly, avoiding flat-index division in
+its cell scan.
+
+`bench-terminal-frame-materialization` holds a render snapshot during every
+apply and reports row-table detach, row-header copy, row-payload reuse, cell
+allocation, and cell-copy counters. At 240x80 on the development host, the
+row-sharded apply medians were 0.74 us for one dirty row, 0.83 us for four
+dirty rows, and 2.02 us for a full frame, versus 55.02 us, 63.98 us, and
+171.98 us with flat whole-grid detachment. All row-sharded cases reported zero
+cell-payload allocations and zero copied terminal cells. A partial update
+still copies 80 small row headers (1,920 bytes) when a snapshot shares the
+outer table; this bounded cost is the remaining ownership tradeoff.
 
 ### Renderer
 
@@ -114,7 +119,7 @@ cmake --build --preset release -j"$(nproc)"
 | `bench-terminal-custom-shader-compiler` | Cold shader baking and content-cache hits |
 | `bench-terminal-custom-shader-rhi` | Retained versus legacy multi-pass shader recording and GPU work |
 | `bench-terminal-kitty-graphics` | Kitty protocol replacement and isolated RGB/RGBA/grayscale materialization |
-| `bench-terminal-frame-materialization` | Ghostty VT full-frame and dirty-row snapshots plus retained-frame application |
+| `bench-terminal-frame-materialization` | Ghostty VT snapshots plus retained-frame application while a render snapshot holds row payloads shared |
 | `bench-terminal-search` | Visible-result latency, canonical history scan, cancellation, and recompression |
 | `bench-terminal-backdrop` | Background asset preparation and software composition |
 

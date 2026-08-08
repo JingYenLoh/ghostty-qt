@@ -16,6 +16,8 @@
 #include <algorithm>
 #include <compare>
 #include <cstdint>
+#include <iterator>
+#include <memory>
 
 // The renderer needs the original SGR foreground source in addition to the
 // resolved RGB value. Ghostty's bold-color=bright behavior only promotes the
@@ -538,10 +540,226 @@ struct TerminalRowPresentation {
     bool operator==(const TerminalRowPresentation &) const = default;
 };
 
+// Retained terminal cells remain logically flat for callers, but each physical
+// row owns an independently implicitly-shared QVector payload. A render-thread
+// frame copy therefore keeps every row alive without forcing the next dirty-row
+// update to detach and copy the complete viewport.
+//
+// Mutation is intentionally limited to applyTerminalUpdate(). Render consumers
+// should prefer rowAt() or cell(row, column) in row-major loops; at() and the
+// read-only random-access iterator retain the former flat indexing contract for
+// less performance-sensitive callers.
+class TerminalFrameCellStorage final {
+public:
+    using Row = QVector<TerminalCell>;
+
+    class const_iterator final {
+    public:
+        using difference_type = qsizetype;
+        using value_type = TerminalCell;
+        using pointer = const TerminalCell *;
+        using reference = const TerminalCell &;
+        using iterator_category = std::random_access_iterator_tag;
+        using iterator_concept = std::random_access_iterator_tag;
+
+        constexpr const_iterator() noexcept = default;
+
+        [[nodiscard]] reference operator*() const
+        {
+            return storage_->at(index_);
+        }
+        [[nodiscard]] pointer operator->() const
+        {
+            return std::addressof(storage_->at(index_));
+        }
+        [[nodiscard]] reference operator[](difference_type offset) const
+        {
+            return storage_->at(index_ + offset);
+        }
+
+        const_iterator &operator++() noexcept
+        {
+            ++index_;
+            return *this;
+        }
+        const_iterator operator++(int) noexcept
+        {
+            const const_iterator previous = *this;
+            ++*this;
+            return previous;
+        }
+        const_iterator &operator--() noexcept
+        {
+            --index_;
+            return *this;
+        }
+        const_iterator operator--(int) noexcept
+        {
+            const const_iterator previous = *this;
+            --*this;
+            return previous;
+        }
+        const_iterator &operator+=(difference_type offset) noexcept
+        {
+            index_ += offset;
+            return *this;
+        }
+        const_iterator &operator-=(difference_type offset) noexcept
+        {
+            index_ -= offset;
+            return *this;
+        }
+
+        friend const_iterator operator+(const_iterator iterator,
+                                        difference_type offset) noexcept
+        {
+            iterator += offset;
+            return iterator;
+        }
+        friend const_iterator operator+(difference_type offset,
+                                        const_iterator iterator) noexcept
+        {
+            iterator += offset;
+            return iterator;
+        }
+        friend const_iterator operator-(const_iterator iterator,
+                                        difference_type offset) noexcept
+        {
+            iterator -= offset;
+            return iterator;
+        }
+        friend difference_type operator-(const const_iterator &left,
+                                         const const_iterator &right) noexcept
+        {
+            Q_ASSERT(left.storage_ == right.storage_);
+            return left.index_ - right.index_;
+        }
+
+        friend bool operator==(const const_iterator &,
+                               const const_iterator &) = default;
+        friend std::strong_ordering
+        operator<=>(const const_iterator &left,
+                    const const_iterator &right) noexcept
+        {
+            Q_ASSERT(left.storage_ == right.storage_);
+            return left.index_ <=> right.index_;
+        }
+
+    private:
+        friend class TerminalFrameCellStorage;
+
+        constexpr const_iterator(const TerminalFrameCellStorage *storage,
+                                 qsizetype index) noexcept
+            : storage_(storage)
+            , index_(index)
+        {}
+
+        const TerminalFrameCellStorage *storage_ = nullptr;
+        qsizetype index_ = 0;
+    };
+
+    [[nodiscard]] qsizetype size() const noexcept { return size_; }
+    [[nodiscard]] bool isEmpty() const noexcept { return size_ == 0; }
+    [[nodiscard]] int columnCount() const noexcept { return columns_; }
+    [[nodiscard]] qsizetype rowCount() const noexcept { return rows_.size(); }
+
+    [[nodiscard]] const TerminalCell &at(qsizetype index) const
+    {
+        Q_ASSERT(index >= 0 && index < size_ && columns_ > 0);
+        const qsizetype row = index / columns_;
+        const qsizetype column = index - row * columns_;
+        return rows_.at(row).at(column);
+    }
+    [[nodiscard]] const TerminalCell &operator[](qsizetype index) const
+    {
+        return at(index);
+    }
+    [[nodiscard]] const TerminalCell &constFirst() const { return at(0); }
+    [[nodiscard]] const Row &rowAt(int row) const { return rows_.at(row); }
+    [[nodiscard]] const TerminalCell &cell(int row, int column) const
+    {
+        return rows_.at(row).at(column);
+    }
+
+    [[nodiscard]] const_iterator begin() const noexcept { return cbegin(); }
+    [[nodiscard]] const_iterator end() const noexcept { return cend(); }
+    [[nodiscard]] const_iterator begin() noexcept { return cbegin(); }
+    [[nodiscard]] const_iterator end() noexcept { return cend(); }
+    [[nodiscard]] const_iterator cbegin() const noexcept
+    {
+        return const_iterator(this, 0);
+    }
+    [[nodiscard]] const_iterator cend() const noexcept
+    {
+        return const_iterator(this, size_);
+    }
+
+    // These identities are intended for deterministic copy-on-write tests and
+    // benchmark counters. They expose no mutable storage.
+    [[nodiscard]] const Row *rowTableData() const noexcept
+    {
+        return rows_.constData();
+    }
+    [[nodiscard]] const TerminalCell *rowData(int row) const
+    {
+        return rows_.at(row).constData();
+    }
+    [[nodiscard]] bool rowTableIsDetached() const noexcept
+    {
+        return rows_.isDetached();
+    }
+
+private:
+    void resetGrid(int columns, int rows)
+    {
+        Q_ASSERT(columns > 0 && rows > 0);
+        columns_ = columns;
+        size_ = static_cast<qsizetype>(columns) * rows;
+        rows_ = QVector<Row>(rows);
+    }
+
+    void replaceRow(int row, const Row &cells)
+    {
+        Q_ASSERT(row >= 0 && row < rows_.size());
+        Q_ASSERT(cells.size() == columns_);
+        rows_[row] = cells;
+    }
+
+    int columns_ = 0;
+    qsizetype size_ = 0;
+    QVector<Row> rows_;
+
+    friend struct TerminalFrameCellStorageAccess;
+};
+
+struct TerminalFrameCellStorageAccess final {
+    static void resetGrid(TerminalFrameCellStorage &storage, int columns,
+                          int rows)
+    {
+        storage.resetGrid(columns, rows);
+    }
+
+    static void replaceRow(TerminalFrameCellStorage &storage, int row,
+                           const TerminalFrameCellStorage::Row &cells)
+    {
+        storage.replaceRow(row, cells);
+    }
+};
+
+struct TerminalFrameApplyMetrics {
+    quint64 rowTableAllocations = 0;
+    quint64 rowTableDetaches = 0;
+    quint64 rowHeadersCopied = 0;
+    quint64 rowPayloadsInstalled = 0;
+    quint64 rowPayloadsReused = 0;
+    quint64 cellPayloadAllocations = 0;
+    quint64 terminalCellsCopied = 0;
+};
+
 struct TerminalFrame {
     int columns = 0;
     int rows = 0;
-    QVector<TerminalCell> cells;
+    TerminalFrameCellStorage cells;
     QVector<TerminalRowPresentation> rowPresentation;
     QColor foreground = QColor(QStringLiteral("#d8dee9"));
     QColor background = QColor(QStringLiteral("#1e222a"));
@@ -695,9 +913,11 @@ struct TerminalClipboardWriteRequest {
 // happens before mutation so a malformed or incomplete delta cannot leave the
 // retained frame half-updated. Returns false for an invalid update or a
 // partial update whose dimensions do not match the retained frame.
-[[nodiscard]] inline bool applyTerminalUpdate(TerminalFrame &frame,
-                                              const TerminalUpdate &update)
+[[nodiscard]] inline bool
+applyTerminalUpdate(TerminalFrame &frame, const TerminalUpdate &update,
+                    TerminalFrameApplyMetrics *metrics = nullptr)
 {
+    if (metrics != nullptr) *metrics = {};
     if (!validTerminalUpdateShape(update)) {
         return false;
     }
@@ -705,23 +925,40 @@ struct TerminalClipboardWriteRequest {
         static_cast<qsizetype>(update.columns) * update.rows;
     if (!update.fullFrame
         && (frame.columns != update.columns || frame.rows != update.rows
-            || frame.cells.size() != cellCount)) {
+            || frame.cells.size() != cellCount
+            || frame.cells.columnCount() != update.columns
+            || frame.cells.rowCount() != update.rows)) {
         return false;
+    }
+
+    if (metrics != nullptr) {
+        metrics->rowPayloadsInstalled =
+            static_cast<quint64>(update.dirtyRows.size());
+        metrics->rowPayloadsReused = update.fullFrame
+            ? 0
+            : static_cast<quint64>(update.rows - update.dirtyRows.size());
+        if (update.fullFrame) {
+            metrics->rowTableAllocations = 1;
+        } else if (!update.dirtyRows.isEmpty()
+                   && !frame.cells.rowTableIsDetached()) {
+            metrics->rowTableAllocations = 1;
+            metrics->rowTableDetaches = 1;
+            metrics->rowHeadersCopied = static_cast<quint64>(update.rows);
+        }
     }
 
     if (update.fullFrame) {
         frame.columns = update.columns;
         frame.rows = update.rows;
-        frame.cells.resize(cellCount);
+        TerminalFrameCellStorageAccess::resetGrid(frame.cells, update.columns,
+                                                  update.rows);
         frame.rowPresentation.resize(update.rows);
     } else if (frame.rowPresentation.size() != update.rows) {
         frame.rowPresentation.resize(update.rows);
     }
     for (const TerminalRowUpdate &row : update.dirtyRows) {
-        const qsizetype destination =
-            static_cast<qsizetype>(row.row) * update.columns;
-        std::copy(row.cells.cbegin(), row.cells.cend(),
-                  frame.cells.begin() + destination);
+        TerminalFrameCellStorageAccess::replaceRow(frame.cells, row.row,
+                                                   row.cells);
         frame.rowPresentation[row.row] = row.presentation;
     }
 

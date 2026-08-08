@@ -276,10 +276,13 @@ void TerminalTypesTest::appliesFullAndPartialUpdates()
 void TerminalTypesTest::rejectsMalformedUpdateWithoutMutation()
 {
     TerminalFrame frame;
-    frame.columns = 2;
-    frame.rows = 1;
-    frame.cells = {textCell(u"a"), textCell(u"b")};
-    frame.contentRevision = 7;
+    TerminalUpdate baseline;
+    baseline.columns = 2;
+    baseline.rows = 1;
+    baseline.fullFrame = true;
+    baseline.dirtyRows = {textRow(0, {u"a", u"b"})};
+    baseline.contentRevision = 7;
+    QVERIFY(applyTerminalUpdate(frame, baseline));
 
     TerminalUpdate malformed;
     malformed.columns = 2;
@@ -299,51 +302,58 @@ void TerminalTypesTest::rejectsMalformedUpdateWithoutMutation()
 void TerminalTypesTest::validatesStrictDirtyRowOrder()
 {
     TerminalFrame baseline;
-    baseline.columns = 2;
-    baseline.rows = 3;
-    baseline.cells = {
-        textCell(u"a"), textCell(u"b"),
-        textCell(u"c"), textCell(u"d"),
-        textCell(u"e"), textCell(u"f"),
+    TerminalUpdate initial;
+    initial.columns = 2;
+    initial.rows = 3;
+    initial.fullFrame = true;
+    initial.dirtyRows = {
+        textRow(0, {u"a", u"b"}),
+        textRow(1, {u"c", u"d"}),
+        textRow(2, {u"e", u"f"}),
     };
+    initial.contentRevision = 7;
+    QVERIFY(applyTerminalUpdate(baseline, initial));
     baseline.palette = {Qt::red, Qt::green};
     baseline.cursorColumn = 1;
     baseline.scrollOffset = 4;
-    baseline.contentRevision = 7;
 
-    const auto verifyRejected = [&baseline](
-                                    QVector<TerminalRowUpdate> dirtyRows,
-                                    bool fullFrame = false) {
-        TerminalFrame frame = baseline;
-        const TerminalCell *const cells = frame.cells.constData();
-        const QColor *const palette = frame.palette.constData();
-        TerminalUpdate update;
-        update.columns = baseline.columns;
-        update.rows = baseline.rows;
-        update.fullFrame = fullFrame;
-        update.dirtyRows = std::move(dirtyRows);
-        update.contentRevision = 8;
+    const auto verifyRejected =
+        [&baseline](QVector<TerminalRowUpdate> dirtyRows,
+                    bool fullFrame = false) {
+            TerminalFrame frame = baseline;
+            const auto *const rowTable = frame.cells.rowTableData();
+            QVector<const TerminalCell *> rowPayloads;
+            rowPayloads.reserve(frame.rows);
+            for (int row = 0; row < frame.rows; ++row) {
+                rowPayloads.append(frame.cells.rowData(row));
+            }
+            const QColor *const palette = frame.palette.constData();
+            TerminalUpdate update;
+            update.columns = baseline.columns;
+            update.rows = baseline.rows;
+            update.fullFrame = fullFrame;
+            update.dirtyRows = std::move(dirtyRows);
+            update.contentRevision = 8;
 
-        QVERIFY(!applyTerminalUpdate(frame, update));
-        QCOMPARE(frame.cells.constData(), cells);
-        QCOMPARE(frame.palette.constData(), palette);
-        QCOMPARE(frame.columns, baseline.columns);
-        QCOMPARE(frame.rows, baseline.rows);
-        QCOMPARE(frame.cursorColumn, baseline.cursorColumn);
-        QCOMPARE(frame.scrollOffset, baseline.scrollOffset);
-        QCOMPARE(frame.contentRevision, baseline.contentRevision);
-    };
+            QVERIFY(!applyTerminalUpdate(frame, update));
+            QCOMPARE(frame.cells.rowTableData(), rowTable);
+            for (int row = 0; row < frame.rows; ++row) {
+                QCOMPARE(frame.cells.rowData(row), rowPayloads.at(row));
+            }
+            QCOMPARE(frame.palette.constData(), palette);
+            QCOMPARE(frame.columns, baseline.columns);
+            QCOMPARE(frame.rows, baseline.rows);
+            QCOMPARE(frame.cursorColumn, baseline.cursorColumn);
+            QCOMPARE(frame.scrollOffset, baseline.scrollOffset);
+            QCOMPARE(frame.contentRevision, baseline.contentRevision);
+        };
 
-    verifyRejected({textRow(0, {u"x", u"y"}),
-                    textRow(0, {u"z", u"w"})});
-    verifyRejected({textRow(2, {u"x", u"y"}),
-                    textRow(0, {u"z", u"w"})});
+    verifyRejected({textRow(0, {u"x", u"y"}), textRow(0, {u"z", u"w"})});
+    verifyRejected({textRow(2, {u"x", u"y"}), textRow(0, {u"z", u"w"})});
     verifyRejected({textRow(-1, {u"x", u"y"})});
     verifyRejected({textRow(3, {u"x", u"y"})});
     verifyRejected({textRow(1, {u"wrong-width"})});
-    verifyRejected({textRow(0, {u"x", u"y"}),
-                    textRow(1, {u"z", u"w"})},
-                   true);
+    verifyRejected({textRow(0, {u"x", u"y"}), textRow(1, {u"z", u"w"})}, true);
 
     TerminalFrame sparse = baseline;
     TerminalUpdate ascending;
@@ -365,9 +375,13 @@ void TerminalTypesTest::preservesCopyOnWriteAcrossIndependentDeltas()
 {
     TerminalUpdate full;
     full.columns = 2;
-    full.rows = 1;
+    full.rows = 3;
     full.fullFrame = true;
-    full.dirtyRows = {textRow(0, {u"a", u"b"})};
+    full.dirtyRows = {
+        textRow(0, {u"a", u"b"}),
+        textRow(1, {u"c", u"d"}),
+        textRow(2, {u"e", u"f"}),
+    };
     full.colorsChanged = true;
     full.foreground = Qt::white;
     full.background = Qt::black;
@@ -383,34 +397,73 @@ void TerminalTypesTest::preservesCopyOnWriteAcrossIndependentDeltas()
 
     TerminalFrame frame;
     QVERIFY(applyTerminalUpdate(frame, full));
+    for (int row = 0; row < full.rows; ++row) {
+        QCOMPARE(frame.cells.rowData(row),
+                 full.dirtyRows.at(row).cells.constData());
+    }
     const QColor *const paletteStorage = frame.palette.constData();
     const TerminalFrame renderSnapshot = frame;
+    QCOMPARE(frame.cells.rowTableData(), renderSnapshot.cells.rowTableData());
+    for (int row = 0; row < frame.rows; ++row) {
+        QCOMPARE(frame.cells.rowData(row), renderSnapshot.cells.rowData(row));
+    }
 
     TerminalUpdate rowOnly;
     rowOnly.columns = 2;
-    rowOnly.rows = 1;
-    rowOnly.dirtyRows = {textRow(0, {u"x", u"y"})};
+    rowOnly.rows = 3;
+    rowOnly.dirtyRows = {textRow(1, {u"x", u"y"})};
     rowOnly.contentRevision = 2;
     QVERIFY(rowOnly.palette.isEmpty());
-    QVERIFY(applyTerminalUpdate(frame, rowOnly));
+    TerminalFrameApplyMetrics metrics;
+    QVERIFY(applyTerminalUpdate(frame, rowOnly, &metrics));
+    QCOMPARE(metrics.rowTableAllocations, quint64{1});
+    QCOMPARE(metrics.rowTableDetaches, quint64{1});
+    QCOMPARE(metrics.rowHeadersCopied, quint64{3});
+    QCOMPARE(metrics.rowPayloadsInstalled, quint64{1});
+    QCOMPARE(metrics.rowPayloadsReused, quint64{2});
+    QCOMPARE(metrics.cellPayloadAllocations, quint64{0});
+    QCOMPARE(metrics.terminalCellsCopied, quint64{0});
     QCOMPARE(frame.palette.constData(), paletteStorage);
     QCOMPARE(renderSnapshot.palette.constData(), paletteStorage);
-    QCOMPARE(frame.cells.at(0).text, QStringLiteral("x"));
+    QVERIFY(frame.cells.rowTableData() != renderSnapshot.cells.rowTableData());
+    QCOMPARE(frame.cells.rowData(0), renderSnapshot.cells.rowData(0));
+    QVERIFY(frame.cells.rowData(1) != renderSnapshot.cells.rowData(1));
+    QCOMPARE(frame.cells.rowData(2), renderSnapshot.cells.rowData(2));
+    QCOMPARE(frame.cells.rowData(1),
+             rowOnly.dirtyRows.constFirst().cells.constData());
+    QCOMPARE(frame.cells.cell(1, 0).text, QStringLiteral("x"));
     QCOMPARE(renderSnapshot.cells.at(0).text, QStringLiteral("a"));
+    QCOMPARE(renderSnapshot.cells.cell(1, 0).text, QStringLiteral("c"));
 
-    const TerminalCell *const cellStorage = frame.cells.constData();
+    const auto *const rowTable = frame.cells.rowTableData();
+    QVector<const TerminalCell *> rowPayloads;
+    rowPayloads.reserve(frame.rows);
+    for (int row = 0; row < frame.rows; ++row) {
+        rowPayloads.append(frame.cells.rowData(row));
+    }
     TerminalUpdate colorsOnly;
     colorsOnly.columns = 2;
-    colorsOnly.rows = 1;
+    colorsOnly.rows = 3;
     colorsOnly.colorsChanged = true;
     colorsOnly.foreground = Qt::cyan;
     colorsOnly.background = Qt::darkBlue;
     colorsOnly.cursorColor = Qt::magenta;
     colorsOnly.palette.fill(Qt::darkGreen, 256);
     colorsOnly.contentRevision = 3;
-    QVERIFY(applyTerminalUpdate(frame, colorsOnly));
-    QCOMPARE(frame.cells.constData(), cellStorage);
-    QCOMPARE(frame.cells.at(0).text, QStringLiteral("x"));
+    TerminalFrameApplyMetrics metadataMetrics;
+    QVERIFY(applyTerminalUpdate(frame, colorsOnly, &metadataMetrics));
+    QCOMPARE(metadataMetrics.rowTableAllocations, quint64{0});
+    QCOMPARE(metadataMetrics.rowTableDetaches, quint64{0});
+    QCOMPARE(metadataMetrics.rowHeadersCopied, quint64{0});
+    QCOMPARE(metadataMetrics.rowPayloadsInstalled, quint64{0});
+    QCOMPARE(metadataMetrics.rowPayloadsReused, quint64{3});
+    QCOMPARE(metadataMetrics.cellPayloadAllocations, quint64{0});
+    QCOMPARE(metadataMetrics.terminalCellsCopied, quint64{0});
+    QCOMPARE(frame.cells.rowTableData(), rowTable);
+    for (int row = 0; row < frame.rows; ++row) {
+        QCOMPARE(frame.cells.rowData(row), rowPayloads.at(row));
+    }
+    QCOMPARE(frame.cells.cell(1, 0).text, QStringLiteral("x"));
     QCOMPARE(frame.foreground, QColor(Qt::cyan));
     QCOMPARE(frame.palette.size(), 256);
     QCOMPARE(frame.palette.at(42), QColor(Qt::darkGreen));

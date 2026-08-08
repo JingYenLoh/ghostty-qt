@@ -964,8 +964,10 @@ void TerminalPane::refreshCustomShaderUniformBase()
         if (cursorColumn >= 0 && cursorColumn < frame_.columns && cursorRow >= 0
             && cursorRow < frame_.rows && cursorIndex >= 0
             && cursorIndex < frame_.cells.size()) {
-            cursorCellForeground = frame_.cells.at(cursorIndex).foreground;
-            cursorCellBackground = frame_.cells.at(cursorIndex).background;
+            const TerminalCell &cursorCell =
+                frame_.cells.cell(cursorRow, cursorColumn);
+            cursorCellForeground = cursorCell.foreground;
+            cursorCellBackground = cursorCell.background;
         } else {
             cursorCellForeground = foreground;
             cursorCellBackground = background;
@@ -5366,7 +5368,8 @@ void TerminalPane::refreshHyperlinkHover()
             hoverCell_.y() * frame_.columns + hoverCell_.x();
         targetMayHaveLink = options_.linkUrl
             || (targetIndex >= 0 && targetIndex < frame_.cells.size()
-                && frame_.cells.at(targetIndex).hasHyperlink());
+                && frame_.cells.cell(hoverCell_.y(), hoverCell_.x())
+                       .hasHyperlink());
     }
 
     if (!targetMayHaveLink) {
@@ -5536,7 +5539,7 @@ bool TerminalPane::hyperlinkCellCandidate(const QPoint &cell,
     }
     const int index = cell.y() * frame_.columns + cell.x();
     const bool osc8Candidate = index >= 0 && index < frame_.cells.size()
-        && frame_.cells.at(index).hasHyperlink();
+        && frame_.cells.cell(cell.y(), cell.x()).hasHyperlink();
     const bool resolvedRegexCandidate = options_.linkUrl
         && hoveredLinkKind_ == TerminalLinkKind::Regex
         && hoveredHyperlinkColumns_ == frame_.columns

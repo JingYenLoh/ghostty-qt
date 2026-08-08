@@ -2365,7 +2365,8 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
             : -1;
         if (cursorActive && cursorCellIndex >= 0
             && cursorCellIndex < frame.cells.size()) {
-            const TerminalCell &cursorCell = frame.cells.at(cursorCellIndex);
+            const TerminalCell &cursorCell =
+                frame.cells.cell(frame.cursorRow, frame.cursorColumn);
             cursorCellForeground = cursorCell.foreground;
             cursorCellBackground = cursorCell.background;
             applyBoldColor(cursorCell, frame, appearance, &cursorCellForeground,
@@ -2496,6 +2497,8 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
 
         for (int row = 0; row < visibleRows; ++row) {
             const qreal top = static_cast<qreal>(row) * cellHeight;
+            const TerminalFrameCellStorage::Row &frameRow =
+                frame.cells.rowAt(row);
             const quint64 textRowEpoch =
                 row < textRowEpochs.size() ? textRowEpochs.at(row) : 0;
             const quint64 solidRowEpoch =
@@ -2559,7 +2562,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                 for (int column = 0; column < visibleColumns; ++column) {
                     const qsizetype index =
                         static_cast<qsizetype>(row) * frame.columns + column;
-                    if (index >= frame.cells.size()) {
+                    if (column >= frameRow.size()) {
                         if (rebuildRowSolids
                             && solidRow.glyphForegrounds.at(column).isValid()) {
                             solidRow.glyphForegrounds[column] = {};
@@ -2567,7 +2570,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                         }
                         continue;
                     }
-                    const TerminalCell &cell = frame.cells.at(index);
+                    const TerminalCell &cell = frameRow.at(column);
                     const qreal left = static_cast<qreal>(column) * cellWidth;
                     const qreal drawWidth =
                         cellWidth * static_cast<qreal>(cell.columnSpan());

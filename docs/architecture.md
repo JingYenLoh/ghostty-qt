@@ -198,13 +198,15 @@ The output path has six stages:
 3. `SessionWorker` requests a render update at the coalesced frame boundary;
 4. the adapter copies full or dirty-row state into an owning `TerminalUpdate`;
 5. a queued signal crosses to `TerminalController` and `TerminalPane`;
-6. the pane merges the update into its retained `TerminalFrame` and schedules
-   a scene-graph update.
+6. the pane installs dirty row payloads into its row-sharded retained
+   `TerminalFrame` and schedules a scene-graph update.
 
 Resize, viewport changes, and structural terminal changes may publish a full
 frame. Ordinary output publishes only dirty rows. Qt containers are implicitly
-shared across the queued boundary, and the pane copies only rows replaced by
-the update.
+shared across the queued boundary. The pane's outer row table detaches when a
+render snapshot is holding it, then dirty row payload handles are installed;
+clean rows and the previous render snapshot keep sharing their payloads. This
+merge copies no `TerminalCell` objects.
 
 Terminal effects such as title, working directory, bell, progress, clipboard,
 and desktop notification, plus worker completions such as file actions, travel

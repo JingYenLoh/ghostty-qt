@@ -66,7 +66,22 @@ struct Measurement {
     QVector<qint64> endToEndNanoseconds;
     quint64 snapshotChecksum = 1'469'598'103'934'665'603ULL;
     quint64 applyChecksum = 1'469'598'103'934'665'603ULL;
+    quint64 retainedSnapshotChecksum = 1'469'598'103'934'665'603ULL;
+    TerminalFrameApplyMetrics applyMetrics;
+    quint64 retainedSnapshots = 0;
 };
+
+void accumulateApplyMetrics(TerminalFrameApplyMetrics *total,
+                            const TerminalFrameApplyMetrics &sample)
+{
+    total->rowTableAllocations += sample.rowTableAllocations;
+    total->rowTableDetaches += sample.rowTableDetaches;
+    total->rowHeadersCopied += sample.rowHeadersCopied;
+    total->rowPayloadsInstalled += sample.rowPayloadsInstalled;
+    total->rowPayloadsReused += sample.rowPayloadsReused;
+    total->cellPayloadAllocations += sample.cellPayloadAllocations;
+    total->terminalCellsCopied += sample.terminalCellsCopied;
+}
 
 std::optional<int> integerOption(const QString &value, bool allowZero = false)
 {
@@ -417,6 +432,96 @@ bool validateAndChecksum(const TerminalUpdate &update,
     return true;
 }
 
+struct RetainedFrameIdentity {
+    const TerminalFrameCellStorage::Row *rowTable = nullptr;
+    QVector<const TerminalCell *> rowPayloads;
+};
+
+RetainedFrameIdentity captureRetainedFrameIdentity(const TerminalFrame &frame)
+{
+    RetainedFrameIdentity identity;
+    identity.rowTable = frame.cells.rowTableData();
+    identity.rowPayloads.reserve(frame.rows);
+    for (int row = 0; row < frame.rows; ++row) {
+        identity.rowPayloads.append(frame.cells.rowData(row));
+    }
+    return identity;
+}
+
+bool validateRetainedFrameSharing(const TerminalFrame &retainedFrame,
+                                  const RetainedFrameIdentity &retainedIdentity,
+                                  const TerminalUpdate &update,
+                                  const TerminalFrame &frame,
+                                  const TerminalFrameApplyMetrics &metrics,
+                                  quint64 *checksum, QString *error)
+{
+    if (retainedFrame.cells.rowTableData() != retainedIdentity.rowTable
+        || frame.cells.rowTableData() == retainedIdentity.rowTable) {
+        *error = QStringLiteral(
+            "retained frame did not preserve an independent row table");
+        return false;
+    }
+
+    qsizetype updateRowIndex = 0;
+    for (int row = 0; row < frame.rows; ++row) {
+        if (retainedFrame.cells.rowData(row)
+            != retainedIdentity.rowPayloads.at(row)) {
+            *error = QStringLiteral("retained row payload changed after apply");
+            return false;
+        }
+
+        const bool replaced = updateRowIndex < update.dirtyRows.size()
+            && update.dirtyRows.at(updateRowIndex).row == row;
+        if (replaced) {
+            if (frame.cells.rowData(row)
+                    != update.dirtyRows.at(updateRowIndex).cells.constData()
+                || frame.cells.rowData(row)
+                    == retainedIdentity.rowPayloads.at(row)) {
+                *error = QStringLiteral(
+                    "dirty row was copied or replaced the retained payload");
+                return false;
+            }
+            ++updateRowIndex;
+        } else if (frame.cells.rowData(row)
+                   != retainedIdentity.rowPayloads.at(row)) {
+            *error = QStringLiteral("clean row payload was not reused");
+            return false;
+        }
+
+        const auto &retainedRow = retainedFrame.cells.rowAt(row);
+        for (const TerminalCell &cell : retainedRow) {
+            *checksum = mixTextChecksum(*checksum, cell.text);
+            *checksum = mixChecksum(*checksum, terminalCellChecksum(cell));
+        }
+    }
+    if (updateRowIndex != update.dirtyRows.size()) {
+        *error =
+            QStringLiteral("not every published row payload was installed");
+        return false;
+    }
+
+    const quint64 expectedInstalled =
+        static_cast<quint64>(update.dirtyRows.size());
+    const quint64 expectedReused = update.fullFrame
+        ? 0
+        : static_cast<quint64>(update.rows)
+            - static_cast<quint64>(update.dirtyRows.size());
+    const quint64 expectedDetaches = update.fullFrame ? 0 : 1;
+    const quint64 expectedHeaders =
+        update.fullFrame ? 0 : static_cast<quint64>(update.rows);
+    if (metrics.rowTableAllocations != 1
+        || metrics.rowTableDetaches != expectedDetaches
+        || metrics.rowHeadersCopied != expectedHeaders
+        || metrics.rowPayloadsInstalled != expectedInstalled
+        || metrics.rowPayloadsReused != expectedReused
+        || metrics.cellPayloadAllocations != 0
+        || metrics.terminalCellsCopied != 0) {
+        *error = QStringLiteral("retained apply metrics were unexpected");
+        return false;
+    }
+    return true;
+}
+
 TimingSummary summarize(QVector<qint64> samples)
 {
     const qint64 total =
@@ -511,6 +616,9 @@ std::optional<Measurement> runBenchmark(const BenchmarkOptions &options,
     for (int iteration = 0; iteration < totalIterations; ++iteration) {
         const int variantIndex = iteration % 2;
         const int variant = variantIndex + 1;
+        const TerminalFrame retainedFrame = frame;
+        const RetainedFrameIdentity retainedIdentity =
+            captureRetainedFrameIdentity(retainedFrame);
         if (workload == Workload::FullFrame) {
             adapter->reset();
             adapter->writeVt(fullVariants[variantIndex]);
@@ -529,9 +637,10 @@ std::optional<Measurement> runBenchmark(const BenchmarkOptions &options,
 
         QElapsedTimer applyTimer;
         applyTimer.start();
+        TerminalFrameApplyMetrics applyMetrics;
         const bool applied =
             renderResult == GhosttyVtAdapter::RenderResult::Ready
-            && applyTerminalUpdate(frame, snapshot.update);
+            && applyTerminalUpdate(frame, snapshot.update, &applyMetrics);
         const qint64 applyNanoseconds = applyTimer.nsecsElapsed();
         const qint64 endToEndNanoseconds = endToEndTimer.nsecsElapsed();
         if (!applied) {
@@ -545,11 +654,18 @@ std::optional<Measurement> runBenchmark(const BenchmarkOptions &options,
                                  &measurement.applyChecksum, error)) {
             return std::nullopt;
         }
+        if (!validateRetainedFrameSharing(
+                retainedFrame, retainedIdentity, snapshot.update, frame,
+                applyMetrics, &measurement.retainedSnapshotChecksum, error)) {
+            return std::nullopt;
+        }
 
         if (iteration >= options.warmup) {
             measurement.snapshotNanoseconds.append(snapshotNanoseconds);
             measurement.applyNanoseconds.append(applyNanoseconds);
             measurement.endToEndNanoseconds.append(endToEndNanoseconds);
+            accumulateApplyMetrics(&measurement.applyMetrics, applyMetrics);
+            ++measurement.retainedSnapshots;
         }
     }
     return measurement;
@@ -567,6 +683,14 @@ void printMeasurement(const BenchmarkOptions &options, Workload workload,
     const quint64 cellsPerUpdate =
         static_cast<quint64>(options.columns) * rowsPerUpdate;
     const quint64 payloadBytes = cellsPerUpdate * sizeof(TerminalCell);
+    const quint64 rowHeaderBytesCopied =
+        measurement.applyMetrics.rowHeadersCopied
+        * sizeof(TerminalFrameCellStorage::Row);
+    const quint64 terminalCellBytesCopied =
+        measurement.applyMetrics.terminalCellsCopied * sizeof(TerminalCell);
+    const quint64 retainedCellBytesReused =
+        measurement.applyMetrics.rowPayloadsReused
+        * static_cast<quint64>(options.columns) * sizeof(TerminalCell);
     const double measuredCells =
         static_cast<double>(cellsPerUpdate) * options.iterations;
     const double measuredPayloadGiB = static_cast<double>(payloadBytes)
@@ -579,7 +703,7 @@ void printMeasurement(const BenchmarkOptions &options, Workload workload,
     QTextStream output(stdout);
     output.setRealNumberNotation(QTextStream::FixedNotation);
     output.setRealNumberPrecision(2);
-    output << "benchmark=terminal-frame-materialization benchmark_contract=1"
+    output << "benchmark=terminal-frame-materialization benchmark_contract=2"
            << " workload="
            << (workload == Workload::FullFrame ? "full-frame" : "dirty-row")
            << " corpus=" << corpusName(options.corpus)
@@ -590,6 +714,7 @@ void printMeasurement(const BenchmarkOptions &options, Workload workload,
            << " cells_per_update=" << cellsPerUpdate
            << " terminal_cell_bytes=" << sizeof(TerminalCell)
            << " update_cell_payload_bytes=" << payloadBytes
+           << " retained_snapshot=true"
            << " warmup=" << options.warmup
            << " iterations=" << options.iterations << '\n';
     output << "timing ";
@@ -613,8 +738,28 @@ void printMeasurement(const BenchmarkOptions &options, Workload workload,
            << static_cast<double>(options.iterations)
             / seconds(endToEnd.totalNanoseconds)
            << '\n';
+    output << "storage retained_snapshots=" << measurement.retainedSnapshots
+           << " row_table_allocations="
+           << measurement.applyMetrics.rowTableAllocations
+           << " row_table_detaches="
+           << measurement.applyMetrics.rowTableDetaches
+           << " row_headers_copied="
+           << measurement.applyMetrics.rowHeadersCopied
+           << " row_header_bytes_copied=" << rowHeaderBytesCopied
+           << " row_payloads_installed="
+           << measurement.applyMetrics.rowPayloadsInstalled
+           << " row_payloads_reused="
+           << measurement.applyMetrics.rowPayloadsReused
+           << " retained_cell_bytes_reused=" << retainedCellBytesReused
+           << " cell_payload_allocations="
+           << measurement.applyMetrics.cellPayloadAllocations
+           << " terminal_cells_copied="
+           << measurement.applyMetrics.terminalCellsCopied
+           << " terminal_cell_bytes_copied=" << terminalCellBytesCopied << '\n';
     output << "validation snapshot_checksum=" << measurement.snapshotChecksum
-           << " apply_checksum=" << measurement.applyChecksum << '\n';
+           << " apply_checksum=" << measurement.applyChecksum
+           << " retained_snapshot_checksum="
+           << measurement.retainedSnapshotChecksum << '\n';
 }
 
 } // namespace
@@ -709,25 +854,30 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    const auto run = [&](Workload selected) {
+    const auto run = [&](Workload selected, int dirtyRowCount) {
+        BenchmarkOptions scenarioOptions = options;
+        scenarioOptions.dirtyRows = dirtyRowCount;
         QString error;
         const std::optional<Measurement> measurement =
-            runBenchmark(options, selected, &error);
+            runBenchmark(scenarioOptions, selected, &error);
         if (!measurement) {
             QTextStream(stderr) << error << '\n';
             return false;
         }
-        printMeasurement(options, selected, *measurement);
+        printMeasurement(scenarioOptions, selected, *measurement);
         return true;
     };
-    if ((workload == QStringLiteral("full")
-         || workload == QStringLiteral("all"))
-        && !run(Workload::FullFrame)) {
+    if (workload == QStringLiteral("all") && !run(Workload::DirtyRows, 1)) {
         return 1;
     }
     if ((workload == QStringLiteral("dirty")
+         || (workload == QStringLiteral("all") && options.dirtyRows != 1))
+        && !run(Workload::DirtyRows, options.dirtyRows)) {
+        return 1;
+    }
+    if ((workload == QStringLiteral("full")
          || workload == QStringLiteral("all"))
-        && !run(Workload::DirtyRows)) {
+        && !run(Workload::FullFrame, options.rows)) {
         return 1;
     }
     return 0;
