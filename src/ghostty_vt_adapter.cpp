@@ -66,6 +66,35 @@ constexpr qsizetype maximumPendingProgressReports = 256;
 constexpr uint32_t kittyUnicodePlaceholder = 0x10eeeeU;
 constexpr int kittyMaximumDecodedImageMegabytes = 400;
 
+[[nodiscard]] constexpr bool isUnicodeScalar(uint32_t codepoint) noexcept
+{
+    return codepoint <= 0x10ffffU
+        && !(codepoint >= 0xd800U && codepoint <= 0xdfffU);
+}
+
+[[nodiscard]] QString singleCodepointText(uint32_t codepoint)
+{
+    constexpr uint32_t firstPrintableAscii = 0x20U;
+    constexpr uint32_t lastPrintableAscii = 0x7eU;
+    static constexpr auto printableAscii = [] {
+        std::array<char16_t, lastPrintableAscii - firstPrintableAscii + 1U>
+            characters{};
+        for (size_t index = 0; index < characters.size(); ++index) {
+            characters[index] =
+                static_cast<char16_t>(firstPrintableAscii + index);
+        }
+        return characters;
+    }();
+
+    if (codepoint >= firstPrintableAscii && codepoint <= lastPrintableAscii) {
+        return QString::fromRawData(
+            printableAscii.data() + (codepoint - firstPrintableAscii), 1);
+    }
+
+    const char32_t scalar = static_cast<char32_t>(codepoint);
+    return QString::fromUcs4(&scalar, 1);
+}
+
 bool decodeKittyPng(void *, const GhosttyAllocator *allocator,
                     const uint8_t *data, size_t dataLength,
                     GhosttySysImage *output)
@@ -4454,44 +4483,47 @@ public:
                         rowUpdate.presentation.paddingExtensionSafe = false;
                     }
 
-                    std::array<uint8_t, 64> graphemeStorage;
-                    GhosttyBuffer graphemeBuffer{
-                        .ptr = graphemeStorage.data(),
-                        .cap = graphemeStorage.size(),
-                        .len = 0,
-                    };
-                    GhosttyResult graphemeResult =
-                        ghostty_render_state_row_cells_get(
-                            rowCells_,
-                            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8,
-                            &graphemeBuffer);
-                    QByteArray dynamicGrapheme;
-                    if (graphemeResult == GHOSTTY_OUT_OF_SPACE) {
-                        dynamicGrapheme.resize(
-                            static_cast<qsizetype>(graphemeBuffer.len));
-                        graphemeBuffer.ptr =
-                            reinterpret_cast<uint8_t *>(dynamicGrapheme.data());
-                        graphemeBuffer.cap =
-                            static_cast<size_t>(dynamicGrapheme.size());
-                        graphemeResult = ghostty_render_state_row_cells_get(
-                            rowCells_,
-                            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8,
-                            &graphemeBuffer);
-                    }
-                    if (graphemeResult != GHOSTTY_SUCCESS) {
+                    if (graphemeCount == 1 && !isUnicodeScalar(codepoint)) {
                         return RenderResult::Retry;
                     }
-                    if (graphemeBuffer.len > 0) {
-                        cell.text = QString::fromUtf8(
-                            reinterpret_cast<const char *>(graphemeBuffer.ptr),
-                            static_cast<qsizetype>(graphemeBuffer.len));
-                    }
-                    // Virtual Kitty placements use this private placeholder as
-                    // geometry metadata. libghostty's native shaper renders it
-                    // blank; keep Qt from displaying a missing-glyph box while
-                    // the public API still lacks expanded virtual fragments.
-                    if (codepoint == kittyUnicodePlaceholder) {
-                        cell.text.clear();
+                    const bool suppressText = style.invisible || cell.spacer()
+                        || codepoint == kittyUnicodePlaceholder;
+                    if (graphemeCount == 1 && !suppressText) {
+                        cell.text = singleCodepointText(codepoint);
+                    } else if (graphemeCount > 1 && !suppressText) {
+                        std::array<uint8_t, 64> graphemeStorage;
+                        GhosttyBuffer graphemeBuffer{
+                            .ptr = graphemeStorage.data(),
+                            .cap = graphemeStorage.size(),
+                            .len = 0,
+                        };
+                        GhosttyResult graphemeResult =
+                            ghostty_render_state_row_cells_get(
+                                rowCells_,
+                                GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8,
+                                &graphemeBuffer);
+                        QByteArray dynamicGrapheme;
+                        if (graphemeResult == GHOSTTY_OUT_OF_SPACE) {
+                            dynamicGrapheme.resize(
+                                static_cast<qsizetype>(graphemeBuffer.len));
+                            graphemeBuffer.ptr = reinterpret_cast<uint8_t *>(
+                                dynamicGrapheme.data());
+                            graphemeBuffer.cap =
+                                static_cast<size_t>(dynamicGrapheme.size());
+                            graphemeResult = ghostty_render_state_row_cells_get(
+                                rowCells_,
+                                GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8,
+                                &graphemeBuffer);
+                        }
+                        if (graphemeResult != GHOSTTY_SUCCESS) {
+                            return RenderResult::Retry;
+                        }
+                        if (graphemeBuffer.len > 0) {
+                            cell.text = QString::fromUtf8(
+                                reinterpret_cast<const char *>(
+                                    graphemeBuffer.ptr),
+                                static_cast<qsizetype>(graphemeBuffer.len));
+                        }
                     }
                     cell.baseCodepoint = codepoint;
                     cell.setPlainCodepoint(graphemeCount == 1);
@@ -4584,9 +4616,6 @@ public:
                         hasSelection
                         && columnIndex >= static_cast<int>(rowSelection.start_x)
                         && columnIndex <= static_cast<int>(rowSelection.end_x));
-                    if (style.invisible || cell.spacer()) {
-                        cell.text.clear();
-                    }
                     ++columnIndex;
                 }
                 if (columnIndex != metadata.columns) {

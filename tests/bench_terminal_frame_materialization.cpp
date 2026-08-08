@@ -27,12 +27,29 @@ enum class Workload {
     DirtyRows,
 };
 
+enum class Corpus {
+    Ascii,
+    Blank,
+    Unicode,
+};
+
+const char *corpusName(Corpus corpus)
+{
+    switch (corpus) {
+    case Corpus::Ascii: return "ascii";
+    case Corpus::Blank: return "blank";
+    case Corpus::Unicode: return "unicode";
+    }
+    Q_UNREACHABLE();
+}
+
 struct BenchmarkOptions {
     int columns = 160;
     int rows = 48;
     int dirtyRows = 4;
     int warmup = 10;
     int iterations = 100;
+    Corpus corpus = Corpus::Ascii;
 };
 
 struct TimingSummary {
@@ -68,6 +85,38 @@ char cellCharacter(int variant, int row, int column)
     return static_cast<char>('!' + value % printableAsciiCount);
 }
 
+struct UnicodeVariant {
+    QString narrow;
+    QString extended;
+    quint32 narrowCodepoint = 0;
+    quint32 extendedCodepoint = 0;
+};
+
+const UnicodeVariant &unicodeVariant(int variant)
+{
+    static const std::array variants{
+        UnicodeVariant{
+            .narrow = QStringLiteral("\u03bb"),
+            .extended = QStringLiteral("e\u0301"),
+            .narrowCodepoint = 0x03bb,
+            .extendedCodepoint = U'e',
+        },
+        UnicodeVariant{
+            .narrow = QStringLiteral("\u03bc"),
+            .extended = QStringLiteral("o\u0302"),
+            .narrowCodepoint = 0x03bc,
+            .extendedCodepoint = U'o',
+        },
+        UnicodeVariant{
+            .narrow = QStringLiteral("\u03bd"),
+            .extended = QStringLiteral("a\u0308"),
+            .narrowCodepoint = 0x03bd,
+            .extendedCodepoint = U'a',
+        },
+    };
+    return variants.at(static_cast<std::size_t>(variant) % variants.size());
+}
+
 void appendCursorPosition(QByteArray &bytes, int row, int column)
 {
     bytes += QByteArrayLiteral("\033[");
@@ -87,7 +136,7 @@ void appendRowStyle(QByteArray &bytes, int row)
     }
 }
 
-void appendRow(QByteArray &bytes, int columns, int row, int variant)
+void appendAsciiRow(QByteArray &bytes, int columns, int row, int variant)
 {
     appendCursorPosition(bytes, row, 0);
     appendRowStyle(bytes, row);
@@ -99,13 +148,54 @@ void appendRow(QByteArray &bytes, int columns, int row, int variant)
     bytes += '\r';
 }
 
+void appendBlankRow(QByteArray &bytes, int row, int variant)
+{
+    appendCursorPosition(bytes, row, 0);
+    const int red = 17 + variant * 37 + row % 7;
+    const int green = 29 + variant * 31 + row % 11;
+    const int blue = 43 + variant * 23 + row % 13;
+    bytes += QByteArrayLiteral("\033[0;48;2;");
+    bytes += QByteArray::number(red);
+    bytes += ';';
+    bytes += QByteArray::number(green);
+    bytes += ';';
+    bytes += QByteArray::number(blue);
+    bytes += QByteArrayLiteral("m\033[2K\033[0m\r");
+}
+
+void appendUnicodeRow(QByteArray &bytes, int columns, int row, int variant)
+{
+    appendCursorPosition(bytes, row, 0);
+    appendRowStyle(bytes, row);
+    const UnicodeVariant &contents = unicodeVariant(variant);
+    for (int column = 0; column < columns; ++column) {
+        bytes +=
+            (column % 2 == 0 ? contents.narrow : contents.extended).toUtf8();
+    }
+    bytes += '\r';
+}
+
+void appendRow(QByteArray &bytes, const BenchmarkOptions &options, int row,
+               int variant)
+{
+    switch (options.corpus) {
+    case Corpus::Ascii:
+        appendAsciiRow(bytes, options.columns, row, variant);
+        break;
+    case Corpus::Blank: appendBlankRow(bytes, row, variant); break;
+    case Corpus::Unicode:
+        appendUnicodeRow(bytes, options.columns, row, variant);
+        break;
+    }
+}
+
 QByteArray fullFrameCommands(const BenchmarkOptions &options, int variant)
 {
     QByteArray bytes;
     bytes.reserve(options.rows * (options.columns + 40));
     bytes += QByteArrayLiteral("\033[?25l");
     for (int row = 0; row < options.rows; ++row) {
-        appendRow(bytes, options.columns, row, variant);
+        appendRow(bytes, options, row, variant);
     }
     return bytes;
 }
@@ -133,7 +223,7 @@ QByteArray dirtyRowCommands(const BenchmarkOptions &options,
     QByteArray bytes;
     bytes.reserve(dirtyRows.size() * (options.columns + 40));
     for (const int row : dirtyRows) {
-        appendRow(bytes, options.columns, row, variant);
+        appendRow(bytes, options, row, variant);
     }
     return bytes;
 }
@@ -182,6 +272,79 @@ quint64 terminalCellChecksum(const TerminalCell &cell)
     return mixChecksum(checksum, cell.underlineColor.rgba());
 }
 
+struct ExpectedCell {
+    QStringView text;
+    quint32 baseCodepoint = 0;
+    bool plainCodepoint = false;
+    bool extendedGrapheme = false;
+    bool spacer = false;
+    int columnSpan = 1;
+};
+
+ExpectedCell expectedUnicodeCell(int variant, int column)
+{
+    const UnicodeVariant &contents = unicodeVariant(variant);
+    switch (column % 2) {
+    case 0:
+        return {
+            .text = contents.narrow,
+            .baseCodepoint = contents.narrowCodepoint,
+            .plainCodepoint = true,
+        };
+    default:
+        return {
+            .text = contents.extended,
+            .baseCodepoint = contents.extendedCodepoint,
+            .extendedGrapheme = true,
+        };
+    }
+}
+
+bool matchesExpectedCell(const TerminalCell &cell,
+                         const BenchmarkOptions &options, int row, int column,
+                         int variant)
+{
+    switch (options.corpus) {
+    case Corpus::Ascii:
+        return cell.text.size() == 1
+            && cell.text.at(0).unicode()
+            == static_cast<uchar>(cellCharacter(variant, row, column))
+            && cell.baseCodepoint
+            == static_cast<uchar>(cellCharacter(variant, row, column))
+            && cell.plainCodepoint() && !cell.extendedGrapheme()
+            && !cell.spacer() && cell.columnSpan() == 1;
+    case Corpus::Blank:
+        return cell.text.isEmpty() && cell.baseCodepoint == 0
+            && !cell.plainCodepoint() && !cell.extendedGrapheme()
+            && !cell.spacer() && cell.columnSpan() == 1
+            && cell.backgroundExplicit();
+    case Corpus::Unicode: {
+        const ExpectedCell expected = expectedUnicodeCell(variant, column);
+        return expected.text.compare(cell.text) == 0
+            && cell.baseCodepoint == expected.baseCodepoint
+            && cell.plainCodepoint() == expected.plainCodepoint
+            && cell.extendedGrapheme() == expected.extendedGrapheme
+            && cell.spacer() == expected.spacer
+            && cell.columnSpan() == expected.columnSpan;
+    }
+    }
+    Q_UNREACHABLE();
+}
+
+quint64 mixTextChecksum(quint64 checksum, QStringView text)
+{
+    // Preserve the original checksum contract for the default ASCII corpus.
+    if (text.size() == 1) {
+        return mixChecksum(checksum, text.at(0).unicode());
+    }
+    checksum = mixChecksum(
+        checksum, 0x8000'0000'0000'0000ULL | static_cast<quint64>(text.size()));
+    for (const QChar character : text) {
+        checksum = mixChecksum(checksum, character.unicode());
+    }
+    return checksum;
+}
+
 bool validateAndChecksum(const TerminalUpdate &update,
                          const TerminalFrame &frame,
                          const BenchmarkOptions &options, Workload workload,
@@ -221,8 +384,6 @@ bool validateAndChecksum(const TerminalUpdate &update,
             return false;
         }
         for (int column = 0; column < options.columns; ++column) {
-            const ushort expected =
-                static_cast<uchar>(cellCharacter(variant, expectedRow, column));
             const TerminalCell &snapshotCell = rowUpdate.cells.at(column);
             const TerminalCell &appliedCell = frame.cells.at(
                 static_cast<qsizetype>(expectedRow) * options.columns + column);
@@ -230,8 +391,8 @@ bool validateAndChecksum(const TerminalUpdate &update,
                 terminalCellChecksum(snapshotCell);
             const quint64 appliedCellChecksum =
                 terminalCellChecksum(appliedCell);
-            if (snapshotCell.text.size() != 1
-                || snapshotCell.text.at(0).unicode() != expected
+            if (!matchesExpectedCell(snapshotCell, options, expectedRow, column,
+                                     variant)
                 || appliedCell.text != snapshotCell.text
                 || appliedCellChecksum != snapshotCellChecksum) {
                 *error = QStringLiteral(
@@ -242,15 +403,14 @@ bool validateAndChecksum(const TerminalUpdate &update,
                 mixChecksum(*snapshotChecksum,
                             static_cast<quint64>(expectedRow) << 32
                                 | static_cast<quint64>(column));
-            *snapshotChecksum = mixChecksum(*snapshotChecksum,
-                                            snapshotCell.text.at(0).unicode());
+            *snapshotChecksum =
+                mixTextChecksum(*snapshotChecksum, snapshotCell.text);
             *snapshotChecksum =
                 mixChecksum(*snapshotChecksum, snapshotCellChecksum);
             *applyChecksum = mixChecksum(*applyChecksum,
                                          static_cast<quint64>(expectedRow) << 32
                                              | static_cast<quint64>(column));
-            *applyChecksum =
-                mixChecksum(*applyChecksum, appliedCell.text.at(0).unicode());
+            *applyChecksum = mixTextChecksum(*applyChecksum, appliedCell.text);
             *applyChecksum = mixChecksum(*applyChecksum, appliedCellChecksum);
         }
     }
@@ -422,6 +582,7 @@ void printMeasurement(const BenchmarkOptions &options, Workload workload,
     output << "benchmark=terminal-frame-materialization benchmark_contract=1"
            << " workload="
            << (workload == Workload::FullFrame ? "full-frame" : "dirty-row")
+           << " corpus=" << corpusName(options.corpus)
            << " columns=" << options.columns << " rows=" << options.rows
            << " dirty_rows="
            << (workload == Workload::FullFrame ? options.rows
@@ -472,6 +633,10 @@ int main(int argc, char **argv)
         QStringLiteral("workload"),
         QStringLiteral("Workload to run: full, dirty, or all."),
         QStringLiteral("name"), QStringLiteral("all"));
+    const QCommandLineOption corpusOption(
+        QStringLiteral("corpus"),
+        QStringLiteral("Cell content corpus: ascii, blank, or unicode."),
+        QStringLiteral("name"), QStringLiteral("ascii"));
     const QCommandLineOption columnsOption(
         QStringLiteral("columns"), QStringLiteral("Terminal columns."),
         QStringLiteral("count"), QStringLiteral("160"));
@@ -488,7 +653,7 @@ int main(int argc, char **argv)
     const QCommandLineOption iterationsOption(
         QStringLiteral("iterations"), QStringLiteral("Measured updates."),
         QStringLiteral("count"), QStringLiteral("100"));
-    parser.addOptions({workloadOption, columnsOption, rowsOption,
+    parser.addOptions({workloadOption, corpusOption, columnsOption, rowsOption,
                        dirtyRowsOption, warmupOption, iterationsOption});
     parser.process(application);
 
@@ -513,6 +678,17 @@ int main(int argc, char **argv)
     options.dirtyRows = *dirtyRows;
     options.warmup = *warmup;
     options.iterations = *iterations;
+    const QString corpus = parser.value(corpusOption).toLower();
+    if (corpus == QStringLiteral("ascii")) {
+        options.corpus = Corpus::Ascii;
+    } else if (corpus == QStringLiteral("blank")) {
+        options.corpus = Corpus::Blank;
+    } else if (corpus == QStringLiteral("unicode")) {
+        options.corpus = Corpus::Unicode;
+    } else {
+        QTextStream(stderr) << "corpus must be ascii, blank, or unicode\n";
+        return 2;
+    }
     const quint64 frameCells = static_cast<quint64>(options.columns)
         * static_cast<quint64>(options.rows);
     if (options.columns > std::numeric_limits<quint16>::max()

@@ -2398,11 +2398,19 @@ void GhosttyVtAdapterTest::translatesCellStylesAndAppearanceMetadata()
 void GhosttyVtAdapterTest::preservesAuthoritativeCellCodepointsForShaping()
 {
     GhosttyVtAdapter::Options options;
-    options.geometry.columns = 10;
+    options.geometry.columns = 12;
     options.geometry.rows = 2;
     auto adapter = GhosttyVtAdapter::create(options);
     QVERIFY(adapter != nullptr);
-    adapter->writeVt(QStringLiteral("fi e\u0301 \U0001f600").toUtf8());
+    QByteArray commands = QStringLiteral("fi e\u0301 \U0001f600").toUtf8();
+    commands += QByteArrayLiteral("\033[1;8H");
+    commands += QStringLiteral("\u754c").toUtf8();
+    commands += QByteArrayLiteral("\033[1;10H\033[48;2;1;2;3m\033[K\033[0m"
+                                  "\033[2;1H\033[8m");
+    commands += QStringLiteral("e\u0301").toUtf8();
+    commands += QByteArrayLiteral("\033[0m\033[2;3H");
+    commands += QStringLiteral("\U0010eeee\u0305\u0305").toUtf8();
+    adapter->writeVt(commands);
 
     GhosttyVtAdapter::RenderSnapshot snapshot;
     QCOMPARE(adapter->renderFrame(&snapshot),
@@ -2414,6 +2422,9 @@ void GhosttyVtAdapterTest::preservesAuthoritativeCellCodepointsForShaping()
     QVERIFY(frame.cells.at(0).plainCodepoint());
     QCOMPARE(frame.cells.at(1).baseCodepoint, quint32{U'i'});
     QVERIFY(frame.cells.at(1).plainCodepoint());
+    QCOMPARE(frame.cells.at(2).text, QStringLiteral(" "));
+    QCOMPARE(frame.cells.at(2).baseCodepoint, quint32{U' '});
+    QVERIFY(frame.cells.at(2).plainCodepoint());
     QCOMPARE(frame.cells.at(3).text, QStringLiteral("e\u0301"));
     QCOMPARE(frame.cells.at(3).baseCodepoint, quint32{U'e'});
     QVERIFY(!frame.cells.at(3).plainCodepoint());
@@ -2425,6 +2436,51 @@ void GhosttyVtAdapterTest::preservesAuthoritativeCellCodepointsForShaping()
     QVERIFY(frame.cells.at(6).spacer());
     QVERIFY(!frame.cells.at(6).plainCodepoint());
     QVERIFY(!frame.cells.at(6).extendedGrapheme());
+
+    const TerminalCell &wideHead = frame.cells.at(7);
+    QCOMPARE(wideHead.text, QStringLiteral("\u754c"));
+    QCOMPARE(wideHead.baseCodepoint, quint32{0x754c});
+    QVERIFY(wideHead.plainCodepoint());
+    QVERIFY(!wideHead.extendedGrapheme());
+    QCOMPARE(wideHead.columnSpan(), 2);
+    QVERIFY(!wideHead.spacer());
+    const TerminalCell &wideTail = frame.cells.at(8);
+    QVERIFY(wideTail.text.isEmpty());
+    QVERIFY(wideTail.spacer());
+    QVERIFY(!wideTail.plainCodepoint());
+    QVERIFY(!wideTail.extendedGrapheme());
+
+    const TerminalCell &backgroundOnly = frame.cells.at(9);
+    QVERIFY(backgroundOnly.text.isEmpty());
+    QCOMPARE(backgroundOnly.baseCodepoint, quint32{0});
+    QVERIFY(!backgroundOnly.plainCodepoint());
+    QVERIFY(!backgroundOnly.extendedGrapheme());
+    QVERIFY(backgroundOnly.backgroundExplicit());
+    QCOMPARE(backgroundOnly.background, QColor::fromRgb(1, 2, 3));
+
+    const TerminalCell &invisibleGrapheme = frame.cells.at(12);
+    QVERIFY(invisibleGrapheme.text.isEmpty());
+    QCOMPARE(invisibleGrapheme.baseCodepoint, quint32{U'e'});
+    QVERIFY(!invisibleGrapheme.plainCodepoint());
+    QVERIFY(invisibleGrapheme.extendedGrapheme());
+    QVERIFY(invisibleGrapheme.invisible());
+
+    const TerminalCell &empty = frame.cells.at(13);
+    QVERIFY(empty.text.isEmpty());
+    QCOMPARE(empty.baseCodepoint, quint32{0});
+    QVERIFY(!empty.plainCodepoint());
+    QVERIFY(!empty.extendedGrapheme());
+    QVERIFY(!empty.backgroundExplicit());
+    QVERIFY(!empty.spacer());
+
+    // The Kitty Unicode placement marker is real grid content, but it must
+    // remain blank in the Qt text layer just like Ghostty's native shaper.
+    const TerminalCell &kittyPlaceholder = frame.cells.at(14);
+    QVERIFY(kittyPlaceholder.text.isEmpty());
+    QCOMPARE(kittyPlaceholder.baseCodepoint, quint32{0x10eeee});
+    QVERIFY(!kittyPlaceholder.plainCodepoint());
+    QVERIFY(kittyPlaceholder.extendedGrapheme());
+    QVERIFY(!kittyPlaceholder.spacer());
 }
 
 void GhosttyVtAdapterTest::preservesTerminalAppearanceOverrides()

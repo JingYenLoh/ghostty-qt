@@ -46,6 +46,19 @@ share one explicitly masked 32-bit word. This reduces `TerminalCell` from 112
 to 80 bytes on the current x86-64 Qt ABI and lowers both queued-update and
 retained-frame cache pressure without relying on C++ bitfield layout.
 
+The retained `TerminalFrame`, however, still stores every row in one flat
+`QVector<TerminalCell>`. A render pass takes a shallow frame snapshot; mutating
+the shared vector for a later dirty-row update can therefore detach and copy
+the whole grid. A possible next step is row-sharded storage whose outer
+container and individual row payloads are implicitly shared, so unchanged rows
+remain shared and only dirty rows detach. This would trade flat traversal and
+simple indexing for finer-grained copies, so it must first be justified by an
+extension to `bench-terminal-frame-materialization`: retain a shallow render
+snapshot while applying one-row, several-row, and full-frame updates, and
+report apply time, allocations, and copied cell bytes at representative grid
+sizes. Renderer benchmarks must also show that noncontiguous rows do not
+regress scan and paint costs.
+
 ### Renderer
 
 The retained renderer already avoids the largest terminal-frontend costs:
