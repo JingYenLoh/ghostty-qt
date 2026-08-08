@@ -309,20 +309,23 @@ the executed artifacts, Qt/RHI device metadata, DPR/framebuffer values,
 swapchain frame intervals, Qt-reported output context, and pass/skip/fail reason
 codes. On Linux it also identifies the process at the other end of the Wayland
 socket with `SO_PEERCRED` and fingerprints `/proc/<pid>/exe`; this records the
-actual socket peer executable even under a nested compositor or proxy, where desktop
-environment names would be ambiguous. The production render thread snapshots
-the live QRhi swapchain's pixel size, SDR/HDR format, alpha flags, sample count,
-and HDR metadata alongside public `QScreen` connector metadata. Connector name,
-physical size/DPI, or nominal refresh may be unknown when Wayland does not
-provide them.
+actual socket peer executable even under a nested compositor or proxy, where
+desktop environment names would be ambiguous. The production render thread
+snapshots the live QRhi swapchain's pixel size, SDR/HDR format, alpha flags,
+sample count, and HDR metadata alongside public `QScreen` connector metadata.
+Connector name, physical size/DPI, or nominal refresh may be unknown when
+Wayland does not provide them. After frame timing finishes, the process
+fingerprints the active mapped graphics driver, vendor dispatch, API loader,
+compiler, and injected layer libraries. The manifest records only roles,
+basenames, byte sizes, and content hashes; absolute paths are deliberately
+omitted.
 
-Exit 0 means at
-least one backend completed the complete matrix; exit 1
-means qualification failed; exit 77 means the current process cannot reach a
-Wayland socket or no selected backend is available. `--skip-build` reuses an
-already configured Release tree. Whether the runner built the artifacts is
-part of the report because a just-completed build can change the host's thermal
-state. Absolute frame-time thresholds remain outside qualification itself;
+Exit 0 means at least one backend completed the complete matrix; exit 1 means
+qualification failed; exit 77 means the current process cannot reach a Wayland
+socket or no selected backend is available. `--skip-build` reuses an already
+configured Release tree. Whether the runner built the artifacts is part of the
+report because a just-completed build can change the host's thermal state.
+Absolute frame-time thresholds remain outside qualification itself;
 executable-owned work counters and readbacks are its deterministic correctness
 gates.
 
@@ -346,8 +349,8 @@ Missing RenderDoc is recorded as a skip unless `--require-renderdoc` is also
 present. The production hook's `grabWindow()` validates the client surface and
 Qt frame-swap path before compositor composition; it cannot capture the
 compositor's final blur, color management, or blending with windows behind it.
-Inspect those
-effects and any requested `.rdc` interactively on the target desktop.
+Inspect those effects and any requested `.rdc` interactively on the target
+desktop.
 
 ### Comparing renderer qualification reports
 
@@ -363,14 +366,25 @@ same effective qualification settings:
 
 The comparator independently verifies each report's schema, benchmark
 contracts, complete scenario and run matrices, Qt version, RHI device, scales,
-framebuffers, warmup/iteration
-counts, build/no-build state, host CPU and kernel, Wayland peer fingerprint,
+framebuffers, warmup/iteration counts, build/no-build state, host CPU and
+kernel, Wayland peer fingerprint,
 and output/swapchain mode before comparing measurements. Repository revisions,
 harness hashes, and executable hashes are preserved as provenance and may
 differ—the changed executable is normally the subject of the comparison.
 `--allow-context-changes` permits an exploratory comparison while retaining
 every context difference in the result; it never permits a device, benchmark
 contract, or workload-matrix mismatch.
+
+The loaded-library contract is fail-closed. A device/inode identity must have
+an executable mapping before it counts as a loaded library. Each candidate is
+kept open while its inode is checked and its `fdinfo` mount ID is resolved
+through `mountinfo` to the exact device from `/proc/self/maps`; this avoids
+trusting `st_dev`, which managed supervisors can virtualize. Identity, size, and
+timestamps are checked again after hashing. Deleted mappings require the
+ptrace-gated `map_files` fallback. Inaccessible, replaced, or otherwise
+unverifiable libraries make the report incomplete. Strict comparison
+recomputes the aggregate SHA-256 from the decoded manifest and treats a
+graphics-stack change as environmental context drift.
 
 Timing mode defaults to `auto`. Quick-profile CPU/GPU medians are reported as
 advisory because their short sample sets exhibit substantial run-to-run noise.
@@ -395,12 +409,22 @@ qualification. Production `frameSwapped` intervals remain informational
 because they primarily describe compositor/vsync cadence rather than renderer
 cost.
 
-The current context contract cannot identify every graphics-driver update:
-Qt's public QRhi device metadata has no portable driver-version field. Collect
-baseline and candidate close together on an otherwise unchanged host, and use
-`--allow-context-changes` only for exploratory results. Hashing the production
-process's loaded backend driver libraries is a remaining qualification
-hardening task.
+For an enforceable performance baseline, use the long profile on an otherwise
+idle host after building Release once:
+
+```sh
+./scripts/qualify-wayland-renderer.py \
+    --profile full \
+    --skip-build \
+    --output-directory tmp/renderer-full-baseline
+```
+
+The full profile has at least 100 warmup and measured iterations for both
+benchmark families, so `auto` timing comparisons enforce the documented noise
+floors. The graphics-library manifest closes ordinary userspace driver and
+loader drift, but it does not fingerprint kernel modules, firmware, anonymous
+JIT code, or shader caches; keep the rest of the host stable and use
+`--allow-context-changes` only for exploratory results.
 
 The Kitty import benchmark separately feeds explicit-ID replacement frames
 through libghostty and the Qt snapshot boundary. `--pixel-format rgb24`

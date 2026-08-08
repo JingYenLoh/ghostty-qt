@@ -3376,8 +3376,8 @@ client-surface readback, an alpha channel, and intermediate-alpha pixels near
 the configured 0.5 opacity over at least five percent of the client surface
 while using an isolated terminal configuration. Every scaled offscreen run
 must use one QRhi device, and a render-thread sample records the shown window's
-driver and requires it to match that same device. The runner
-supplies a unique single-instance-disabled application identity and isolated
+driver and requires it to match that same device. The runner supplies a unique
+single-instance-disabled application identity and isolated
 configuration, cache, data, and state directories, but retains the host runtime
 directory because it owns the Wayland socket.
 The report fingerprints the actual Wayland socket peer executable through Linux
@@ -3388,6 +3388,22 @@ thread records Qt-reported connector geometry, scale, DPI, nominal refresh, and
 identity through `QScreen`. Output names, physical dimensions, DPI, and nominal
 refresh may be unknown when the compositor does not advertise them. This is
 client/output context, not an ICC profile or proof of compositor presentation.
+After the measured frame intervals are complete, the production process also
+walks its Linux `/proc/self/maps` entries and fingerprints the graphics stack
+that was actually mapped for the selected backend. Relevant vendor drivers,
+dispatch libraries, API loaders, compiler components, and injected layers are
+deduplicated by the mapping's device/inode pair, and only identities with an
+executable segment count as loaded libraries. Each reopened file stays pinned
+while its inode is checked and its `fdinfo` mount ID is resolved through
+`mountinfo` to the exact device recorded by `/proc/self/maps`. This mount-ID
+check remains reliable when a managed supervisor virtualizes the `st_dev`
+reported by `fstat`. The file identity, size, and timestamps are checked again
+after hashing. `/proc/self/map_files` is a best-effort fallback for deleted or
+replaced mappings because access can be ptrace-restricted. The compact manifest
+contains roles, basenames, sizes, and SHA-256 digests but no absolute paths;
+the aggregate identity is computed after timing and cannot contaminate the
+frame samples. Any relevant library that cannot be verified makes the evidence
+partial and fails qualification closed.
 Results are written atomically after each child command so a driver reset or
 timeout cannot erase earlier evidence. Each child owns a process group; timeout,
 Ctrl+C, `SIGTERM`, or `SIGHUP` terminates that group, covering ordinary build,
@@ -3395,8 +3411,8 @@ capture, and terminal descendants before the report is atomically finalized.
 
 `scripts/compare-renderer-qualification.py` consumes two immutable reports and
 first independently validates and then compares their benchmark contracts,
-complete identity matrices,
-configuration, Qt/RHI device, host, Wayland peer, and output/swapchain context.
+complete identity matrices, configuration, Qt/RHI device, loaded graphics
+stack, host, Wayland peer, and output/swapchain context.
 Only compatible records are paired. Pane and retained-shader CPU/GPU medians
 are absolute timing signals; retained-shader timing is also compared as a ratio
 to the same run's legacy renderer so common host load affects both sides. Short
@@ -3416,12 +3432,12 @@ JSON report records the corresponding limitation rather than treating a Qt
 `grabWindow()` image as a desktop screenshot.
 Generic Wayland also exposes no compositor software-version query. The peer
 executable hash identifies the process serving the socket, but does not hash
-its dynamically loaded compositor libraries. Likewise, QRhi identifies the
-device but exposes no portable graphics-driver version; a driver-library update
-can therefore escape the current context checks when the kernel and OS metadata
-are unchanged. Full output ICC/HDR state and actual presentation timestamps
-require explicit color-management and `wp_presentation` protocol integration
-and remain outside this probe.
+its dynamically loaded compositor libraries. QRhi also exposes no portable
+graphics-driver version, so the mapped-library manifest supplies the userspace
+driver identity instead. It still cannot identify kernel modules, firmware,
+anonymous JIT mappings, or shader-cache contents. Full output ICC/HDR state and
+actual presentation timestamps require explicit color-management and
+`wp_presentation` protocol integration and remain outside this probe.
 
 ## Deliberate renderer-v1 limits
 

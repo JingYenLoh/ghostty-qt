@@ -10,6 +10,7 @@
 #include "ghostty_config_service.h"
 #include "keyboard_layout.h"
 #include "launch_options.h"
+#include "renderer_graphics_library_manifest.h"
 #include "single_instance_activation.h"
 #include "systemd_notify.h"
 #include "terminal_cell_metrics.h"
@@ -2132,8 +2133,10 @@ bool installRendererQualificationTestHook(QQuickWindow *window,
                 if (!quickWindow->isVisible() || !quickWindow->isExposed()
                     || api == QSGRendererInterface::Unknown
                     || api == QSGRendererInterface::Null
-                    || api == QSGRendererInterface::Software || image.isNull()
-                    || !physicalSizeMatches
+                    || api == QSGRendererInterface::Software
+                    || (api != QSGRendererInterface::OpenGL
+                        && api != QSGRendererInterface::Vulkan)
+                    || image.isNull() || !physicalSizeMatches
                     || !QQuickWindow::hasDefaultAlphaBuffer()
                     || quickWindow->format().alphaBufferSize() <= 0
                     || quickWindow->color().alpha() != 0 || panes.isEmpty()
@@ -2221,6 +2224,12 @@ bool installRendererQualificationTestHook(QQuickWindow *window,
                         ? QString::number(value, 'f', 2)
                         : QStringLiteral("na");
                 };
+                const RendererGraphicsBackend graphicsBackend =
+                    api == QSGRendererInterface::Vulkan
+                    ? RendererGraphicsBackend::Vulkan
+                    : RendererGraphicsBackend::OpenGL;
+                const RendererGraphicsLibraryManifest graphicsLibraries =
+                    collectRendererGraphicsLibraryManifest(graphicsBackend);
 
                 QTextStream output(stdout);
                 output.setRealNumberNotation(QTextStream::FixedNotation);
@@ -2231,6 +2240,19 @@ bool installRendererQualificationTestHook(QQuickWindow *window,
                     << " platform=" << QGuiApplication::platformName()
                     << " graphics_api="
                     << rendererQualificationGraphicsApiName(api)
+                    << " graphics_library_contract=1"
+                    << " graphics_library_status="
+                    << rendererGraphicsLibraryManifestStatusName(
+                           graphicsLibraries.status)
+                    << " graphics_library_count="
+                    << graphicsLibraries.libraries.size()
+                    << " graphics_library_sha256="
+                    << (graphicsLibraries.aggregateSha256.isEmpty()
+                            ? QByteArrayLiteral("unavailable")
+                            : graphicsLibraries.aggregateSha256)
+                    << " graphics_library_manifest="
+                    << rendererQualificationOutputToken(
+                           QString::fromUtf8(graphicsLibraries.compactJson))
                     << " dpr=" << dpr << " logical=" << quickWindow->width()
                     << 'x' << quickWindow->height()
                     << " physical=" << image.width() << 'x' << image.height()

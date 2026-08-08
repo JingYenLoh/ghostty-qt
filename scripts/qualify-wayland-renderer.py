@@ -32,9 +32,9 @@ from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, unquote_to_bytes
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SUPPORTED_BACKENDS = ("opengl", "vulkan")
 RENDER_ENVIRONMENT_KEYS = (
     "QT_QPA_PLATFORM",
@@ -70,6 +70,7 @@ SOFTWARE_DEVICE_NAME_FRAGMENTS = (
     "swiftshader",
     "swrast",
 )
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 ACTIVE_REPORT_PATH: Path | None = None
 ACTIVE_REPORT: dict[str, object] | None = None
 
@@ -182,6 +183,125 @@ def parse_records(output: str) -> list[dict[str, str]]:
         for line in output.splitlines()
         if (record := parse_key_value_record(line)) is not None
     ]
+
+
+def graphics_library_aggregate(libraries: Sequence[Mapping[str, object]]) -> str:
+    records = sorted(
+        (
+            str(library["role"]),
+            str(library["name"]),
+            int(library["size"]),
+            str(library["sha256"]),
+        )
+        for library in libraries
+    )
+    payload = b"".join(
+        b"\0".join(str(field).encode("utf-8") for field in record) + b"\n"
+        for record in records
+    )
+    return hashlib.sha256(payload).hexdigest()
+
+
+def is_valid_utf8_scalar_string(value: str) -> bool:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def graphics_library_identity(
+    record: Mapping[str, str], backend: str
+) -> dict[str, object] | None:
+    encoded_manifest = record.get("graphics_library_manifest")
+    if (
+        record.get("graphics_library_contract") != "1"
+        or record.get("graphics_library_status") != "complete"
+        or not isinstance(encoded_manifest, str)
+        or re.search(r"%(?![0-9A-Fa-f]{2})", encoded_manifest)
+    ):
+        return None
+    try:
+        manifest_text = unquote_to_bytes(encoded_manifest).decode("utf-8")
+        manifest = json.loads(manifest_text)
+    except (UnicodeError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(manifest, dict)
+        or set(manifest)
+        != {"schema_version", "backend", "status", "libraries", "diagnostic"}
+        or manifest.get("schema_version") != 1
+        or manifest.get("backend") != backend
+        or manifest.get("status") != record.get("graphics_library_status")
+        or not isinstance(manifest.get("libraries"), list)
+        or not isinstance(manifest.get("diagnostic"), (str, type(None)))
+        or (
+            isinstance(manifest.get("diagnostic"), str)
+            and not is_valid_utf8_scalar_string(manifest["diagnostic"])
+        )
+    ):
+        return None
+
+    normalized: list[dict[str, object]] = []
+    identities: set[tuple[str, str, int, str]] = set()
+    for library in manifest["libraries"]:
+        if not isinstance(library, dict) or set(library) != {
+            "role",
+            "name",
+            "path_kind",
+            "size",
+            "sha256",
+        }:
+            return None
+        role = library.get("role")
+        name = library.get("name")
+        path_kind = library.get("path_kind")
+        size = library.get("size")
+        sha256 = library.get("sha256")
+        if (
+            role not in ("driver", "vendor_dispatch", "api_loader", "layer", "compiler")
+            or not isinstance(name, str)
+            or not name
+            or not is_valid_utf8_scalar_string(name)
+            or "/" in name
+            or any(delimiter in name for delimiter in ("\0", "\n", "\r"))
+            or path_kind not in ("system", "custom", "deleted")
+            or isinstance(size, bool)
+            or not isinstance(size, int)
+            or size <= 0
+            or not isinstance(sha256, str)
+            or SHA256_PATTERN.fullmatch(sha256) is None
+            or (role, name, size, sha256) in identities
+        ):
+            return None
+        identities.add((role, name, size, sha256))
+        normalized.append({"role": role, "name": name, "size": size, "sha256": sha256})
+    normalized.sort(
+        key=lambda library: (
+            str(library["role"]),
+            str(library["name"]),
+            int(library["size"]),
+            str(library["sha256"]),
+        )
+    )
+    count = parse_nonnegative_int(record.get("graphics_library_count"))
+    aggregate = record.get("graphics_library_sha256")
+    if (
+        not normalized
+        or not any(
+            library["role"] in ("driver", "vendor_dispatch") for library in normalized
+        )
+        or count != len(normalized)
+        or not isinstance(aggregate, str)
+        or SHA256_PATTERN.fullmatch(aggregate) is None
+        or aggregate != graphics_library_aggregate(normalized)
+    ):
+        return None
+    return {
+        "aggregate_sha256": aggregate,
+        "library_count": count,
+        "libraries": normalized,
+    }
 
 
 def parse_positive_float(value: str | None) -> float | None:
@@ -815,6 +935,11 @@ def validate_swapchain_run(
     ):
         mark_run(run, "fail", "invalid_presented_surface")
         return None
+    graphics_libraries = graphics_library_identity(record, backend)
+    if graphics_libraries is None:
+        mark_run(run, "fail", "invalid_graphics_library_evidence")
+        return None
+    run["graphics_library_identity"] = graphics_libraries
     device = {
         key: record.get(key)
         for key in (

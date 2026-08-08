@@ -103,7 +103,8 @@ advanced text/graphics support, and distribution:
 - Headless smoke tests use Qt's software scene graph. The hardware RHI path has
   a reproducible host matrix for OpenGL/Vulkan readbacks, invariant counters,
   device/DPR metadata, a production-window swapchain/frame-swap probe, and
-  strict baseline/candidate comparison.
+  strict baseline/candidate comparison with loaded userspace graphics-stack
+  fingerprints.
   Final compositor output and representative performance baselines still need
   interactive collection on target Wayland compositors and GPU drivers.
 

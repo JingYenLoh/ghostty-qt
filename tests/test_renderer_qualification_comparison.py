@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import quote, unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "compare-renderer-qualification.py"
@@ -24,6 +25,46 @@ DEVICE = {
     "rhi_vendor_id": "0x1002",
     "rhi_device_id": "0x1234",
 }
+
+
+def graphics_library_record_fields(
+    libraries: list[dict[str, object]] | None = None,
+    *,
+    backend: str = "vulkan",
+    status: str = "complete",
+    diagnostic: str | None = None,
+) -> dict[str, str]:
+    effective_libraries = (
+        [
+            {
+                "role": "driver",
+                "name": "libvulkan_radeon.so",
+                "path_kind": "system",
+                "size": 123456,
+                "sha256": "1" * 64,
+            }
+        ]
+        if libraries is None
+        else libraries
+    )
+    manifest = {
+        "schema_version": 1,
+        "backend": backend,
+        "status": status,
+        "libraries": effective_libraries,
+        "diagnostic": diagnostic,
+    }
+    return {
+        "graphics_library_contract": "1",
+        "graphics_library_status": status,
+        "graphics_library_count": str(len(effective_libraries)),
+        "graphics_library_sha256": comparison.graphics_library_aggregate(
+            effective_libraries
+        ),
+        "graphics_library_manifest": quote(
+            json.dumps(manifest, separators=(",", ":"), sort_keys=True), safe=""
+        ),
+    }
 
 
 def make_report(profile: str = "quick") -> dict[str, object]:
@@ -138,6 +179,7 @@ def make_report(profile: str = "quick") -> dict[str, object]:
         "minimum_half_alpha_pixels": "39600",
         "panes": "1",
         "running_panes": "1",
+        **graphics_library_record_fields(),
         **DEVICE,
     }
     return {
@@ -500,6 +542,11 @@ class RendererQualificationComparisonTest(unittest.TestCase):
         result = comparison.compare_reports(baseline, malformed, comparison.Policy())
         self.assertEqual(result["status"], "incompatible")
 
+        old_schema = copy.deepcopy(baseline)
+        old_schema["schema_version"] = 2
+        result = comparison.compare_reports(baseline, old_schema, comparison.Policy())
+        self.assertEqual(result["status"], "incompatible")
+
         skipped = copy.deepcopy(baseline)
         skipped["status"] = "skip"
         skipped["reason_code"] = "no_supported_backend"
@@ -615,6 +662,194 @@ class RendererQualificationComparisonTest(unittest.TestCase):
             shader_loss, copy.deepcopy(shader_loss), comparison.Policy()
         )
         self.assertEqual(result["status"], "incompatible")
+
+    def test_rejects_malformed_graphics_library_evidence(self) -> None:
+        def candidate_with(fields: dict[str, str]) -> dict[str, object]:
+            candidate = make_report()
+            find_record(candidate, "swapchain").update(fields)
+            return candidate
+
+        malformed_candidates = (
+            candidate_with(graphics_library_record_fields([])),
+            candidate_with(
+                {
+                    **graphics_library_record_fields(),
+                    "graphics_library_manifest": "%ZZ",
+                }
+            ),
+            candidate_with(
+                {
+                    **graphics_library_record_fields(),
+                    "graphics_library_count": "2",
+                }
+            ),
+            candidate_with(
+                graphics_library_record_fields(
+                    [
+                        {
+                            "role": "driver",
+                            "name": "libvulkan_radeon.so",
+                            "path_kind": "system",
+                            "size": 123456,
+                            "sha256": "BAD",
+                        }
+                    ]
+                )
+            ),
+            candidate_with(
+                graphics_library_record_fields(
+                    [
+                        {
+                            "role": "driver",
+                            "name": "libvulkan_radeon.so",
+                            "path_kind": "system",
+                            "size": 123456,
+                            "sha256": "1" * 64,
+                        },
+                        {
+                            "role": "driver",
+                            "name": "libvulkan_radeon.so",
+                            "path_kind": "custom",
+                            "size": 123456,
+                            "sha256": "1" * 64,
+                        },
+                    ]
+                )
+            ),
+            candidate_with(
+                graphics_library_record_fields(
+                    [
+                        {
+                            "role": "layer",
+                            "name": "libVkLayer_test.so",
+                            "path_kind": "system",
+                            "size": 1000,
+                            "sha256": "3" * 64,
+                        }
+                    ]
+                )
+            ),
+            candidate_with(
+                graphics_library_record_fields(
+                    [
+                        {
+                            "role": "driver",
+                            "name": "driver\nname.so",
+                            "path_kind": "system",
+                            "size": 123456,
+                            "sha256": "1" * 64,
+                        }
+                    ]
+                )
+            ),
+            candidate_with(
+                {
+                    **graphics_library_record_fields(),
+                    "graphics_library_sha256": "0" * 64,
+                }
+            ),
+            candidate_with(graphics_library_record_fields(status="unavailable")),
+        )
+        for candidate in malformed_candidates:
+            with self.subTest(
+                status=find_record(candidate, "swapchain").get(
+                    "graphics_library_status"
+                )
+            ):
+                result = comparison.compare_reports(
+                    make_report(), candidate, comparison.Policy()
+                )
+                self.assertEqual(result["status"], "incompatible")
+
+    def test_graphics_library_content_is_context_but_audit_fields_are_not(
+        self,
+    ) -> None:
+        baseline = make_report()
+        audit_only = copy.deepcopy(baseline)
+        find_record(audit_only, "swapchain").update(
+            graphics_library_record_fields(
+                [
+                    {
+                        "role": "driver",
+                        "name": "libvulkan_radeon.so",
+                        "path_kind": "custom",
+                        "size": 123456,
+                        "sha256": "1" * 64,
+                    }
+                ],
+                diagnostic="resolved through a custom search path",
+            )
+        )
+        result = comparison.compare_reports(baseline, audit_only, comparison.Policy())
+        self.assertEqual(result["status"], "pass")
+
+        changed = copy.deepcopy(baseline)
+        find_record(changed, "swapchain").update(
+            graphics_library_record_fields(
+                [
+                    {
+                        "role": "driver",
+                        "name": "libvulkan_radeon.so",
+                        "path_kind": "system",
+                        "size": 123456,
+                        "sha256": "2" * 64,
+                    }
+                ]
+            )
+        )
+        strict = comparison.compare_reports(baseline, changed, comparison.Policy())
+        self.assertEqual(strict["status"], "incompatible")
+        allowed = comparison.compare_reports(
+            baseline,
+            changed,
+            comparison.Policy(allow_context_changes=True),
+        )
+        self.assertEqual(allowed["status"], "pass")
+        self.assertGreater(allowed["summary"]["context_changes"], 0)
+
+    def test_graphics_library_manifest_rejects_lone_unicode_surrogates(self) -> None:
+        baseline = make_report()
+        encoded = find_record(baseline, "swapchain")["graphics_library_manifest"]
+        manifest = json.loads(unquote(encoded))
+        manifest["libraries"][0]["name"] = "\ud800"
+        surrogate_name = quote(
+            json.dumps(manifest, separators=(",", ":"), sort_keys=True), safe=""
+        )
+        manifest["libraries"][0]["name"] = "libvulkan_radeon.so"
+        manifest["diagnostic"] = "\udfff"
+        surrogate_diagnostic = quote(
+            json.dumps(manifest, separators=(",", ":"), sort_keys=True), safe=""
+        )
+
+        for malformed in (surrogate_name, surrogate_diagnostic, "\ud800"):
+            with self.subTest(manifest=ascii(malformed)[:80]):
+                candidate = make_report()
+                find_record(candidate, "swapchain")["graphics_library_manifest"] = (
+                    malformed
+                )
+                result = comparison.compare_reports(
+                    baseline, candidate, comparison.Policy()
+                )
+                self.assertEqual(result["status"], "incompatible")
+
+        unicode_report = make_report()
+        find_record(unicode_report, "swapchain").update(
+            graphics_library_record_fields(
+                [
+                    {
+                        "role": "driver",
+                        "name": "lib\U0001f600.so",
+                        "path_kind": "custom",
+                        "size": 123456,
+                        "sha256": "4" * 64,
+                    }
+                ]
+            )
+        )
+        result = comparison.compare_reports(
+            unicode_report, copy.deepcopy(unicode_report), comparison.Policy()
+        )
+        self.assertEqual(result["status"], "pass")
 
     def test_absolute_shader_timings_are_gated_independently_of_ratios(self) -> None:
         baseline = make_report("full")

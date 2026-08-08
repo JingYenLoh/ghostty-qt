@@ -1301,6 +1301,14 @@ target_link_libraries(ghostty-qt-single-instance-activation PUBLIC
     ghostty-qt-desktop-activation
 )
 
+ghostty_qt_add_internal_library(ghostty-qt-renderer-graphics-library-manifest
+    src/renderer_graphics_library_manifest.cpp
+    src/renderer_graphics_library_manifest.h
+)
+target_link_libraries(ghostty-qt-renderer-graphics-library-manifest PUBLIC
+    Qt6::Core
+)
+
 qt_add_executable(ghostty-qt
     src/main.cpp
     src/application_identity.h
@@ -1399,6 +1407,7 @@ target_link_libraries(ghostty-qt PRIVATE
     ghostty-qt-linux-cgroup
     ghostty-qt-link-matcher
     ghostty-qt-quick-terminal
+    ghostty-qt-renderer-graphics-library-manifest
     ghostty-qt-runtime-paths
     ghostty-qt-single-instance-activation
     ghostty-qt-shell-integration

@@ -149,6 +149,18 @@ target_link_libraries(test-renderdoc-capture PRIVATE
 add_test(NAME renderdoc-capture COMMAND test-renderdoc-capture)
 set_tests_properties(renderdoc-capture PROPERTIES TIMEOUT 10)
 
+qt_add_executable(test-renderer-graphics-library-manifest
+    test_renderer_graphics_library_manifest.cpp
+)
+target_link_libraries(test-renderer-graphics-library-manifest PRIVATE
+    Qt6::Core
+    Qt6::Test
+    ghostty-qt-renderer-graphics-library-manifest
+)
+add_test(NAME renderer-graphics-library-manifest
+    COMMAND test-renderer-graphics-library-manifest)
+set_tests_properties(renderer-graphics-library-manifest PROPERTIES TIMEOUT 20)
+
 qt_add_executable(test-terminal-custom-shader-qsg
     test_terminal_custom_shader_qsg.cpp
 )

@@ -85,7 +85,8 @@ for intentional upgrade procedure.
   and atomic machine-readable evidence. A strict baseline comparator validates
   independently complete benchmark/device/host/output evidence, enforces
   deterministic work regressions, and applies noise-aware full-profile timing
-  gates. Graphics-driver library fingerprints are not yet captured. Final
+  gates. The production probe fingerprints its actually mapped userspace
+  graphics driver, loader, compiler, and injected-layer libraries. Final
   compositor blending, blur, color management, and presentation timing still
   require interactive or dedicated Wayland-protocol inspection.
 - Custom shaders require Qt Quick's OpenGL or Vulkan RHI backend. Other

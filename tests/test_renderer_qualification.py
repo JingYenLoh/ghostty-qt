@@ -12,6 +12,7 @@ import time
 import unittest
 from pathlib import Path
 from unittest import mock
+from urllib.parse import quote, unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "qualify-wayland-renderer.py"
@@ -20,6 +21,45 @@ assert SPEC is not None and SPEC.loader is not None
 qualification = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = qualification
 SPEC.loader.exec_module(qualification)
+
+
+def graphics_library_fields(
+    libraries: list[dict[str, object]] | None = None,
+    *,
+    backend: str = "vulkan",
+    status: str = "complete",
+    diagnostic: str | None = None,
+) -> str:
+    effective_libraries = (
+        [
+            {
+                "role": "driver",
+                "name": "libvulkan_radeon.so",
+                "path_kind": "system",
+                "size": 123456,
+                "sha256": "1" * 64,
+            }
+        ]
+        if libraries is None
+        else libraries
+    )
+    manifest = {
+        "schema_version": 1,
+        "backend": backend,
+        "status": status,
+        "libraries": effective_libraries,
+        "diagnostic": diagnostic,
+    }
+    encoded = quote(
+        json.dumps(manifest, separators=(",", ":"), sort_keys=True), safe=""
+    )
+    aggregate = qualification.graphics_library_aggregate(effective_libraries)
+    return (
+        f"graphics_library_contract=1 graphics_library_status={status} "
+        f"graphics_library_count={len(effective_libraries)} "
+        f"graphics_library_sha256={aggregate} "
+        f"graphics_library_manifest={encoded}"
+    )
 
 
 class RendererQualificationTest(unittest.TestCase):
@@ -299,7 +339,8 @@ class RendererQualificationTest(unittest.TestCase):
             f"translucent_pixels={translucent_pixels} "
             f"half_alpha_pixels={half_alpha_pixels} pixel_count={pixel_count} "
             f"minimum_half_alpha_pixels={minimum_half_alpha_pixels} "
-            "panes=1 running_panes=1 rhi_backend=Vulkan "
+            "panes=1 running_panes=1 "
+            f"{graphics_library_fields()} rhi_backend=Vulkan "
             "rhi_device_name=Test%20GPU rhi_device_type=integrated "
             "rhi_vendor_id=0x1002 rhi_device_id=0x1234"
         )
@@ -461,6 +502,175 @@ class RendererQualificationTest(unittest.TestCase):
                 }
                 qualification.validate_swapchain_run(run, "vulkan", 30)
                 self.assertEqual(run["reason_code"], "invalid_presented_surface")
+
+    def test_rejects_malformed_graphics_library_evidence(self) -> None:
+        def run_with_fields(fields: str) -> dict[str, object]:
+            records = qualification.parse_records(self.swapchain_output())
+            self.assertEqual(len(records), 1)
+            replacement = qualification.parse_key_value_record(
+                f"renderer_qualification {fields}"
+            )
+            assert replacement is not None
+            records[0].update(
+                {key: value for key, value in replacement.items() if key != "record"}
+            )
+            return {"return_code": 0, "records": records}
+
+        malformed_fields = (
+            graphics_library_fields([]),
+            " ".join(
+                (
+                    "graphics_library_contract=1",
+                    "graphics_library_status=complete",
+                    "graphics_library_count=1",
+                    f"graphics_library_sha256={'1' * 64}",
+                    "graphics_library_manifest=%ZZ",
+                )
+            ),
+            graphics_library_fields().replace(
+                "graphics_library_count=1",
+                "graphics_library_count=2",
+            ),
+            graphics_library_fields(
+                [
+                    {
+                        "role": "driver",
+                        "name": "libvulkan_radeon.so",
+                        "path_kind": "system",
+                        "size": 123456,
+                        "sha256": "BAD",
+                    }
+                ]
+            ),
+            graphics_library_fields(
+                [
+                    {
+                        "role": "driver",
+                        "name": "libvulkan_radeon.so",
+                        "path_kind": "system",
+                        "size": 123456,
+                        "sha256": "1" * 64,
+                    },
+                    {
+                        "role": "driver",
+                        "name": "libvulkan_radeon.so",
+                        "path_kind": "custom",
+                        "size": 123456,
+                        "sha256": "1" * 64,
+                    },
+                ]
+            ),
+            graphics_library_fields(
+                [
+                    {
+                        "role": "layer",
+                        "name": "libVkLayer_test.so",
+                        "path_kind": "system",
+                        "size": 1000,
+                        "sha256": "3" * 64,
+                    }
+                ]
+            ),
+            graphics_library_fields(
+                [
+                    {
+                        "role": "driver",
+                        "name": "driver\nname.so",
+                        "path_kind": "system",
+                        "size": 123456,
+                        "sha256": "1" * 64,
+                    }
+                ]
+            ),
+            graphics_library_fields(status="unavailable"),
+            graphics_library_fields().replace(
+                next(
+                    token
+                    for token in graphics_library_fields().split()
+                    if token.startswith("graphics_library_sha256=")
+                ),
+                f"graphics_library_sha256={'0' * 64}",
+            ),
+        )
+        for fields in malformed_fields:
+            with self.subTest(fields=fields[:80]):
+                run = run_with_fields(fields)
+                qualification.validate_swapchain_run(run, "vulkan", 30)
+                self.assertEqual(
+                    run["reason_code"], "invalid_graphics_library_evidence"
+                )
+
+    def test_graphics_library_aggregate_is_sorted_and_length_delimited(self) -> None:
+        libraries = [
+            {
+                "role": "driver",
+                "name": "z.so",
+                "size": 2,
+                "sha256": "2" * 64,
+            },
+            {
+                "role": "driver",
+                "name": "a.so",
+                "size": 1,
+                "sha256": "1" * 64,
+            },
+        ]
+        payload = (
+            f"driver\0a.so\0{1}\0{'1' * 64}\ndriver\0z.so\0{2}\0{'2' * 64}\n"
+        ).encode()
+        self.assertEqual(
+            qualification.graphics_library_aggregate(libraries),
+            qualification.hashlib.sha256(payload).hexdigest(),
+        )
+
+    def test_graphics_library_manifest_rejects_lone_unicode_surrogates(self) -> None:
+        def run_with_manifest(manifest_value: str) -> dict[str, object]:
+            records = qualification.parse_records(self.swapchain_output())
+            self.assertEqual(len(records), 1)
+            records[0]["graphics_library_manifest"] = manifest_value
+            return {"return_code": 0, "records": records}
+
+        encoded = qualification.parse_records(self.swapchain_output())[0][
+            "graphics_library_manifest"
+        ]
+        manifest = json.loads(unquote(encoded))
+        manifest["libraries"][0]["name"] = "\ud800"
+        surrogate_name = quote(
+            json.dumps(manifest, separators=(",", ":"), sort_keys=True), safe=""
+        )
+        manifest["libraries"][0]["name"] = "libvulkan_radeon.so"
+        manifest["diagnostic"] = "\udfff"
+        surrogate_diagnostic = quote(
+            json.dumps(manifest, separators=(",", ":"), sort_keys=True), safe=""
+        )
+
+        for malformed in (surrogate_name, surrogate_diagnostic, "\ud800"):
+            with self.subTest(manifest=ascii(malformed)[:80]):
+                run = run_with_manifest(malformed)
+                qualification.validate_swapchain_run(run, "vulkan", 30)
+                self.assertEqual(
+                    run["reason_code"], "invalid_graphics_library_evidence"
+                )
+
+        unicode_library = [
+            {
+                "role": "driver",
+                "name": "lib\U0001f600.so",
+                "path_kind": "custom",
+                "size": 123456,
+                "sha256": "4" * 64,
+            }
+        ]
+        records = qualification.parse_records(self.swapchain_output())
+        replacement = qualification.parse_key_value_record(
+            f"renderer_qualification {graphics_library_fields(unicode_library)}"
+        )
+        assert replacement is not None
+        records[0].update(
+            {key: value for key, value in replacement.items() if key != "record"}
+        )
+        run = {"return_code": 0, "records": records}
+        self.assertEqual(qualification.validate_swapchain_run(run, "vulkan", 30), 1)
 
     def test_accepts_coherent_hdr_swapchain_metadata(self) -> None:
         output = self.swapchain_output()
