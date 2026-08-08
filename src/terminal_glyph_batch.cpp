@@ -76,19 +76,19 @@ const QSGGeometry::AttributeSet glyphAttributeSet{
     return std::max(required, std::max<qsizetype>(growth, 64));
 }
 
-[[nodiscard]] bool finitePositiveRect(const QRectF &rect) noexcept
+[[nodiscard]] bool finitePositiveRect(const TerminalGlyphRect &rect) noexcept
 {
-    return std::isfinite(rect.x()) && std::isfinite(rect.y())
-        && std::isfinite(rect.width()) && std::isfinite(rect.height())
-        && rect.width() > 0.0 && rect.height() > 0.0;
+    return std::isfinite(rect.left) && std::isfinite(rect.top)
+        && std::isfinite(rect.right) && std::isfinite(rect.bottom)
+        && rect.right > rect.left && rect.bottom > rect.top;
 }
 
-[[nodiscard]] bool validSourceRect(const QRectF &rect) noexcept
+[[nodiscard]] bool validSourceRect(const TerminalGlyphRect &rect) noexcept
 {
-    constexpr qreal tolerance = std::numeric_limits<qreal>::epsilon() * 16.0;
-    return finitePositiveRect(rect) && rect.x() >= -tolerance
-        && rect.y() >= -tolerance && rect.right() <= 1.0 + tolerance
-        && rect.bottom() <= 1.0 + tolerance;
+    constexpr float tolerance = std::numeric_limits<float>::epsilon() * 16.0F;
+    return finitePositiveRect(rect) && rect.left >= -tolerance
+        && rect.top >= -tolerance && rect.right <= 1.0F + tolerance
+        && rect.bottom <= 1.0F + tolerance;
 }
 
 [[nodiscard]] bool validGlyph(const TerminalGlyphQuad &glyph) noexcept
@@ -102,14 +102,14 @@ const QSGGeometry::AttributeSet glyphAttributeSet{
     return glyphCount >= 0 && glyphCount <= maximumGlyphCount;
 }
 
-void setVertex(GlyphVertex &vertex, qreal x, qreal y, qreal u, qreal v,
+void setVertex(GlyphVertex &vertex, float x, float y, float u, float v,
                uchar red, uchar green, uchar blue, uchar alpha) noexcept
 {
     vertex = {
-        .x = static_cast<float>(x),
-        .y = static_cast<float>(y),
-        .u = static_cast<float>(u),
-        .v = static_cast<float>(v),
+        .x = x,
+        .y = y,
+        .u = u,
+        .v = v,
         .red = red,
         .green = green,
         .blue = blue,
@@ -392,8 +392,8 @@ void TerminalGlyphBatch::writeGeometry()
 {
     auto *vertices = static_cast<GlyphVertex *>(geometry_->vertexData());
     for (const TerminalGlyphQuad &glyph : pending_) {
-        const QRectF &destination = glyph.destination;
-        const QRectF &source = glyph.normalizedSource;
+        const TerminalGlyphRect &destination = glyph.destination;
+        const TerminalGlyphRect &source = glyph.normalizedSource;
         const QColor color =
             terminalRenderingColor(glyph.color, committedAlphaBlending_)
                 .toRgb();
@@ -406,14 +406,14 @@ void TerminalGlyphBatch::writeGeometry()
         const uchar blue = premultiply(color.blue());
         const uchar opacity = static_cast<uchar>(alpha);
 
-        setVertex(vertices[0], destination.left(), destination.top(),
-                  source.left(), source.top(), red, green, blue, opacity);
-        setVertex(vertices[1], destination.right(), destination.top(),
-                  source.right(), source.top(), red, green, blue, opacity);
-        setVertex(vertices[2], destination.left(), destination.bottom(),
-                  source.left(), source.bottom(), red, green, blue, opacity);
-        setVertex(vertices[3], destination.right(), destination.bottom(),
-                  source.right(), source.bottom(), red, green, blue, opacity);
+        setVertex(vertices[0], destination.left, destination.top, source.left,
+                  source.top, red, green, blue, opacity);
+        setVertex(vertices[1], destination.right, destination.top, source.right,
+                  source.top, red, green, blue, opacity);
+        setVertex(vertices[2], destination.left, destination.bottom,
+                  source.left, source.bottom, red, green, blue, opacity);
+        setVertex(vertices[3], destination.right, destination.bottom,
+                  source.right, source.bottom, red, green, blue, opacity);
         vertices += verticesPerGlyph;
     }
     geometry_->markVertexDataDirty();

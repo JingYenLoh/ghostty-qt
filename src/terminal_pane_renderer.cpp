@@ -788,8 +788,8 @@ struct TerminalTextRowRenderResult {
         const QRectF source = texture.convertToNormalizedSourceRect(
             QRectF(entry->paddedPixelRect));
         quads.append({
-            .destination = destination,
-            .normalizedSource = source,
+            .destination = TerminalGlyphRect::fromQRectF(destination),
+            .normalizedSource = TerminalGlyphRect::fromQRectF(source),
             .color = shaped.run.color,
         });
     }

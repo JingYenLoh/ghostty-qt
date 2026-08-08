@@ -12,16 +12,45 @@ class QSGGeometry;
 class QSGMaterial;
 class QSGTexture;
 
+// Store the four edges that are uploaded to the GPU, rather than QRectF's
+// qreal origin and size. On 64-bit builds this halves each retained rectangle
+// while preserving the exact float values written to vertex geometry.
+struct TerminalGlyphRect {
+    float left = 0.0F;
+    float top = 0.0F;
+    float right = 0.0F;
+    float bottom = 0.0F;
+
+    [[nodiscard]] static TerminalGlyphRect
+    fromQRectF(const QRectF &rect) noexcept
+    {
+        return {
+            .left = static_cast<float>(rect.left()),
+            .top = static_cast<float>(rect.top()),
+            .right = static_cast<float>(rect.right()),
+            .bottom = static_cast<float>(rect.bottom()),
+        };
+    }
+
+    bool operator==(const TerminalGlyphRect &) const = default;
+};
+
+static_assert(sizeof(TerminalGlyphRect) == sizeof(float) * 4);
+
 // One already-rasterized monochrome glyph. The source rectangle is expressed
 // in normalized atlas coordinates; its sampled alpha modulates the
 // premultiplied vertex color.
 struct TerminalGlyphQuad {
-    QRectF destination;
-    QRectF normalizedSource;
+    TerminalGlyphRect destination;
+    TerminalGlyphRect normalizedSource;
     QColor color;
 
     bool operator==(const TerminalGlyphQuad &) const = default;
 };
+
+#if defined(Q_PROCESSOR_X86_64)
+static_assert(sizeof(TerminalGlyphQuad) == 48);
+#endif
 
 enum class TerminalGlyphBatchCommitResult : quint8 {
     Batched,

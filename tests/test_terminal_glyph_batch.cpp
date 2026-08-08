@@ -4,6 +4,7 @@
 #include <QSGTexture>
 #include <QTest>
 
+#include <array>
 #include <limits>
 
 namespace {
@@ -41,11 +42,17 @@ struct GlyphVertex {
 
 static_assert(sizeof(GlyphVertex) == 20);
 
+[[nodiscard]] TerminalGlyphRect glyphRect(qreal x, qreal y, qreal width,
+                                          qreal height)
+{
+    return TerminalGlyphRect::fromQRectF(QRectF(x, y, width, height));
+}
+
 void appendGlyph(QVector<TerminalGlyphQuad> &glyphs, int index)
 {
     glyphs.append({
-        .destination = QRectF(index * 8.0, index * 16.0, 8.0, 16.0),
-        .normalizedSource = QRectF(index * 0.01, 0.0, 0.01, 0.02),
+        .destination = glyphRect(index * 8.0, index * 16.0, 8.0, 16.0),
+        .normalizedSource = glyphRect(index * 0.01, 0.0, 0.01, 0.02),
         .color = QColor::fromRgb(16 + index, 32 + index, 48 + index, 128),
     });
 }
@@ -63,6 +70,7 @@ class TerminalGlyphBatchTest final : public QObject {
 private Q_SLOTS:
     void retainsGeometryAndSkipsIdenticalUpdates();
     void exposesEmptyAndFallbackWithoutPartialGeometry();
+    void rejectsInvalidPackedRectangles();
     void writesIndexedPremultipliedQuads();
     void enforcesUnsignedShortIndexBoundary();
     void changesTextureWithoutRewritingGeometry();
@@ -129,8 +137,7 @@ void TerminalGlyphBatchTest::exposesEmptyAndFallbackWithoutPartialGeometry()
 
     QVector<TerminalGlyphQuad> &invalid = batch.beginUpdate();
     appendGlyph(invalid, 0);
-    invalid.front().destination.setWidth(
-        std::numeric_limits<qreal>::quiet_NaN());
+    invalid.front().destination.right = std::numeric_limits<float>::quiet_NaN();
     QCOMPARE(batch.commit(&texture), TerminalGlyphBatchCommitResult::Fallback);
     QCOMPARE(batch.geometry()->vertexCount(), 0);
     QCOMPARE(batch.fallbackCommitCount(), quint64{2});
@@ -152,28 +159,71 @@ void TerminalGlyphBatchTest::exposesEmptyAndFallbackWithoutPartialGeometry()
     QCOMPARE(batch.commitGeneration(), generation);
 }
 
+void TerminalGlyphBatchTest::rejectsInvalidPackedRectangles()
+{
+    const TerminalGlyphRect validDestination = glyphRect(2.0, 3.0, 4.0, 5.0);
+    const TerminalGlyphRect validSource = glyphRect(0.1, 0.2, 0.3, 0.4);
+    const float infinity = std::numeric_limits<float>::infinity();
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const std::array invalidDestinations{
+        glyphRect(2.0, 3.0, 0.0, 5.0),
+        glyphRect(2.0, 3.0, 4.0, -1.0),
+        TerminalGlyphRect{
+            .left = infinity, .top = 3.0F, .right = infinity, .bottom = 8.0F},
+        TerminalGlyphRect{
+            .left = 2.0F, .top = 3.0F, .right = nan, .bottom = 8.0F},
+    };
+    const std::array invalidSources{
+        glyphRect(0.1, 0.2, 0.0, 0.4),
+        glyphRect(-0.01, 0.2, 0.3, 0.4),
+        glyphRect(0.8, 0.2, 0.21, 0.4),
+        TerminalGlyphRect{
+            .left = 0.1F, .top = 0.2F, .right = 0.4F, .bottom = infinity},
+    };
+
+    StubTexture texture(1);
+    TerminalGlyphBatch batch;
+    const auto commit = [&batch, &texture](TerminalGlyphRect destination,
+                                           TerminalGlyphRect source) {
+        batch.beginUpdate().append({
+            .destination = destination,
+            .normalizedSource = source,
+            .color = Qt::white,
+        });
+        return batch.commit(&texture);
+    };
+    for (const TerminalGlyphRect destination : invalidDestinations) {
+        QCOMPARE(commit(destination, validSource),
+                 TerminalGlyphBatchCommitResult::Fallback);
+    }
+    for (const TerminalGlyphRect source : invalidSources) {
+        QCOMPARE(commit(validDestination, source),
+                 TerminalGlyphBatchCommitResult::Fallback);
+    }
+}
+
 void TerminalGlyphBatchTest::writesIndexedPremultipliedQuads()
 {
     StubTexture texture(1);
     TerminalGlyphBatch batch;
     QVector<TerminalGlyphQuad> &glyphs = batch.beginUpdate();
     glyphs.append({
-        .destination = QRectF(2.0, 3.0, 4.0, 5.0),
-        .normalizedSource = QRectF(0.1, 0.2, 0.3, 0.4),
+        .destination = glyphRect(2.25, 3.5, 4.125, 5.75),
+        .normalizedSource = glyphRect(0.125, 0.25, 0.375, 0.5),
         .color = QColor::fromRgb(128, 64, 32, 128),
     });
     QCOMPARE(batch.commit(&texture), TerminalGlyphBatchCommitResult::Batched);
 
     const GlyphVertex *vertex = vertices(batch);
     QVERIFY(vertex != nullptr);
-    QCOMPARE(vertex[0].x, 2.0F);
-    QCOMPARE(vertex[0].y, 3.0F);
-    QCOMPARE(vertex[0].u, 0.1F);
-    QCOMPARE(vertex[0].v, 0.2F);
-    QCOMPARE(vertex[3].x, 6.0F);
-    QCOMPARE(vertex[3].y, 8.0F);
-    QCOMPARE(vertex[3].u, 0.4F);
-    QCOMPARE(vertex[3].v, 0.6F);
+    QCOMPARE(vertex[0].x, 2.25F);
+    QCOMPARE(vertex[0].y, 3.5F);
+    QCOMPARE(vertex[0].u, 0.125F);
+    QCOMPARE(vertex[0].v, 0.25F);
+    QCOMPARE(vertex[3].x, 6.375F);
+    QCOMPARE(vertex[3].y, 9.25F);
+    QCOMPARE(vertex[3].u, 0.5F);
+    QCOMPARE(vertex[3].v, 0.75F);
     QCOMPARE(vertex[0].red, uchar{64});
     QCOMPARE(vertex[0].green, uchar{32});
     QCOMPARE(vertex[0].blue, uchar{16});
@@ -191,8 +241,8 @@ void TerminalGlyphBatchTest::writesIndexedPremultipliedQuads()
 
     QVector<TerminalGlyphQuad> &linear = batch.beginUpdate();
     linear.append({
-        .destination = QRectF(2.0, 3.0, 4.0, 5.0),
-        .normalizedSource = QRectF(0.1, 0.2, 0.3, 0.4),
+        .destination = glyphRect(2.25, 3.5, 4.125, 5.75),
+        .normalizedSource = glyphRect(0.125, 0.25, 0.375, 0.5),
         .color = QColor::fromRgb(128, 64, 32, 128),
     });
     QCOMPARE(batch.commit(&texture, TerminalAlphaBlending::Linear),
@@ -214,8 +264,8 @@ void TerminalGlyphBatchTest::enforcesUnsignedShortIndexBoundary()
     static_assert(maximumGlyphCount == 16'384);
 
     const TerminalGlyphQuad glyph{
-        .destination = QRectF(2.0, 3.0, 4.0, 5.0),
-        .normalizedSource = QRectF(0.1, 0.2, 0.3, 0.4),
+        .destination = glyphRect(2.0, 3.0, 4.0, 5.0),
+        .normalizedSource = glyphRect(0.1, 0.2, 0.3, 0.4),
         .color = QColor::fromRgb(128, 64, 32, 128),
     };
     StubTexture texture(1);

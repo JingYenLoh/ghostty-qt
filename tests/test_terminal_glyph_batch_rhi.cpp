@@ -22,7 +22,8 @@ QSGRendererInterface::GraphicsApi requestedGraphicsApi =
 class GlyphBatchNode final : public QSGNode {
 public:
     GlyphBatchNode(QQuickWindow *window, const QImage &coverage,
-                   const QRectF &destination, const QColor &color)
+                   const QRectF &destination, const QColor &color,
+                   TerminalAlphaBlending alphaBlending)
         : batch_(new TerminalGlyphBatch)
     {
         appendChildNode(batch_);
@@ -39,12 +40,13 @@ public:
 
         QVector<TerminalGlyphQuad> &glyphs = batch_->beginUpdate();
         glyphs.append({
-            .destination = destination,
-            .normalizedSource = texture_->convertToNormalizedSourceRect(
-                QRectF(QPointF{}, QSizeF(coverage.size()))),
+            .destination = TerminalGlyphRect::fromQRectF(destination),
+            .normalizedSource = TerminalGlyphRect::fromQRectF(
+                texture_->convertToNormalizedSourceRect(
+                    QRectF(QPointF{}, QSizeF(coverage.size())))),
             .color = color,
         });
-        result_ = batch_->commit(texture_.get());
+        result_ = batch_->commit(texture_.get(), alphaBlending);
     }
 
     ~GlyphBatchNode() override
@@ -67,7 +69,8 @@ private:
 
 class GlyphBatchItem final : public QQuickItem {
 public:
-    GlyphBatchItem()
+    explicit GlyphBatchItem(TerminalAlphaBlending alphaBlending)
+        : alphaBlending_(alphaBlending)
     {
         setFlag(QQuickItem::ItemHasContents);
 
@@ -87,8 +90,9 @@ protected:
     {
         if (oldNode != nullptr) return oldNode;
 
-        auto *const node = new GlyphBatchNode(
-            window(), coverage_, QRectF(2.0, 2.0, 20.0, 8.0), glyphColor_);
+        auto *const node = new GlyphBatchNode(window(), coverage_,
+                                              QRectF(2.25, 2.5, 19.5, 7.25),
+                                              glyphColor_, alphaBlending_);
         result_.store(static_cast<int>(node->result()),
                       std::memory_order_release);
         return node;
@@ -96,7 +100,8 @@ protected:
 
 private:
     QImage coverage_;
-    QColor glyphColor_{180, 100, 40};
+    QColor glyphColor_{180, 100, 40, 160};
+    TerminalAlphaBlending alphaBlending_ = TerminalAlphaBlending::Native;
     std::atomic<int> result_{
         static_cast<int>(TerminalGlyphBatchCommitResult::Fallback)};
 };
@@ -149,13 +154,23 @@ class TerminalGlyphBatchRhiTest final : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void rendersCoverageTexture_data();
     void rendersCoverageTexture();
 };
 
+void TerminalGlyphBatchRhiTest::rendersCoverageTexture_data()
+{
+    QTest::addColumn<int>("alphaBlending");
+    QTest::newRow("native") << static_cast<int>(TerminalAlphaBlending::Native);
+    QTest::newRow("linear") << static_cast<int>(TerminalAlphaBlending::Linear);
+}
+
 void TerminalGlyphBatchRhiTest::rendersCoverageTexture()
 {
+    QFETCH(int, alphaBlending);
+    const auto mode = static_cast<TerminalAlphaBlending>(alphaBlending);
     QQuickWindow window;
-    GlyphBatchItem item;
+    GlyphBatchItem item(mode);
     const QImage frame = render(item, window);
     if (frame.isNull()) {
         QSKIP("The platform cannot initialize the requested RHI context.");
@@ -178,20 +193,22 @@ void TerminalGlyphBatchRhiTest::rendersCoverageTexture()
     const QColor covered =
         frame.pixelColor(physicalSample(window, frame, QPointF(18.0, 6.0)));
     constexpr int coverage = 128;
-    const QColor glyphColor(180, 100, 40);
-    const auto coveredComponent = [](int component) {
-        return (component * coverage + 127) / 255;
+    const QColor glyphColor(180, 100, 40, 160);
+    const QColor renderColor = terminalRenderingColor(glyphColor, mode).toRgb();
+    const auto coveredComponent = [&renderColor](int component) {
+        const int premultiplied = (component * renderColor.alpha() + 127) / 255;
+        return (premultiplied * coverage + 127) / 255;
     };
-    const QColor expected(coveredComponent(glyphColor.red()),
-                          coveredComponent(glyphColor.green()),
-                          coveredComponent(glyphColor.blue()));
+    const QColor expected(coveredComponent(renderColor.red()),
+                          coveredComponent(renderColor.green()),
+                          coveredComponent(renderColor.blue()));
     QVERIFY2(near(covered.red(), expected.red())
                  && near(covered.green(), expected.green())
                  && near(covered.blue(), expected.blue()),
              qPrintable(QStringLiteral("coverage sample %1, expected %2")
                             .arg(colorDescription(covered))
                             .arg(colorDescription(expected))));
-    QVERIFY2(covered.red() < glyphColor.red() - 40,
+    QVERIFY2(covered.red() < renderColor.red() - 40,
              "Coverage sampling unexpectedly produced a solid glyph quad.");
 }
 
