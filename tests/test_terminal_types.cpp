@@ -88,11 +88,11 @@ private Q_SLOTS:
 void TerminalTypesTest::packsCellMetadataWithoutChangingSemantics()
 {
     constexpr std::size_t oldTerminalCellSize = 112;
-    constexpr std::size_t unpackedPayloadSize =
-        sizeof(QString) + 3 * sizeof(QColor) + 2 * sizeof(quint32);
     QVERIFY(sizeof(TerminalCell) <= oldTerminalCellSize);
-    QVERIFY(sizeof(TerminalCell)
-            <= unpackedPayloadSize + alignof(TerminalCell) - 1);
+    QCOMPARE(sizeof(TerminalCellColor), sizeof(quint32));
+#if defined(Q_PROCESSOR_X86_64)
+    QCOMPARE(sizeof(TerminalCell), std::size_t{48});
+#endif
 
     constexpr TerminalCellFlags expectedDefaults{
         false, false, false, false, false, false, false, false,
@@ -104,6 +104,26 @@ void TerminalTypesTest::packsCellMetadataWithoutChangingSemantics()
     QCOMPARE(defaults.styleForegroundPaletteIndex(), -1);
     QCOMPARE(defaults.underlineStyle(), TerminalUnderlineStyle::None);
     QCOMPARE(defaults.columnSpan(), 1);
+    QVERIFY(!defaults.foreground.isValid());
+    QVERIFY(!defaults.background.isValid());
+    QVERIFY(!defaults.underlineColor.isValid());
+
+    TerminalCell colored;
+    colored.foreground = Qt::black;
+    colored.background = QColor::fromRgb(1, 2, 3);
+    colored.underlineColor = TerminalCellColor::fromRgb(254, 128, 64);
+    QCOMPARE(colored.foreground, QColor(Qt::black));
+    QCOMPARE(colored.background, QColor::fromRgb(1, 2, 3));
+    QCOMPARE(colored.underlineColor, QColor::fromRgb(254, 128, 64));
+    QVERIFY(QColor::fromRgb(1, 2, 3) == colored.background);
+    QCOMPARE(colored.background.rgba(), qRgba(1, 2, 3, 255));
+    QCOMPARE(colored.background.toQColor().alpha(), 255);
+    const TerminalCell copied = colored;
+    QCOMPARE(copied.foreground, colored.foreground);
+    QCOMPARE(copied.background, colored.background);
+    QCOMPARE(copied.underlineColor, colored.underlineColor);
+    colored.background = QColor{};
+    QVERIFY(!colored.background.isValid());
 
     using FlagSetter = void (TerminalCell::*)(bool) noexcept;
     constexpr std::array<FlagSetter, expectedDefaults.size()> flagSetters{

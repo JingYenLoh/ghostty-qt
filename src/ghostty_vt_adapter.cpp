@@ -4582,10 +4582,14 @@ public:
                         ? styleForeground
                         : styleBackground;
 
-                    cell.foreground = toQColor(foreground);
-                    cell.background = toQColor(background);
-                    cell.underlineColor = toQColor(resolveStyleColor(
-                        style.underline_color, colors, foreground));
+                    cell.foreground = TerminalCellColor::fromRgb(
+                        foreground.r, foreground.g, foreground.b);
+                    cell.background = TerminalCellColor::fromRgb(
+                        background.r, background.g, background.b);
+                    const GhosttyColorRgb underlineColor = resolveStyleColor(
+                        style.underline_color, colors, foreground);
+                    cell.underlineColor = TerminalCellColor::fromRgb(
+                        underlineColor.r, underlineColor.g, underlineColor.b);
                     switch (style.fg_color.tag) {
                     case GHOSTTY_STYLE_COLOR_PALETTE:
                         cell.setStyleForegroundSource(

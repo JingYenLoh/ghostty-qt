@@ -6,6 +6,7 @@
 #include <QBitArray>
 #include <QByteArray>
 #include <QColor>
+#include <QDebug>
 #include <QMetaType>
 #include <QPoint>
 #include <QString>
@@ -60,6 +61,106 @@ enum class TerminalSearchDirection : quint8 {
     Next,
     Previous,
 };
+
+// Cell colors originate in libghostty's opaque RGB8 render-state API. Keep
+// that exact representation in the per-cell transport instead of retaining a
+// 16-byte QColor three times for every visible grid position. Zero represents
+// an invalid/default-constructed color; bit 24 distinguishes opaque black from
+// that sentinel.
+class TerminalCellColor final {
+public:
+    constexpr TerminalCellColor() noexcept = default;
+
+    explicit TerminalCellColor(const QColor &color) noexcept { assign(color); }
+    explicit TerminalCellColor(Qt::GlobalColor color) noexcept
+        : TerminalCellColor(QColor(color))
+    {}
+
+    TerminalCellColor &operator=(const QColor &color) noexcept
+    {
+        assign(color);
+        return *this;
+    }
+
+    TerminalCellColor &operator=(Qt::GlobalColor color) noexcept
+    {
+        return *this = QColor(color);
+    }
+
+    [[nodiscard]] static constexpr TerminalCellColor
+    fromRgb(quint8 red, quint8 green, quint8 blue) noexcept
+    {
+        TerminalCellColor result;
+        result.value_ = validMask | static_cast<quint32>(red) << 16U
+            | static_cast<quint32>(green) << 8U | static_cast<quint32>(blue);
+        return result;
+    }
+
+    [[nodiscard]] constexpr bool isValid() const noexcept
+    {
+        return (value_ & validMask) != 0;
+    }
+
+    [[nodiscard]] QColor toQColor() const noexcept
+    {
+        return isValid() ? QColor::fromRgb(opaqueAlpha | rgb24()) : QColor{};
+    }
+
+    [[nodiscard]] QRgb rgba() const noexcept { return toQColor().rgba(); }
+
+    operator QColor() const noexcept { return toQColor(); }
+
+    friend constexpr bool operator==(TerminalCellColor,
+                                     TerminalCellColor) noexcept = default;
+
+    friend bool operator==(TerminalCellColor left, const QColor &right) noexcept
+    {
+        return left.toQColor() == right;
+    }
+
+    friend bool operator==(const QColor &left, TerminalCellColor right) noexcept
+    {
+        return left == right.toQColor();
+    }
+
+    friend QDebug operator<<(QDebug debug, TerminalCellColor color)
+    {
+        return debug << color.toQColor();
+    }
+
+private:
+    static constexpr quint32 rgbMask = 0x00ff'ffffU;
+    static constexpr quint32 validMask = 0x0100'0000U;
+    static constexpr QRgb opaqueAlpha = 0xff00'0000U;
+
+    [[nodiscard]] constexpr QRgb rgb24() const noexcept
+    {
+        return static_cast<QRgb>(value_ & rgbMask);
+    }
+
+    void assign(const QColor &color) noexcept
+    {
+        if (!color.isValid()) {
+            value_ = 0;
+            return;
+        }
+        const QColor rgbColor = color.toRgb();
+        Q_ASSERT(rgbColor.alpha() == 255);
+        if (rgbColor.alpha() != 255) {
+            value_ = 0;
+            return;
+        }
+        value_ = fromRgb(static_cast<quint8>(rgbColor.red()),
+                         static_cast<quint8>(rgbColor.green()),
+                         static_cast<quint8>(rgbColor.blue()))
+                     .value_;
+    }
+
+    quint32 value_ = 0;
+};
+
+static_assert(sizeof(TerminalCellColor) == sizeof(quint32));
+static_assert(alignof(TerminalCellColor) == alignof(quint32));
 
 // Search results use full-screen coordinates so they remain independent of
 // the current viewport. They are value-only snapshots, not libghostty grid
@@ -186,9 +287,9 @@ static_assert(alignof(TerminalCellMetadata) == alignof(quint32));
 
 struct TerminalCell {
     QString text;
-    QColor foreground;
-    QColor background;
-    QColor underlineColor;
+    TerminalCellColor foreground;
+    TerminalCellColor background;
+    TerminalCellColor underlineColor;
     // Preserve the terminal's authoritative base cell content separately
     // from its UTF-16 grapheme. Renderer shaping rules must distinguish a
     // plain `f` from a grapheme that merely begins with `f`.
@@ -423,6 +524,10 @@ struct TerminalCell {
 private:
     TerminalCellMetadata metadata_;
 };
+
+#if defined(Q_PROCESSOR_X86_64)
+static_assert(sizeof(TerminalCell) == 48);
+#endif
 
 struct TerminalRowPresentation {
     // Ghostty's conservative vertical-padding heuristic rejects prompt rows,
