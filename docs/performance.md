@@ -42,22 +42,25 @@ This is a competent baseline. There is no evidence yet for replacing it with
 
 Visible cells cross the worker/UI boundary as contiguous row payloads. Their
 16 boolean attributes, color-source fields, underline style, and 1/2-cell span
-share one explicitly masked 32-bit word. This reduces `TerminalCell` from 112
-to 80 bytes on the current x86-64 Qt ABI and lowers both queued-update and
-retained-frame cache pressure without relying on C++ bitfield layout.
+share one explicitly masked 32-bit word. The three cell colors use a separate
+opaque RGB8 value with an explicit invalid sentinel instead of three 16-byte
+`QColor` objects; alpha remains a renderer-owned presentation concern. Together
+these layouts reduce `TerminalCell` from 112 to 48 bytes on the current x86-64
+Qt ABI and lower queued-update, retained-frame, and detach-copy pressure without
+relying on C++ bitfield layout.
 
-The retained `TerminalFrame`, however, still stores every row in one flat
+The retained `TerminalFrame` deliberately still stores every row in one flat
 `QVector<TerminalCell>`. A render pass takes a shallow frame snapshot; mutating
 the shared vector for a later dirty-row update can therefore detach and copy
-the whole grid. A possible next step is row-sharded storage whose outer
-container and individual row payloads are implicitly shared, so unchanged rows
-remain shared and only dirty rows detach. This would trade flat traversal and
-simple indexing for finer-grained copies, so it must first be justified by an
-extension to `bench-terminal-frame-materialization`: retain a shallow render
-snapshot while applying one-row, several-row, and full-frame updates, and
-report apply time, allocations, and copied cell bytes at representative grid
-sizes. Renderer benchmarks must also show that noncontiguous rows do not
-regress scan and paint costs.
+the whole grid. Row sharding was explicitly deferred from the current struct
+optimization stage: it changes retained-frame ownership and renderer traversal,
+rather than only representation. Before implementing it, extend
+`bench-terminal-frame-materialization` to retain a shallow render snapshot
+while applying one-row, several-row, and full-frame updates and report apply
+time, allocations, and copied cell bytes. Renderer benchmarks must also show
+that noncontiguous rows do not regress scan and paint costs. Only then should
+the flat vector be replaced with implicitly shared row payloads whose dirty
+rows detach independently.
 
 ### Renderer
 
@@ -70,6 +73,11 @@ The retained renderer already avoids the largest terminal-frontend costs:
 - RHI solid geometry, printable-ASCII glyph batches, and atlas resources are
   retained across compatible updates;
 - Qt text nodes are created lazily for complex shaping and the software path;
+- exact per-cell fallback layouts are reconstructed from run boundaries only
+  after grid-fit rejection instead of being retained for every ordinary cell;
+- validated glyph plans omit unused UTF-16 source indexes, and retained glyph
+  quads store the float edges ultimately uploaded to the GPU, reducing their
+  x86-64 layouts from 40 to 32 bytes and from 80 to 48 bytes respectively;
 - Kitty textures and placement nodes survive redraw, movement, and compatible
   replacement;
 - image storage is packed straight-alpha RGBA rather than separate color and
@@ -81,6 +89,15 @@ Structural changes such as font, DPR, backend, render context, or incompatible
 grid geometry still require broader invalidation. Compositor output, blur,
 color management, and presentation timing remain host-level measurement
 boundaries.
+
+### Search
+
+Physical search-row snapshots store the screen row once and one 16-bit column
+per emitted UTF-8 byte. The worker reconstructs a full search coordinate only
+when the KMP scanner consumes that byte. This row-local structure-of-arrays
+boundary reduces byte-to-cell mapping storage from 8 to 2 bytes per byte while
+preserving wide-character, combining-grapheme, wrap, newline, and viewport
+semantics.
 
 ## Building benchmarks
 
