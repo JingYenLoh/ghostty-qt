@@ -63,19 +63,16 @@ struct ShapedLine {
 TerminalGlyphPlan qtGlyphs(const QTextLine &line, const QPointF &origin)
 {
     constexpr QTextLayout::GlyphRunRetrievalFlags flags =
-        QTextLayout::RetrieveGlyphIndexes | QTextLayout::RetrieveGlyphPositions
-        | QTextLayout::RetrieveStringIndexes;
+        QTextLayout::RetrieveGlyphIndexes | QTextLayout::RetrieveGlyphPositions;
     TerminalGlyphPlan result;
     for (const QGlyphRun &glyphRun : line.glyphRuns(-1, -1, flags)) {
         const QList<quint32> glyphIndexes = glyphRun.glyphIndexes();
         const QList<QPointF> positions = glyphRun.positions();
-        const QList<qsizetype> stringIndexes = glyphRun.stringIndexes();
         for (qsizetype index = 0; index < glyphIndexes.size(); ++index) {
             result.append({
                 .font = glyphRun.rawFont(),
-                .glyphIndex = glyphIndexes.at(index),
                 .baselinePosition = origin + positions.at(index),
-                .sourceIndex = stringIndexes.at(index),
+                .glyphIndex = glyphIndexes.at(index),
             });
         }
     }

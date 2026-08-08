@@ -87,9 +87,8 @@ std::optional<TerminalGlyphPlan> terminalGlyphPlan(const TerminalTextRun &run,
             mappedSources[sourceIndex] = true;
             result.append({
                 .font = font,
-                .glyphIndex = glyphIndexes.at(index),
                 .baselinePosition = baselinePosition,
-                .sourceIndex = sourceIndex,
+                .glyphIndex = glyphIndexes.at(index),
             });
         }
     }

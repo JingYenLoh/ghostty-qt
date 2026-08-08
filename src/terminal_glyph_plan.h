@@ -12,16 +12,19 @@
 class QTextLine;
 
 // One glyph positioned by QTextLayout. The baseline position is expressed in
-// the caller's coordinate system; sourceIndex is the corresponding UTF-16
-// offset in TerminalTextRun::text.
+// the caller's coordinate system. Source coverage is validated while building
+// the plan but is not retained because renderers do not consume it.
 struct TerminalGlyphInstance {
     QRawFont font;
-    quint32 glyphIndex = 0;
     QPointF baselinePosition;
-    qsizetype sourceIndex = 0;
+    quint32 glyphIndex = 0;
 
     bool operator==(const TerminalGlyphInstance &) const = default;
 };
+
+#if defined(Q_PROCESSOR_X86_64)
+static_assert(sizeof(TerminalGlyphInstance) == 32);
+#endif
 
 using TerminalGlyphPlan = QVector<TerminalGlyphInstance>;
 
