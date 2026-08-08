@@ -974,16 +974,213 @@ struct TerminalGlyphStyle {
     bool operator==(const TerminalGlyphStyle &) const = default;
 };
 
+enum class TerminalRowPaintDependency : quint32 {
+    FrameForeground = 1U << 0U,
+    FrameBackground = 1U << 1U,
+    Palette = 1U << 2U,
+    Selection = 1U << 3U,
+    SearchCandidate = 1U << 4U,
+    SearchSelected = 1U << 5U,
+    BoldColor = 1U << 6U,
+    FaintOpacity = 1U << 7U,
+    MinimumContrast = 1U << 8U,
+    ExplicitBackgroundAlpha = 1U << 9U,
+};
+
+using TerminalRowPaintDependencies = quint32;
+
+constexpr TerminalRowPaintDependencies
+terminalRowPaintDependency(TerminalRowPaintDependency dependency) noexcept
+{
+    return static_cast<TerminalRowPaintDependencies>(dependency);
+}
+
+constexpr TerminalRowPaintDependencies terminalAllRowPaintDependencies =
+    (1U << 10U) - 1U;
+
+void addTerminalRowPaintDependency(
+    TerminalRowPaintDependencies &dependencies,
+    TerminalRowPaintDependency dependency) noexcept
+{
+    dependencies |= terminalRowPaintDependency(dependency);
+}
+
+[[nodiscard]] bool
+terminalRowPaintDependsOn(TerminalRowPaintDependencies dependencies,
+                          TerminalRowPaintDependencies changes) noexcept
+{
+    return (dependencies & changes) != 0;
+}
+
+[[nodiscard]] bool
+terminalColorUsesFallback(const TerminalColorValue &color) noexcept
+{
+    return color.kind == TerminalColorKind::Unset
+        || (color.kind == TerminalColorKind::Color && !color.color.isValid());
+}
+
+struct TerminalRowPaintState {
+    TerminalGlyphStyle glyphStyle;
+    QColor foreground;
+    QColor background;
+    QColor globalBackground;
+    QVector<QColor> palette;
+    int explicitBackgroundAlpha = 255;
+
+    bool operator==(const TerminalRowPaintState &) const = default;
+};
+
+[[nodiscard]] TerminalRowPaintDependencies
+terminalRowPaintChanges(const std::optional<TerminalRowPaintState> &previous,
+                        const TerminalRowPaintState &current)
+{
+    if (!previous.has_value()) return terminalAllRowPaintDependencies;
+
+    TerminalRowPaintDependencies changes = 0;
+    const TerminalGlyphStyle &oldStyle = previous->glyphStyle;
+    const TerminalGlyphStyle &newStyle = current.glyphStyle;
+    if (oldStyle.selectionForeground != newStyle.selectionForeground
+        || oldStyle.selectionBackground != newStyle.selectionBackground) {
+        addTerminalRowPaintDependency(changes,
+                                      TerminalRowPaintDependency::Selection);
+    }
+    if (oldStyle.searchForeground != newStyle.searchForeground
+        || oldStyle.searchBackground != newStyle.searchBackground) {
+        addTerminalRowPaintDependency(
+            changes, TerminalRowPaintDependency::SearchCandidate);
+    }
+    if (oldStyle.searchSelectedForeground != newStyle.searchSelectedForeground
+        || oldStyle.searchSelectedBackground
+            != newStyle.searchSelectedBackground) {
+        addTerminalRowPaintDependency(
+            changes, TerminalRowPaintDependency::SearchSelected);
+    }
+    if (oldStyle.boldColor != newStyle.boldColor) {
+        addTerminalRowPaintDependency(changes,
+                                      TerminalRowPaintDependency::BoldColor);
+    }
+    if (oldStyle.faintOpacity != newStyle.faintOpacity) {
+        addTerminalRowPaintDependency(changes,
+                                      TerminalRowPaintDependency::FaintOpacity);
+    }
+    if (oldStyle.minimumContrast != newStyle.minimumContrast) {
+        addTerminalRowPaintDependency(
+            changes, TerminalRowPaintDependency::MinimumContrast);
+    }
+    if (previous->foreground != current.foreground) {
+        addTerminalRowPaintDependency(
+            changes, TerminalRowPaintDependency::FrameForeground);
+    }
+    if (previous->background != current.background) {
+        addTerminalRowPaintDependency(
+            changes, TerminalRowPaintDependency::FrameBackground);
+    }
+    if (previous->palette != current.palette) {
+        addTerminalRowPaintDependency(changes,
+                                      TerminalRowPaintDependency::Palette);
+    }
+    if (previous->explicitBackgroundAlpha != current.explicitBackgroundAlpha) {
+        addTerminalRowPaintDependency(
+            changes, TerminalRowPaintDependency::ExplicitBackgroundAlpha);
+    }
+    if (previous->globalBackground != current.globalBackground
+        && (oldStyle.minimumContrast > 1.0 || newStyle.minimumContrast > 1.0)) {
+        addTerminalRowPaintDependency(
+            changes, TerminalRowPaintDependency::MinimumContrast);
+    }
+    return changes;
+}
+
+[[nodiscard]] TerminalRowPaintDependencies terminalCellPaintDependencies(
+    const TerminalCell &cell, bool candidateSearchMatch,
+    bool selectedSearchMatch, bool forceOpaqueBackground, bool hoveredHyperlink,
+    const TerminalGlyphStyle &glyphStyle)
+{
+    TerminalRowPaintDependencies dependencies = 0;
+    const bool glyphVisible =
+        !cell.invisible && !cell.text.isEmpty() && !cell.spacer;
+    const bool decorationVisible = !cell.invisible
+        && (hoveredHyperlink
+            || cell.underlineStyle != TerminalUnderlineStyle::None
+            || cell.strikeThrough || cell.overline);
+    const bool backgroundVisible =
+        cell.backgroundExplicit || forceOpaqueBackground;
+    if (!glyphVisible && !decorationVisible && !backgroundVisible) {
+        return dependencies;
+    }
+
+    if (cell.bold) {
+        addTerminalRowPaintDependency(dependencies,
+                                      TerminalRowPaintDependency::BoldColor);
+        if (cell.styleForegroundSource == TerminalColorSource::Palette) {
+            addTerminalRowPaintDependency(dependencies,
+                                          TerminalRowPaintDependency::Palette);
+        } else if (cell.styleForegroundSource == TerminalColorSource::Rgb) {
+            // A fixed bold-color applies to RGB only while its resolved value
+            // equals the terminal default foreground.
+            addTerminalRowPaintDependency(
+                dependencies, TerminalRowPaintDependency::FrameForeground);
+        }
+    }
+    if (cell.faint && (glyphVisible || decorationVisible)) {
+        addTerminalRowPaintDependency(dependencies,
+                                      TerminalRowPaintDependency::FaintOpacity);
+    }
+    if ((glyphVisible && !cell.minimumContrastExemptGlyph)
+        || decorationVisible) {
+        addTerminalRowPaintDependency(
+            dependencies, TerminalRowPaintDependency::MinimumContrast);
+    }
+    if (cell.backgroundExplicit && !forceOpaqueBackground) {
+        addTerminalRowPaintDependency(
+            dependencies, TerminalRowPaintDependency::ExplicitBackgroundAlpha);
+    }
+    const bool selectionActive = cell.selected;
+    selectedSearchMatch = !selectionActive && selectedSearchMatch;
+    candidateSearchMatch =
+        !selectionActive && !selectedSearchMatch && candidateSearchMatch;
+    if (selectionActive) {
+        addTerminalRowPaintDependency(dependencies,
+                                      TerminalRowPaintDependency::Selection);
+        if (terminalColorUsesFallback(glyphStyle.selectionBackground)) {
+            addTerminalRowPaintDependency(
+                dependencies, TerminalRowPaintDependency::FrameForeground);
+        }
+        if (terminalColorUsesFallback(glyphStyle.selectionForeground)) {
+            addTerminalRowPaintDependency(
+                dependencies, TerminalRowPaintDependency::FrameBackground);
+        }
+    } else if (selectedSearchMatch) {
+        addTerminalRowPaintDependency(
+            dependencies, TerminalRowPaintDependency::SearchSelected);
+        if (terminalColorUsesFallback(glyphStyle.searchSelectedBackground)) {
+            addTerminalRowPaintDependency(
+                dependencies, TerminalRowPaintDependency::FrameForeground);
+        }
+        if (terminalColorUsesFallback(glyphStyle.searchSelectedForeground)) {
+            addTerminalRowPaintDependency(
+                dependencies, TerminalRowPaintDependency::FrameBackground);
+        }
+    } else if (candidateSearchMatch) {
+        addTerminalRowPaintDependency(
+            dependencies, TerminalRowPaintDependency::SearchCandidate);
+        if (terminalColorUsesFallback(glyphStyle.searchBackground)) {
+            addTerminalRowPaintDependency(
+                dependencies, TerminalRowPaintDependency::FrameForeground);
+        }
+        if (terminalColorUsesFallback(glyphStyle.searchForeground)) {
+            addTerminalRowPaintDependency(
+                dependencies, TerminalRowPaintDependency::FrameBackground);
+        }
+    }
+    return dependencies;
+}
+
 struct TerminalTextRenderState {
     bool shapingBreakCursor = true;
     qreal cellWidth = 1.0;
     qreal cellHeight = 1.0;
     qreal baseline = 1.0;
-    TerminalGlyphStyle glyphStyle;
-    QColor foreground;
-    QColor globalBackground;
-    int explicitBackgroundAlpha = 255;
-    QVector<QColor> palette;
     int frameColumns = 0;
     int frameRows = 0;
     int visibleColumns = 0;
@@ -1046,12 +1243,6 @@ struct TerminalSolidRenderState {
     qreal strikethroughThickness = 1.0;
     qreal overlinePosition = 0.0;
     qreal overlineThickness = 1.0;
-    TerminalGlyphStyle glyphStyle;
-    QColor foreground;
-    QColor background;
-    QColor globalBackground;
-    QVector<QColor> palette;
-    int explicitBackgroundAlpha = 255;
     int frameColumns = 0;
     int frameRows = 0;
     int visibleColumns = 0;
@@ -1064,6 +1255,10 @@ struct TerminalSolidRenderState {
 
 struct TerminalSolidRowCache {
     quint64 builtEpoch = 0;
+    // Renderer-time global inputs actually consumed by this row's current
+    // cells. TerminalCell colors are already resolved worker snapshots; only
+    // frontend presentation rules add dependencies here.
+    TerminalRowPaintDependencies paintDependencies = 0;
     QVector<ColoredRect> backgrounds;
     QVector<ColoredRect> decorationsBeforeText;
     QVector<ColoredRect> decorationsAfterText;
@@ -1268,6 +1463,7 @@ public:
         }
         solidRows.clear();
         solidState.reset();
+        rowPaintState.reset();
         retainedSolidRows = false;
         blockCursorTextState = {};
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
@@ -1667,6 +1863,7 @@ public:
     std::optional<TerminalTextResourceState> textResourceState;
     std::optional<TerminalTextRenderState> textState;
     std::optional<TerminalSolidRenderState> solidState;
+    std::optional<TerminalRowPaintState> rowPaintState;
     std::optional<OverlayTextRenderState> startingTextState;
     std::optional<OverlayTextRenderState> overlayTextState;
     std::optional<OverlayTextRenderState> paneOverlayTextState;
@@ -2195,18 +2392,6 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
         textState.cellWidth = cellWidth;
         textState.cellHeight = cellHeight;
         textState.baseline = metrics.baseline;
-        textState.glyphStyle = TerminalGlyphStyle::fromAppearance(appearance);
-        textState.foreground = frame.foreground;
-        // Opacity can only alter retained glyph/decor colors through minimum
-        // contrast. Keep background-only reloads off the text rebuild path at
-        // the default threshold.
-        if (appearance.minimumContrast > 1.0) {
-            textState.globalBackground = globalBackground;
-            textState.explicitBackgroundAlpha = explicitBackgroundAlpha;
-        } else {
-            textState.globalBackground = frame.background;
-        }
-        textState.palette = frame.palette;
         textState.frameColumns = frame.columns;
         textState.frameRows = frame.rows;
         textState.visibleColumns = visibleColumns;
@@ -2254,14 +2439,6 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
             .strikethroughThickness = metrics.strikethroughThickness,
             .overlinePosition = overlinePosition,
             .overlineThickness = metrics.overlineThickness,
-            .glyphStyle = TerminalGlyphStyle::fromAppearance(appearance),
-            .foreground = frame.foreground,
-            .background = frame.background,
-            .globalBackground = appearance.minimumContrast > 1.0
-                ? globalBackground
-                : frame.background,
-            .palette = frame.palette,
-            .explicitBackgroundAlpha = explicitBackgroundAlpha,
             .frameColumns = frame.columns,
             .frameRows = frame.rows,
             .visibleColumns = visibleColumns,
@@ -2274,6 +2451,18 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
             || root->solidRows.size() != visibleRows;
         root->prepareSolidRows(visibleRows, !softwareRenderer);
         root->solidState = solidState;
+
+        const TerminalRowPaintState rowPaintState{
+            .glyphStyle = TerminalGlyphStyle::fromAppearance(appearance),
+            .foreground = frame.foreground,
+            .background = frame.background,
+            .globalBackground = globalBackground,
+            .palette = frame.palette,
+            .explicitBackgroundAlpha = explicitBackgroundAlpha,
+        };
+        const TerminalRowPaintDependencies rowPaintChanges =
+            terminalRowPaintChanges(root->rowPaintState, rowPaintState);
+        root->rowPaintState = rowPaintState;
 
         BlockCursorTextState blockCursorTextState;
         if (blockCursorActive) {
@@ -2322,7 +2511,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                      && previousShapingCursorState.row == row)
                     || (shapingCursorState.active
                         && shapingCursorState.row == row));
-            const bool rebuildRowText = rebuildAllText
+            bool rebuildRowText = rebuildAllText
                 || !root->builtTextRows.testBit(row)
                 || root->builtRowEpochs.at(row) != textRowEpoch
                 || cursorChangedThisRow || shapingCursorChangedThisRow;
@@ -2336,21 +2525,25 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                 || solidRow.backgroundLayers.size() != visibleColumns
                 || solidRow.glyphForegrounds.size() != visibleColumns
                 || solidRow.builtEpoch != solidRowEpoch
-                || blockCursorChangedThisRow;
-            if (rebuildRowText) {
-                root->beginTextRowBuild(row, gridViewport, frame.foreground,
-                                        alphaBlending);
-            }
+                || blockCursorChangedThisRow
+                || terminalRowPaintDependsOn(solidRow.paintDependencies,
+                                             rowPaintChanges);
+            bool glyphForegroundsChanged = false;
+            const bool buildRowTextCells = rebuildRowText || rebuildRowSolids;
             QVector<TerminalTextCell> rowTextCells;
-            if (rebuildRowText) {
+            if (buildRowTextCells) {
                 rowTextCells.reserve(visibleColumns);
             }
             if (rebuildRowSolids) {
+                solidRow.paintDependencies = 0;
                 solidRow.backgrounds.clear();
                 solidRow.decorationsBeforeText.clear();
                 solidRow.decorationsAfterText.clear();
                 solidRow.backgroundLayers.fill({}, visibleColumns);
-                solidRow.glyphForegrounds.fill({}, visibleColumns);
+                if (solidRow.glyphForegrounds.size() != visibleColumns) {
+                    solidRow.glyphForegrounds.fill({}, visibleColumns);
+                    glyphForegroundsChanged = true;
+                }
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
                 solidRow.fontRoleCellCounts.fill(0);
                 solidRow.decorationForegrounds.fill({}, visibleColumns);
@@ -2363,18 +2556,16 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                     static_cast<quint64>(visibleColumns);
 #endif
             }
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-            if (rebuildRowText) {
-                root->rowLayoutCounts[row] = 0;
-                root->rowFallbackCellCounts[row] = 0;
-                root->rowBatchedGlyphCounts[row] = 0;
-            }
-#endif
             if (rebuildRowSolids || rebuildRowText) {
                 for (int column = 0; column < visibleColumns; ++column) {
                     const qsizetype index =
                         static_cast<qsizetype>(row) * frame.columns + column;
                     if (index >= frame.cells.size()) {
+                        if (rebuildRowSolids
+                            && solidRow.glyphForegrounds.at(column).isValid()) {
+                            solidRow.glyphForegrounds[column] = {};
+                            glyphForegroundsChanged = true;
+                        }
                         continue;
                     }
                     const TerminalCell &cell = frame.cells.at(index);
@@ -2426,6 +2617,14 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                         const bool forceOpaqueBackground = cell.selected
                             || selectedSearchMatch || candidateSearchMatch
                             || cell.inverse;
+                        const bool hoveredHyperlink =
+                            index < hoveredHyperlinkCells.size()
+                            && hoveredHyperlinkCells.testBit(index);
+                        solidRow.paintDependencies |=
+                            terminalCellPaintDependencies(
+                                cell, candidateSearchMatch, selectedSearchMatch,
+                                forceOpaqueBackground, hoveredHyperlink,
+                                rowPaintState.glyphStyle);
                         const QColor backgroundLayer = cellBackgroundLayer(
                             cellBackground, cell.backgroundExplicit,
                             forceOpaqueBackground, explicitBackgroundAlpha);
@@ -2476,7 +2675,11 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                             foreground = blockCursorTextColor;
                             decorationForeground = blockCursorTextColor;
                         }
-                        solidRow.glyphForegrounds[column] = foreground;
+                        if (solidRow.glyphForegrounds.at(column)
+                            != foreground) {
+                            solidRow.glyphForegrounds[column] = foreground;
+                            glyphForegroundsChanged = true;
+                        }
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
                         solidRow.decorationForegrounds[column] =
                             decorationForeground;
@@ -2490,8 +2693,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                         if (!cell.invisible) {
                             TerminalUnderlineStyle underlineStyle =
                                 cell.underlineStyle;
-                            if (index < hoveredHyperlinkCells.size()
-                                && hoveredHyperlinkCells.testBit(index)) {
+                            if (hoveredHyperlink) {
                                 underlineStyle = cell.underlineStyle
                                         == TerminalUnderlineStyle::Single
                                     ? TerminalUnderlineStyle::Double
@@ -2576,7 +2778,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                         }
                     }
 
-                    if (rebuildRowText) {
+                    if (buildRowTextCells) {
                         rowTextCells.append({
                             .text = cell.text,
                             .font = metrics.fontForText(fontRole, cell.text),
@@ -2597,8 +2799,19 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                     }
                 }
             }
+            if (rebuildRowSolids && !rebuildRowText
+                && glyphForegroundsChanged) {
+                rebuildRowText = true;
+            }
             bool rowTextComplete = !rebuildRowText;
             if (rebuildRowText) {
+                root->beginTextRowBuild(row, gridViewport, frame.foreground,
+                                        alphaBlending);
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+                root->rowLayoutCounts[row] = 0;
+                root->rowFallbackCellCounts[row] = 0;
+                root->rowBatchedGlyphCounts[row] = 0;
+#endif
                 const QVector<TerminalTextRun> runs = planTerminalTextRuns(
                     std::span<const TerminalTextCell>(
                         rowTextCells.constData(),

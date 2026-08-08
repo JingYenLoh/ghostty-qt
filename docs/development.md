@@ -65,8 +65,17 @@ text submissions on OpenGL/Vulkan. Every scenario validates native submissions,
 batched glyphs, glyph geometry, and atlas churn in addition to its row/layout
 counts, prohibiting extra work or silent path changes. The terminal-pane
 row-damage tests separately assert the affected row identities and retention of
-every unaffected row. Search-color, geometry, and other global style
-invalidations remain deliberately outside these sparse benchmark scenarios.
+every unaffected row. The global-color cases use the source provenance retained
+on each cell. The `text-explicit-color-global-noop` frame has only direct-RGB
+foregrounds and cell-owned backgrounds, so alternating the default foreground,
+default background, and palette must paint without building a text row,
+visiting a solid cell, submitting text, writing geometry, allocating a batch,
+or uploading the atlas. `text-selective-color-change` alternates the same
+global state on a mixed frame and requires only the even rows whose bold text
+depends on palette promotion or default-foreground equality to rebuild. Both
+cases preserve exact atlas and per-row scene-graph identities. Geometry and
+other global style invalidations remain outside these sparse benchmark
+scenarios.
 
 Use a Release build and compare results only on the same machine, Qt version,
 backend, dimensions, warmup, and iteration count:
@@ -150,8 +159,11 @@ RHI backend. The `text-atlas-retained-rebuild` case alternates row-affecting
 palette state on a canonical ASCII frame and requires zero atlas uploads,
 glyph-batch node creations, and buffer allocations while preserving the exact
 row-container, glyph-batch, and already-resident native fallback identities
-for the compatible font/DPR/render context. The Kitty cases use 512
-placements sharing assets and separately
+for the compatible font/DPR/render context. The explicit-color no-op and mixed
+dependency cases additionally make global-color row selection observable:
+unaffected rows perform no cell or shaping work, while affected rows retain
+their scene-graph resources and glyph-buffer capacity. The Kitty cases use
+512 placements sharing assets and separately
 exercise opaque and translucent first upload, same-snapshot redraw, and same-ID
 replacement, plus opaque movement and eviction.
 Their churn guards require retained redraws to perform no scene-graph work,

@@ -75,12 +75,15 @@ advanced text/graphics support, and distribution:
   geometry per visible row. Sparse updates plan and shape only damaged rows and
   commit only their GPU geometry; the software fallback keeps global solid-node
   pools after benchmarking showed that row-node traversal was counterproductive
-  there. Compatible text runs reduce layout count with exact-position fallback
-  for unsafe runs, while the narrower ASCII path removes native text submissions
-  without replacing Qt shaping. Reproducible host reports and a noise-aware
-  comparator gate structural work and full-profile timing; collecting
-  representative baselines and further reducing global row invalidation cost
-  remain the principal renderer performance risks.
+  there. Compatible global paint changes use cached row dependencies and skip
+  unrelated cell scans and shaping; affected rows rebuild text only after their
+  recomputed foregrounds change. Compatible text runs reduce layout count with
+  exact-position fallback for unsafe runs, while the narrower ASCII path removes
+  native text submissions without replacing Qt shaping. Reproducible host
+  reports and a noise-aware comparator gate structural work and full-profile
+  timing; collecting representative baselines and reducing the remaining
+  structural full-invalidations remain the principal renderer performance
+  risks.
 - The libghostty revision should remain pinned; upgrades need focused ABI/API
   review and protocol regressions.
 - Color emoji and exact Ghostty font shaping still require explicit renderer

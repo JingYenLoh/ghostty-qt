@@ -733,8 +733,11 @@ ghostty-qt therefore implements the largest safe frontend-owned subset:
   and grid-shape invalidations when its font program, DPR, window, and graphics
   API remain compatible. Those compatible invalidations also retain row
   containers, glyph-batch nodes, existing geometry capacity, and any cleared
-  native fallback node; row-count changes preserve the common prefix. Every
-  other row keeps a lazily created general Qt text path.
+  native fallback node. Global paint deltas are intersected with cached row
+  dependencies, so unrelated rows perform no cell scan or shaping and affected
+  rows rebuild text only when their effective foreground changes; row-count
+  changes preserve the common prefix. Every other row keeps a lazily created
+  general Qt text path.
 
 This gives visible feature and ligature support without allowing a platform
 shaper to move later cells off-grid. The parity ledger remains conservative:

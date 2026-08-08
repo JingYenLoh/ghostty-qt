@@ -411,6 +411,10 @@ public:
             TerminalColorValue::fromColor(QColor(QStringLiteral("#f0f0f0")));
         options.appearance.cursorTextColor =
             TerminalColorValue::fromColor(QColor(QStringLiteral("#101010")));
+        options.appearance.boldColor = {
+            .kind = TerminalBoldColorKind::Color,
+            .color = QColor(QStringLiteral("#ff3300")),
+        };
 
         const qreal devicePixelRatio = window_->devicePixelRatio();
         const TerminalCellMetrics metrics =
@@ -641,7 +645,7 @@ public:
         // Establish this scenario's own row topology. The second palette is a
         // guaranteed text-state transition regardless of state inherited from
         // a previously measured scenario.
-        publishTextFrame(pattern, false);
+        publishGlobalDependentTextFrame(pattern, false);
         if (!renderUntimed(error)) return {};
         publishTextPalette(true);
         if (!renderUntimed(error)) return {};
@@ -662,7 +666,7 @@ public:
              .nativeTextSubmissions = expectBatch ? 0 : rows,
              .nativeTextCells = expectBatch ? 0 : cells,
              .batchedGlyphs = expectBatch ? cells : 0,
-             .glyphBatchGeometryWrites = 0,
+             .glyphBatchGeometryWrites = expectBatch ? rows : 0,
              .glyphBatchNodeCreations = 0,
              .glyphBatchAllocations = 0},
             0, 0, {},
@@ -680,6 +684,80 @@ public:
             baseline.rowGlyphBatchSerials;
         result.expectedFinalRowNativeTextNodeSerials = baseline.rowNodeSerials;
 
+        return result;
+    }
+
+    ScenarioResult textExplicitColorGlobalNoop(int warmupIterations,
+                                               int measuredIterations,
+                                               RenderDocCapture *capture,
+                                               QString *error)
+    {
+        clearSearch();
+        const QStringView pattern = u"ab+cd=ef+gh-";
+
+        publishDependencyTextFrame(pattern, false, false);
+        if (!renderUntimed(error)) return {};
+        publishGlobalTextColors(true);
+        if (!renderUntimed(error)) return {};
+
+        const TerminalPaneRenderProbeSnapshot baseline =
+            terminalPaneRenderProbe(pane_);
+        bool alternateColors = true;
+        ScenarioResult result = measure(
+            QStringLiteral("text-explicit-color-global-noop"), warmupIterations,
+            measuredIterations, {.paintSerial = 1}, 0, 0, {},
+            [this, &alternateColors] {
+                alternateColors = !alternateColors;
+                publishGlobalTextColors(alternateColors);
+            },
+            capture, error);
+        if (result.name.isEmpty()) return result;
+
+        requireRetainedTextResources(result, baseline);
+        return result;
+    }
+
+    ScenarioResult textSelectiveColorChange(int warmupIterations,
+                                            int measuredIterations,
+                                            RenderDocCapture *capture,
+                                            QString *error)
+    {
+        clearSearch();
+        const QStringView pattern = u"ab+cd=ef+gh-";
+
+        publishDependencyTextFrame(pattern, false, true);
+        if (!renderUntimed(error)) return {};
+        publishGlobalTextColors(true);
+        if (!renderUntimed(error)) return {};
+
+        const TerminalPaneRenderProbeSnapshot baseline =
+            terminalPaneRenderProbe(pane_);
+        const bool expectBatch = glyphBatchExpected();
+        const quint64 rows = static_cast<quint64>((grid_.rows + 1) / 2);
+        const quint64 cells = static_cast<quint64>(grid_.columns) * rows;
+        bool alternateColors = true;
+        ScenarioResult result = measure(
+            QStringLiteral("text-selective-color-change"), warmupIterations,
+            measuredIterations,
+            {.paintSerial = 1,
+             .solidCellVisits = cells,
+             .textRowBuilds = rows,
+             .textLayouts = expectBatch ? 0 : rows,
+             .nativeTextSubmissions = expectBatch ? 0 : rows,
+             .nativeTextCells = expectBatch ? 0 : cells,
+             .batchedGlyphs = expectBatch ? cells : 0,
+             .glyphBatchGeometryWrites = expectBatch ? rows : 0,
+             .glyphBatchNodeCreations = 0,
+             .glyphBatchAllocations = 0},
+            0, 0, {},
+            [this, &alternateColors] {
+                alternateColors = !alternateColors;
+                publishGlobalTextColors(alternateColors);
+            },
+            capture, error);
+        if (result.name.isEmpty()) return result;
+
+        requireRetainedTextResources(result, baseline);
         return result;
     }
 
@@ -1180,6 +1258,42 @@ private:
         return update;
     }
 
+    TerminalRowUpdate makeExplicitColorTextRow(int row,
+                                               QStringView pattern) const
+    {
+        TerminalRowUpdate update = makeTextRow(row, pattern);
+        for (TerminalCell &cell : update.cells) {
+            cell.foreground = QColor(QStringLiteral("#91d7e3"));
+            cell.background = QColor(QStringLiteral("#1b2430"));
+            cell.styleForegroundSource = TerminalColorSource::Rgb;
+            cell.backgroundExplicit = true;
+        }
+        return update;
+    }
+
+    TerminalRowUpdate makeGlobalColorDependentTextRow(int row,
+                                                      QStringView pattern,
+                                                      bool globalVariant) const
+    {
+        TerminalRowUpdate update = makeTextRow(row, pattern);
+        const bool paletteDerived = row % 4 == 0;
+        const QColor foreground = paletteDerived
+            ? textPalette(globalVariant).at(0)
+            : globalVariant ? QColor(QStringLiteral("#eceff4"))
+                            : QColor(QStringLiteral("#d8dee9"));
+        for (TerminalCell &cell : update.cells) {
+            cell.foreground = foreground;
+            cell.background = QColor(QStringLiteral("#1b2430"));
+            cell.backgroundExplicit = true;
+            cell.styleForegroundSource = paletteDerived
+                ? TerminalColorSource::Palette
+                : TerminalColorSource::Rgb;
+            cell.styleForegroundPaletteIndex = paletteDerived ? 0 : -1;
+            cell.bold = true;
+        }
+        return update;
+    }
+
     void publishFullFrame(bool alternate)
     {
         TerminalUpdate update;
@@ -1267,6 +1381,82 @@ private:
         update.palette = textPalette(alternate);
         update.contentRevision = ++revision_;
         controller_->terminalUpdated(update);
+    }
+
+    void publishDependencyTextFrame(QStringView pattern, bool globalVariant,
+                                    bool mixedDependencies)
+    {
+        TerminalUpdate update;
+        update.columns = grid_.columns;
+        update.rows = grid_.rows;
+        update.fullFrame = true;
+        update.foreground = globalVariant ? QColor(QStringLiteral("#eceff4"))
+                                          : QColor(QStringLiteral("#d8dee9"));
+        update.background = globalVariant ? QColor(QStringLiteral("#14191f"))
+                                          : QColor(QStringLiteral("#090c10"));
+        update.cursorColor = QColor(QStringLiteral("#f0f0f0"));
+        update.cursorColorExplicit = true;
+        update.palette = textPalette(globalVariant);
+        update.contentRevision = ++revision_;
+        update.dirtyRows.reserve(grid_.rows);
+        for (int row = 0; row < grid_.rows; ++row) {
+            const bool globalColorDependent = mixedDependencies && row % 2 == 0;
+            update.dirtyRows.append(
+                globalColorDependent ? makeGlobalColorDependentTextRow(
+                                           row, pattern, globalVariant)
+                                     : makeExplicitColorTextRow(row, pattern));
+        }
+        controller_->terminalUpdated(update);
+    }
+
+    void publishGlobalDependentTextFrame(QStringView pattern,
+                                         bool globalVariant)
+    {
+        TerminalUpdate update;
+        update.columns = grid_.columns;
+        update.rows = grid_.rows;
+        update.fullFrame = true;
+        update.foreground = globalVariant ? QColor(QStringLiteral("#eceff4"))
+                                          : QColor(QStringLiteral("#d8dee9"));
+        update.background = Qt::black;
+        update.cursorColor = QColor(QStringLiteral("#f0f0f0"));
+        update.cursorColorExplicit = true;
+        update.palette = textPalette(globalVariant);
+        update.contentRevision = ++revision_;
+        update.dirtyRows.reserve(grid_.rows);
+        for (int row = 0; row < grid_.rows; ++row) {
+            update.dirtyRows.append(
+                makeGlobalColorDependentTextRow(row, pattern, globalVariant));
+        }
+        controller_->terminalUpdated(update);
+    }
+
+    void publishGlobalTextColors(bool alternate)
+    {
+        TerminalUpdate update;
+        update.columns = grid_.columns;
+        update.rows = grid_.rows;
+        update.colorsChanged = true;
+        update.foreground = alternate ? QColor(QStringLiteral("#eceff4"))
+                                      : QColor(QStringLiteral("#d8dee9"));
+        update.background = alternate ? QColor(QStringLiteral("#14191f"))
+                                      : QColor(QStringLiteral("#090c10"));
+        update.cursorColor = QColor(QStringLiteral("#f0f0f0"));
+        update.cursorColorExplicit = true;
+        update.palette = textPalette(alternate);
+        update.contentRevision = ++revision_;
+        controller_->terminalUpdated(update);
+    }
+
+    static void requireRetainedTextResources(
+        ScenarioResult &result, const TerminalPaneRenderProbeSnapshot &baseline)
+    {
+        result.expectedFinalNativeTextNodeCount = baseline.nativeTextNodeCount;
+        result.expectedFinalGlyphAtlasSerial = baseline.glyphAtlasSerial;
+        result.expectedFinalRowContainerSerials = baseline.rowContainerSerials;
+        result.expectedFinalRowGlyphBatchSerials =
+            baseline.rowGlyphBatchSerials;
+        result.expectedFinalRowNativeTextNodeSerials = baseline.rowNodeSerials;
     }
 
     void publishCursor()
@@ -1712,6 +1902,10 @@ const QVector<std::pair<QString, ScenarioFunction>> &scenarioFunctions()
          &RendererBenchmark::textLigatureFullFrame},
         {QStringLiteral("text-atlas-retained-rebuild"),
          &RendererBenchmark::textAtlasRetainedRebuild},
+        {QStringLiteral("text-explicit-color-global-noop"),
+         &RendererBenchmark::textExplicitColorGlobalNoop},
+        {QStringLiteral("text-selective-color-change"),
+         &RendererBenchmark::textSelectiveColorChange},
         {QStringLiteral("cursor-only"), &RendererBenchmark::cursorOnly},
         {QStringLiteral("full-invalidation"),
          &RendererBenchmark::fullInvalidation},

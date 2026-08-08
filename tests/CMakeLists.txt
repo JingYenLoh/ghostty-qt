@@ -968,7 +968,11 @@ set_tests_properties(terminal-pane-glyph-batch-wayland-rhi PROPERTIES
 )
 add_test(
     NAME terminal-pane-retained-solids-rhi
-    COMMAND test-terminal-pane retainsMainTextRowsAcrossIncrementalUpdates
+    COMMAND
+        test-terminal-pane
+        retainsMainTextRowsAcrossIncrementalUpdates
+        invalidatesOnlyRowsAffectedByGlobalColors
+        invalidatesHoveredExemptGlyphForContrastChanges
 )
 set_tests_properties(terminal-pane-retained-solids-rhi PROPERTIES
     TIMEOUT 30

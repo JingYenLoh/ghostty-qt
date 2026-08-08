@@ -488,6 +488,8 @@ private Q_SLOTS:
     void runsCursorBlinkTimerOnlyWhenNeeded();
     void defaultCursorBlinkPublishesBothRenderPhases();
     void retainsMainTextRowsAcrossIncrementalUpdates();
+    void invalidatesOnlyRowsAffectedByGlobalColors();
+    void invalidatesHoveredExemptGlyphForContrastChanges();
     void retainsGlyphAtlasAndLazilyCreatesNativeTextRows();
     void invalidatesOnlyChangedSearchDecorationRows();
     void rendersAndRetainsKittyGraphics();
@@ -1810,6 +1812,7 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
         for (TerminalCell &cell : update.cells) {
             cell.foreground = color;
             cell.background = Qt::black;
+            cell.styleForegroundSource = TerminalColorSource::Rgb;
         }
         update.cells[1].background = color;
         update.cells[1].backgroundExplicit = true;
@@ -2207,41 +2210,45 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     QVERIFY(approximatelyEqual(centerColor(clearedSearchImage, 1),
                                rowColors[1]));
 
-    // Every global text-state dependency invalidates all currently visible
-    // rows, including newly visible rows after a shape change.
+    // Global colors that none of these explicit-RGB rows consume leave the
+    // retained row plans and their pixels untouched.
     TerminalUpdate colors;
     colors.columns = columns;
     colors.rows = rows;
     colors.colorsChanged = true;
-    colors.foreground = full.foreground;
+    colors.foreground = QColor(QStringLiteral("#dedede"));
     colors.background = full.background;
     colors.cursorColor = full.cursorColor;
     colors.cursorColorExplicit = full.cursorColorExplicit;
     colors.palette = {QColor(QStringLiteral("#112233"))};
     colors.contentRevision = ++revision;
     controller->terminalUpdated(colors);
-    QVERIFY(!window.grabWindow().isNull());
+    const QImage colorsChangedImage = window.grabWindow();
+    QVERIFY(!colorsChangedImage.isNull());
     const TerminalPaneRenderProbeSnapshot paletteChanged =
         terminalPaneRenderProbe(pane);
     QCOMPARE(paletteChanged.rootSerial, clearedSearch.rootSerial);
-    QVERIFY(allVisibleRowsRebuilt(clearedSearch, paletteChanged));
-    for (int row = 0; row < rows; ++row) {
-        QCOMPARE(paletteChanged.rowSolidBuildCounts[row],
-                 clearedSearch.rowSolidBuildCounts[row] + 1);
-    }
+    QCOMPARE(paletteChanged.rowBuildCounts, clearedSearch.rowBuildCounts);
+    QCOMPARE(paletteChanged.rowSolidBuildCounts,
+             clearedSearch.rowSolidBuildCounts);
+    QCOMPARE(paletteChanged.solidCellVisitCount,
+             clearedSearch.solidCellVisitCount);
+    QCOMPARE(colorsChangedImage, clearedSearchImage);
 
     LaunchOptions appearanceChanged = options;
     appearanceChanged.appearance.faintOpacity = 0.75;
     pane->applyRuntimeOptions(appearanceChanged);
-    QVERIFY(!window.grabWindow().isNull());
+    const QImage faintChangedImage = window.grabWindow();
+    QVERIFY(!faintChangedImage.isNull());
     const TerminalPaneRenderProbeSnapshot reloadedAppearance =
         terminalPaneRenderProbe(pane);
     QCOMPARE(reloadedAppearance.rootSerial, paletteChanged.rootSerial);
-    QVERIFY(allVisibleRowsRebuilt(paletteChanged, reloadedAppearance));
-    for (int row = 0; row < rows; ++row) {
-        QCOMPARE(reloadedAppearance.rowSolidBuildCounts[row],
-                 paletteChanged.rowSolidBuildCounts[row] + 1);
-    }
+    QCOMPARE(reloadedAppearance.rowBuildCounts, paletteChanged.rowBuildCounts);
+    QCOMPARE(reloadedAppearance.rowSolidBuildCounts,
+             paletteChanged.rowSolidBuildCounts);
+    QCOMPARE(reloadedAppearance.solidCellVisitCount,
+             paletteChanged.solidCellVisitCount);
+    QCOMPARE(faintChangedImage, colorsChangedImage);
 
     LaunchOptions styleChanged = appearanceChanged;
     styleChanged.typography.face(TerminalFontRole::Bold).style =
@@ -2263,6 +2270,13 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
         terminalPaneRenderProbe(pane);
     QCOMPARE(reloadedFont.rootSerial, reloadedStyle.rootSerial);
     QVERIFY(allVisibleRowsRebuilt(reloadedStyle, reloadedFont));
+    QCOMPARE(reloadedFont.rowSolidBuildCounts.size(), rows);
+    for (int row = 0; row < rows; ++row) {
+        QVERIFY(reloadedFont.rowSolidBuildCounts.at(row)
+                > reloadedStyle.rowSolidBuildCounts.at(row));
+    }
+    QVERIFY(reloadedFont.solidCellVisitCount
+            > reloadedStyle.solidCellVisitCount);
 
     pane->setWidth(std::max(1.0, pane->width() - cellWidth));
     QVERIFY(!window.grabWindow().isNull());
@@ -2270,7 +2284,366 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
         terminalPaneRenderProbe(pane);
     QCOMPARE(resized.rootSerial, reloadedFont.rootSerial);
     QVERIFY(allVisibleRowsRebuilt(reloadedFont, resized));
+    QCOMPARE(resized.rowSolidBuildCounts.size(), rows);
+    for (int row = 0; row < rows; ++row) {
+        QVERIFY(resized.rowSolidBuildCounts.at(row)
+                > reloadedFont.rowSolidBuildCounts.at(row));
+    }
+    QVERIFY(resized.solidCellVisitCount > reloadedFont.solidCellVisitCount);
 
+    window.close();
+    delete pane;
+}
+
+void TerminalPaneTest::invalidatesOnlyRowsAffectedByGlobalColors()
+{
+    qRegisterMetaType<TerminalSearchUpdate>();
+    qRegisterMetaType<TerminalUpdate>();
+
+    const QColor initialForeground(QStringLiteral("#dddddd"));
+    const QColor changedForeground(QStringLiteral("#3366ff"));
+    const QColor initialBackground(QStringLiteral("#101010"));
+    const QColor changedBackground(QStringLiteral("#eeeeee"));
+    const QColor explicitFirst(QStringLiteral("#00ffff"));
+    const QColor explicitLast(QStringLiteral("#ff00ff"));
+    const QColor boldColor(QStringLiteral("#ff3300"));
+    const QColor initialBright(QStringLiteral("#00ff00"));
+    const QColor changedBright(QStringLiteral("#ffff00"));
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    useSystemFixedFont(options);
+    options.appearance.foregroundColor = initialForeground;
+    options.appearance.backgroundColor = initialBackground;
+    options.appearance.boldColor = {
+        .kind = TerminalBoldColorKind::Color,
+        .color = boldColor,
+    };
+    const TerminalColorValue invalidFixedColor{
+        .kind = TerminalColorKind::Color,
+        .color = {},
+    };
+    options.appearance.selectionForeground = invalidFixedColor;
+    options.appearance.selectionBackground = invalidFixedColor;
+    options.appearance.searchForeground = invalidFixedColor;
+    options.appearance.searchBackground = invalidFixedColor;
+
+    constexpr int columns = 4;
+    constexpr int rows = 6;
+    QVector<QColor> initialPalette(16, Qt::black);
+    initialPalette[0] = QColor(QStringLiteral("#006600"));
+    initialPalette[8] = initialBright;
+
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
+    QQuickWindow window;
+    window.setColor(initialBackground);
+    window.resize(qCeil(metrics.cellWidth * columns),
+                  qCeil(metrics.cellHeight * rows));
+    auto *pane = new TerminalPane(options, window.contentItem(), std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
+    pane->setSize(window.size());
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    const auto makeRow = [&](int row, const QColor &foreground,
+                             TerminalColorSource source, bool bold,
+                             int paletteIndex = -1) {
+        TerminalRowUpdate update;
+        update.row = row;
+        update.cells.resize(columns);
+        for (TerminalCell &cell : update.cells) {
+            cell.text = QStringLiteral("M");
+            cell.baseCodepoint = 'M';
+            cell.plainCodepoint = true;
+            cell.foreground = foreground;
+            cell.background = initialBackground;
+            cell.backgroundExplicit = true;
+            cell.styleForegroundSource = source;
+            cell.styleForegroundPaletteIndex = paletteIndex;
+            cell.bold = bold;
+        }
+        return update;
+    };
+
+    TerminalUpdate frame;
+    frame.columns = columns;
+    frame.rows = rows;
+    frame.fullFrame = true;
+    frame.colorsChanged = true;
+    frame.foreground = initialForeground;
+    frame.background = initialBackground;
+    frame.cursorVisible = false;
+    frame.palette = initialPalette;
+    frame.contentRevision = 1;
+    frame.dirtyRows = {
+        makeRow(0, explicitFirst, TerminalColorSource::Rgb, false),
+        makeRow(1, initialPalette.at(0), TerminalColorSource::Palette, true, 0),
+        makeRow(2, initialForeground, TerminalColorSource::Rgb, true),
+        makeRow(3, explicitLast, TerminalColorSource::Rgb, false),
+    };
+    TerminalRowUpdate selectedRow =
+        makeRow(4, explicitFirst, TerminalColorSource::Rgb, false);
+    for (TerminalCell &cell : selectedRow.cells) cell.selected = true;
+    frame.dirtyRows.append(std::move(selectedRow));
+    frame.dirtyRows.append(
+        makeRow(5, explicitLast, TerminalColorSource::Rgb, false));
+    controller->terminalUpdated(frame);
+
+    TerminalSearchUpdate search;
+    search.generation = 1;
+    search.contentRevision = frame.contentRevision;
+    search.active = true;
+    search.complete = true;
+    search.totalMatches = 1;
+    search.selectedMatch = 0;
+    search.columns = columns;
+    search.rows = rows;
+    search.visibleCellMask =
+        cellMask(columns, rows,
+                 {QPoint(0, 5), QPoint(1, 5), QPoint(2, 5), QPoint(3, 5)});
+    search.selectedCellMask = QBitArray(columns * rows);
+    controller->searchUpdated(search);
+
+    const QImage initialImage = window.grabWindow();
+    QVERIFY(!initialImage.isNull());
+    const TerminalPaneRenderProbeSnapshot initial =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(initial.rowBuildCounts.size(), rows);
+    QCOMPARE(initial.rowSolidBuildCounts.size(), rows);
+    QCOMPARE(initial.glyphForegrounds.size(), columns * rows);
+    QCOMPARE(initial.cellBackgrounds.size(), columns * rows);
+
+    const auto cellIndex = [](int column, int row) {
+        return static_cast<qsizetype>(row) * columns + column;
+    };
+    const auto verifyRowColor =
+        [&](const TerminalPaneRenderProbeSnapshot &probe, int row,
+            const QColor &expected) {
+            for (int column = 0; column < columns; ++column) {
+                QCOMPARE(probe.glyphForegrounds.at(cellIndex(column, row)),
+                         expected);
+            }
+        };
+    const auto verifyRowBackground =
+        [&](const TerminalPaneRenderProbeSnapshot &probe, int row,
+            const QColor &expected) {
+            for (int column = 0; column < columns; ++column) {
+                QCOMPARE(probe.cellBackgrounds.at(cellIndex(column, row)),
+                         expected);
+            }
+        };
+    verifyRowColor(initial, 0, explicitFirst);
+    verifyRowColor(initial, 1, initialBright);
+    verifyRowColor(initial, 2, boldColor);
+    verifyRowColor(initial, 3, explicitLast);
+    verifyRowColor(initial, 4, initialBackground);
+    verifyRowColor(initial, 5, initialBackground);
+    verifyRowBackground(initial, 4, initialForeground);
+    verifyRowBackground(initial, 5, initialForeground);
+
+    QVector<QColor> changedPalette = initialPalette;
+    changedPalette[8] = changedBright;
+    TerminalUpdate colors;
+    colors.columns = columns;
+    colors.rows = rows;
+    colors.colorsChanged = true;
+    colors.foreground = changedForeground;
+    colors.background = changedBackground;
+    colors.palette = changedPalette;
+    colors.contentRevision = frame.contentRevision;
+    controller->terminalUpdated(colors);
+
+    const QImage changedImage = window.grabWindow();
+    QVERIFY(!changedImage.isNull());
+    const TerminalPaneRenderProbeSnapshot changed =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(changed.rootSerial, initial.rootSerial);
+    QCOMPARE(changed.rowNodeSerials, initial.rowNodeSerials);
+    QVector<quint64> expectedBuildCounts = initial.rowBuildCounts;
+    ++expectedBuildCounts[1];
+    ++expectedBuildCounts[2];
+    ++expectedBuildCounts[4];
+    ++expectedBuildCounts[5];
+    QCOMPARE(changed.rowBuildCounts, expectedBuildCounts);
+    QVector<quint64> expectedSolidBuildCounts = initial.rowSolidBuildCounts;
+    ++expectedSolidBuildCounts[1];
+    ++expectedSolidBuildCounts[2];
+    ++expectedSolidBuildCounts[4];
+    ++expectedSolidBuildCounts[5];
+    QCOMPARE(changed.rowSolidBuildCounts, expectedSolidBuildCounts);
+    QCOMPARE(changed.solidCellVisitCount,
+             initial.solidCellVisitCount + static_cast<quint64>(4 * columns));
+    verifyRowColor(changed, 0, explicitFirst);
+    verifyRowColor(changed, 1, changedBright);
+    verifyRowColor(changed, 2, initialForeground);
+    verifyRowColor(changed, 3, explicitLast);
+    verifyRowColor(changed, 4, changedBackground);
+    verifyRowColor(changed, 5, changedBackground);
+    verifyRowBackground(changed, 4, changedForeground);
+    verifyRowBackground(changed, 5, changedForeground);
+
+    const auto rowPixels = [&](const QImage &image, int row) {
+        const qreal scale =
+            static_cast<qreal>(image.height()) / window.height();
+        const int top =
+            qBound(0, qCeil(row * metrics.cellHeight * scale), image.height());
+        const int bottom =
+            qBound(top, qFloor((row + 1) * metrics.cellHeight * scale),
+                   image.height());
+        return image.copy(0, top, image.width(), bottom - top);
+    };
+    QCOMPARE(rowPixels(changedImage, 0), rowPixels(initialImage, 0));
+    QVERIFY(rowPixels(changedImage, 1) != rowPixels(initialImage, 1));
+    QVERIFY(rowPixels(changedImage, 2) != rowPixels(initialImage, 2));
+    QCOMPARE(rowPixels(changedImage, 3), rowPixels(initialImage, 3));
+    QVERIFY(rowPixels(changedImage, 4) != rowPixels(initialImage, 4));
+    QVERIFY(rowPixels(changedImage, 5) != rowPixels(initialImage, 5));
+
+    window.close();
+    delete pane;
+}
+
+void TerminalPaneTest::invalidatesHoveredExemptGlyphForContrastChanges()
+{
+    qRegisterMetaType<TerminalUpdate>();
+
+    const QColor lowContrast(QStringLiteral("#333333"));
+    const QColor initialBackground(Qt::black);
+    const QColor changedBackground(Qt::white);
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    useSystemFixedFont(options);
+    options.appearance.foregroundColor = lowContrast;
+    options.appearance.backgroundColor = initialBackground;
+    options.appearance.minimumContrast = 1.0;
+    options.linkPreviews = LinkPreviewMode::Never;
+
+    constexpr int columns = 1;
+    constexpr int rows = 2;
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
+    QQuickWindow window;
+    window.setColor(initialBackground);
+    window.resize(qCeil(metrics.cellWidth * columns),
+                  qCeil(metrics.cellHeight * rows));
+    auto *pane = new TerminalPane(options, window.contentItem(), std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
+    pane->setSize(window.size());
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy hyperlinkQueries(controller,
+                                &TerminalController::hyperlinkQueryRequested);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    pane->forceActiveFocus();
+    QTRY_VERIFY_WITH_TIMEOUT(pane->hasActiveFocus(), 1000);
+
+    TerminalUpdate frame;
+    frame.columns = columns;
+    frame.rows = rows;
+    frame.fullFrame = true;
+    frame.colorsChanged = true;
+    frame.foreground = lowContrast;
+    frame.background = initialBackground;
+    frame.cursorVisible = false;
+    frame.contentRevision = 19;
+    for (int row = 0; row < rows; ++row) {
+        TerminalRowUpdate rowUpdate;
+        rowUpdate.row = row;
+        rowUpdate.cells.resize(columns);
+        TerminalCell &cell = rowUpdate.cells[0];
+        cell.text = QString(QChar(0x2588));
+        cell.baseCodepoint = 0x2588;
+        cell.plainCodepoint = true;
+        cell.foreground = lowContrast;
+        cell.background = initialBackground;
+        cell.styleForegroundSource = TerminalColorSource::Rgb;
+        cell.minimumContrastExemptGlyph = true;
+        cell.hasHyperlink = row == 0;
+        frame.dirtyRows.append(std::move(rowUpdate));
+    }
+    controller->terminalUpdated(frame);
+    QVERIFY(!window.grabWindow().isNull());
+
+    QKeyEvent controlPress(QEvent::KeyPress, Qt::Key_Control,
+                           Qt::ControlModifier);
+    QCoreApplication::sendEvent(pane, &controlPress);
+    const QPointF linkPosition(metrics.cellWidth * 0.5,
+                               metrics.cellHeight * 0.5);
+    QHoverEvent hover(QEvent::HoverMove, linkPosition, linkPosition,
+                      linkPosition, Qt::ControlModifier);
+    QCoreApplication::sendEvent(pane, &hover);
+    QTRY_COMPARE_WITH_TIMEOUT(hyperlinkQueries.count(), 1, 1000);
+    controller->hyperlinkResolved(
+        frame.contentRevision, TerminalHyperlinkState::Visible,
+        TerminalLinkKind::Osc8,
+        QByteArrayLiteral("https://example.test/contrast"), QPoint(0, 0),
+        {QPoint(0, 0)});
+
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot hovered =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(hovered.rowBuildCounts.size(), rows);
+    QCOMPARE(hovered.rowSolidBuildCounts.size(), rows);
+    QCOMPARE(hovered.glyphForegrounds.at(0), lowContrast);
+    QCOMPARE(hovered.underlineColors.at(0), lowContrast);
+    QVERIFY(!hovered.underlineColors.at(1).isValid());
+    QVERIFY(!hovered.underlineRects.isEmpty());
+
+    LaunchOptions contrast = options;
+    contrast.appearance.minimumContrast = 7.0;
+    pane->applyRuntimeOptions(contrast);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot contrasted =
+        terminalPaneRenderProbe(pane);
+    QVector<quint64> expectedSolidBuildCounts = hovered.rowSolidBuildCounts;
+    ++expectedSolidBuildCounts[0];
+    QCOMPARE(contrasted.rowSolidBuildCounts, expectedSolidBuildCounts);
+    QCOMPARE(contrasted.rowBuildCounts, hovered.rowBuildCounts);
+    QCOMPARE(contrasted.solidCellVisitCount,
+             hovered.solidCellVisitCount + columns);
+    QCOMPARE(contrasted.glyphForegrounds.at(0), lowContrast);
+    QColor transparentCellBackground = initialBackground;
+    transparentCellBackground.setAlpha(0);
+    const QColor contrastedUnderline = terminalMinimumContrastColorForTest(
+        lowContrast, transparentCellBackground, initialBackground, 7.0);
+    QCOMPARE(contrasted.underlineColors.at(0), contrastedUnderline);
+    QCOMPARE(contrasted.decorationForegrounds.at(0), contrastedUnderline);
+    QVERIFY(contrastedUnderline != lowContrast);
+    QVERIFY(!contrasted.underlineColors.at(1).isValid());
+
+    TerminalUpdate colors;
+    colors.columns = columns;
+    colors.rows = rows;
+    colors.colorsChanged = true;
+    colors.foreground = lowContrast;
+    colors.background = changedBackground;
+    colors.contentRevision = frame.contentRevision + 1;
+    controller->terminalUpdated(colors);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot backgroundChanged =
+        terminalPaneRenderProbe(pane);
+    ++expectedSolidBuildCounts[0];
+    QCOMPARE(backgroundChanged.rowSolidBuildCounts, expectedSolidBuildCounts);
+    QCOMPARE(backgroundChanged.rowBuildCounts, contrasted.rowBuildCounts);
+    QCOMPARE(backgroundChanged.solidCellVisitCount,
+             contrasted.solidCellVisitCount + columns);
+    QCOMPARE(backgroundChanged.glyphForegrounds.at(0), lowContrast);
+    const QColor backgroundUnderline = terminalMinimumContrastColorForTest(
+        lowContrast, transparentCellBackground, changedBackground, 7.0);
+    QCOMPARE(backgroundChanged.underlineColors.at(0), backgroundUnderline);
+    QCOMPARE(backgroundChanged.decorationForegrounds.at(0),
+             backgroundUnderline);
+    QVERIFY(backgroundUnderline != contrastedUnderline);
+    QVERIFY(!backgroundChanged.underlineColors.at(1).isValid());
+
+    QKeyEvent controlRelease(QEvent::KeyRelease, Qt::Key_Control,
+                             Qt::NoModifier);
+    QCoreApplication::sendEvent(pane, &controlRelease);
     window.close();
     delete pane;
 }

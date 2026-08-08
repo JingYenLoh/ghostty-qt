@@ -82,8 +82,13 @@ for intentional upgrade procedure.
   cell-derived solid geometry are retained per row on OpenGL and Vulkan. One
   font/DPR/render-context-scoped compact CPU Alpha8 atlas and explicit RGBA
   coverage texture are reused across dirty rows and compatible global
-  invalidations. Compatible rebuilds retain row containers and glyph batches,
-  and row-count changes preserve their common prefix without new allocation.
+  invalidations. Compatible paint changes are intersected with cached per-row
+  dependencies, so rows unaffected by palette, default-color, selection/search
+  style, bold, faint, contrast, or explicit-cell-opacity changes perform no
+  cell scan or shaping. A dependent solid row rebuilds text only when its
+  effective glyph colors changed. Compatible rebuilds retain row containers
+  and glyph batches, and row-count changes preserve their common prefix without
+  new allocation.
   Rows that remain fully batched allocate no native text node; unsafe or
   complex text creates the Qt fallback lazily and retains it cleared for reuse,
   while the software renderer retains Qt's general path. A host

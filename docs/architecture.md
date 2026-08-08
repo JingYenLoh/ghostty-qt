@@ -716,12 +716,18 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    The fallback node uses `QtRendering`, which stores distance-field glyphs in
    Qt's GPU atlases on hardware RHI backends.
 
-   Accepted row epochs rebuild only changed rows, while font, geometry,
-   appearance, palette, search-style, and frame-shape changes rebuild the
-   complete text layer. Candidate and selected search-mask replacement is not
-   part of that global text-state key. The pane compares normalized old and new
-   masks by row with boundary-masked packed-word loads, then advances both text
-   and solid epochs only for rows whose effective bits changed. Moving a
+   Accepted row epochs rebuild only changed rows. Font, geometry, alpha mode,
+   and frame-shape changes remain structural text invalidations, while
+   compatible palette, default-color, selection/search-style, bold-color,
+   faint-opacity, minimum-contrast, and explicit-cell-opacity changes produce
+   a paint-dependency mask. Each retained solid row records only the global
+   paint inputs its current cells consume, so an unrelated change skips both
+   its cell scan and text shaping. A dependent row first recomputes its solid
+   plan; text is rebuilt only when the resulting glyph-foreground vector
+   actually changed. Candidate and selected search-mask replacement remains
+   outside that global state. The pane compares normalized old and new masks by
+   row with boundary-masked packed-word loads, then advances both text and solid
+   epochs only for rows whose effective bits changed. Moving a
    highlight therefore rebuilds its old and new rows while retaining every
    unaffected text container and solid plan; clearing a valid mask, including
    by rejecting a malformed replacement, rebuilds only rows that lose
@@ -732,9 +738,12 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
 7. Cell-derived backgrounds, resolved glyph/decor colors, and before/after-text
    decorations are retained in one render-thread cache per visible row.
    Independent solid-row epochs cover terminal dirty rows; search and
-   hyperlink mask replacement mark only rows whose bits changed. A global
-   solid-state key invalidates all rows for palette, appearance,
-   cell-affecting opacity, geometry, or device-pixel changes. Block-cursor
+   hyperlink mask replacement mark only rows whose bits changed. Structural
+   geometry, alpha-mode, software/backend, or device-pixel changes invalidate
+   every row. Compatible paint changes intersect the per-row dependency mask:
+   direct frame-color fallbacks, bold palette promotion, bold RGB/default
+   equality, selection/search presentation, faint opacity, minimum contrast,
+   and explicit background alpha are tracked independently. Block-cursor
    transitions rebuild only their old and new rows, while bar/underline cursor
    movement and metadata/frontend-overlay updates reuse every row plan. Each
    row owns three persistent `TerminalRectBatch` instances on RHI backends, in
@@ -925,9 +934,10 @@ No full-frame raster-image upload sits between the frame and the scene graph.
 The glyph fast path performs one compact RGBA coverage upload from its CPU
 Alpha8 atlas for each font/DPR/render-context resource generation, then reuses
 it across row damage and unrelated full-row invalidations. Compatible global
-invalidations also reuse the row containers and existing-capacity glyph
-batches, avoiding scene-node and geometry-buffer allocation while still
-rewriting changed vertex colors. Qt's implicitly
+paint changes additionally select only rows that consume the changed input.
+Unaffected rows perform no cell scan or shaping; affected rows reuse their
+containers and existing-capacity glyph batches, rewriting vertex colors only
+when their effective foreground changed. Qt's implicitly
 shared frame snapshot is normally an O(1)
 reference-count operation rather than a deep cell copy. During ordinary sparse
 updates, the renderer resolves solid presentation and shapes text only for rows
@@ -938,10 +948,9 @@ and solid batches, so a sparse update rewrites only geometry for rows whose
 presentation changed. The software fallback retains the row plans but flattens
 solids into global node pools. Padding, cursor, and frontend overlays use
 independent global batches; unchanged batches skip geometry updates and every
-batch reuses its CPU and scene-graph allocation capacity. Global text-state
-changes, including search-decoration color changes, still rebuild the complete
-text layer. Search mask-only changes use the shared row-damage epochs described
-above and leave unaffected text and solid rows retained.
+batch reuses its CPU and scene-graph allocation capacity. Search mask-only
+changes use the shared row-damage epochs described above and leave unaffected
+text and solid rows retained.
 
 Custom shaders are pane-local post-processing stages around the private render
 item, so terminal pixels and Kitty graphics are filtered while Qt-owned pane
@@ -3095,8 +3104,10 @@ The default CTest suite has focused layers for each ownership boundary:
   that all-ASCII rows allocate no native text nodes, a rejected row lazily
   allocates exactly one, returning to ASCII clears stale native content, and
   palette/grid invalidations retain atlas identity, row containers, glyph
-  batches, and dormant native fallback nodes; compatible row-count changes
-  preserve the common prefix, while a font change replaces those resources.
+  batches, and dormant native fallback nodes; global paint changes rebuild only
+  rows with matching dependencies and leave unrelated pixels and work counters
+  unchanged; compatible row-count changes preserve the common prefix, while a
+  font change replaces those resources.
 - `ghostty-smoke` exercises terminal parsing/render-state iteration, CJK wide
   cells, key and 1002 mouse-drag encoding, bracketed paste, and terminal query
   callbacks directly through the C API.
@@ -3522,12 +3533,15 @@ actual presentation timestamps require explicit color-management and
   Candidate and selected search-mask changes use the same row-local text and
   solid damage boundary. The software fallback still flattens cached solid
   plans into global node pools because per-row scene-node traversal costs more
-  than it saves there. A global appearance, geometry, palette, search-style, or
-  renderer-backend change can still rebuild every visible row. Compatible
-  appearance, geometry, palette, and search-style changes retain row
-  containers, glyph batches, dormant native nodes, and the atlas; compatible
-  row-count changes preserve the common prefix. Font-program, DPR, window, or
-  backend changes replace those resources at an explicit lifetime boundary.
+  than it saves there. Compatible palette, default-color, appearance, and
+  search-style changes intersect cached row dependencies; unaffected rows do
+  no cell or shaping work, and an affected solid row rebuilds text only if its
+  effective glyph colors changed. Geometry, alpha mode, and renderer-backend
+  changes remain conservative full invalidations. Every compatible change
+  retains row containers, glyph batches, dormant native nodes, and the atlas;
+  compatible row-count changes preserve the common prefix. Font-program, DPR,
+  window, or backend changes replace those resources at an explicit lifetime
+  boundary.
 - Qt still shapes every run. The custom atlas consumes only Qt-owned exact
   one-glyph-per-cell printable ASCII; Qt's distance-field text path handles
   ligatures, fallback faces, complex text, and other rejected rows. Neither
