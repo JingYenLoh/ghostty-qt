@@ -1,6 +1,7 @@
 #include "ghostty_vt_adapter.h"
 
 #include "ghostty_key_identity.h"
+#include "terminal_kitty_image_materialization.h"
 
 #include <ghostty/vt.h>
 
@@ -3949,62 +3950,36 @@ public:
             return cached;
         }
 
-        QImage rgba(static_cast<int>(image.width),
-                    static_cast<int>(image.height), QImage::Format_RGBA8888);
-        if (rgba.isNull()) return {};
-        rgba.setDevicePixelRatio(1.0);
-        bool fullyOpaque = true;
-        for (quint32 row = 0; row < image.height; ++row) {
-            uchar *destination = rgba.scanLine(static_cast<int>(row));
-            const uint8_t *source = image.pixels
-                + static_cast<quint64>(row) * image.width * image.bytesPerPixel;
-            if (image.format == GHOSTTY_KITTY_IMAGE_FORMAT_RGBA) {
-                const size_t rowBytes = static_cast<size_t>(image.width) * 4U;
-                std::memcpy(destination, source, rowBytes);
-                for (quint32 column = 0; column < image.width; ++column) {
-                    fullyOpaque =
-                        fullyOpaque && source[column * 4U + 3U] == 255;
-                }
-                continue;
-            }
-            for (quint32 column = 0; column < image.width; ++column) {
-                const qsizetype offset = static_cast<qsizetype>(column) * 4;
-                switch (image.format) {
-                case GHOSTTY_KITTY_IMAGE_FORMAT_RGB:
-                    destination[offset] = source[column * 3U];
-                    destination[offset + 1] = source[column * 3U + 1U];
-                    destination[offset + 2] = source[column * 3U + 2U];
-                    destination[offset + 3] = 255;
-                    break;
-                case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA: {
-                    const uchar gray = source[column * 2U];
-                    const uchar alpha = source[column * 2U + 1U];
-                    destination[offset] = gray;
-                    destination[offset + 1] = gray;
-                    destination[offset + 2] = gray;
-                    destination[offset + 3] = alpha;
-                    fullyOpaque = fullyOpaque && alpha == 255;
-                    break;
-                }
-                case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY: {
-                    const uchar gray = source[column];
-                    destination[offset] = gray;
-                    destination[offset + 1] = gray;
-                    destination[offset + 2] = gray;
-                    destination[offset + 3] = 255;
-                    break;
-                }
-                default: return {};
-                }
-            }
+        std::optional<TerminalKittyPixelFormat> format;
+        switch (image.format) {
+        case GHOSTTY_KITTY_IMAGE_FORMAT_RGB:
+            format = TerminalKittyPixelFormat::Rgb;
+            break;
+        case GHOSTTY_KITTY_IMAGE_FORMAT_RGBA:
+            format = TerminalKittyPixelFormat::Rgba;
+            break;
+        case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA:
+            format = TerminalKittyPixelFormat::GrayAlpha;
+            break;
+        case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY:
+            format = TerminalKittyPixelFormat::Gray;
+            break;
+        default: return {};
         }
+
+        auto materialized = terminalMaterializeKittyImage(
+            QSize(static_cast<int>(image.width),
+                  static_cast<int>(image.height)),
+            *format,
+            std::span<const std::uint8_t>(image.pixels, image.dataLength));
+        if (!materialized.has_value()) return {};
 
         auto asset = std::make_shared<const TerminalKittyGraphicsImage>(
             TerminalKittyGraphicsImage{
                 .imageId = image.imageId,
                 .generation = image.generation,
-                .fullyOpaque = fullyOpaque,
-                .straightRgba = std::move(rgba),
+                .fullyOpaque = materialized->fullyOpaque,
+                .straightRgba = std::move(materialized->straightRgba),
             });
         kittyImageAssets_.insert(image.generation, asset);
         return asset;

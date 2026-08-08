@@ -1,4 +1,5 @@
 #include "ghostty_vt_adapter.h"
+#include "terminal_kitty_image_materialization.h"
 
 #ifdef GHOSTTY_VT_H
 #error "ghostty_vt_adapter.h must not expose the libghostty-vt C API"
@@ -153,6 +154,8 @@ private Q_SLOTS:
     void rendersTerminalValuesAndEffects();
     void normalizesDesktopNotificationEffects();
     void normalizesProgressReportEffects();
+    void materializesPackedKittyPixelFormats();
+    void rejectsInvalidKittyPixelMaterialization();
     void publishesKittyGraphicsSnapshots();
     void publishesMpvShapedKittyFrames();
     void cullsOpaqueKittyGraphicsWithoutDeletingHistory();
@@ -576,6 +579,97 @@ void GhosttyVtAdapterTest::normalizesProgressReportEffects()
                     std::nullopt);
     expectCompacted(repeatedlyCompacted, 2, TerminalProgressState::Remove,
                     std::nullopt, std::nullopt);
+}
+
+void GhosttyVtAdapterTest::materializesPackedKittyPixelFormats()
+{
+    std::array<std::uint8_t, 18> rgb{
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+    };
+    auto materialized = terminalMaterializeKittyImage(
+        QSize(3, 2), TerminalKittyPixelFormat::Rgb, rgb);
+    QVERIFY(materialized.has_value());
+    QVERIFY(materialized->fullyOpaque);
+    QCOMPARE(materialized->straightRgba.format(), QImage::Format_RGBA8888);
+    QCOMPARE(materialized->straightRgba.size(), QSize(3, 2));
+    QCOMPARE(materialized->straightRgba.sizeInBytes(), qsizetype{24});
+    QCOMPARE(materialized->straightRgba.pixelColor(0, 0), QColor(1, 2, 3));
+    QCOMPARE(materialized->straightRgba.pixelColor(2, 1), QColor(16, 17, 18));
+    rgb[0] = 99;
+    QCOMPARE(materialized->straightRgba.pixelColor(0, 0), QColor(1, 2, 3));
+
+    std::array<std::uint8_t, 6> gray{0, 31, 63, 127, 191, 255};
+    materialized = terminalMaterializeKittyImage(
+        QSize(3, 2), TerminalKittyPixelFormat::Gray, gray);
+    QVERIFY(materialized.has_value());
+    QVERIFY(materialized->fullyOpaque);
+    QCOMPARE(materialized->straightRgba.pixelColor(0, 0), QColor(0, 0, 0));
+    QCOMPARE(materialized->straightRgba.pixelColor(2, 1),
+             QColor(255, 255, 255));
+    gray[5] = 0;
+    QCOMPARE(materialized->straightRgba.pixelColor(2, 1),
+             QColor(255, 255, 255));
+
+    std::array<std::uint8_t, 20> grayAlpha{
+        1,   255, 2,   255, 3,   255, 4,   255, 5,   255,
+        101, 255, 102, 255, 103, 255, 104, 255, 105, 255,
+    };
+    materialized = terminalMaterializeKittyImage(
+        QSize(5, 2), TerminalKittyPixelFormat::GrayAlpha, grayAlpha);
+    QVERIFY(materialized.has_value());
+    QVERIFY(materialized->fullyOpaque);
+    QCOMPARE(materialized->straightRgba.pixelColor(4, 1),
+             QColor(105, 105, 105));
+    grayAlpha.back() = 17;
+    materialized = terminalMaterializeKittyImage(
+        QSize(5, 2), TerminalKittyPixelFormat::GrayAlpha, grayAlpha);
+    QVERIFY(materialized.has_value());
+    QVERIFY(!materialized->fullyOpaque);
+    QCOMPARE(materialized->straightRgba.pixelColor(4, 1),
+             QColor(105, 105, 105, 17));
+
+    std::array<std::uint8_t, 21> unalignedRgba{};
+    auto rgba = std::span<std::uint8_t>(unalignedRgba).subspan<1>();
+    for (std::size_t pixel = 0; pixel < 5; ++pixel) {
+        rgba[pixel * 4] = static_cast<std::uint8_t>(20 + pixel);
+        rgba[pixel * 4 + 1] = static_cast<std::uint8_t>(40 + pixel);
+        rgba[pixel * 4 + 2] = static_cast<std::uint8_t>(60 + pixel);
+        rgba[pixel * 4 + 3] = 255;
+    }
+    materialized = terminalMaterializeKittyImage(
+        QSize(5, 1), TerminalKittyPixelFormat::Rgba, rgba);
+    QVERIFY(materialized.has_value());
+    QVERIFY(materialized->fullyOpaque);
+    QCOMPARE(materialized->straightRgba.pixelColor(4, 0), QColor(24, 44, 64));
+    rgba.front() = 99;
+    QCOMPARE(materialized->straightRgba.pixelColor(0, 0), QColor(20, 40, 60));
+    rgba.front() = 20;
+    rgba.back() = 23;
+    materialized = terminalMaterializeKittyImage(
+        QSize(5, 1), TerminalKittyPixelFormat::Rgba, rgba);
+    QVERIFY(materialized.has_value());
+    QVERIFY(!materialized->fullyOpaque);
+    QCOMPARE(materialized->straightRgba.pixelColor(4, 0),
+             QColor(24, 44, 64, 23));
+}
+
+void GhosttyVtAdapterTest::rejectsInvalidKittyPixelMaterialization()
+{
+    const std::array<std::uint8_t, 6> pixels{};
+    QVERIFY(!terminalMaterializeKittyImage(
+                 QSize(), TerminalKittyPixelFormat::Rgb, pixels)
+                 .has_value());
+    QVERIFY(!terminalMaterializeKittyImage(
+                 QSize(2, 1), TerminalKittyPixelFormat::Rgb,
+                 std::span<const std::uint8_t>(pixels).first<5>())
+                 .has_value());
+    QVERIFY(!terminalMaterializeKittyImage(
+                 QSize(1, 1), TerminalKittyPixelFormat::Rgb, pixels)
+                 .has_value());
+    QVERIFY(!terminalMaterializeKittyImage(
+                 QSize(1, 1), static_cast<TerminalKittyPixelFormat>(255),
+                 std::span<const std::uint8_t>(pixels).first<3>())
+                 .has_value());
 }
 
 void GhosttyVtAdapterTest::publishesKittyGraphicsSnapshots()

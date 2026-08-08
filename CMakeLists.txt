@@ -1089,6 +1089,8 @@ add_library(ghostty-qt-vt-adapter STATIC
     src/ghostty_vt_adapter.h
     src/terminal_desktop_notification.h
     src/terminal_inspector_snapshot.h
+    src/terminal_kitty_image_materialization.cpp
+    src/terminal_kitty_image_materialization.h
     src/terminal_progress_report.h
 )
 target_include_directories(ghostty-qt-vt-adapter PUBLIC

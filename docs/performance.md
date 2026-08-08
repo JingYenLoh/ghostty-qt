@@ -75,7 +75,7 @@ cmake --build --preset release -j"$(nproc)"
 | `bench-terminal-pane-renderer` | Full-frame, dirty-row, cursor, search, glyph-batch, and Kitty scene-graph work |
 | `bench-terminal-custom-shader-compiler` | Cold shader baking and content-cache hits |
 | `bench-terminal-custom-shader-rhi` | Retained versus legacy multi-pass shader recording and GPU work |
-| `bench-terminal-kitty-graphics` | Kitty parsing, materialization, replacement, and packed storage |
+| `bench-terminal-kitty-graphics` | Kitty protocol replacement and isolated RGB/RGBA/grayscale materialization |
 | `bench-terminal-search` | Visible-result latency, canonical history scan, cancellation, and recompression |
 | `bench-terminal-backdrop` | Background asset preparation and software composition |
 
@@ -99,6 +99,10 @@ QT_QPA_PLATFORM=wayland \
 ./build/release/tests/bench-terminal-kitty-graphics \
     --pixel-format rgba32 --width 640 --height 360 \
     --warmup 10 --iterations 100
+
+./build/release/tests/bench-terminal-kitty-graphics \
+    --workload materialization --pixel-format rgba32-opaque \
+    --width 1920 --height 1080 --warmup 10 --iterations 100
 
 ./build/release/tests/bench-terminal-search \
     --rows 25000 --viewport-rows 32 --warmup 1 --iterations 5
