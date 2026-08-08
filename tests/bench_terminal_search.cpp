@@ -1,3 +1,4 @@
+#include "ghostty_vt_adapter.h"
 #include "session_worker.h"
 
 #include <QByteArray>
@@ -391,6 +392,10 @@ void printTiming(QTextStream &output, QStringView name,
 
 int main(int argc, char **argv)
 {
+    constexpr qsizetype searchRowMapBytesPerByte =
+        sizeof(GhosttyVtAdapter::SearchRowSnapshot::Column);
+    static_assert(searchRowMapBytesPerByte == 2);
+
     QCoreApplication application(argc, argv);
     QCoreApplication::setApplicationName(
         QStringLiteral("bench-terminal-search"));
@@ -688,6 +693,7 @@ int main(int argc, char **argv)
            << " columns=" << options.columns
            << " viewport_rows=" << options.viewportRows
            << " marker_stride=" << options.markerStride
+           << " row_map_bytes_per_byte=" << searchRowMapBytesPerByte
            << " expected_matches=" << expectedMatches
            << " scroll_total=" << frame.scrollTotal
            << " target_offset=" << targetOffset

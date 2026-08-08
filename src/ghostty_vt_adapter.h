@@ -263,15 +263,18 @@ public:
     };
 
     // A bounded, value-only snapshot of one physical row in full-screen
-    // coordinates. Each emitted UTF-8 byte maps to its owning cell. The
+    // coordinates. Each emitted UTF-8 byte maps to its owning column; the one
+    // shared screen row is stored once instead of repeated for every byte. The
     // caller uses wrapped to decide whether to concatenate the following row
-    // or insert a hard newline mapped to newlineCell.
+    // or insert a hard newline mapped to newlineColumn.
     struct SearchRowSnapshot {
-        quint32 screenRow = 0;
+        using Column = quint16;
+
         QByteArray text;
-        QVector<TerminalSearchCell> byteCells;
+        QVector<Column> byteColumns;
+        quint32 screenRow = 0;
+        Column newlineColumn = 0;
         bool wrapped = false;
-        TerminalSearchCell newlineCell;
     };
 
     static std::unique_ptr<GhosttyVtAdapter> create(const Options &options,

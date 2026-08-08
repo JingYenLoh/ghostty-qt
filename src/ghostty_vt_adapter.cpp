@@ -50,10 +50,13 @@ struct ScreenCell final {
     friend bool operator==(const ScreenCell &, const ScreenCell &) = default;
 };
 
-struct TextMapData final {
+template <typename Coordinate> struct BasicTextMapData final {
     QByteArray text;
-    QVector<ScreenCell> byteCells;
+    QVector<Coordinate> byteCells;
 };
+
+using TextMapData = BasicTextMapData<ScreenCell>;
+using SearchRowTextMapData = BasicTextMapData<quint16>;
 
 constexpr quint64 maximumLogicalLineCells = 131'072;
 constexpr qsizetype maximumLogicalLineBytes = 4 * 1024 * 1024;
@@ -2596,9 +2599,11 @@ public:
         return output;
     }
 
-    std::optional<TextMapData>
-    textMapBetween(ScreenCell start, ScreenCell end,
-                   bool includeTrailingEmptyStorage = false) const
+    template <typename Coordinate, typename ProjectCoordinate>
+    std::optional<BasicTextMapData<Coordinate>>
+    textMapBetweenMapped(ScreenCell start, ScreenCell end,
+                         bool includeTrailingEmptyStorage,
+                         ProjectCoordinate projectCoordinate) const
     {
         if (end < start) {
             std::swap(start, end);
@@ -2619,10 +2624,10 @@ public:
             return std::nullopt;
         }
 
-        TextMapData data;
-        QVector<ScreenCell> pendingBlanks;
+        BasicTextMapData<Coordinate> data;
+        QVector<Coordinate> pendingBlanks;
         const auto appendMapped = [&data](QByteArrayView bytes,
-                                          const ScreenCell &cell) {
+                                          const Coordinate &cell) {
             if (bytes.size() < 0
                 || data.text.size() > maximumLogicalLineBytes - bytes.size()) {
                 return false;
@@ -2638,7 +2643,7 @@ public:
             return true;
         };
         const auto flushBlanks = [&pendingBlanks, &appendMapped]() {
-            for (const ScreenCell &blank : std::as_const(pendingBlanks)) {
+            for (const Coordinate &blank : std::as_const(pendingBlanks)) {
                 if (!appendMapped(QByteArrayView(" ", 1), blank)) {
                     return false;
                 }
@@ -2688,6 +2693,7 @@ public:
                     .x = static_cast<uint16_t>(column),
                     .y = y,
                 };
+                const Coordinate mappedCell = projectCoordinate(cell);
                 GhosttyGridRef reference = rowReference;
                 reference.x = static_cast<uint16_t>(column);
 
@@ -2714,11 +2720,11 @@ public:
                         >= static_cast<qsizetype>(maximumLogicalLineCells)) {
                         return std::nullopt;
                     }
-                    pendingBlanks.append(cell);
+                    pendingBlanks.append(mappedCell);
                     continue;
                 }
 
-                if (!flushBlanks() || !appendMapped(*grapheme, cell)) {
+                if (!flushBlanks() || !appendMapped(*grapheme, mappedCell)) {
                     return std::nullopt;
                 }
             }
@@ -2741,6 +2747,24 @@ public:
             return std::nullopt;
         }
         return data;
+    }
+
+    std::optional<TextMapData>
+    textMapBetween(ScreenCell start, ScreenCell end,
+                   bool includeTrailingEmptyStorage = false) const
+    {
+        return textMapBetweenMapped<ScreenCell>(
+            start, end, includeTrailingEmptyStorage,
+            [](const ScreenCell &cell) { return cell; });
+    }
+
+    std::optional<SearchRowTextMapData>
+    textMapSearchRow(ScreenCell start, ScreenCell end,
+                     bool includeTrailingEmptyStorage) const
+    {
+        return textMapBetweenMapped<quint16>(
+            start, end, includeTrailingEmptyStorage,
+            [](const ScreenCell &cell) { return cell.x; });
     }
 
     std::optional<LogicalLineSnapshot> snapshotLogicalLineAt(int column,
@@ -3824,7 +3848,8 @@ public:
         // and emits them if the continuation later contains text. Preserve
         // those cells for a wrapped row; only a hard line ending owns
         // independently trimmable trailing spaces.
-        std::optional<TextMapData> data = textMapBetween(start, end, wrapped);
+        std::optional<SearchRowTextMapData> data =
+            textMapSearchRow(start, end, wrapped);
         if (!data.has_value()) {
             return std::nullopt;
         }
@@ -3840,19 +3865,13 @@ public:
         }
 
         SearchRowSnapshot snapshot;
-        snapshot.screenRow = screenRow;
         snapshot.text = std::move(data->text);
-        snapshot.byteCells.reserve(data->byteCells.size());
-        for (const ScreenCell &cell : std::as_const(data->byteCells)) {
-            snapshot.byteCells.append(TerminalSearchCell{
-                .column = cell.x,
-                .screenRow = cell.y,
-            });
-        }
+        snapshot.byteColumns = std::move(data->byteCells);
+        snapshot.screenRow = screenRow;
+        snapshot.newlineColumn = snapshot.byteColumns.isEmpty()
+            ? 0
+            : snapshot.byteColumns.constLast();
         snapshot.wrapped = wrapped;
-        snapshot.newlineCell = snapshot.byteCells.isEmpty()
-            ? TerminalSearchCell{.column = 0, .screenRow = screenRow}
-            : snapshot.byteCells.constLast();
         return snapshot;
     }
 

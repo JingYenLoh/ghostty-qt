@@ -2000,6 +2000,8 @@ void GhosttyVtAdapterTest::snapshotsLogicalLineBytesAcrossGraphemesAndWideWraps(
 
 void GhosttyVtAdapterTest::snapshotsPhysicalSearchRowsAcrossHistoryAndScreens()
 {
+    static_assert(sizeof(GhosttyVtAdapter::SearchRowSnapshot::Column) == 2);
+
     GhosttyVtAdapter::Options options;
     options.geometry.columns = 8;
     options.geometry.rows = 3;
@@ -2032,7 +2034,9 @@ void GhosttyVtAdapterTest::snapshotsPhysicalSearchRowsAcrossHistoryAndScreens()
         auto snapshot = adapter->snapshotSearchRow(row);
         QVERIFY(snapshot.has_value());
         QCOMPARE(snapshot->screenRow, row);
-        QCOMPARE(snapshot->text.size(), snapshot->byteCells.size());
+        QCOMPARE(snapshot->text.size(), snapshot->byteColumns.size());
+        QVERIFY(std::ranges::all_of(snapshot->byteColumns,
+                                    [](quint16 column) { return column < 8; }));
         if (snapshot->text == QByteArrayLiteral("A  B")) {
             gapRow = std::move(snapshot);
         } else if (snapshot->text == expectedHead) {
@@ -2044,33 +2048,23 @@ void GhosttyVtAdapterTest::snapshotsPhysicalSearchRowsAcrossHistoryAndScreens()
 
     QVERIFY(gapRow.has_value());
     QVERIFY(!gapRow->wrapped);
-    QCOMPARE(gapRow->byteCells,
-             QVector<TerminalSearchCell>({
-                 {.column = 0, .screenRow = gapRow->screenRow},
-                 {.column = 1, .screenRow = gapRow->screenRow},
-                 {.column = 2, .screenRow = gapRow->screenRow},
-                 {.column = 3, .screenRow = gapRow->screenRow},
-             }));
-    const TerminalSearchCell expectedGapNewline{
-        .column = 3,
-        .screenRow = gapRow->screenRow,
-    };
-    QCOMPARE(gapRow->newlineCell, expectedGapNewline);
+    QCOMPARE(gapRow->byteColumns, QVector<quint16>({0, 1, 2, 3}));
+    QCOMPARE(gapRow->newlineColumn, quint16{3});
 
     QVERIFY(wrapHead.has_value());
     QVERIFY(wrapHead->wrapped);
-    QCOMPARE(wrapHead->byteCells.at(4).column, quint16{4});
-    QCOMPARE(wrapHead->byteCells.at(5).column, quint16{4});
-    QCOMPARE(wrapHead->byteCells.at(6).column, quint16{4});
-    QCOMPARE(wrapHead->newlineCell, wrapHead->byteCells.constLast());
+    QCOMPARE(wrapHead->byteColumns.at(4), quint16{4});
+    QCOMPARE(wrapHead->byteColumns.at(5), quint16{4});
+    QCOMPARE(wrapHead->byteColumns.at(6), quint16{4});
+    QCOMPARE(wrapHead->newlineColumn, wrapHead->byteColumns.constLast());
 
     QVERIFY(wrapTail.has_value());
     QVERIFY(!wrapTail->wrapped);
     const QByteArray wide = QStringLiteral("\u754c").toUtf8();
     for (qsizetype index = 0; index < wide.size(); ++index) {
-        QCOMPARE(wrapTail->byteCells.at(index).column, quint16{0});
+        QCOMPARE(wrapTail->byteColumns.at(index), quint16{0});
     }
-    QCOMPARE(wrapTail->byteCells.at(wide.size()).column, quint16{2});
+    QCOMPARE(wrapTail->byteColumns.at(wide.size()), quint16{2});
 
     // A soft wrap can follow a row whose final cells are spaces. Those bytes
     // are part of the logical search text and must not be trimmed like the
@@ -2082,16 +2076,12 @@ void GhosttyVtAdapterTest::snapshotsPhysicalSearchRowsAcrossHistoryAndScreens()
     QVERIFY(spacedWrapHead.has_value());
     QVERIFY(spacedWrapHead->wrapped);
     QCOMPARE(spacedWrapHead->text, QByteArrayLiteral("abc     "));
-    QCOMPARE(spacedWrapHead->byteCells.size(), qsizetype{8});
+    QCOMPARE(spacedWrapHead->byteColumns.size(), qsizetype{8});
     for (quint16 column = 0; column < 8; ++column) {
-        const TerminalSearchCell expected{
-            .column = column,
-            .screenRow = 0,
-        };
-        QCOMPARE(spacedWrapHead->byteCells.at(column), expected);
+        QCOMPARE(spacedWrapHead->byteColumns.at(column), column);
     }
-    QCOMPARE(spacedWrapHead->newlineCell,
-             spacedWrapHead->byteCells.constLast());
+    QCOMPARE(spacedWrapHead->newlineColumn,
+             spacedWrapHead->byteColumns.constLast());
     const auto spacedWrapTail = spacedWrapAdapter->snapshotSearchRow(1);
     QVERIFY(spacedWrapTail.has_value());
     QVERIFY(!spacedWrapTail->wrapped);
@@ -2133,7 +2123,7 @@ void GhosttyVtAdapterTest::searchSnapshotsFollowLiveDeccolmDimensions()
     const auto row = adapter->snapshotSearchRow(0);
     QVERIFY(row.has_value());
     QCOMPARE(row->text, QByteArrayLiteral("wide-grid"));
-    QCOMPARE(row->byteCells.size(), row->text.size());
+    QCOMPARE(row->byteColumns.size(), row->text.size());
 }
 
 void GhosttyVtAdapterTest::tracksTextRangesAcrossReflowViewportAndScreenChanges()

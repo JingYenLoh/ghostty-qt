@@ -433,6 +433,25 @@ std::optional<qsizetype> gridCellCount(int columns, int rows)
     return columnCount * rowCount;
 }
 
+TerminalSearchCell
+searchRowByteCell(const GhosttyVtAdapter::SearchRowSnapshot &row,
+                  qsizetype byteIndex)
+{
+    return {
+        .column = row.byteColumns.at(byteIndex),
+        .screenRow = row.screenRow,
+    };
+}
+
+TerminalSearchCell
+searchRowNewlineCell(const GhosttyVtAdapter::SearchRowSnapshot &row)
+{
+    return {
+        .column = row.newlineColumn,
+        .screenRow = row.screenRow,
+    };
+}
+
 void addVisibleSearchCells(QBitArray &destination, TerminalSearchRange range,
                            const GhosttyVtAdapter::SearchExtent &extent)
 {
@@ -3468,7 +3487,7 @@ void SessionWorker::processSearchChunk()
             while (!row->text.isEmpty()
                    && row->text.at(row->text.size() - 1) == ' ') {
                 row->text.chop(1);
-                if (!row->byteCells.isEmpty()) row->byteCells.removeLast();
+                if (!row->byteColumns.isEmpty()) row->byteColumns.removeLast();
             }
             searchState_->viewportProbeByteIndex = row->text.size();
             searchState_->viewportProbeRow = std::move(*row);
@@ -3478,7 +3497,7 @@ void SessionWorker::processSearchChunk()
             const qsizetype index = --searchState_->viewportProbeByteIndex;
             feedViewportProbeByte(
                 searchState_->viewportProbeRow->text.at(index),
-                searchState_->viewportProbeRow->byteCells.at(index));
+                searchRowByteCell(*searchState_->viewportProbeRow, index));
             ++bytesProcessed;
         } else {
             // Do not carry KMP state across a physical-row boundary. The
@@ -3568,7 +3587,7 @@ void SessionWorker::processSearchChunk()
                 // discarded trailing blank rows.
                 searchState_->finalBoundaryObserved = true;
                 searchState_->finalBoundaryPending = !row->wrapped;
-                searchState_->finalBoundaryCell = row->newlineCell;
+                searchState_->finalBoundaryCell = searchRowNewlineCell(*row);
             }
             if (row->wrapped && !searchState_->newerLogicalContent) {
                 // PageFormatter carries trailing blanks through a soft wrap,
@@ -3578,7 +3597,7 @@ void SessionWorker::processSearchChunk()
                 while (!row->text.isEmpty()
                        && row->text.at(row->text.size() - 1) == ' ') {
                     row->text.chop(1);
-                    row->byteCells.removeLast();
+                    row->byteColumns.removeLast();
                 }
             }
             if (!searchState_->seenFormattedContent && row->text.isEmpty()) {
@@ -3588,14 +3607,16 @@ void SessionWorker::processSearchChunk()
             }
             if (searchState_->seenFormattedContent) {
                 searchState_->currentRowBoundaryPending = !row->wrapped;
-                searchState_->currentRowBoundaryCell = row->newlineCell;
+                searchState_->currentRowBoundaryCell =
+                    searchRowNewlineCell(*row);
             } else {
                 searchState_->currentRowBoundaryPending =
                     searchState_->finalBoundaryPending;
                 // SlidingWindow maps its appended newline to the last byte
                 // PageFormatter retained, not to any trimmed blank row below
                 // it. This keeps a selected match anchored to visible text.
-                searchState_->currentRowBoundaryCell = row->newlineCell;
+                searchState_->currentRowBoundaryCell =
+                    searchRowNewlineCell(*row);
                 searchState_->finalBoundaryPending = false;
             }
             searchState_->currentRowLogicalHasText = !row->text.isEmpty()
@@ -3611,7 +3632,7 @@ void SessionWorker::processSearchChunk()
         } else if (searchState_->currentRowByteIndex > 0) {
             const qsizetype index = --searchState_->currentRowByteIndex;
             feedByte(searchState_->currentRow->text.at(index),
-                     searchState_->currentRow->byteCells.at(index));
+                     searchRowByteCell(*searchState_->currentRow, index));
             ++bytesProcessed;
         } else {
             searchState_->seenFormattedContent = true;
