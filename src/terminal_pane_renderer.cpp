@@ -3,6 +3,9 @@
 #include "terminal_pane.h"
 
 #include "terminal_backdrop_qsg.h"
+#include "terminal_glyph_atlas.h"
+#include "terminal_glyph_batch.h"
+#include "terminal_glyph_plan.h"
 #include "terminal_kitty_graphics_qsg.h"
 #include "terminal_pane_render_probe_p.h"
 #include "terminal_rect_batch.h"
@@ -17,8 +20,10 @@
 #include <QMatrix4x4>
 #include <QMutexLocker>
 #include <QQuickWindow>
+#include <QRawFont>
 #include <QSGSimpleRectNode>
 #include <QSGTextNode>
+#include <QSGTexture>
 #include <QTextCharFormat>
 #include <QTextLayout>
 #include <QTextOption>
@@ -37,6 +42,7 @@
 #include <ranges>
 #include <span>
 #include <utility>
+#include <vector>
 
 class TerminalPaneRenderItem final : public QQuickItem {
 public:
@@ -91,6 +97,15 @@ namespace {
 
 using TerminalPaneRenderer::normalizedDevicePixelRatio;
 using TerminalPaneRenderer::physicalPixels;
+
+[[nodiscard]] bool terminalGlyphBatchDisabled()
+{
+    bool parsed = false;
+    const int value =
+        qEnvironmentVariableIntValue("GHOSTTY_QT_DISABLE_GLYPH_BATCH", &parsed);
+    return parsed ? value != 0
+                  : qEnvironmentVariableIsSet("GHOSTTY_QT_DISABLE_GLYPH_BATCH");
+}
 
 float unfocusedSplitOverlayOpacity(double paneOpacity)
 {
@@ -604,6 +619,7 @@ void appendTextLayout(QSGTextNode *node, const QString &text, const QFont &font,
 struct TerminalRunLayoutResult {
     quint64 layoutCount = 0;
     quint64 fallbackCellCount = 0;
+    quint64 nativeCellCount = 0;
 };
 
 [[nodiscard]] QFont gridAlignedRunFont(const TerminalTextRun &run,
@@ -644,6 +660,83 @@ struct TerminalRunLayoutResult {
     return aligned;
 }
 
+class TerminalShapedTextRun final {
+public:
+    TerminalShapedTextRun(const TerminalTextRun &source, qreal top,
+                          qreal baseline, qreal cellWidth,
+                          qreal devicePixelRatio,
+                          TerminalAlphaBlending alphaBlending,
+                          bool planGlyphBatch)
+        : run(source)
+        , origin(static_cast<qreal>(run.column) * cellWidth, top)
+        , layout(run.text, gridAlignedRunFont(run, cellWidth))
+    {
+        QTextOption option;
+        option.setWrapMode(QTextOption::NoWrap);
+        option.setFlags(QTextOption::IncludeTrailingSpaces);
+        // Terminal rows are physical left-to-right grids even when individual
+        // codepoints have a right-to-left bidi class.
+        option.setTextDirection(Qt::LeftToRight);
+        layout.setTextOption(option);
+
+        QTextLayout::FormatRange range;
+        range.start = 0;
+        range.length = static_cast<int>(run.text.size());
+        range.format.setForeground(
+            terminalRenderingColor(run.color, alphaBlending));
+        layout.setFormats({range});
+
+        layout.beginLayout();
+        line = layout.createLine();
+        if (line.isValid()) {
+            line.setLineWidth(std::max<qreal>(1.0, run.columnSpan * cellWidth));
+            line.setPosition(QPointF(0.0, baseline - line.ascent()));
+        }
+        layout.endLayout();
+        fit = terminalTextGridFit(line, run, cellWidth, devicePixelRatio);
+        if (planGlyphBatch) {
+            glyphPlan = terminalGlyphPlan(run, line, fit, origin);
+        }
+    }
+
+    const TerminalTextRun &run;
+    QPointF origin;
+    QTextLayout layout;
+    QTextLine line;
+    TerminalTextGridFit fit = TerminalTextGridFit::Rejected;
+    std::optional<TerminalGlyphPlan> glyphPlan;
+};
+
+TerminalRunLayoutResult
+appendTerminalShapedTextRun(QSGTextNode *node, TerminalShapedTextRun &shaped,
+                            qreal top, qreal baseline, qreal cellWidth,
+                            TerminalAlphaBlending alphaBlending)
+{
+    if (node == nullptr || shaped.run.text.isEmpty()) {
+        return {};
+    }
+
+    const quint64 nativeCellCount =
+        static_cast<quint64>(shaped.run.fallbackCells.size());
+    if (shaped.line.isValid() && shaped.fit != TerminalTextGridFit::Rejected) {
+        node->addTextLayout(shaped.origin, &shaped.layout);
+        return {.layoutCount = 1, .nativeCellCount = nativeCellCount};
+    }
+
+    TerminalRunLayoutResult result;
+    result.layoutCount = nativeCellCount;
+    result.fallbackCellCount = nativeCellCount;
+    result.nativeCellCount = nativeCellCount;
+    for (const TerminalTextFallbackCell &cell : shaped.run.fallbackCells) {
+        appendTextLayout(
+            node, cell.text, shaped.run.font, shaped.run.color,
+            QPointF(static_cast<qreal>(cell.column) * cellWidth, top), baseline,
+            static_cast<qreal>(cell.columnSpan) * cellWidth, alphaBlending,
+            Qt::LeftToRight);
+    }
+    return result;
+}
+
 TerminalRunLayoutResult
 appendTerminalTextRun(QSGTextNode *node, const TerminalTextRun &run, qreal top,
                       qreal baseline, qreal cellWidth, qreal devicePixelRatio,
@@ -652,48 +745,124 @@ appendTerminalTextRun(QSGTextNode *node, const TerminalTextRun &run, qreal top,
     if (node == nullptr || run.text.isEmpty()) {
         return {};
     }
+    TerminalShapedTextRun shaped(run, top, baseline, cellWidth,
+                                 devicePixelRatio, alphaBlending, false);
+    return appendTerminalShapedTextRun(node, shaped, top, baseline, cellWidth,
+                                       alphaBlending);
+}
 
-    QTextLayout layout(run.text, gridAlignedRunFont(run, cellWidth));
-    QTextOption option;
-    option.setWrapMode(QTextOption::NoWrap);
-    option.setFlags(QTextOption::IncludeTrailingSpaces);
-    // Terminal rows are physical left-to-right grids even when individual
-    // codepoints have a right-to-left bidi class.
-    option.setTextDirection(Qt::LeftToRight);
-    layout.setTextOption(option);
+struct TerminalTextRowRenderResult {
+    quint64 nativeLayoutCount = 0;
+    quint64 fallbackCellCount = 0;
+    quint64 nativeCellCount = 0;
+    quint64 batchedGlyphCount = 0;
+    quint64 glyphBatchGeometryWriteCount = 0;
+};
 
-    QTextLayout::FormatRange range;
-    range.start = 0;
-    range.length = static_cast<int>(run.text.size());
-    range.format.setForeground(
-        terminalRenderingColor(run.color, alphaBlending));
-    layout.setFormats({range});
+[[nodiscard]] bool appendTerminalGlyphPlan(QVector<TerminalGlyphQuad> &quads,
+                                           const TerminalShapedTextRun &shaped,
+                                           const TerminalGlyphAtlas &atlas,
+                                           QSGTexture &texture,
+                                           quint64 *glyphCount)
+{
+    if (!shaped.glyphPlan.has_value() || glyphCount == nullptr) return false;
 
-    layout.beginLayout();
-    QTextLine line = layout.createLine();
-    if (line.isValid()) {
-        line.setLineWidth(std::max<qreal>(1.0, run.columnSpan * cellWidth));
-        line.setPosition(QPointF(0.0, baseline - line.ascent()));
+    const qreal padding =
+        static_cast<qreal>(atlas.paddingPixels()) / atlas.devicePixelRatio();
+    for (const TerminalGlyphInstance &glyph : *shaped.glyphPlan) {
+        const TerminalGlyphAtlasEntry *const entry =
+            atlas.lookup(glyph.font, glyph.glyphIndex);
+        if (entry == nullptr) return false;
+        ++*glyphCount;
+        if (entry->blank) continue;
+
+        const QRectF destination =
+            entry->logicalDestination(glyph.baselinePosition)
+                .adjusted(-padding, -padding, padding, padding);
+        const QRectF source = texture.convertToNormalizedSourceRect(
+            QRectF(entry->paddedPixelRect));
+        quads.append({
+            .destination = destination,
+            .normalizedSource = source,
+            .color = shaped.run.color,
+        });
     }
-    layout.endLayout();
-    if (line.isValid()
-        && terminalTextGridFit(line, run, cellWidth, devicePixelRatio)
-            != TerminalTextGridFit::Rejected) {
-        node->addTextLayout(
-            QPointF(static_cast<qreal>(run.column) * cellWidth, top), &layout);
-        return {.layoutCount = 1};
+    return true;
+}
+
+TerminalTextRowRenderResult
+renderTerminalTextRow(QSGTextNode *textNode, TerminalGlyphBatch *glyphBatch,
+                      const TerminalGlyphAtlas *glyphAtlas,
+                      QSGTexture *glyphTexture,
+                      const QVector<TerminalTextRun> &runs, qreal top,
+                      qreal baseline, qreal cellWidth, qreal devicePixelRatio,
+                      TerminalAlphaBlending alphaBlending)
+{
+    TerminalTextRowRenderResult result;
+    const auto appendNativeResult = [&result](TerminalRunLayoutResult native) {
+        result.nativeLayoutCount += native.layoutCount;
+        result.fallbackCellCount += native.fallbackCellCount;
+        result.nativeCellCount += native.nativeCellCount;
+    };
+    if (glyphBatch == nullptr || glyphAtlas == nullptr
+        || glyphTexture == nullptr) {
+        for (const TerminalTextRun &run : runs) {
+            appendNativeResult(
+                appendTerminalTextRun(textNode, run, top, baseline, cellWidth,
+                                      devicePixelRatio, alphaBlending));
+        }
+        return result;
     }
 
-    TerminalRunLayoutResult result;
-    result.layoutCount = static_cast<quint64>(run.fallbackCells.size());
-    result.fallbackCellCount = result.layoutCount;
-    for (const TerminalTextFallbackCell &cell : run.fallbackCells) {
-        appendTextLayout(
-            node, cell.text, run.font, run.color,
-            QPointF(static_cast<qreal>(cell.column) * cellWidth, top), baseline,
-            static_cast<qreal>(cell.columnSpan) * cellWidth, alphaBlending,
-            Qt::LeftToRight);
+    QVector<TerminalGlyphQuad> &quads = glyphBatch->beginUpdate();
+    quint64 plannedGlyphCount = 0;
+    bool eligible = true;
+    const quint64 writesBefore = glyphBatch->geometryWriteCount();
+    if (runs.size() == 1) {
+        TerminalShapedTextRun shaped(runs.constFirst(), top, baseline,
+                                     cellWidth, devicePixelRatio, alphaBlending,
+                                     true);
+        eligible = appendTerminalGlyphPlan(quads, shaped, *glyphAtlas,
+                                           *glyphTexture, &plannedGlyphCount);
+        if (!eligible) quads.clear();
+        const TerminalGlyphBatchCommitResult committed =
+            glyphBatch->commit(glyphTexture, alphaBlending);
+        if (eligible && committed != TerminalGlyphBatchCommitResult::Fallback) {
+            result.batchedGlyphCount = plannedGlyphCount;
+        } else {
+            appendNativeResult(appendTerminalShapedTextRun(
+                textNode, shaped, top, baseline, cellWidth, alphaBlending));
+        }
+    } else {
+        std::vector<std::unique_ptr<TerminalShapedTextRun>> shapedRuns;
+        shapedRuns.reserve(static_cast<std::size_t>(runs.size()));
+        for (const TerminalTextRun &run : runs) {
+            auto shaped = std::make_unique<TerminalShapedTextRun>(
+                run, top, baseline, cellWidth, devicePixelRatio, alphaBlending,
+                eligible);
+            if (eligible
+                && !appendTerminalGlyphPlan(quads, *shaped, *glyphAtlas,
+                                            *glyphTexture,
+                                            &plannedGlyphCount)) {
+                eligible = false;
+            }
+            shapedRuns.push_back(std::move(shaped));
+        }
+        if (!eligible) quads.clear();
+        const TerminalGlyphBatchCommitResult committed =
+            glyphBatch->commit(glyphTexture, alphaBlending);
+        if (eligible && committed != TerminalGlyphBatchCommitResult::Fallback) {
+            result.batchedGlyphCount = plannedGlyphCount;
+        } else {
+            for (const auto &shaped : shapedRuns) {
+                appendNativeResult(appendTerminalShapedTextRun(
+                    textNode, *shaped, top, baseline, cellWidth,
+                    alphaBlending));
+            }
+        }
     }
+    result.glyphBatchGeometryWriteCount =
+        glyphBatch->geometryWriteCount() - writesBefore;
     return result;
 }
 
@@ -962,6 +1131,8 @@ public:
 #endif
     }
 
+    ~TerminalSceneNode() override { clearMainText(); }
+
     void setGridOrigin(const QPointF &origin) const
     {
         QMatrix4x4 matrix;
@@ -1006,10 +1177,15 @@ public:
 
     void clearMainText()
     {
+        // Batches hold non-owning texture pointers. Destroy every glyph node
+        // before releasing the texture and render-thread-local QRawFonts.
         clearNodeChildren(mainTextRows);
         rowContainers.clear();
         rowTextNodes.clear();
+        rowGlyphBatches.clear();
         builtRowEpochs.clear();
+        glyphAtlasTexture.reset();
+        glyphAtlas.reset();
         textState.reset();
         shapingCursorState = {};
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
@@ -1093,7 +1269,8 @@ public:
     void resetTextRows(
         int rowCount,
         const std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)>
-            &newFonts)
+            &newFonts,
+        bool useGlyphBatch)
     {
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
         QVector<quint64> cumulativeBuildCounts = rowBuildCounts;
@@ -1101,6 +1278,7 @@ public:
         clearMainText();
         rowContainers.reserve(rowCount);
         rowTextNodes.fill(nullptr, rowCount);
+        rowGlyphBatches.fill(nullptr, rowCount);
         builtRowEpochs.fill(0, rowCount);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
         rowNodeSerials.fill(0, rowCount);
@@ -1111,11 +1289,67 @@ public:
 #endif
         for (int row = 0; row < rowCount; ++row) {
             auto *container = new QSGNode;
+            if (useGlyphBatch) {
+                auto *const batch = new TerminalGlyphBatch;
+                rowGlyphBatches[row] = batch;
+                container->appendChildNode(batch);
+            }
             mainTextRows->appendChildNode(container);
             rowContainers.append(container);
         }
 
         fonts = newFonts;
+    }
+
+    bool prepareGlyphAtlas(QQuickWindow *window, qreal devicePixelRatio)
+    {
+        glyphAtlasTexture.reset();
+        glyphAtlas.reset();
+        if (window == nullptr) return false;
+
+        QString printableAscii;
+        printableAscii.reserve(0x7f - 0x20);
+        for (ushort codeUnit = 0x20; codeUnit < 0x7f; ++codeUnit) {
+            printableAscii.append(QChar(codeUnit));
+        }
+
+        QVector<TerminalGlyphAtlasKey> requests;
+        requests.reserve(static_cast<qsizetype>(fonts.size())
+                         * printableAscii.size());
+        for (const QFont &font : fonts) {
+            const QRawFont rawFont = QRawFont::fromFont(font);
+            if (!rawFont.isValid()) return false;
+            const QList<quint32> glyphIndexes =
+                rawFont.glyphIndexesForString(printableAscii);
+            if (glyphIndexes.size() != printableAscii.size()) return false;
+            for (const quint32 glyphIndex : glyphIndexes) {
+                requests.append({.font = rawFont, .glyphIndex = glyphIndex});
+            }
+        }
+
+        std::optional<TerminalGlyphAtlas> nextAtlas = TerminalGlyphAtlas::build(
+            std::span<const TerminalGlyphAtlasKey>(
+                requests.constData(),
+                static_cast<std::size_t>(requests.size())),
+            {.devicePixelRatio = devicePixelRatio});
+        if (!nextAtlas.has_value()) return false;
+
+        QImage textureImage = nextAtlas->textureImage();
+        if (textureImage.isNull()) return false;
+        std::unique_ptr<QSGTexture> nextTexture(window->createTextureFromImage(
+            textureImage, QQuickWindow::TextureHasAlphaChannel));
+        if (nextTexture == nullptr) return false;
+        nextTexture->setFiltering(QSGTexture::Linear);
+        nextTexture->setMipmapFiltering(QSGTexture::None);
+        nextTexture->setHorizontalWrapMode(QSGTexture::ClampToEdge);
+        nextTexture->setVerticalWrapMode(QSGTexture::ClampToEdge);
+
+        glyphAtlas = std::move(nextAtlas);
+        glyphAtlasTexture = std::move(nextTexture);
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+        ++glyphAtlasUploadCount;
+#endif
+        return true;
     }
 
     QSGTextNode *prepareTextRow(int row, QQuickWindow *window,
@@ -1156,9 +1390,8 @@ public:
 
     void updateOverlayText(const OverlayTextRenderState &state)
     {
-        [[maybe_unused]] const TextNodeUpdate result =
-            updateTextNode(overlayText, overlayTextContainer, overlayTextState,
-                           state);
+        [[maybe_unused]] const TextNodeUpdate result = updateTextNode(
+            overlayText, overlayTextContainer, overlayTextState, state);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
         if (result.created) {
             overlayTextNodeSerial =
@@ -1170,9 +1403,8 @@ public:
 
     void updateStartingText(const OverlayTextRenderState &state)
     {
-        [[maybe_unused]] const TextNodeUpdate result =
-            updateTextNode(startingText, startingTextContainer,
-                           startingTextState, state);
+        [[maybe_unused]] const TextNodeUpdate result = updateTextNode(
+            startingText, startingTextContainer, startingTextState, state);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
         if (result.created) {
             startingTextNodeSerial =
@@ -1184,9 +1416,9 @@ public:
 
     void updatePaneOverlayText(const OverlayTextRenderState &state)
     {
-        [[maybe_unused]] const TextNodeUpdate result = updateTextNode(
-            paneOverlayText, paneOverlayTextContainer, paneOverlayTextState,
-            state);
+        [[maybe_unused]] const TextNodeUpdate result =
+            updateTextNode(paneOverlayText, paneOverlayTextContainer,
+                           paneOverlayTextState, state);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
         if (result.created) {
             paneOverlayTextNodeSerial =
@@ -1267,7 +1499,10 @@ public:
     bool retainedSolidRows = false;
     QVector<QSGNode *> rowContainers;
     QVector<QSGTextNode *> rowTextNodes;
+    QVector<TerminalGlyphBatch *> rowGlyphBatches;
     QVector<quint64> builtRowEpochs;
+    std::optional<TerminalGlyphAtlas> glyphAtlas;
+    std::unique_ptr<QSGTexture> glyphAtlasTexture;
     QVector<TerminalSolidRowCache> solidRows;
     std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> fonts;
     std::optional<TerminalTextRenderState> textState;
@@ -1294,6 +1529,11 @@ public:
     QVector<quint64> rowBuildCounts;
     QVector<quint64> solidRowBuildCounts;
     quint64 solidCellVisitCount = 0;
+    quint64 nativeTextSubmissionCount = 0;
+    quint64 nativeTextCellCount = 0;
+    quint64 batchedGlyphCount = 0;
+    quint64 glyphBatchGeometryWriteCount = 0;
+    quint64 glyphAtlasUploadCount = 0;
     QVector<quint64> rowLayoutCounts;
     QVector<quint64> rowFallbackCellCounts;
 #endif
@@ -1438,6 +1678,16 @@ void publishRenderProbe(
         root.rectLayers[terminalEnumIndex(RectLayer::DecorationAfterText)]
             ->commitGeneration();
     snapshot.solidCellVisitCount = root.solidCellVisitCount;
+    snapshot.nativeTextSubmissionCount = root.nativeTextSubmissionCount;
+    snapshot.nativeTextCellCount = root.nativeTextCellCount;
+    snapshot.batchedGlyphCount = root.batchedGlyphCount;
+    snapshot.glyphBatchGeometryWriteCount = root.glyphBatchGeometryWriteCount;
+    snapshot.glyphAtlasUploadCount = root.glyphAtlasUploadCount;
+    snapshot.glyphAtlasEntryCount =
+        root.glyphAtlas.has_value() ? root.glyphAtlas->entryCount() : 0;
+    snapshot.glyphAtlasBytes = root.glyphAtlas.has_value()
+        ? static_cast<quint64>(root.glyphAtlas->textureByteSize())
+        : 0;
     snapshot.rowLayoutCounts = root.rowLayoutCounts;
     snapshot.rowFallbackCellCounts = root.rowFallbackCellCounts;
     snapshot.metrics = metrics;
@@ -1629,6 +1879,8 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
     const bool alphaBlendingSupported =
         graphicsApi == QSGRendererInterface::OpenGL
         || graphicsApi == QSGRendererInterface::Vulkan;
+    const bool glyphBatchEnabled =
+        alphaBlendingSupported && !terminalGlyphBatchDisabled();
     const bool linearAlphaBlendingActive =
         alphaBlendingSupported && alphaBlendingPipelineActive;
     const TerminalAlphaBlending alphaBlending =
@@ -1758,8 +2010,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
         textState.cellWidth = cellWidth;
         textState.cellHeight = cellHeight;
         textState.baseline = metrics.baseline;
-        textState.glyphStyle =
-            TerminalGlyphStyle::fromAppearance(appearance);
+        textState.glyphStyle = TerminalGlyphStyle::fromAppearance(appearance);
         textState.foreground = frame.foreground;
         // Opacity can only alter retained glyph/decor colors through minimum
         // contrast. Keep background-only reloads off the text rebuild path at
@@ -1785,7 +2036,11 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
             || *root->textState != textState
             || root->rowTextNodes.size() != visibleRows;
         if (rebuildAllText) {
-            root->resetTextRows(visibleRows, metrics.fontProgram->fonts);
+            root->resetTextRows(visibleRows, metrics.fontProgram->fonts,
+                                glyphBatchEnabled);
+            if (glyphBatchEnabled) {
+                (void)root->prepareGlyphAtlas(window(), devicePixelRatio);
+            }
             root->textState = textState;
         } else {
             // The viewport is clipping state, not shaping state. Interactive
@@ -2152,19 +2407,29 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                         rowTextCells.constData(),
                         static_cast<std::size_t>(rowTextCells.size())),
                     metrics.shapingBreakCursor);
-                for (const TerminalTextRun &run : runs) {
-                    const TerminalRunLayoutResult result =
-                        appendTerminalTextRun(rowText, run, top, baseline,
-                                              cellWidth, devicePixelRatio,
-                                              alphaBlending);
+                TerminalGlyphBatch *const glyphBatch =
+                    row < root->rowGlyphBatches.size()
+                    ? root->rowGlyphBatches.at(row)
+                    : nullptr;
+                const TerminalTextRowRenderResult result =
+                    renderTerminalTextRow(
+                        rowText, glyphBatch,
+                        root->glyphAtlas.has_value()
+                            ? std::addressof(*root->glyphAtlas)
+                            : nullptr,
+                        root->glyphAtlasTexture.get(), runs, top, baseline,
+                        cellWidth, devicePixelRatio, alphaBlending);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-                    root->rowLayoutCounts[row] += result.layoutCount;
-                    root->rowFallbackCellCounts[row] +=
-                        result.fallbackCellCount;
+                root->rowLayoutCounts[row] += result.nativeLayoutCount;
+                root->rowFallbackCellCounts[row] += result.fallbackCellCount;
+                root->nativeTextSubmissionCount += result.nativeLayoutCount;
+                root->nativeTextCellCount += result.nativeCellCount;
+                root->batchedGlyphCount += result.batchedGlyphCount;
+                root->glyphBatchGeometryWriteCount +=
+                    result.glyphBatchGeometryWriteCount;
 #else
-                    Q_UNUSED(result);
+                Q_UNUSED(result);
 #endif
-                }
             }
             if (rebuildRowText) {
                 root->builtRowEpochs[row] =

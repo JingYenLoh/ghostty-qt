@@ -693,22 +693,35 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    image generation and are evicted only after retained nodes have been rebound
    or removed. Moving between layers or changing the scene-graph context
    recreates the affected node.
-   Main terminal text is retained in one public `QSGTextNode` per visible row;
-   accepted row epochs rebuild only changed rows, while font, geometry,
+   Main terminal text is retained in one container per visible row. OpenGL and
+   Vulkan containers pair one indexed `TerminalGlyphBatch` with a public
+   `QSGTextNode` fallback; other backends use only the text node. `QTextLayout`
+   remains the sole shaper. A run enters the terminal-owned batch only when its
+   metadata proves one glyph for every fixed-pitch printable-ASCII cell. If any
+   run in a row is non-ASCII, wide, clustered, decorated, off-grid, or otherwise
+   unsafe, the complete row uses the text node without partial batching.
+   Eligible glyphs use one immutable padded CPU Alpha8 atlas containing
+   printable ASCII for all four role faces at the current device scale. It is
+   expanded once to an explicit premultiplied-RGBA coverage texture because
+   public QSG texture sampling does not portably expose Alpha8 coverage on both
+   OpenGL and Vulkan. Global text-state changes rebuild and upload that atlas;
+   ordinary dirty-row updates reuse it.
+   The fallback node uses `QtRendering`, which stores distance-field glyphs in
+   Qt's GPU atlases on hardware RHI backends.
+
+   Accepted row epochs rebuild only changed rows, while font, geometry,
    appearance, palette, search-style, and frame-shape changes rebuild the
    complete text layer. Candidate and selected search-mask replacement is not
    part of that global text-state key. The pane compares normalized old and new
    masks by row with boundary-masked packed-word loads, then advances both text
    and solid epochs only for rows whose effective bits changed. Moving a
    highlight therefore rebuilds its old and new rows while retaining every
-   unaffected text node and solid plan; clearing a valid mask, including by
-   rejecting a malformed replacement, rebuilds only rows that lose
-   decorations. Old and new block-cursor rows are rebuilt when
-   its text override changes. The row nodes use `QtRendering`, which stores
-   distance-field glyphs in GPU atlases on hardware RHI backends. The final
-   rectangle keeps an empty extent while inactive and updates without
-   scene-graph allocation. Dimming state is absent from the retained text-state
-   key.
+   unaffected text container and solid plan; clearing a valid mask, including
+   by rejecting a malformed replacement, rebuilds only rows that lose
+   decorations. Old and new block-cursor rows are rebuilt when its text override
+   changes. The final rectangle keeps an empty extent while inactive and updates
+   without scene-graph allocation. Dimming state is absent from the retained
+   text-state key.
 7. Cell-derived backgrounds, resolved glyph/decor colors, and before/after-text
    decorations are retained in one render-thread cache per visible row.
    Independent solid-row epochs cover terminal dirty rows; search and
@@ -893,27 +906,31 @@ prevents output-driven scrolling without advancing the anchor; enabling it
 live after intervening output may scroll on the first eligible frame when that
 stale anchor is compared.
 
-Renderer-v1's base terminal path uses Qt's public scene-graph API: text nodes
-supply the GPU glyph path and one retained vertex-colored `QSGGeometryNode` per
-painter layer supplies solid primitives on RHI backends. Qt's software
-adaptation does not render that public vertex-color material, so the
-test/fallback path retains one reusable `QSGSimpleRectNode` pool per layer for
-correctness.
-No intermediate raster-image upload sits between the frame and the scene
-graph. Qt's implicitly shared frame snapshot is normally an O(1) reference-count
-operation rather than a deep cell copy. During ordinary sparse updates, the
-renderer resolves solid presentation and shapes text only for rows whose
-persistent epochs or derived block-cursor state changed. Metadata-only,
+Renderer-v1's base terminal path uses Qt's public scene-graph API. Retained
+indexed geometry and a padded RGBA coverage texture expanded from a compact
+CPU Alpha8 atlas supply the narrow printable-ASCII glyph path on OpenGL and
+Vulkan; public text nodes supply the general and software fallback. One
+retained vertex-colored `QSGGeometryNode` per painter layer supplies solid
+primitives on RHI backends. Qt's software adaptation does not render that
+public vertex-color material, so the test/fallback path retains one reusable
+`QSGSimpleRectNode` pool per layer for correctness.
+No full-frame raster-image upload sits between the frame and the scene graph.
+The glyph fast path performs one compact RGBA coverage upload from its CPU
+Alpha8 atlas when global text state is rebuilt and then reuses it across row
+damage. Qt's implicitly shared frame snapshot is normally an O(1)
+reference-count operation rather than a deep cell copy. During ordinary sparse
+updates, the renderer resolves solid presentation and shapes text only for rows
+whose persistent epochs or derived block-cursor state changed. Metadata-only,
 frontend-overlay, and non-block cursor updates perform no cell-presentation
-scan. On an RHI backend, each cached solid row commits directly to its three
-persistent painter-layer batches, so a sparse update rewrites only geometry for
-rows whose presentation changed. The software fallback retains the row plans
-but flattens them into global node pools. Padding, cursor, and frontend overlays
-use independent global batches; unchanged batches skip geometry updates and
-every batch reuses its CPU and scene-graph allocation capacity. Global
-text-state changes, including search-decoration color changes, still rebuild
-the complete text layer. Search mask-only changes use the shared row-damage
-epochs described above and leave unaffected text and solid rows retained.
+scan. On an RHI backend, each cached row commits directly to its retained text
+and solid batches, so a sparse update rewrites only geometry for rows whose
+presentation changed. The software fallback retains the row plans but flattens
+solids into global node pools. Padding, cursor, and frontend overlays use
+independent global batches; unchanged batches skip geometry updates and every
+batch reuses its CPU and scene-graph allocation capacity. Global text-state
+changes, including search-decoration color changes, still rebuild the complete
+text layer. Search mask-only changes use the shared row-damage epochs described
+above and leave unaffected text and solid rows retained.
 
 Custom shaders are pane-local post-processing stages around the private render
 item, so terminal pixels and Kitty graphics are filtered while Qt-owned pane
@@ -1940,6 +1957,21 @@ run. The defensive plain `fi`/`fl`/`st` planner breaks deliberately remain, so
 this support does not enable the typographic ligatures Ghostty also suppresses.
 The result preserves terminal geometry and safe fallback while avoiding one
 layout per ordinary cell.
+
+On OpenGL and Vulkan, an additional renderer-free planner reads the glyph
+indexes, positions, raw fonts, and UTF-16 indexes from that already-shaped
+line; it never reshapes the run. It accepts only an exact fixed-pitch mapping of
+one printable ASCII code unit, cell, source index, and unflagged glyph. The
+renderer rasterizes the four role faces through public `QRawFont` APIs at the
+current DPR, removes transparent borders, caches blank glyphs, and packs the
+unique masks in stable first-use order with transparent sampling padding. One
+compact CPU Alpha8 atlas is expanded once into explicit premultiplied RGBA
+coverage for the public-QSG upload, and one retained indexed quad batch per row
+then replaces Qt text submissions for a fully eligible row. Atlas allocation,
+texture creation, a missing lookup, or any ineligible run fails the complete
+row back to its already-shaped `QSGTextNode` representation. This preserves
+ligatures, fallback fonts, complex scripts, color glyphs, and the software
+renderer while keeping the common terminal path narrow.
 
 These mappings do not claim Ghostty's embedded production fallback stack,
 FreeType load and synthesis internals, or HarfBuzz positioned-glyph plan:
@@ -2988,6 +3020,11 @@ The default CTest suite has focused layers for each ownership boundary:
   font, color, style, selection, invisible, defensive ligature, and optional
   logical-cursor boundaries; wide spacer handling; interior placeholders;
   edge trimming; and exact fallback-cell coordinates.
+- `terminal-glyph-plan` proves that the ASCII fast path extracts Qt's existing
+  glyph indexes and positions without reshaping. It accepts exact plain-ASCII
+  cell maps and rejects ligatures, non-ASCII and wide cells, malformed maps,
+  non-grid fits, non-finite positions, and flagged glyph runs as complete
+  units.
 - `terminal-geometry` verifies point-to-physical padding conversion, explicit
   padding before grid selection, equal and capped balance modes, projected
   grid origin, padding-aware hit testing, full-surface versus terminal extents,
@@ -3031,6 +3068,16 @@ The default CTest suite has focused layers for each ownership boundary:
   shrinking, identical and smaller updates allocate nothing, software
   rectangle nodes are pooled and hidden rather than deleted, and switching
   render backends reuses the existing layer objects.
+- `terminal-glyph-atlas` covers deterministic first-use shelf packing,
+  deduplication, transparent padding, normalized texture coordinates, blank
+  glyph caching, fractional DPR, CPU-image and four-channel texture byte
+  accounting, exact premultiplied-RGBA coverage expansion, and soft
+  invalid-input or capacity failure. `terminal-glyph-batch` covers retained
+  indexed allocation, premultiplied native/linear colors, unchanged-update
+  reuse, texture-only rebinding without a geometry rewrite, and empty or invalid
+  whole-batch fallback. Its OpenGL/Vulkan RHI companion reads back a two-texel
+  mask and distinguishes transparent, half-coverage, and incorrectly solid or
+  never-uploaded output.
 - `ghostty-smoke` exercises terminal parsing/render-state iteration, CJK wide
   cells, key and 1002 mouse-drag encoding, bracketed paste, and terminal query
   callbacks directly through the C API.
@@ -3419,10 +3466,11 @@ to the same run's legacy renderer so common host load affects both sides. Short
 quick runs are advisory, while sufficiently sampled runs enforce
 relative-plus-absolute noise floors.
 Executable work counters form a separate deterministic gate, so additional
-row shaping, Kitty uploads/node mutations, or retained resource work cannot be
-hidden by noisy timing. Comparison results are sorted, atomic JSON artifacts
-with independent provenance hashes; the qualification reports are never
-modified.
+row shaping or native text submissions, lost ASCII batching, glyph-batch
+geometry rewrites, atlas uploads/residency changes, Kitty uploads/node
+mutations, or retained resource work cannot be hidden by noisy timing.
+Comparison results are sorted, atomic JSON artifacts with independent
+provenance hashes; the qualification reports are never modified.
 
 The hook does not claim access to pixels after compositor composition. Wayland
 does not let a normal client read compositor blur, output transform, color
@@ -3442,32 +3490,39 @@ actual presentation timestamps require explicit color-management and
 ## Deliberate renderer-v1 limits
 
 - Dirty-row value updates keep the thread boundary small for ordinary output,
-  and persistent row text nodes restrict `QTextLayout` work to those rows.
+  and persistent row text containers restrict `QTextLayout` work to those rows.
   Maximal compatible text runs replace ordinary per-cell layouts, with
   exact all-boundary validation or cluster-aware ligature validation and
-  per-cell fallback for unsafe runs. Solid
-  presentation and its three cell-derived RHI geometry batches are retained by
-  row, so sparse output and cursor-only updates plan and commit only damaged
-  rows on the GPU path. Candidate and selected search-mask changes use the same
-  row-local text and solid damage boundary. The software fallback still
-  flattens cached plans into global node pools because per-row scene-node
-  traversal costs more than it saves there. A global appearance, geometry,
-  palette, search-style, or renderer-backend change still rebuilds every
-  visible row by design.
-- Text uses Qt's GPU distance-field glyph atlas on hardware RHI backends and
-  shapes compatible cells together. It cannot consume Ghostty's private
-  selected-face and positioned-glyph plan, so exact fallback, synthesis,
-  FreeType flags, and cluster placement remain Qt-owned approximations. There
-  is no color-emoji pipeline. Kitty graphics render ordinary placements;
-  Unicode virtual placements await an expanded-placement public API.
+  per-cell fallback for unsafe runs. Exact printable ASCII uses a compact CPU
+  Alpha8 atlas, one explicit RGBA coverage upload, and an indexed row batch on
+  OpenGL and Vulkan; the general `QSGTextNode` path remains available in the
+  same row container. Solid presentation and its three cell-derived RHI
+  geometry batches are likewise retained by row, so sparse output and
+  cursor-only updates plan and commit only damaged rows on the GPU path.
+  Candidate and selected search-mask changes use the same row-local text and
+  solid damage boundary. The software fallback still flattens cached solid
+  plans into global node pools because per-row scene-node traversal costs more
+  than it saves there. A global appearance, geometry, palette, search-style, or
+  renderer-backend change still rebuilds every visible row and the glyph atlas
+  by design.
+- Qt still shapes every run. The custom atlas consumes only Qt-owned exact
+  one-glyph-per-cell printable ASCII; Qt's distance-field text path handles
+  ligatures, fallback faces, complex text, and other rejected rows. Neither
+  path can consume Ghostty's private selected-face and positioned-glyph plan,
+  so exact fallback, synthesis, FreeType flags, and cluster placement remain
+  Qt-owned approximations. There is no color-emoji pipeline. Kitty graphics
+  render ordinary placements; Unicode virtual placements await an
+  expanded-placement public API.
 - `alpha-blending` is implemented as a pane-local color pipeline on OpenGL and
   Vulkan. Native uses Qt's sRGB path; linear inputs and user-shader
   intermediates use RGBA16F and a final built-in pass restores premultiplied
   sRGB for Qt composition. Software and other unsupported scene-graph backends
-  deliberately fall back to native. Qt's public text node does not expose the
-  per-fragment glyph coverage and effective cell background needed by
-  Ghostty's luminance-based `linear-corrected` weight, so that value currently
-  shares linear coverage and remains partial in the parity ledger.
+  deliberately fall back to native. The ASCII batch shader samples glyph
+  coverage, but does not yet implement Ghostty's luminance-based
+  `linear-corrected` weight. Qt's general text-node fallback also does not
+  expose per-fragment coverage and effective cell background. Both paths
+  therefore share linear coverage so one setting cannot change semantics with
+  row eligibility; the value remains partial in the parity ledger.
 - Background images use a dedicated packed-RGBA material on RHI backends so
   straight RGB and alpha are filtered before premultiplication and
   repeated through Ghostty's explicit modulo coordinates. The software

@@ -672,10 +672,11 @@ software rendering tests without changing the Qt layer or texture architecture.
 ## Exact font resolution and terminal shaping
 
 **Status:** the finalized typography configuration, Qt-owned face resolution,
-maximal compatible row shaping, and device-pixel-safe fallback are implemented.
-Exact Ghostty face selection, FreeType behavior, synthesis, run construction,
-positioned glyph output, generated box sprites, and icon classification require
-a public renderer-neutral font contract.
+maximal compatible row shaping, device-pixel-safe fallback, and a narrow
+Qt-owned printable-ASCII atlas/batch are implemented. Exact Ghostty face
+selection, FreeType behavior, synthesis, run construction, positioned glyph
+output, generated box sprites, and icon classification require a public
+renderer-neutral font contract.
 
 The standalone public VT API exposes the authoritative row cells, styles,
 selection range, base codepoint, grapheme length, and complete grapheme bytes.
@@ -718,12 +719,17 @@ ghostty-qt therefore implements the largest safe frontend-owned subset:
 - a pure planner forms maximal row runs at every observable text-style,
   selection, font, invisible-cell, defensive ligature, and configured cursor
   boundary while retaining wide spacers with their head;
-- Qt shapes those runs with `QTextLayout`; and
+- Qt shapes those runs with `QTextLayout`;
 - an all-boundary device-pixel check handles ordinary runs without inspecting
   glyph metadata. If only internal caret positions differ, Qt's glyph string
   indexes identify shaping clusters and the renderer instead validates their
   starts plus the run endpoint. Incomplete metadata or a remaining mismatch
-  keeps exact per-cell placement for the complete run.
+  keeps exact per-cell placement for the complete run; and
+- on OpenGL and Vulkan, runs accepted by the exact all-boundary path can extract
+  one-glyph-per-cell printable ASCII from the already-shaped line, rasterize it
+  through `QRawFont` into a compact CPU Alpha8 atlas, expand it once to an
+  explicit RGBA coverage texture, and emit it through retained per-row indexed
+  batches. Every other row keeps the general Qt text path.
 
 This gives visible feature and ligature support without allowing a platform
 shaper to move later cells off-grid. The parity ledger remains conservative:
@@ -833,8 +839,9 @@ Once this contract exists in an official, publicly reachable Ghostty commit:
    snapshots.
 3. Feed the existing worker-authoritative render rows directly into the public
    run shaper; do not expose the terminal handle across threads.
-4. Add a retained QSG glyph atlas around the public raster result, keyed by
-   upstream grid generation, face, glyph, and device scale.
+4. Retarget and expand the existing Qt-owned printable-ASCII atlas around the
+   public raster result, keyed by upstream grid generation, face, glyph, and
+   device scale, rather than preserving Qt face identity as the cache key.
 5. Keep the current dirty-row and scene-node lifetime architecture, but remove
    the `QTextLayout` grid-validation fallback once every glyph comes from the
    authoritative plan.

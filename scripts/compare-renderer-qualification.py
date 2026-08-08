@@ -129,6 +129,13 @@ PANE_WORK_FIELDS = (
     "text_row_builds",
     "text_layouts",
     "text_fallback_cells",
+    "native_text_submissions",
+    "native_text_cells",
+    "batched_glyphs",
+    "glyph_batch_geometry_writes",
+    "glyph_atlas_uploads",
+    "glyph_atlas_entry_count_final",
+    "glyph_atlas_bytes_final",
     "kitty_texture_uploads",
     "kitty_node_creations",
     "kitty_node_deletions",
@@ -138,6 +145,7 @@ PANE_WORK_FIELDS = (
     "kitty_texture_set_count_final",
     "kitty_texture_bytes_final",
 )
+PANE_COVERAGE_FIELDS = frozenset(("batched_glyphs",))
 SHADER_WORK_FIELDS = (
     "source_paints",
     "target_creates",
@@ -845,6 +853,14 @@ def validate_pane_evidence(
         signed_record_integer(
             record.get("kitty_texture_set_count_delta"),
             f"{identity}.kitty_texture_set_count_delta",
+        )
+        signed_record_integer(
+            record.get("glyph_atlas_entry_count_delta"),
+            f"{identity}.glyph_atlas_entry_count_delta",
+        )
+        signed_record_integer(
+            record.get("glyph_atlas_bytes_delta"),
+            f"{identity}.glyph_atlas_bytes_delta",
         )
 
 
@@ -1603,6 +1619,9 @@ def work_metric(
     identity: tuple[str, ...], name: str, baseline: int, candidate: int
 ) -> dict[str, object]:
     delta = candidate - baseline
+    higher_is_better = name in PANE_COVERAGE_FIELDS
+    regression = delta < 0 if higher_is_better else delta > 0
+    improvement = delta > 0 if higher_is_better else delta < 0
     return {
         "identity": list(identity),
         "metric": name,
@@ -1613,7 +1632,7 @@ def work_metric(
         "delta": delta,
         "enforced": True,
         "classification": (
-            "regression" if delta > 0 else "improvement" if delta < 0 else "stable"
+            "regression" if regression else "improvement" if improvement else "stable"
         ),
     }
 

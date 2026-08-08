@@ -121,6 +121,13 @@ struct ProbeDelta {
     quint64 textRowBuilds = 0;
     quint64 textLayouts = 0;
     quint64 textFallbackCells = 0;
+    quint64 nativeTextSubmissions = 0;
+    quint64 nativeTextCells = 0;
+    quint64 batchedGlyphs = 0;
+    quint64 glyphBatchGeometryWrites = 0;
+    quint64 glyphAtlasUploads = 0;
+    qint64 glyphAtlasEntryCount = 0;
+    qint64 glyphAtlasBytes = 0;
     quint64 kittyTextureUploads = 0;
     quint64 kittyNodeCreations = 0;
     quint64 kittyNodeDeletions = 0;
@@ -136,6 +143,13 @@ struct ProbeDelta {
         textRowBuilds += other.textRowBuilds;
         textLayouts += other.textLayouts;
         textFallbackCells += other.textFallbackCells;
+        nativeTextSubmissions += other.nativeTextSubmissions;
+        nativeTextCells += other.nativeTextCells;
+        batchedGlyphs += other.batchedGlyphs;
+        glyphBatchGeometryWrites += other.glyphBatchGeometryWrites;
+        glyphAtlasUploads += other.glyphAtlasUploads;
+        glyphAtlasEntryCount += other.glyphAtlasEntryCount;
+        glyphAtlasBytes += other.glyphAtlasBytes;
         kittyTextureUploads += other.kittyTextureUploads;
         kittyNodeCreations += other.kittyNodeCreations;
         kittyNodeDeletions += other.kittyNodeDeletions;
@@ -162,6 +176,8 @@ struct ScenarioResult {
     qsizetype expectedFinalKittyTextureSetCount = 0;
     quint64 finalKittyTextureBytes = 0;
     quint64 expectedFinalKittyTextureBytes = 0;
+    qsizetype finalGlyphAtlasEntryCount = 0;
+    quint64 finalGlyphAtlasBytes = 0;
     int measuredFrames = 0;
 };
 
@@ -172,6 +188,19 @@ ProbeDelta operator-(const TerminalPaneRenderProbeSnapshot &after,
         .paintSerial = after.paintSerial - before.paintSerial,
         .solidCellVisits =
             after.solidCellVisitCount - before.solidCellVisitCount,
+        .nativeTextSubmissions =
+            after.nativeTextSubmissionCount - before.nativeTextSubmissionCount,
+        .nativeTextCells =
+            after.nativeTextCellCount - before.nativeTextCellCount,
+        .batchedGlyphs = after.batchedGlyphCount - before.batchedGlyphCount,
+        .glyphBatchGeometryWrites = after.glyphBatchGeometryWriteCount
+            - before.glyphBatchGeometryWriteCount,
+        .glyphAtlasUploads =
+            after.glyphAtlasUploadCount - before.glyphAtlasUploadCount,
+        .glyphAtlasEntryCount = static_cast<qint64>(after.glyphAtlasEntryCount)
+            - static_cast<qint64>(before.glyphAtlasEntryCount),
+        .glyphAtlasBytes = static_cast<qint64>(after.glyphAtlasBytes)
+            - static_cast<qint64>(before.glyphAtlasBytes),
         .kittyTextureUploads = after.kittyGraphicsTextureUploadCount
             - before.kittyGraphicsTextureUploadCount,
         .kittyNodeCreations = after.kittyGraphicsNodeCreationCount
@@ -215,6 +244,13 @@ ProbeDelta operator*(ProbeDelta delta, quint64 count)
     delta.textRowBuilds *= count;
     delta.textLayouts *= count;
     delta.textFallbackCells *= count;
+    delta.nativeTextSubmissions *= count;
+    delta.nativeTextCells *= count;
+    delta.batchedGlyphs *= count;
+    delta.glyphBatchGeometryWrites *= count;
+    delta.glyphAtlasUploads *= count;
+    delta.glyphAtlasEntryCount *= static_cast<qint64>(count);
+    delta.glyphAtlasBytes *= static_cast<qint64>(count);
     delta.kittyTextureUploads *= count;
     delta.kittyNodeCreations *= count;
     delta.kittyNodeDeletions *= count;
@@ -429,6 +465,12 @@ public:
         publishFullFrame(false);
         if (!renderUntimed(error, true)) return InitializationResult::Failure;
 
+        // Exercise the terminal-owned glyph batch against a black background
+        // before timing anything. This catches atlas/shader failures that the
+        // colored-cell validation above would otherwise conceal.
+        publishTextFrame(u"ab+cd=ef+gh-");
+        if (!renderUntimed(error, true)) return InitializationResult::Failure;
+
         const QColor kittyValidationColor(23, 211, 149);
         publishKitty(makeKittySnapshot(
             makeKittyImage(++kittyGeneration_, kittyValidationColor), 0));
@@ -505,7 +547,9 @@ public:
             QStringLiteral("one-dirty-row"), warmupIterations,
             measuredIterations,
             {.paintSerial = 1,
-             .solidCellVisits = static_cast<quint64>(grid_.columns)},
+             .solidCellVisits = static_cast<quint64>(grid_.columns),
+             .textRowBuilds = 1,
+             .textLayouts = 1},
             0, 0, {},
             [this, &odd] {
                 odd = !odd;
@@ -528,7 +572,7 @@ public:
     {
         return textShapingScenario(QStringLiteral("text-ascii-dirty-row"),
                                    u"ab+cd=ef+gh-", u"ij-kl+mn=op+", false,
-                                   warmupIterations, measuredIterations,
+                                   true, warmupIterations, measuredIterations,
                                    capture, error);
     }
 
@@ -539,7 +583,7 @@ public:
     {
         return textShapingScenario(QStringLiteral("text-ligature-dirty-row"),
                                    u"ab>=cd===ef=", u"ij===kl>=mn=", false,
-                                   warmupIterations, measuredIterations,
+                                   false, warmupIterations, measuredIterations,
                                    capture, error);
     }
 
@@ -548,7 +592,7 @@ public:
                                       RenderDocCapture *capture, QString *error)
     {
         return textShapingScenario(QStringLiteral("text-ascii-full-frame"),
-                                   u"ab+cd=ef+gh-", u"ij-kl+mn=op+", true,
+                                   u"ab+cd=ef+gh-", u"ij-kl+mn=op+", true, true,
                                    warmupIterations, measuredIterations,
                                    capture, error);
     }
@@ -560,7 +604,7 @@ public:
     {
         return textShapingScenario(QStringLiteral("text-ligature-full-frame"),
                                    u"ab>=cd===ef=", u"ij===kl>=mn=", true,
-                                   warmupIterations, measuredIterations,
+                                   false, warmupIterations, measuredIterations,
                                    capture, error);
     }
 
@@ -574,7 +618,9 @@ public:
         return measure(
             QStringLiteral("cursor-only"), warmupIterations, measuredIterations,
             {.paintSerial = 1,
-             .solidCellVisits = static_cast<quint64>(2 * grid_.columns)},
+             .solidCellVisits = static_cast<quint64>(2 * grid_.columns),
+             .textRowBuilds = 2,
+             .textLayouts = 4},
             0, 0, {},
             [this] {
                 cursorRow_ = cursorRow_ == 0 ? grid_.rows - 1 : 0;
@@ -593,7 +639,9 @@ public:
             measuredIterations,
             {.paintSerial = 1,
              .solidCellVisits =
-                 static_cast<quint64>(grid_.columns * grid_.rows)},
+                 static_cast<quint64>(grid_.columns * grid_.rows),
+             .textRowBuilds = static_cast<quint64>(grid_.rows),
+             .textLayouts = static_cast<quint64>(grid_.rows)},
             0, 0, {},
             [this, &odd] {
                 odd = !odd;
@@ -859,20 +907,34 @@ private:
     ScenarioResult
     textShapingScenario(const QString &name, QStringView firstPattern,
                         QStringView secondPattern, bool fullFrame,
-                        int warmupIterations, int measuredIterations,
-                        RenderDocCapture *capture, QString *error)
+                        bool batchCandidate, int warmupIterations,
+                        int measuredIterations, RenderDocCapture *capture,
+                        QString *error)
     {
         Q_ASSERT(firstPattern.size() == secondPattern.size());
         bool alternate = false;
         const quint64 rebuiltRows =
             static_cast<quint64>(fullFrame ? grid_.rows : 1);
+        bool disabledParsed = false;
+        const int disabledValue = qEnvironmentVariableIntValue(
+            "GHOSTTY_QT_DISABLE_GLYPH_BATCH", &disabledParsed);
+        const bool batchDisabled = disabledParsed
+            ? disabledValue != 0
+            : qEnvironmentVariableIsSet("GHOSTTY_QT_DISABLE_GLYPH_BATCH");
+        const bool expectBatch = batchCandidate
+            && graphicsApi_ != GraphicsApi::Software && !batchDisabled;
+        const quint64 cells = static_cast<quint64>(grid_.columns) * rebuiltRows;
         return measure(
             name, warmupIterations, measuredIterations,
             {.paintSerial = 1,
              .solidCellVisits =
                  static_cast<quint64>(grid_.columns) * rebuiltRows,
              .textRowBuilds = rebuiltRows,
-             .textLayouts = rebuiltRows},
+             .textLayouts = expectBatch ? 0 : rebuiltRows,
+             .nativeTextSubmissions = expectBatch ? 0 : rebuiltRows,
+             .nativeTextCells = expectBatch ? 0 : cells,
+             .batchedGlyphs = expectBatch ? cells : 0,
+             .glyphBatchGeometryWrites = expectBatch ? rebuiltRows : 0},
             0, 0, {},
             [this, firstPattern, secondPattern, fullFrame, &alternate] {
                 alternate = !alternate;
@@ -1330,6 +1392,8 @@ private:
         ProbeDelta accumulatedDelta;
         qsizetype finalTextureSetCount = 0;
         quint64 finalTextureBytes = 0;
+        qsizetype finalGlyphAtlasEntryCount = 0;
+        quint64 finalGlyphAtlasBytes = 0;
         for (int iteration = 0; iteration < frameCount; ++iteration) {
             if (!setup()) return {};
             const TerminalPaneRenderProbeSnapshot before =
@@ -1357,6 +1421,8 @@ private:
             accumulatedDelta += after - before;
             finalTextureSetCount = after.kittyGraphicsTextureCount;
             finalTextureBytes = after.kittyGraphicsTextureBytes;
+            finalGlyphAtlasEntryCount = after.glyphAtlasEntryCount;
+            finalGlyphAtlasBytes = after.glyphAtlasBytes;
             if (timing.cpuUpdateNanoseconds.has_value()) {
                 cpuUpdateSamples.append(*timing.cpuUpdateNanoseconds);
             }
@@ -1400,6 +1466,8 @@ private:
                 expectedFinalKittyTextureSetCount,
             .finalKittyTextureBytes = finalTextureBytes,
             .expectedFinalKittyTextureBytes = expectedFinalKittyTextureBytes,
+            .finalGlyphAtlasEntryCount = finalGlyphAtlasEntryCount,
+            .finalGlyphAtlasBytes = finalGlyphAtlasBytes,
             .measuredFrames = frameCount,
         };
     }
@@ -1558,6 +1626,19 @@ bool printResult(GridSize grid, const ScenarioResult &result,
                   static_cast<double>(result.probeDelta.textFallbackCells)
                       / static_cast<double>(result.measuredFrames),
                   'f', 1)
+           << " native_text_submissions="
+           << result.probeDelta.nativeTextSubmissions
+           << " native_text_cells=" << result.probeDelta.nativeTextCells
+           << " batched_glyphs=" << result.probeDelta.batchedGlyphs
+           << " glyph_batch_geometry_writes="
+           << result.probeDelta.glyphBatchGeometryWrites
+           << " glyph_atlas_uploads=" << result.probeDelta.glyphAtlasUploads
+           << " glyph_atlas_entry_count_delta="
+           << result.probeDelta.glyphAtlasEntryCount
+           << " glyph_atlas_entry_count_final="
+           << result.finalGlyphAtlasEntryCount
+           << " glyph_atlas_bytes_delta=" << result.probeDelta.glyphAtlasBytes
+           << " glyph_atlas_bytes_final=" << result.finalGlyphAtlasBytes
            << " kitty_texture_uploads=" << result.probeDelta.kittyTextureUploads
            << " kitty_node_creations=" << result.probeDelta.kittyNodeCreations
            << " kitty_node_deletions=" << result.probeDelta.kittyNodeDeletions
@@ -1586,16 +1667,44 @@ bool printResult(GridSize grid, const ScenarioResult &result,
     requireEqual(result.probeDelta.solidCellVisits,
                  result.expectedProbeDelta.solidCellVisits,
                  u"solid-cell visit count");
-    if (result.expectedProbeDelta.textRowBuilds > 0) {
-        requireEqual(result.probeDelta.textRowBuilds,
-                     result.expectedProbeDelta.textRowBuilds,
-                     u"text-row build count");
-        requireEqual(result.probeDelta.textLayouts,
-                     result.expectedProbeDelta.textLayouts,
-                     u"text layout count");
-        requireEqual(result.probeDelta.textFallbackCells,
-                     result.expectedProbeDelta.textFallbackCells,
-                     u"text fallback-cell count");
+    requireEqual(result.probeDelta.textRowBuilds,
+                 result.expectedProbeDelta.textRowBuilds,
+                 u"text-row build count");
+    requireEqual(result.probeDelta.textLayouts,
+                 result.expectedProbeDelta.textLayouts, u"text layout count");
+    requireEqual(result.probeDelta.textFallbackCells,
+                 result.expectedProbeDelta.textFallbackCells,
+                 u"text fallback-cell count");
+    if (result.name.startsWith(QLatin1StringView("text-"))) {
+        requireEqual(result.probeDelta.nativeTextSubmissions,
+                     result.expectedProbeDelta.nativeTextSubmissions,
+                     u"native text submission count");
+        requireEqual(result.probeDelta.nativeTextCells,
+                     result.expectedProbeDelta.nativeTextCells,
+                     u"native text cell count");
+        requireEqual(result.probeDelta.batchedGlyphs,
+                     result.expectedProbeDelta.batchedGlyphs,
+                     u"batched glyph count");
+        requireEqual(result.probeDelta.glyphBatchGeometryWrites,
+                     result.expectedProbeDelta.glyphBatchGeometryWrites,
+                     u"glyph-batch geometry write count");
+        requireEqual(result.probeDelta.glyphAtlasUploads,
+                     result.expectedProbeDelta.glyphAtlasUploads,
+                     u"glyph-atlas upload count");
+        requireEqual(result.probeDelta.glyphAtlasEntryCount,
+                     result.expectedProbeDelta.glyphAtlasEntryCount,
+                     u"glyph-atlas entry-count delta");
+        requireEqual(result.probeDelta.glyphAtlasBytes,
+                     result.expectedProbeDelta.glyphAtlasBytes,
+                     u"glyph-atlas byte delta");
+        if (result.expectedProbeDelta.batchedGlyphs > 0
+            && (result.finalGlyphAtlasEntryCount <= 0
+                || result.finalGlyphAtlasBytes == 0)) {
+            output << "missing resident glyph atlas for " << result.name
+                   << ": entries=" << result.finalGlyphAtlasEntryCount
+                   << " bytes=" << result.finalGlyphAtlasBytes << '\n';
+            valid = false;
+        }
     }
     requireEqual(result.probeDelta.kittyTextureUploads,
                  result.expectedProbeDelta.kittyTextureUploads,

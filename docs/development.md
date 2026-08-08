@@ -47,17 +47,22 @@ without a swapchain or present. Untimed initialization readbacks verify both
 terminal output and a known-color Kitty placement on the selected backend;
 measured frames do not read the target back. Damage counters assert that the
 scenarios rebuild the intended text rows and visit the intended number of solid
-cells, preventing a faster result caused by accidentally skipping work.
-`search-update` moves one candidate highlight between rows and requires two
-text-row builds, three layouts, and `2 * columns` solid-cell visits per frame.
+cells, preventing a faster result caused by accidentally skipping work. Text
+telemetry distinguishes layouts submitted to the native Qt text node from
+glyphs emitted by the terminal-owned batch; both paths still begin with
+`QTextLayout` shaping. `search-update` moves one candidate highlight between
+rows and requires two text-row builds and `2 * columns` solid-cell visits per
+frame.
 `search-selection-update` toggles a candidate between ordinary and selected
 presentation on one row, while `search-clear` toggles one row of highlights on
 and off. Both require one text-row build and `columns` solid-cell visits per
-frame; selection uses two layouts and clear uses one. Those counts prohibit
-extra row rebuilds; the terminal-pane row-damage tests separately assert the
-affected row identities and retention of every unaffected row. Search-color,
-geometry, and other global style invalidations remain deliberately outside
-these sparse benchmark scenarios.
+frame. The software/general fallback retains the native-layout expectations;
+eligible OpenGL/Vulkan ASCII instead requires batched glyphs and no native text
+submissions. Those counts prohibit extra row rebuilds or silent fallback; the
+terminal-pane row-damage tests separately assert the affected row identities
+and retention of every unaffected row. Search-color, geometry, and other global
+style invalidations remain deliberately outside these sparse benchmark
+scenarios.
 
 Use a Release build and compare results only on the same machine, Qt version,
 backend, dimensions, warmup, and iteration count:
@@ -115,15 +120,18 @@ runs.
 The pane RHI mode separately reports CPU synthetic-update preparation and
 delivery, scene-graph command recording, completion, and total timings, plus
 whole-command-buffer GPU timestamps where supported. Each scenario also reports
-and validates paint and cell-visit counts plus Kitty texture uploads, live
-generation-keyed texture-set cache entries, texture-set evictions,
-placement-node creation/deletion, geometry writes, and node material
-assignments. It also reports and validates the live logical RGBA8 texture
-bytes. Every texture set owns one GPU texture. An untimed initialization
-readback validates straight-alpha upload and composition on the selected RHI
-backend. The Kitty cases use 512 placements sharing assets and separately
-exercise opaque and translucent first upload, same-snapshot redraw, and
-same-ID replacement, plus opaque movement and eviction.
+and validates paint and cell-visit counts, native text submissions and cells,
+batched glyphs, glyph-batch geometry writes, atlas uploads, final atlas entries
+and logical GPU atlas bytes at four RGBA bytes per texel, plus Kitty texture
+uploads, live generation-keyed texture-set cache entries, texture-set
+evictions, placement-node creation/deletion, geometry writes, and node material
+assignments. Atlas entry and byte deltas expose accidental rebuild or eviction;
+the compact CPU Alpha8 staging image is not included in that GPU figure. Untimed
+initialization readbacks first force a printable-ASCII frame through the glyph
+shader, then verify straight-alpha Kitty upload and composition on the selected
+RHI backend. The Kitty cases use 512 placements sharing assets and separately
+exercise opaque and translucent first upload, same-snapshot redraw, and same-ID
+replacement, plus opaque movement and eviction.
 Their churn guards require retained redraws to perform no scene-graph work,
 movement to rewrite geometry only, same-ID replacement to rebind materials
 only, and eviction to delete the placements and texture set. Offscreen
@@ -204,6 +212,13 @@ Set `GHOSTTY_QT_CUSTOM_SHADER_PIPELINE=legacy` when reproducing an application
 issue specifically against the old nested implementation. The benchmark
 constructs both implementations directly and does not consult this variable.
 
+Set `GHOSTTY_QT_DISABLE_GLYPH_BATCH=1` to force the application's general
+`QSGTextNode` path when comparing rendering or performance against the
+printable-ASCII batch. The pane benchmark honors the same switch and adjusts
+its native-versus-batched work expectations. This is a diagnostic A/B control,
+not a supported user configuration setting; Qt's software scene graph already
+uses the general path.
+
 ### RenderDoc captures
 
 Install RenderDoc so that both `renderdoccmd` and `qrenderdoc` are available,
@@ -252,7 +267,9 @@ The helper obtains its accepted names from the benchmark's authoritative
 `--list-scenarios` output. The catalog includes metadata, dirty-row and
 full-frame ASCII/ligature shaping, cursor, full invalidation, all three search
 damage cases, and the opaque/translucent Kitty upload, retained redraw,
-movement, replacement, and eviction cases.
+movement, replacement, and eviction cases. On OpenGL and Vulkan the ASCII
+cases exercise the terminal-owned glyph batch, while the ligature cases are a
+deliberate control for the native Qt fallback.
 Capture mode records one frame of the selected scenario on the 120×40 grid
 after warmup and intentionally suppresses its instrumented timings. The output
 texture is named
@@ -397,8 +414,10 @@ over 100 µs CPU or 50 µs GPU. Retained custom-shader absolute medians use
 legacy renderer from the same run; those CPU/GPU ratio gates use 15%/+0.10 and
 12%/+0.08 respectively. Improvements use the same noise floors as regressions,
 so ordinary jitter is neutral. Losing GPU timestamp evidence is always a
-regression. Deterministic increases in row/text/Kitty work or retained shader
-resource work are also enforced in every timing mode.
+regression. Deterministic increases in row/native-text/Kitty work, glyph-batch
+geometry or atlas uploads/residency, or retained shader resource work are also
+enforced in every timing mode. Losing expected batched glyphs is likewise a
+regression even if frame timing appears faster.
 
 The comparison document is written atomically and contains sorted per-metric
 baseline, candidate, delta, percentage, limits, classification, provenance,

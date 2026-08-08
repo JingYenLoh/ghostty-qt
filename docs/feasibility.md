@@ -43,10 +43,12 @@ scaffolding them:
 - Ghostty render state crosses to Qt as owned value updates; an initial full
   frame is followed by dirty-row replacements. Wide cells, styles, selection,
   cursor, and scrollback metadata are represented.
-- A `QQuickItem` renderer uses public `QSGTextNode` objects with `QtRendering`
-  for distance-field glyph atlases on hardware RHI backends. Per-cell
-  `QTextLayout` preserves exact grid placement, while batched colored geometry
-  handles backgrounds, selection, cursors, and decorations.
+- A `QQuickItem` renderer shapes maximal compatible runs with `QTextLayout`.
+  OpenGL and Vulkan render exact one-glyph-per-cell printable ASCII through a
+  compact terminal-owned CPU Alpha8 atlas, one explicit RGBA coverage texture,
+  and retained indexed row batches; public `QSGTextNode` objects preserve the
+  general and software fallback. Batched colored geometry handles backgrounds,
+  selection, cursors, and decorations.
 - Key, mouse, focus, paste, and tracked selection-gesture paths use Ghostty's
   encoders and terminal modes.
 - A narrow project-owned Zig/C matcher imports Ghostty's pinned default URL/path
@@ -66,16 +68,17 @@ The project is feasible as a terminal MVP, but production parity is a larger
 effort. The main risks are renderer performance, the evolving libghostty API,
 advanced text/graphics support, and distribution:
 
-- Renderer-v1 has the intended QSG/GPU glyph path, dirty-row worker/UI
-  transport, persistent main-text nodes, and retained cell-derived RHI geometry
-  per visible row. Sparse updates plan and shape only damaged rows, and commit
-  only their GPU geometry; the software fallback keeps global node pools after
-  benchmarking showed that row-node traversal was counterproductive there.
-  Compatible text runs reduce layout count with exact-position fallback for
-  unsafe runs. Reproducible host reports and a noise-aware comparator now gate
-  structural work and full-profile timing; collecting representative baselines
-  and reducing global invalidation cost remain the principal renderer
-  performance risks.
+- Renderer-v1 has the intended hybrid QSG/GPU glyph path, dirty-row worker/UI
+  transport, persistent row text containers, and retained cell-derived RHI
+  geometry per visible row. Sparse updates plan and shape only damaged rows and
+  commit only their GPU geometry; the software fallback keeps global solid-node
+  pools after benchmarking showed that row-node traversal was counterproductive
+  there. Compatible text runs reduce layout count with exact-position fallback
+  for unsafe runs, while the narrower ASCII path removes native text submissions
+  without replacing Qt shaping. Reproducible host reports and a noise-aware
+  comparator gate structural work and full-profile timing; collecting
+  representative baselines and reducing global invalidation cost remain the
+  principal renderer performance risks.
 - The libghostty revision should remain pinned; upgrades need focused ABI/API
   review and protocol regressions.
 - Color emoji and exact Ghostty font shaping still require explicit renderer

@@ -376,6 +376,24 @@ set_tests_properties(terminal-text-runs PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 
+qt_add_executable(test-terminal-glyph-plan
+    test_terminal_glyph_plan.cpp
+)
+target_include_directories(test-terminal-glyph-plan PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-terminal-glyph-plan PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+    ghostty-qt-terminal-foundation
+)
+add_test(NAME terminal-glyph-plan COMMAND test-terminal-glyph-plan)
+set_tests_properties(terminal-glyph-plan PROPERTIES
+    TIMEOUT 10
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
 qt_add_executable(test-terminal-geometry
     test_terminal_geometry.cpp
 )
@@ -486,6 +504,71 @@ target_link_libraries(test-terminal-rect-batch PRIVATE
 )
 add_test(NAME terminal-rect-batch COMMAND test-terminal-rect-batch)
 set_tests_properties(terminal-rect-batch PROPERTIES TIMEOUT 10)
+
+qt_add_executable(test-terminal-glyph-atlas
+    test_terminal_glyph_atlas.cpp
+)
+target_include_directories(test-terminal-glyph-atlas PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-terminal-glyph-atlas PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+    ghostty-qt-terminal-rendering
+)
+add_test(NAME terminal-glyph-atlas COMMAND test-terminal-glyph-atlas)
+set_tests_properties(terminal-glyph-atlas PROPERTIES
+    TIMEOUT 10
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+qt_add_executable(test-terminal-glyph-batch
+    test_terminal_glyph_batch.cpp
+)
+target_include_directories(test-terminal-glyph-batch PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-terminal-glyph-batch PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Quick
+    Qt6::Test
+    ghostty-qt-terminal-rendering
+)
+add_test(NAME terminal-glyph-batch COMMAND test-terminal-glyph-batch)
+set_tests_properties(terminal-glyph-batch PROPERTIES TIMEOUT 10)
+
+qt_add_executable(test-terminal-glyph-batch-rhi
+    test_terminal_glyph_batch_rhi.cpp
+)
+target_include_directories(test-terminal-glyph-batch-rhi PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-terminal-glyph-batch-rhi PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Quick
+    Qt6::Test
+    ghostty-qt-terminal-rendering
+)
+add_test(NAME terminal-glyph-batch-rhi COMMAND test-terminal-glyph-batch-rhi)
+set_tests_properties(terminal-glyph-batch-rhi PROPERTIES
+    TIMEOUT 20
+    ENVIRONMENT
+        "LIBGL_ALWAYS_SOFTWARE=1;QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=opengl;QT_SCALE_FACTOR=1"
+    SKIP_REGULAR_EXPRESSION
+        "SKIP.*platform cannot initialize the requested RHI context"
+)
+add_test(NAME terminal-glyph-batch-vulkan-rhi
+    COMMAND test-terminal-glyph-batch-rhi)
+set_tests_properties(terminal-glyph-batch-vulkan-rhi PROPERTIES
+    TIMEOUT 20
+    ENVIRONMENT
+        "GHOSTTY_QT_GLYPH_BATCH_TEST_BACKEND=vulkan;QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=vulkan;QT_SCALE_FACTOR=1"
+    SKIP_REGULAR_EXPRESSION
+        "SKIP.*platform cannot initialize the requested RHI context"
+)
 
 add_executable(fake-ghostty-cli-helper
     fake_ghostty_cli_helper.cpp

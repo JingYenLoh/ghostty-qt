@@ -78,17 +78,21 @@ for intentional upgrade procedure.
 - User-defined `link` expressions are not implemented because the pinned
   upstream parser does not implement their CLI grammar; the parity ledger
   records this as blocked upstream rather than planned frontend work.
-- Renderer damage and text nodes are retained per row, as is cell-derived solid
-  geometry on RHI backends; the software fallback uses pooled global nodes.
-  A host qualification runner combines the full offscreen OpenGL/Vulkan
-  scenario matrix with a real production-window swapchain/frame-swap probe
-  and atomic machine-readable evidence. A strict baseline comparator validates
+- Renderer damage, general text nodes, printable-ASCII glyph batches, and
+  cell-derived solid geometry are retained per row on OpenGL and Vulkan. One
+  text-state-scoped compact CPU Alpha8 atlas and explicit RGBA coverage texture
+  are reused across dirty rows; unsafe or complex text and the software
+  renderer retain Qt's general fallback. A host qualification runner combines
+  the full offscreen OpenGL/Vulkan scenario matrix with a real production-window
+  swapchain/frame-swap probe and atomic machine-readable evidence. A strict
+  baseline comparator validates
   independently complete benchmark/device/host/output evidence, enforces
-  deterministic work regressions, and applies noise-aware full-profile timing
-  gates. The production probe fingerprints its actually mapped userspace
-  graphics driver, loader, compiler, and injected-layer libraries. Final
-  compositor blending, blur, color management, and presentation timing still
-  require interactive or dedicated Wayland-protocol inspection.
+  deterministic text, glyph-batch, atlas, and Kitty work regressions, and
+  applies noise-aware full-profile timing gates. The production probe
+  fingerprints its actually mapped userspace graphics driver, loader,
+  compiler, and injected-layer libraries. Final compositor blending, blur,
+  color management, and presentation timing still require interactive or
+  dedicated Wayland-protocol inspection.
 - Custom shaders require Qt Quick's OpenGL or Vulkan RHI backend. Other
   backends keep terminal output unfiltered and expose a configuration
   diagnostic; representative baseline collection still needs target GPUs and

@@ -83,8 +83,20 @@ struct TerminalPaneRenderProbeSnapshot {
     quint64 globalDecorationBeforeTextGeometryCommitCount = 0;
     quint64 globalDecorationAfterTextGeometryCommitCount = 0;
     quint64 solidCellVisitCount = 0;
-    // Layouts in each row's latest rebuild. A compatible shaped run counts
-    // once; a rejected run counts once per exact-position fallback cell.
+    // Cumulative text-renderer work for the current scene-graph root. Native
+    // submissions are runs delegated to Qt's text nodes; batched glyphs are
+    // glyph instances emitted by the terminal-owned fast path.
+    quint64 nativeTextSubmissionCount = 0;
+    quint64 nativeTextCellCount = 0;
+    quint64 batchedGlyphCount = 0;
+    quint64 glyphBatchGeometryWriteCount = 0;
+    quint64 glyphAtlasUploadCount = 0;
+    // Current terminal-owned glyph-atlas residency.
+    qsizetype glyphAtlasEntryCount = 0;
+    quint64 glyphAtlasBytes = 0;
+    // Native QSGTextNode layout submissions in each row's latest rebuild.
+    // A terminal-batched row is zero; a compatible native run counts once;
+    // a rejected run counts once per exact-position fallback cell.
     QVector<quint64> rowLayoutCounts;
     QVector<quint64> rowFallbackCellCounts;
     TerminalCellMetrics metrics;

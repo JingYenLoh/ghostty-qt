@@ -85,6 +85,8 @@ def make_report(profile: str = "quick") -> dict[str, object]:
             "gpu_valid_samples": f"{pane_iterations}/{pane_iterations}",
             "measured_frames": str(pane_iterations),
             "paints": str(pane_iterations),
+            "glyph_atlas_entry_count_delta": "0",
+            "glyph_atlas_bytes_delta": "0",
             "kitty_texture_set_count_delta": "0",
             **{field: "0" for field in comparison.PANE_WORK_FIELDS},
         }
@@ -419,6 +421,21 @@ class RendererQualificationComparisonTest(unittest.TestCase):
         improved = comparison.compare_reports(
             improved_baseline, improved_candidate, comparison.Policy()
         )
+        self.assertEqual(improved["status"], "pass")
+        self.assertEqual(improved["summary"]["improvements"], 1)
+
+    def test_lost_batched_glyph_coverage_is_always_enforced(self) -> None:
+        baseline = make_report()
+        find_record(baseline, "pane_scenario")["batched_glyphs"] = "100"
+        candidate = copy.deepcopy(baseline)
+        find_record(candidate, "pane_scenario")["batched_glyphs"] = "99"
+        result = comparison.compare_reports(baseline, candidate, comparison.Policy())
+        self.assertEqual(result["status"], "regression")
+        self.assertEqual(result["summary"]["regressions"], 1)
+
+        expanded = copy.deepcopy(baseline)
+        find_record(expanded, "pane_scenario")["batched_glyphs"] = "101"
+        improved = comparison.compare_reports(baseline, expanded, comparison.Policy())
         self.assertEqual(improved["status"], "pass")
         self.assertEqual(improved["summary"]["improvements"], 1)
 

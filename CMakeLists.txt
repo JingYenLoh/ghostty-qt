@@ -986,6 +986,10 @@ add_library(ghostty-qt-terminal-rendering STATIC
     src/terminal_kitty_graphics.h
     src/terminal_kitty_graphics_qsg.cpp
     src/terminal_kitty_graphics_qsg.h
+    src/terminal_glyph_atlas.cpp
+    src/terminal_glyph_atlas.h
+    src/terminal_glyph_batch.cpp
+    src/terminal_glyph_batch.h
     src/terminal_rect_batch.cpp
     src/terminal_rect_batch.h
     src/terminal_straight_rgba_texture.cpp
@@ -1062,6 +1066,23 @@ qt_add_shaders(
         terminal_kitty.vert.qsb
         terminal_kitty.frag.qsb
 )
+qt_add_shaders(
+    ghostty-qt-terminal-rendering
+    ghostty_qt_terminal_glyph_shaders
+
+    BATCHABLE
+
+    PREFIX
+        "/ghostty-qt/shaders"
+
+    FILES
+        shaders/terminal_glyph.vert
+        shaders/terminal_glyph.frag
+
+    OUTPUTS
+        terminal_glyph.vert.qsb
+        terminal_glyph.frag.qsb
+)
 
 add_library(ghostty-qt-vt-adapter STATIC
     src/ghostty_vt_adapter.cpp
@@ -1118,6 +1139,8 @@ ghostty_qt_add_internal_library(ghostty-qt-terminal-foundation
     src/terminal_font_resolver.h
     src/terminal_geometry.cpp
     src/terminal_geometry.h
+    src/terminal_glyph_plan.cpp
+    src/terminal_glyph_plan.h
     src/terminal_path.h
     src/terminal_session_options.h
     src/terminal_text_grid_fit.cpp
