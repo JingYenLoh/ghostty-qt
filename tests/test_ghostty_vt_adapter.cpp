@@ -137,7 +137,7 @@ QVector<QPoint> hyperlinkCandidates(const TerminalFrame &frame)
 {
     QVector<QPoint> candidates;
     for (int index = 0; index < frame.cells.size(); ++index) {
-        if (frame.cells.at(index).hasHyperlink) {
+        if (frame.cells.at(index).hasHyperlink()) {
             candidates.append(QPoint(index % frame.columns,
                                      index / frame.columns));
         }
@@ -1534,7 +1534,7 @@ void GhosttyVtAdapterTest::resolvesOsc8HyperlinksAcrossViewportState()
     renderInto(adapter.get(), &frame);
     QVector<QPoint> candidates;
     for (int index = 0; index < frame.cells.size(); ++index) {
-        if (frame.cells.at(index).hasHyperlink) {
+        if (frame.cells.at(index).hasHyperlink()) {
             candidates.append(QPoint(index % frame.columns,
                                      index / frame.columns));
         }
@@ -1553,17 +1553,16 @@ void GhosttyVtAdapterTest::resolvesOsc8HyperlinksAcrossViewportState()
     // the displayed scrollback rather than retaining a stale active-area ref.
     adapter->writeVt(QByteArrayLiteral("\r\nrow-2\r\nrow-3"));
     renderInto(adapter.get(), &frame);
-    QVERIFY(std::none_of(frame.cells.cbegin(), frame.cells.cend(),
-                         [](const TerminalCell &cell) {
-                             return cell.hasHyperlink;
-                         }));
+    QVERIFY(std::none_of(
+        frame.cells.cbegin(), frame.cells.cend(),
+        [](const TerminalCell &cell) { return cell.hasHyperlink(); }));
     QVERIFY(adapter->scrollViewport({
         .kind = TerminalViewportRequest::Kind::Top,
     }));
     renderInto(adapter.get(), &frame);
     candidates.clear();
     for (int index = 0; index < frame.cells.size(); ++index) {
-        if (frame.cells.at(index).hasHyperlink) {
+        if (frame.cells.at(index).hasHyperlink()) {
             candidates.append(QPoint(index % frame.columns,
                                      index / frame.columns));
         }
@@ -1586,7 +1585,7 @@ void GhosttyVtAdapterTest::resolvesOsc8HyperlinksAcrossViewportState()
     renderInto(adapter.get(), &frame);
     QVector<QPoint> alternateCandidates;
     for (int index = 0; index < frame.cells.size(); ++index) {
-        if (frame.cells.at(index).hasHyperlink) {
+        if (frame.cells.at(index).hasHyperlink()) {
             alternateCandidates.append(QPoint(index % frame.columns,
                                               index / frame.columns));
         }
@@ -1622,7 +1621,7 @@ void GhosttyVtAdapterTest::resolvesOsc8HyperlinksAcrossViewportState()
     byteLink += QByteArrayLiteral("\033\\R\033]8;;\033\\");
     adapter->writeVt(byteLink);
     renderInto(adapter.get(), &frame);
-    QVERIFY(frame.cells.constFirst().hasHyperlink);
+    QVERIFY(frame.cells.constFirst().hasHyperlink());
     const auto byteMatch = adapter->hyperlinkAt(0, 0, {QPoint(0, 0)});
     QVERIFY(byteMatch.has_value());
     QCOMPARE(byteMatch->uri, byteUri);
@@ -2332,55 +2331,59 @@ void GhosttyVtAdapterTest::translatesCellStylesAndAppearanceMetadata()
     const TerminalFrame frame = applyUpdate(snapshot.update);
     const TerminalCell &paletteBold = frame.cells.at(0);
     QCOMPARE(paletteBold.text, QStringLiteral("P"));
-    QCOMPARE(paletteBold.styleForegroundSource, TerminalColorSource::Palette);
-    QCOMPARE(paletteBold.styleForegroundPaletteIndex, 1);
-    QVERIFY(paletteBold.bold);
+    QCOMPARE(paletteBold.styleForegroundSource(), TerminalColorSource::Palette);
+    QCOMPARE(paletteBold.styleForegroundPaletteIndex(), 1);
+    QVERIFY(paletteBold.bold());
 
     const TerminalCell &rgbFaint = frame.cells.at(1);
     QCOMPARE(rgbFaint.text, QStringLiteral("R"));
-    QCOMPARE(rgbFaint.styleForegroundSource, TerminalColorSource::Rgb);
-    QCOMPARE(rgbFaint.styleForegroundPaletteIndex, -1);
-    QVERIFY(rgbFaint.faint);
+    QCOMPARE(rgbFaint.styleForegroundSource(), TerminalColorSource::Rgb);
+    QCOMPARE(rgbFaint.styleForegroundPaletteIndex(), -1);
+    QVERIFY(rgbFaint.faint());
 
     const TerminalCell &defaultEffects = frame.cells.at(2);
     QCOMPARE(defaultEffects.text, QStringLiteral("D"));
-    QCOMPARE(defaultEffects.styleForegroundSource, TerminalColorSource::Default);
-    QVERIFY(defaultEffects.italic);
-    QVERIFY(defaultEffects.textBlink);
+    QCOMPARE(defaultEffects.styleForegroundSource(),
+             TerminalColorSource::Default);
+    QVERIFY(defaultEffects.italic());
+    QVERIFY(defaultEffects.textBlink());
 
     const TerminalCell &inverse = frame.cells.at(3);
     QCOMPARE(inverse.text, QStringLiteral("I"));
-    QVERIFY(inverse.inverse);
-    QVERIFY(!inverse.backgroundExplicit);
+    QVERIFY(inverse.inverse());
+    QVERIFY(!inverse.backgroundExplicit());
     QCOMPARE(inverse.foreground, frame.background);
     QCOMPARE(inverse.background, frame.foreground);
 
     const TerminalCell &invisible = frame.cells.at(4);
     QVERIFY(invisible.text.isEmpty());
-    QVERIFY(invisible.invisible);
+    QVERIFY(invisible.invisible());
 
     const TerminalCell &single = frame.cells.at(5);
-    QCOMPARE(single.underlineStyle, TerminalUnderlineStyle::Single);
-    QVERIFY(!single.underlineUsesForeground);
+    QCOMPARE(single.underlineStyle(), TerminalUnderlineStyle::Single);
+    QVERIFY(!single.underlineUsesForeground());
     QCOMPARE(single.underlineColor, QColor::fromRgb(1, 2, 3));
-    QCOMPARE(frame.cells.at(6).underlineStyle, TerminalUnderlineStyle::Double);
-    QCOMPARE(frame.cells.at(7).underlineStyle, TerminalUnderlineStyle::Curly);
-    QCOMPARE(frame.cells.at(8).underlineStyle, TerminalUnderlineStyle::Dotted);
-    QCOMPARE(frame.cells.at(9).underlineStyle, TerminalUnderlineStyle::Dashed);
+    QCOMPARE(frame.cells.at(6).underlineStyle(),
+             TerminalUnderlineStyle::Double);
+    QCOMPARE(frame.cells.at(7).underlineStyle(), TerminalUnderlineStyle::Curly);
+    QCOMPARE(frame.cells.at(8).underlineStyle(),
+             TerminalUnderlineStyle::Dotted);
+    QCOMPARE(frame.cells.at(9).underlineStyle(),
+             TerminalUnderlineStyle::Dashed);
 
     const TerminalCell &decorations = frame.cells.at(10);
-    QVERIFY(decorations.strikeThrough);
-    QVERIFY(decorations.overline);
+    QVERIFY(decorations.strikeThrough());
+    QVERIFY(decorations.overline());
 
     const TerminalCell &matchingExplicitBackground = frame.cells.at(11);
     QCOMPARE(matchingExplicitBackground.text, QStringLiteral("B"));
-    QVERIFY(matchingExplicitBackground.backgroundExplicit);
+    QVERIFY(matchingExplicitBackground.backgroundExplicit());
     QCOMPARE(matchingExplicitBackground.background, globalBackground);
     QCOMPARE(matchingExplicitBackground.background, frame.background);
 
     const TerminalCell &defaultBackground = frame.cells.at(12);
     QCOMPARE(defaultBackground.text, QStringLiteral("D"));
-    QVERIFY(!defaultBackground.backgroundExplicit);
+    QVERIFY(!defaultBackground.backgroundExplicit());
     QCOMPARE(defaultBackground.background, frame.background);
 
     // Erasing with a background pen uses Ghostty's compact bg-color content
@@ -2388,7 +2391,7 @@ void GhosttyVtAdapterTest::translatesCellStylesAndAppearanceMetadata()
     // deliberately treats both representations as explicit.
     const TerminalCell &contentBackground = frame.cells.at(13);
     QVERIFY(contentBackground.text.isEmpty());
-    QVERIFY(contentBackground.backgroundExplicit);
+    QVERIFY(contentBackground.backgroundExplicit());
     QCOMPARE(contentBackground.background, QColor::fromRgb(1, 2, 3));
 }
 
@@ -2408,20 +2411,20 @@ void GhosttyVtAdapterTest::preservesAuthoritativeCellCodepointsForShaping()
 
     QCOMPARE(frame.cells.at(0).text, QStringLiteral("f"));
     QCOMPARE(frame.cells.at(0).baseCodepoint, quint32{U'f'});
-    QVERIFY(frame.cells.at(0).plainCodepoint);
+    QVERIFY(frame.cells.at(0).plainCodepoint());
     QCOMPARE(frame.cells.at(1).baseCodepoint, quint32{U'i'});
-    QVERIFY(frame.cells.at(1).plainCodepoint);
+    QVERIFY(frame.cells.at(1).plainCodepoint());
     QCOMPARE(frame.cells.at(3).text, QStringLiteral("e\u0301"));
     QCOMPARE(frame.cells.at(3).baseCodepoint, quint32{U'e'});
-    QVERIFY(!frame.cells.at(3).plainCodepoint);
-    QVERIFY(frame.cells.at(3).extendedGrapheme);
+    QVERIFY(!frame.cells.at(3).plainCodepoint());
+    QVERIFY(frame.cells.at(3).extendedGrapheme());
     QCOMPARE(frame.cells.at(5).text, QStringLiteral("\U0001f600"));
     QCOMPARE(frame.cells.at(5).baseCodepoint, quint32{0x1f600});
-    QVERIFY(frame.cells.at(5).plainCodepoint);
-    QVERIFY(!frame.cells.at(5).extendedGrapheme);
-    QVERIFY(frame.cells.at(6).spacer);
-    QVERIFY(!frame.cells.at(6).plainCodepoint);
-    QVERIFY(!frame.cells.at(6).extendedGrapheme);
+    QVERIFY(frame.cells.at(5).plainCodepoint());
+    QVERIFY(!frame.cells.at(5).extendedGrapheme());
+    QVERIFY(frame.cells.at(6).spacer());
+    QVERIFY(!frame.cells.at(6).plainCodepoint());
+    QVERIFY(!frame.cells.at(6).extendedGrapheme());
 }
 
 void GhosttyVtAdapterTest::preservesTerminalAppearanceOverrides()
@@ -2861,7 +2864,7 @@ void GhosttyVtAdapterTest::marksMinimumContrastExemptGlyphs()
             continue;
         }
         QVERIFY(sampleIndex < static_cast<qsizetype>(samples.size()));
-        QCOMPARE(cell.minimumContrastExemptGlyph,
+        QCOMPARE(cell.minimumContrastExemptGlyph(),
                  samples[static_cast<size_t>(sampleIndex)].exempt);
         ++sampleIndex;
     }

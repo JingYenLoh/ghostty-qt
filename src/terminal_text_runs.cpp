@@ -91,17 +91,17 @@ TerminalShapingStyle terminalShapingStyle(const TerminalCell &cell)
     return {
         .foreground = cell.foreground,
         .underlineColor = cell.underlineColor,
-        .foregroundSource = cell.styleForegroundSource,
-        .foregroundPaletteIndex = cell.styleForegroundPaletteIndex,
-        .bold = cell.bold,
-        .italic = cell.italic,
-        .faint = cell.faint,
-        .textBlink = cell.textBlink,
-        .inverse = cell.inverse,
-        .underlineUsesForeground = cell.underlineUsesForeground,
-        .underlineStyle = cell.underlineStyle,
-        .strikeThrough = cell.strikeThrough,
-        .overline = cell.overline,
+        .foregroundSource = cell.styleForegroundSource(),
+        .foregroundPaletteIndex = cell.styleForegroundPaletteIndex(),
+        .bold = cell.bold(),
+        .italic = cell.italic(),
+        .faint = cell.faint(),
+        .textBlink = cell.textBlink(),
+        .inverse = cell.inverse(),
+        .underlineUsesForeground = cell.underlineUsesForeground(),
+        .underlineStyle = cell.underlineStyle(),
+        .strikeThrough = cell.strikeThrough(),
+        .overline = cell.overline(),
     };
 }
 

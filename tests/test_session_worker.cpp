@@ -1088,9 +1088,9 @@ void SessionWorkerTest::searchesIncrementallyAndNavigates()
     QVERIFY(wideHead != wideFrame.cells.cend());
     const qsizetype wideHeadIndex =
         std::ranges::distance(wideFrame.cells.cbegin(), wideHead);
-    QCOMPARE(wideHead->columnSpan, 2);
+    QCOMPARE(wideHead->columnSpan(), 2);
     QVERIFY(wideHeadIndex + 1 < wideFrame.cells.size());
-    QVERIFY(wideFrame.cells.at(wideHeadIndex + 1).spacer);
+    QVERIFY(wideFrame.cells.at(wideHeadIndex + 1).spacer());
     QVERIFY(latestSearchUpdate(searchSpy, 4)->visibleCellMask.testBit(
         wideHeadIndex));
     worker.navigateSearch(4, TerminalSearchDirection::Next);
@@ -3397,7 +3397,7 @@ void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
     const TerminalFrame frame = accumulatedFrame(updateSpy);
     QVector<QPoint> candidates;
     for (int index = 0; index < frame.cells.size(); ++index) {
-        if (frame.cells.at(index).hasHyperlink) {
+        if (frame.cells.at(index).hasHyperlink()) {
             candidates.append(QPoint(index % frame.columns,
                                      index / frame.columns));
         }
@@ -3632,7 +3632,7 @@ void SessionWorkerTest::resolvesRegexLinksAcrossUtf8WrapsAndOsc8Precedence()
 
     QPoint oscCell(-1, -1);
     for (int index = 0; index < frame.cells.size(); ++index) {
-        if (frame.cells.at(index).hasHyperlink) {
+        if (frame.cells.at(index).hasHyperlink()) {
             oscCell = QPoint(index % frame.columns, index / frame.columns);
             break;
         }

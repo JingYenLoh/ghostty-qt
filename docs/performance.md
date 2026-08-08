@@ -38,6 +38,14 @@ The write notifier is enabled only while the PTY is backpressured.
 This is a competent baseline. There is no evidence yet for replacing it with
 `io_uring` or an additional I/O thread on Linux.
 
+### Frame transport
+
+Visible cells cross the worker/UI boundary as contiguous row payloads. Their
+16 boolean attributes, color-source fields, underline style, and 1/2-cell span
+share one explicitly masked 32-bit word. This reduces `TerminalCell` from 112
+to 80 bytes on the current x86-64 Qt ABI and lowers both queued-update and
+retained-frame cache pressure without relying on C++ bitfield layout.
+
 ### Renderer
 
 The retained renderer already avoids the largest terminal-frontend costs:
@@ -76,6 +84,7 @@ cmake --build --preset release -j"$(nproc)"
 | `bench-terminal-custom-shader-compiler` | Cold shader baking and content-cache hits |
 | `bench-terminal-custom-shader-rhi` | Retained versus legacy multi-pass shader recording and GPU work |
 | `bench-terminal-kitty-graphics` | Kitty protocol replacement and isolated RGB/RGBA/grayscale materialization |
+| `bench-terminal-frame-materialization` | Ghostty VT full-frame and dirty-row snapshots plus retained-frame application |
 | `bench-terminal-search` | Visible-result latency, canonical history scan, cancellation, and recompression |
 | `bench-terminal-backdrop` | Background asset preparation and software composition |
 
@@ -103,6 +112,10 @@ QT_QPA_PLATFORM=wayland \
 ./build/release/tests/bench-terminal-kitty-graphics \
     --workload materialization --pixel-format rgba32-opaque \
     --width 1920 --height 1080 --warmup 10 --iterations 100
+
+./build/release/tests/bench-terminal-frame-materialization \
+    --workload all --columns 160 --rows 48 --dirty-rows 4 \
+    --warmup 10 --iterations 100
 
 ./build/release/tests/bench-terminal-search \
     --rows 25000 --viewport-rows 32 --warmup 1 --iterations 5

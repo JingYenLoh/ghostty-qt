@@ -1105,7 +1105,7 @@ void TerminalWorkspaceTest::backgroundOpacityReloadIsPaneLocalAndInherited()
                 cell.background = background;
             }
             row.cells[1].background = explicitBackground;
-            row.cells[1].backgroundExplicit = true;
+            row.cells[1].setBackgroundExplicit(true);
             update.dirtyRows.append(std::move(row));
 
             controller->terminalUpdated(update);
@@ -1490,7 +1490,7 @@ void TerminalWorkspaceTest::
             for (TerminalCell &cell : rowUpdate.cells) {
                 cell.foreground = Qt::white;
                 cell.background = edgeBackground;
-                cell.backgroundExplicit = true;
+                cell.setBackgroundExplicit(true);
             }
             update.dirtyRows.append(std::move(rowUpdate));
         }

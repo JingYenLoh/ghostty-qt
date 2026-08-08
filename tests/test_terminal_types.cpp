@@ -4,6 +4,8 @@
 
 #include <QTest>
 
+#include <array>
+#include <cstddef>
 #include <initializer_list>
 #include <limits>
 #include <utility>
@@ -15,6 +17,30 @@ TerminalCell textCell(QStringView text)
     TerminalCell cell;
     cell.text = text.toString();
     return cell;
+}
+
+using TerminalCellFlags = std::array<bool, 16>;
+
+TerminalCellFlags terminalCellFlags(const TerminalCell &cell)
+{
+    return {
+        cell.plainCodepoint(),
+        cell.extendedGrapheme(),
+        cell.bold(),
+        cell.italic(),
+        cell.faint(),
+        cell.textBlink(),
+        cell.inverse(),
+        cell.invisible(),
+        cell.underlineUsesForeground(),
+        cell.strikeThrough(),
+        cell.overline(),
+        cell.selected(),
+        cell.backgroundExplicit(),
+        cell.minimumContrastExemptGlyph(),
+        cell.hasHyperlink(),
+        cell.spacer(),
+    };
 }
 
 TerminalRowUpdate textRow(int row, std::initializer_list<QStringView> cells)
@@ -34,7 +60,7 @@ TerminalRowUpdate hyperlinkRow(
     update.row = row;
     update.cells.resize(columns);
     for (int column : linkedColumns) {
-        update.cells[column].hasHyperlink = true;
+        update.cells[column].setHasHyperlink(true);
     }
     return update;
 }
@@ -45,6 +71,7 @@ class TerminalTypesTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void packsCellMetadataWithoutChangingSemantics();
     void appliesFullAndPartialUpdates();
     void rejectsMalformedUpdateWithoutMutation();
     void validatesStrictDirtyRowOrder();
@@ -57,6 +84,139 @@ private Q_SLOTS:
     void validatesTerminalOriginatedClipboardWrites();
     void mapsPlainClipboardCodepointsInOneOrderedPass();
 };
+
+void TerminalTypesTest::packsCellMetadataWithoutChangingSemantics()
+{
+    constexpr std::size_t oldTerminalCellSize = 112;
+    constexpr std::size_t unpackedPayloadSize =
+        sizeof(QString) + 3 * sizeof(QColor) + 2 * sizeof(quint32);
+    QVERIFY(sizeof(TerminalCell) <= oldTerminalCellSize);
+    QVERIFY(sizeof(TerminalCell)
+            <= unpackedPayloadSize + alignof(TerminalCell) - 1);
+
+    constexpr TerminalCellFlags expectedDefaults{
+        false, false, false, false, false, false, false, false,
+        true,  false, false, false, false, false, false, false,
+    };
+    const TerminalCell defaults;
+    QVERIFY(terminalCellFlags(defaults) == expectedDefaults);
+    QCOMPARE(defaults.styleForegroundSource(), TerminalColorSource::Default);
+    QCOMPARE(defaults.styleForegroundPaletteIndex(), -1);
+    QCOMPARE(defaults.underlineStyle(), TerminalUnderlineStyle::None);
+    QCOMPARE(defaults.columnSpan(), 1);
+
+    using FlagSetter = void (TerminalCell::*)(bool) noexcept;
+    constexpr std::array<FlagSetter, expectedDefaults.size()> flagSetters{
+        &TerminalCell::setPlainCodepoint,
+        &TerminalCell::setExtendedGrapheme,
+        &TerminalCell::setBold,
+        &TerminalCell::setItalic,
+        &TerminalCell::setFaint,
+        &TerminalCell::setTextBlink,
+        &TerminalCell::setInverse,
+        &TerminalCell::setInvisible,
+        &TerminalCell::setUnderlineUsesForeground,
+        &TerminalCell::setStrikeThrough,
+        &TerminalCell::setOverline,
+        &TerminalCell::setSelected,
+        &TerminalCell::setBackgroundExplicit,
+        &TerminalCell::setMinimumContrastExemptGlyph,
+        &TerminalCell::setHasHyperlink,
+        &TerminalCell::setSpacer,
+    };
+    for (std::size_t index = 0; index < flagSetters.size(); ++index) {
+        TerminalCell cell;
+        cell.setStyleForegroundSource(TerminalColorSource::Rgb);
+        cell.setStyleForegroundPaletteIndex(255);
+        cell.setUnderlineStyle(TerminalUnderlineStyle::Dashed);
+        cell.setColumnSpan(2);
+
+        TerminalCellFlags expected = expectedDefaults;
+        expected[index] = !expected[index];
+        (cell.*flagSetters[index])(expected[index]);
+        QVERIFY(terminalCellFlags(cell) == expected);
+        QCOMPARE(cell.styleForegroundSource(), TerminalColorSource::Rgb);
+        QCOMPARE(cell.styleForegroundPaletteIndex(), 255);
+        QCOMPARE(cell.underlineStyle(), TerminalUnderlineStyle::Dashed);
+        QCOMPARE(cell.columnSpan(), 2);
+
+        (cell.*flagSetters[index])(expectedDefaults[index]);
+        QVERIFY(terminalCellFlags(cell) == expectedDefaults);
+    }
+
+    TerminalCell adjacentFields;
+    adjacentFields.setSpacer(true);
+    adjacentFields.setStyleForegroundPaletteIndex(255);
+    adjacentFields.setUnderlineStyle(TerminalUnderlineStyle::Dashed);
+    adjacentFields.setColumnSpan(2);
+    constexpr std::array colorSources{
+        TerminalColorSource::Default,
+        TerminalColorSource::Palette,
+        TerminalColorSource::Rgb,
+    };
+    for (const TerminalColorSource source : colorSources) {
+        adjacentFields.setStyleForegroundSource(source);
+        QCOMPARE(adjacentFields.styleForegroundSource(), source);
+        QCOMPARE(adjacentFields.styleForegroundPaletteIndex(), 255);
+        QCOMPARE(adjacentFields.underlineStyle(),
+                 TerminalUnderlineStyle::Dashed);
+        QCOMPARE(adjacentFields.columnSpan(), 2);
+        QVERIFY(adjacentFields.spacer());
+    }
+
+    for (const int paletteIndex : {-1, 0, 255}) {
+        adjacentFields.setStyleForegroundPaletteIndex(paletteIndex);
+        QCOMPARE(adjacentFields.styleForegroundSource(),
+                 TerminalColorSource::Rgb);
+        QCOMPARE(adjacentFields.styleForegroundPaletteIndex(), paletteIndex);
+        QCOMPARE(adjacentFields.underlineStyle(),
+                 TerminalUnderlineStyle::Dashed);
+        QCOMPARE(adjacentFields.columnSpan(), 2);
+        QVERIFY(adjacentFields.spacer());
+    }
+
+    constexpr std::array underlineStyles{
+        TerminalUnderlineStyle::None,   TerminalUnderlineStyle::Single,
+        TerminalUnderlineStyle::Double, TerminalUnderlineStyle::Curly,
+        TerminalUnderlineStyle::Dotted, TerminalUnderlineStyle::Dashed,
+    };
+    for (const TerminalUnderlineStyle style : underlineStyles) {
+        adjacentFields.setUnderlineStyle(style);
+        QCOMPARE(adjacentFields.styleForegroundSource(),
+                 TerminalColorSource::Rgb);
+        QCOMPARE(adjacentFields.styleForegroundPaletteIndex(), 255);
+        QCOMPARE(adjacentFields.underlineStyle(), style);
+        QCOMPARE(adjacentFields.columnSpan(), 2);
+        QVERIFY(adjacentFields.spacer());
+    }
+
+    for (const int columnSpan : {1, 2}) {
+        adjacentFields.setColumnSpan(columnSpan);
+        QCOMPARE(adjacentFields.styleForegroundSource(),
+                 TerminalColorSource::Rgb);
+        QCOMPARE(adjacentFields.styleForegroundPaletteIndex(), 255);
+        QCOMPARE(adjacentFields.underlineStyle(),
+                 TerminalUnderlineStyle::Dashed);
+        QCOMPARE(adjacentFields.columnSpan(), columnSpan);
+        QVERIFY(adjacentFields.spacer());
+    }
+
+    TerminalCell copySource;
+    for (std::size_t index = 0; index < flagSetters.size(); ++index) {
+        (copySource.*flagSetters[index])(!expectedDefaults[index]);
+    }
+    copySource.setStyleForegroundSource(TerminalColorSource::Rgb);
+    copySource.setStyleForegroundPaletteIndex(255);
+    copySource.setUnderlineStyle(TerminalUnderlineStyle::Dashed);
+    copySource.setColumnSpan(2);
+    const TerminalCell copy = copySource;
+    QVERIFY(terminalCellFlags(copy) == terminalCellFlags(copySource));
+    QCOMPARE(copy.styleForegroundSource(), copySource.styleForegroundSource());
+    QCOMPARE(copy.styleForegroundPaletteIndex(),
+             copySource.styleForegroundPaletteIndex());
+    QCOMPARE(copy.underlineStyle(), copySource.underlineStyle());
+    QCOMPARE(copy.columnSpan(), copySource.columnSpan());
+}
 
 void TerminalTypesTest::appliesFullAndPartialUpdates()
 {

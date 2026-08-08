@@ -111,47 +111,317 @@ struct TerminalSearchUpdate {
     QBitArray selectedCellMask;
 };
 
+// Terminal cells are copied across the worker/UI boundary and retained for
+// every visible grid position. Keep their compact scalar state in one
+// explicitly masked word rather than relying on implementation-defined C++
+// bitfield layout.
+class TerminalCellMetadata {
+public:
+    TerminalCellMetadata() noexcept = default;
+
+private:
+    friend struct TerminalCell;
+
+    enum class Flag : quint32 {
+        PlainCodepoint = 1U << 0,
+        ExtendedGrapheme = 1U << 1,
+        Bold = 1U << 2,
+        Italic = 1U << 3,
+        Faint = 1U << 4,
+        TextBlink = 1U << 5,
+        Inverse = 1U << 6,
+        Invisible = 1U << 7,
+        UnderlineUsesForeground = 1U << 8,
+        StrikeThrough = 1U << 9,
+        Overline = 1U << 10,
+        Selected = 1U << 11,
+        BackgroundExplicit = 1U << 12,
+        MinimumContrastExemptGlyph = 1U << 13,
+        HasHyperlink = 1U << 14,
+        Spacer = 1U << 15,
+        Wide = 1U << 30,
+    };
+
+    static constexpr quint32 foregroundSourceShift = 16;
+    static constexpr quint32 foregroundSourceMask = 0x3U
+        << foregroundSourceShift;
+    static constexpr quint32 foregroundPaletteIndexShift = 18;
+    static constexpr quint32 foregroundPaletteIndexMask = 0x1ffU
+        << foregroundPaletteIndexShift;
+    static constexpr quint32 underlineStyleShift = 27;
+    static constexpr quint32 underlineStyleMask = 0x7U << underlineStyleShift;
+
+    static_assert(static_cast<quint32>(TerminalColorSource::Rgb)
+                  <= (foregroundSourceMask >> foregroundSourceShift));
+    static_assert(static_cast<quint32>(TerminalUnderlineStyle::Dashed)
+                  <= (underlineStyleMask >> underlineStyleShift));
+
+    [[nodiscard]] bool flag(Flag flag) const noexcept
+    {
+        return (value_ & static_cast<quint32>(flag)) != 0;
+    }
+
+    void setFlag(Flag flag, bool enabled) noexcept
+    {
+        const quint32 mask = static_cast<quint32>(flag);
+        value_ = enabled ? value_ | mask : value_ & ~mask;
+    }
+
+    [[nodiscard]] quint32 field(quint32 mask, quint32 shift) const noexcept
+    {
+        return (value_ & mask) >> shift;
+    }
+
+    void setField(quint32 mask, quint32 shift, quint32 value) noexcept
+    {
+        Q_ASSERT((value & ~(mask >> shift)) == 0);
+        value_ = (value_ & ~mask) | ((value << shift) & mask);
+    }
+
+    quint32 value_ = static_cast<quint32>(Flag::UnderlineUsesForeground);
+};
+
+static_assert(sizeof(TerminalCellMetadata) == sizeof(quint32));
+static_assert(alignof(TerminalCellMetadata) == alignof(quint32));
+
 struct TerminalCell {
     QString text;
+    QColor foreground;
+    QColor background;
+    QColor underlineColor;
     // Preserve the terminal's authoritative base cell content separately
     // from its UTF-16 grapheme. Renderer shaping rules must distinguish a
     // plain `f` from a grapheme that merely begins with `f`.
     quint32 baseCodepoint = 0;
-    bool plainCodepoint = false;
+
+    [[nodiscard]] bool plainCodepoint() const noexcept
+    {
+        return metadata_.flag(TerminalCellMetadata::Flag::PlainCodepoint);
+    }
+    void setPlainCodepoint(bool value) noexcept
+    {
+        metadata_.setFlag(TerminalCellMetadata::Flag::PlainCodepoint, value);
+    }
+
     // Ghostty's cursor shaping rule keeps cells with extra grapheme
     // codepoints joined, but still breaks around plain and empty cells.
-    bool extendedGrapheme = false;
-    QColor foreground;
-    QColor background;
-    QColor underlineColor;
-    TerminalColorSource styleForegroundSource = TerminalColorSource::Default;
-    int styleForegroundPaletteIndex = -1;
-    bool bold = false;
-    bool italic = false;
-    bool faint = false;
+    [[nodiscard]] bool extendedGrapheme() const noexcept
+    {
+        return metadata_.flag(TerminalCellMetadata::Flag::ExtendedGrapheme);
+    }
+    void setExtendedGrapheme(bool value) noexcept
+    {
+        metadata_.setFlag(TerminalCellMetadata::Flag::ExtendedGrapheme, value);
+    }
+
+    [[nodiscard]] TerminalColorSource styleForegroundSource() const noexcept
+    {
+        return static_cast<TerminalColorSource>(
+            metadata_.field(TerminalCellMetadata::foregroundSourceMask,
+                            TerminalCellMetadata::foregroundSourceShift));
+    }
+    void setStyleForegroundSource(TerminalColorSource value) noexcept
+    {
+        const quint32 encoded = static_cast<quint32>(value);
+        Q_ASSERT(encoded <= static_cast<quint32>(TerminalColorSource::Rgb));
+        metadata_.setField(
+            TerminalCellMetadata::foregroundSourceMask,
+            TerminalCellMetadata::foregroundSourceShift,
+            encoded <= static_cast<quint32>(TerminalColorSource::Rgb)
+                ? encoded
+                : static_cast<quint32>(TerminalColorSource::Default));
+    }
+
+    [[nodiscard]] int styleForegroundPaletteIndex() const noexcept
+    {
+        return static_cast<int>(metadata_.field(
+                   TerminalCellMetadata::foregroundPaletteIndexMask,
+                   TerminalCellMetadata::foregroundPaletteIndexShift))
+            - 1;
+    }
+    void setStyleForegroundPaletteIndex(int value) noexcept
+    {
+        Q_ASSERT(value >= -1 && value <= 255);
+        const quint32 encoded =
+            static_cast<quint32>(std::clamp(value, -1, 255) + 1);
+        metadata_.setField(TerminalCellMetadata::foregroundPaletteIndexMask,
+                           TerminalCellMetadata::foregroundPaletteIndexShift,
+                           encoded);
+    }
+
+    [[nodiscard]] bool bold() const noexcept
+    {
+        return metadata_.flag(TerminalCellMetadata::Flag::Bold);
+    }
+    void setBold(bool value) noexcept
+    {
+        metadata_.setFlag(TerminalCellMetadata::Flag::Bold, value);
+    }
+
+    [[nodiscard]] bool italic() const noexcept
+    {
+        return metadata_.flag(TerminalCellMetadata::Flag::Italic);
+    }
+    void setItalic(bool value) noexcept
+    {
+        metadata_.setFlag(TerminalCellMetadata::Flag::Italic, value);
+    }
+
+    [[nodiscard]] bool faint() const noexcept
+    {
+        return metadata_.flag(TerminalCellMetadata::Flag::Faint);
+    }
+    void setFaint(bool value) noexcept
+    {
+        metadata_.setFlag(TerminalCellMetadata::Flag::Faint, value);
+    }
+
     // Retained for semantic parity. The pinned Ghostty renderer currently
     // records SGR blink but deliberately does not animate text with it.
-    bool textBlink = false;
-    bool inverse = false;
-    bool invisible = false;
-    bool underlineUsesForeground = true;
-    TerminalUnderlineStyle underlineStyle = TerminalUnderlineStyle::None;
-    bool strikeThrough = false;
-    bool overline = false;
-    bool selected = false;
+    [[nodiscard]] bool textBlink() const noexcept
+    {
+        return metadata_.flag(TerminalCellMetadata::Flag::TextBlink);
+    }
+    void setTextBlink(bool value) noexcept
+    {
+        metadata_.setFlag(TerminalCellMetadata::Flag::TextBlink, value);
+    }
+
+    [[nodiscard]] bool inverse() const noexcept
+    {
+        return metadata_.flag(TerminalCellMetadata::Flag::Inverse);
+    }
+    void setInverse(bool value) noexcept
+    {
+        metadata_.setFlag(TerminalCellMetadata::Flag::Inverse, value);
+    }
+
+    [[nodiscard]] bool invisible() const noexcept
+    {
+        return metadata_.flag(TerminalCellMetadata::Flag::Invisible);
+    }
+    void setInvisible(bool value) noexcept
+    {
+        metadata_.setFlag(TerminalCellMetadata::Flag::Invisible, value);
+    }
+
+    [[nodiscard]] bool underlineUsesForeground() const noexcept
+    {
+        return metadata_.flag(
+            TerminalCellMetadata::Flag::UnderlineUsesForeground);
+    }
+    void setUnderlineUsesForeground(bool value) noexcept
+    {
+        metadata_.setFlag(TerminalCellMetadata::Flag::UnderlineUsesForeground,
+                          value);
+    }
+
+    [[nodiscard]] TerminalUnderlineStyle underlineStyle() const noexcept
+    {
+        return static_cast<TerminalUnderlineStyle>(
+            metadata_.field(TerminalCellMetadata::underlineStyleMask,
+                            TerminalCellMetadata::underlineStyleShift));
+    }
+    void setUnderlineStyle(TerminalUnderlineStyle value) noexcept
+    {
+        const quint32 encoded = static_cast<quint32>(value);
+        Q_ASSERT(encoded
+                 <= static_cast<quint32>(TerminalUnderlineStyle::Dashed));
+        metadata_.setField(
+            TerminalCellMetadata::underlineStyleMask,
+            TerminalCellMetadata::underlineStyleShift,
+            encoded <= static_cast<quint32>(TerminalUnderlineStyle::Dashed)
+                ? encoded
+                : static_cast<quint32>(TerminalUnderlineStyle::None));
+    }
+
+    [[nodiscard]] bool strikeThrough() const noexcept
+    {
+        return metadata_.flag(TerminalCellMetadata::Flag::StrikeThrough);
+    }
+    void setStrikeThrough(bool value) noexcept
+    {
+        metadata_.setFlag(TerminalCellMetadata::Flag::StrikeThrough, value);
+    }
+
+    [[nodiscard]] bool overline() const noexcept
+    {
+        return metadata_.flag(TerminalCellMetadata::Flag::Overline);
+    }
+    void setOverline(bool value) noexcept
+    {
+        metadata_.setFlag(TerminalCellMetadata::Flag::Overline, value);
+    }
+
+    [[nodiscard]] bool selected() const noexcept
+    {
+        return metadata_.flag(TerminalCellMetadata::Flag::Selected);
+    }
+    void setSelected(bool value) noexcept
+    {
+        metadata_.setFlag(TerminalCellMetadata::Flag::Selected, value);
+    }
+
     // True when libghostty reports a cell-owned background source. This
     // provenance cannot be recovered from the resolved RGB value because an
     // explicit color may equal the terminal's global background. Keep it
     // independent of inverse, selection, and search presentation policy.
-    bool backgroundExplicit = false;
+    [[nodiscard]] bool backgroundExplicit() const noexcept
+    {
+        return metadata_.flag(TerminalCellMetadata::Flag::BackgroundExplicit);
+    }
+    void setBackgroundExplicit(bool value) noexcept
+    {
+        metadata_.setFlag(TerminalCellMetadata::Flag::BackgroundExplicit,
+                          value);
+    }
+
     // Derived from Ghostty's raw base codepoint, not from shaped QString
     // contents. Only the glyph is exempt; decorations still use contrast.
-    bool minimumContrastExemptGlyph = false;
+    [[nodiscard]] bool minimumContrastExemptGlyph() const noexcept
+    {
+        return metadata_.flag(
+            TerminalCellMetadata::Flag::MinimumContrastExemptGlyph);
+    }
+    void setMinimumContrastExemptGlyph(bool value) noexcept
+    {
+        metadata_.setFlag(
+            TerminalCellMetadata::Flag::MinimumContrastExemptGlyph, value);
+    }
+
     // The URI remains worker-owned and is resolved only for an active hover.
     // This cheap bit lets the UI avoid querying ordinary cells.
-    bool hasHyperlink = false;
-    bool spacer = false;
-    int columnSpan = 1;
+    [[nodiscard]] bool hasHyperlink() const noexcept
+    {
+        return metadata_.flag(TerminalCellMetadata::Flag::HasHyperlink);
+    }
+    void setHasHyperlink(bool value) noexcept
+    {
+        metadata_.setFlag(TerminalCellMetadata::Flag::HasHyperlink, value);
+    }
+
+    [[nodiscard]] bool spacer() const noexcept
+    {
+        return metadata_.flag(TerminalCellMetadata::Flag::Spacer);
+    }
+    void setSpacer(bool value) noexcept
+    {
+        metadata_.setFlag(TerminalCellMetadata::Flag::Spacer, value);
+    }
+
+    [[nodiscard]] int columnSpan() const noexcept
+    {
+        return metadata_.flag(TerminalCellMetadata::Flag::Wide) ? 2 : 1;
+    }
+    void setColumnSpan(int value) noexcept
+    {
+        Q_ASSERT(value == 1 || value == 2);
+        metadata_.setFlag(TerminalCellMetadata::Flag::Wide,
+                          std::clamp(value, 1, 2) == 2);
+    }
+
+private:
+    TerminalCellMetadata metadata_;
 };
 
 struct TerminalRowPresentation {

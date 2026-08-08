@@ -4443,13 +4443,13 @@ public:
                     }
 
                     TerminalCell &cell = rowUpdate.cells[columnIndex];
-                    cell.columnSpan = wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : 1;
-                    cell.hasHyperlink = hasHyperlink;
-                    cell.minimumContrastExemptGlyph =
-                        minimumContrastExemptGlyph(codepoint);
+                    cell.setColumnSpan(wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : 1);
+                    cell.setHasHyperlink(hasHyperlink);
+                    cell.setMinimumContrastExemptGlyph(
+                        minimumContrastExemptGlyph(codepoint));
                     const bool coveringGlyph = codepoint == 0x2588;
-                    cell.spacer = wide == GHOSTTY_CELL_WIDE_SPACER_TAIL
-                        || wide == GHOSTTY_CELL_WIDE_SPACER_HEAD;
+                    cell.setSpacer(wide == GHOSTTY_CELL_WIDE_SPACER_TAIL
+                                   || wide == GHOSTTY_CELL_WIDE_SPACER_HEAD);
                     if (isPowerlinePaddingGlyph(codepoint)) {
                         rowUpdate.presentation.paddingExtensionSafe = false;
                     }
@@ -4494,8 +4494,8 @@ public:
                         cell.text.clear();
                     }
                     cell.baseCodepoint = codepoint;
-                    cell.plainCodepoint = graphemeCount == 1;
-                    cell.extendedGrapheme = graphemeCount > 1;
+                    cell.setPlainCodepoint(graphemeCount == 1);
+                    cell.setExtendedGrapheme(graphemeCount > 1);
 
                     GhosttyColorRgb foreground = colors.foreground;
                     GhosttyColorRgb background = colors.background;
@@ -4514,7 +4514,7 @@ public:
                             &explicitColor);
                     if (backgroundResult == GHOSTTY_SUCCESS) {
                         background = explicitColor;
-                        cell.backgroundExplicit = true;
+                        cell.setBackgroundExplicit(true);
                         if (sameRgb(background, colors.background)) {
                             rowUpdate.presentation.paddingExtensionSafe = false;
                         }
@@ -4537,53 +4537,54 @@ public:
                         style.underline_color, colors, foreground));
                     switch (style.fg_color.tag) {
                     case GHOSTTY_STYLE_COLOR_PALETTE:
-                        cell.styleForegroundSource =
-                            TerminalColorSource::Palette;
-                        cell.styleForegroundPaletteIndex =
-                            static_cast<int>(style.fg_color.value.palette);
+                        cell.setStyleForegroundSource(
+                            TerminalColorSource::Palette);
+                        cell.setStyleForegroundPaletteIndex(
+                            static_cast<int>(style.fg_color.value.palette));
                         break;
                     case GHOSTTY_STYLE_COLOR_RGB:
-                        cell.styleForegroundSource = TerminalColorSource::Rgb;
+                        cell.setStyleForegroundSource(TerminalColorSource::Rgb);
                         break;
                     default:
-                        cell.styleForegroundSource =
-                            TerminalColorSource::Default;
+                        cell.setStyleForegroundSource(
+                            TerminalColorSource::Default);
                         break;
                     }
-                    cell.bold = style.bold;
-                    cell.italic = style.italic;
-                    cell.faint = style.faint;
-                    cell.textBlink = style.blink;
-                    cell.inverse = style.inverse;
-                    cell.invisible = style.invisible;
-                    cell.underlineUsesForeground =
-                        style.underline_color.tag == GHOSTTY_STYLE_COLOR_NONE;
+                    cell.setBold(style.bold);
+                    cell.setItalic(style.italic);
+                    cell.setFaint(style.faint);
+                    cell.setTextBlink(style.blink);
+                    cell.setInverse(style.inverse);
+                    cell.setInvisible(style.invisible);
+                    cell.setUnderlineUsesForeground(
+                        style.underline_color.tag == GHOSTTY_STYLE_COLOR_NONE);
                     switch (style.underline) {
                     case GHOSTTY_SGR_UNDERLINE_SINGLE:
-                        cell.underlineStyle = TerminalUnderlineStyle::Single;
+                        cell.setUnderlineStyle(TerminalUnderlineStyle::Single);
                         break;
                     case GHOSTTY_SGR_UNDERLINE_DOUBLE:
-                        cell.underlineStyle = TerminalUnderlineStyle::Double;
+                        cell.setUnderlineStyle(TerminalUnderlineStyle::Double);
                         break;
                     case GHOSTTY_SGR_UNDERLINE_CURLY:
-                        cell.underlineStyle = TerminalUnderlineStyle::Curly;
+                        cell.setUnderlineStyle(TerminalUnderlineStyle::Curly);
                         break;
                     case GHOSTTY_SGR_UNDERLINE_DOTTED:
-                        cell.underlineStyle = TerminalUnderlineStyle::Dotted;
+                        cell.setUnderlineStyle(TerminalUnderlineStyle::Dotted);
                         break;
                     case GHOSTTY_SGR_UNDERLINE_DASHED:
-                        cell.underlineStyle = TerminalUnderlineStyle::Dashed;
+                        cell.setUnderlineStyle(TerminalUnderlineStyle::Dashed);
                         break;
                     default:
-                        cell.underlineStyle = TerminalUnderlineStyle::None;
+                        cell.setUnderlineStyle(TerminalUnderlineStyle::None);
                         break;
                     }
-                    cell.strikeThrough = style.strikethrough;
-                    cell.overline = style.overline;
-                    cell.selected = hasSelection
+                    cell.setStrikeThrough(style.strikethrough);
+                    cell.setOverline(style.overline);
+                    cell.setSelected(
+                        hasSelection
                         && columnIndex >= static_cast<int>(rowSelection.start_x)
-                        && columnIndex <= static_cast<int>(rowSelection.end_x);
-                    if (style.invisible || cell.spacer) {
+                        && columnIndex <= static_cast<int>(rowSelection.end_x));
+                    if (style.invisible || cell.spacer()) {
                         cell.text.clear();
                     }
                     ++columnIndex;

@@ -350,7 +350,7 @@ void applyBoldColor(const TerminalCell &cell, const TerminalFrame &frame,
                     const TerminalAppearance &appearance, QColor *foreground,
                     QColor *background)
 {
-    if (!cell.bold || foreground == nullptr || background == nullptr
+    if (!cell.bold() || foreground == nullptr || background == nullptr
         || appearance.boldColor.kind == TerminalBoldColorKind::Unset) {
         return;
     }
@@ -358,25 +358,25 @@ void applyBoldColor(const TerminalCell &cell, const TerminalFrame &frame,
     // The source is the logical SGR foreground. Inverse is applied after
     // Ghostty resolves bold-color, so its rendered destination is the cell
     // background when SGR inverse is active.
-    QColor *styleForeground = cell.inverse ? background : foreground;
-    switch (cell.styleForegroundSource) {
+    QColor *styleForeground = cell.inverse() ? background : foreground;
+    switch (cell.styleForegroundSource()) {
     case TerminalColorSource::Default:
         if (appearance.boldColor.kind == TerminalBoldColorKind::Color
             && appearance.boldColor.color.isValid()) {
             *styleForeground = appearance.boldColor.color;
         }
         break;
-    case TerminalColorSource::Palette:
-        if (cell.styleForegroundPaletteIndex >= 0
-            && cell.styleForegroundPaletteIndex < 8
-            && frame.palette.size() > cell.styleForegroundPaletteIndex + 8) {
-            const QColor bright =
-                frame.palette.at(cell.styleForegroundPaletteIndex + 8);
+    case TerminalColorSource::Palette: {
+        const int paletteIndex = cell.styleForegroundPaletteIndex();
+        if (paletteIndex >= 0 && paletteIndex < 8
+            && frame.palette.size() > paletteIndex + 8) {
+            const QColor bright = frame.palette.at(paletteIndex + 8);
             if (bright.isValid()) {
                 *styleForeground = bright;
             }
         }
         break;
+    }
     case TerminalColorSource::Rgb:
         if (appearance.boldColor.kind == TerminalBoldColorKind::Color
             && appearance.boldColor.color.isValid()
@@ -1098,44 +1098,44 @@ terminalRowPaintChanges(const std::optional<TerminalRowPaintState> &previous,
 {
     TerminalRowPaintDependencies dependencies = 0;
     const bool glyphVisible =
-        !cell.invisible && !cell.text.isEmpty() && !cell.spacer;
-    const bool decorationVisible = !cell.invisible
+        !cell.invisible() && !cell.text.isEmpty() && !cell.spacer();
+    const bool decorationVisible = !cell.invisible()
         && (hoveredHyperlink
-            || cell.underlineStyle != TerminalUnderlineStyle::None
-            || cell.strikeThrough || cell.overline);
+            || cell.underlineStyle() != TerminalUnderlineStyle::None
+            || cell.strikeThrough() || cell.overline());
     const bool backgroundVisible =
-        cell.backgroundExplicit || forceOpaqueBackground;
+        cell.backgroundExplicit() || forceOpaqueBackground;
     if (!glyphVisible && !decorationVisible && !backgroundVisible) {
         return dependencies;
     }
 
-    if (cell.bold) {
+    if (cell.bold()) {
         addTerminalRowPaintDependency(dependencies,
                                       TerminalRowPaintDependency::BoldColor);
-        if (cell.styleForegroundSource == TerminalColorSource::Palette) {
+        if (cell.styleForegroundSource() == TerminalColorSource::Palette) {
             addTerminalRowPaintDependency(dependencies,
                                           TerminalRowPaintDependency::Palette);
-        } else if (cell.styleForegroundSource == TerminalColorSource::Rgb) {
+        } else if (cell.styleForegroundSource() == TerminalColorSource::Rgb) {
             // A fixed bold-color applies to RGB only while its resolved value
             // equals the terminal default foreground.
             addTerminalRowPaintDependency(
                 dependencies, TerminalRowPaintDependency::FrameForeground);
         }
     }
-    if (cell.faint && (glyphVisible || decorationVisible)) {
+    if (cell.faint() && (glyphVisible || decorationVisible)) {
         addTerminalRowPaintDependency(dependencies,
                                       TerminalRowPaintDependency::FaintOpacity);
     }
-    if ((glyphVisible && !cell.minimumContrastExemptGlyph)
+    if ((glyphVisible && !cell.minimumContrastExemptGlyph())
         || decorationVisible) {
         addTerminalRowPaintDependency(
             dependencies, TerminalRowPaintDependency::MinimumContrast);
     }
-    if (cell.backgroundExplicit && !forceOpaqueBackground) {
+    if (cell.backgroundExplicit() && !forceOpaqueBackground) {
         addTerminalRowPaintDependency(
             dependencies, TerminalRowPaintDependency::ExplicitBackgroundAlpha);
     }
-    const bool selectionActive = cell.selected;
+    const bool selectionActive = cell.selected();
     selectedSearchMatch = !selectionActive && selectedSearchMatch;
     candidateSearchMatch =
         !selectionActive && !selectedSearchMatch && candidateSearchMatch;
@@ -2570,10 +2570,10 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                     }
                     const TerminalCell &cell = frame.cells.at(index);
                     const qreal left = static_cast<qreal>(column) * cellWidth;
-                    const qreal drawWidth = cellWidth
-                        * static_cast<qreal>(std::max(1, cell.columnSpan));
+                    const qreal drawWidth =
+                        cellWidth * static_cast<qreal>(cell.columnSpan());
                     const TerminalFontRole fontRole =
-                        terminalFontRole(cell.bold, cell.italic);
+                        terminalFontRole(cell.bold(), cell.italic());
 
                     if (rebuildRowSolids) {
                         QColor styledForeground = cell.foreground;
@@ -2585,7 +2585,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                             && searchCandidateCellMask.testBit(index);
                         bool selectedSearchMatch = selectedMaskMatchesFrame
                             && searchSelectedCellMask.testBit(index);
-                        if (cell.spacer && column > 0) {
+                        if (cell.spacer() && column > 0) {
                             // libghostty maps every UTF-8 byte to the owning
                             // wide head. Carry its decoration into the spacer.
                             candidateSearchMatch = candidateSearchMatch
@@ -2599,7 +2599,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                         }
 
                         QColor cellBackground = styledBackground;
-                        if (cell.selected) {
+                        if (cell.selected()) {
                             cellBackground = resolveRelativeColor(
                                 appearance.selectionBackground,
                                 styledForeground, styledBackground,
@@ -2614,9 +2614,9 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                                 appearance.searchBackground, styledForeground,
                                 styledBackground, frame.foreground);
                         }
-                        const bool forceOpaqueBackground = cell.selected
+                        const bool forceOpaqueBackground = cell.selected()
                             || selectedSearchMatch || candidateSearchMatch
-                            || cell.inverse;
+                            || cell.inverse();
                         const bool hoveredHyperlink =
                             index < hoveredHyperlinkCells.size()
                             && hoveredHyperlinkCells.testBit(index);
@@ -2626,7 +2626,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                                 forceOpaqueBackground, hoveredHyperlink,
                                 rowPaintState.glyphStyle);
                         const QColor backgroundLayer = cellBackgroundLayer(
-                            cellBackground, cell.backgroundExplicit,
+                            cellBackground, cell.backgroundExplicit(),
                             forceOpaqueBackground, explicitBackgroundAlpha);
                         solidRow.backgroundLayers[column] = backgroundLayer;
                         if (backgroundLayer.alpha() > 0) {
@@ -2639,7 +2639,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                         }
 
                         QColor foreground = styledForeground;
-                        if (cell.selected) {
+                        if (cell.selected()) {
                             foreground = resolveRelativeColor(
                                 appearance.selectionForeground,
                                 styledForeground, styledBackground,
@@ -2659,14 +2659,14 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                             && column >= frame.cursorColumn
                             && column < frame.cursorColumn
                                     + std::max(1, frame.cursorColumnSpan);
-                        if (cell.faint) {
+                        if (cell.faint()) {
                             foreground = withOpacity(foreground,
                                                      appearance.faintOpacity);
                         }
                         QColor decorationForeground = minimumContrastColor(
                             foreground, backgroundLayer, globalBackground,
                             appearance.minimumContrast);
-                        if (!cell.minimumContrastExemptGlyph) {
+                        if (!cell.minimumContrastExemptGlyph()) {
                             foreground = decorationForeground;
                         }
                         // Ghostty applies block-cursor text last to every
@@ -2683,18 +2683,18 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
                         solidRow.decorationForegrounds[column] =
                             decorationForeground;
-                        if (!cell.invisible && !cell.text.isEmpty()
-                            && !cell.spacer) {
+                        if (!cell.invisible() && !cell.text.isEmpty()
+                            && !cell.spacer()) {
                             ++solidRow.fontRoleCellCounts[terminalEnumIndex(
                                 fontRole)];
                         }
 #endif
 
-                        if (!cell.invisible) {
+                        if (!cell.invisible()) {
                             TerminalUnderlineStyle underlineStyle =
-                                cell.underlineStyle;
+                                cell.underlineStyle();
                             if (hoveredHyperlink) {
-                                underlineStyle = cell.underlineStyle
+                                underlineStyle = cell.underlineStyle()
                                         == TerminalUnderlineStyle::Single
                                     ? TerminalUnderlineStyle::Double
                                     : TerminalUnderlineStyle::Single;
@@ -2702,16 +2702,16 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                             if (underlineStyle
                                 != TerminalUnderlineStyle::None) {
                                 QColor underlineColor =
-                                    cell.underlineUsesForeground
+                                    cell.underlineUsesForeground()
                                     ? decorationForeground
                                     : cell.underlineColor;
-                                if (!cell.underlineUsesForeground
-                                    && cell.faint) {
+                                if (!cell.underlineUsesForeground()
+                                    && cell.faint()) {
                                     underlineColor =
                                         withOpacity(underlineColor,
                                                     appearance.faintOpacity);
                                 }
-                                if (!cell.underlineUsesForeground) {
+                                if (!cell.underlineUsesForeground()) {
                                     underlineColor = minimumContrastColor(
                                         underlineColor, backgroundLayer,
                                         globalBackground,
@@ -2736,13 +2736,13 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                                     underlineColor, devicePixelRatio,
                                     rowUnderlineProbe);
                             }
-                            if (cell.strikeThrough || cell.overline) {
+                            if (cell.strikeThrough() || cell.overline()) {
                                 const QRectF decorationCanvas =
                                     paddedSpriteCanvas(QRectF(left, top,
                                                               drawWidth,
                                                               cellHeight),
                                                        devicePixelRatio);
-                                if (cell.strikeThrough) {
+                                if (cell.strikeThrough()) {
                                     const QRectF rect(
                                         left,
                                         top + metrics.strikethroughPosition,
@@ -2759,7 +2759,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                                         decorationCanvas, decorationForeground,
                                         rowStrikeProbe);
                                 }
-                                if (cell.overline) {
+                                if (cell.overline()) {
                                     const QRectF rect(
                                         left, top + overlinePosition, drawWidth,
                                         metrics.overlineThickness);
@@ -2786,12 +2786,12 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                             .style = terminalShapingStyle(cell),
                             .baseCodepoint = cell.baseCodepoint,
                             .column = column,
-                            .columnSpan = std::max(1, cell.columnSpan),
-                            .plainCodepoint = cell.plainCodepoint,
-                            .extendedGrapheme = cell.extendedGrapheme,
-                            .selected = cell.selected,
-                            .invisible = cell.invisible,
-                            .spacer = cell.spacer,
+                            .columnSpan = cell.columnSpan(),
+                            .plainCodepoint = cell.plainCodepoint(),
+                            .extendedGrapheme = cell.extendedGrapheme(),
+                            .selected = cell.selected(),
+                            .invisible = cell.invisible(),
+                            .spacer = cell.spacer(),
                             .cursor = shapingCursorState.active
                                 && shapingCursorState.row == row
                                 && shapingCursorState.column == column,

@@ -4162,7 +4162,7 @@ void SessionWorker::publishFrame()
                     std::as_const(hyperlinkState_->publishedCells),
                     [&row](const QPoint &cell) { return cell.y() == row.row; })
                 || std::ranges::any_of(row.cells, [](const TerminalCell &cell) {
-                       return cell.hasHyperlink;
+                       return cell.hasHyperlink();
                    })) {
                 hyperlinkMayHaveChanged = true;
                 break;

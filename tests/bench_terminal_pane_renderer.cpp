@@ -1250,7 +1250,7 @@ private:
             TerminalCell cell;
             cell.text = QString(character);
             cell.baseCodepoint = character.unicode();
-            cell.plainCodepoint = true;
+            cell.setPlainCodepoint(true);
             cell.foreground = QColor(QStringLiteral("#d8dee9"));
             cell.background = Qt::black;
             update.cells.append(std::move(cell));
@@ -1265,8 +1265,8 @@ private:
         for (TerminalCell &cell : update.cells) {
             cell.foreground = QColor(QStringLiteral("#91d7e3"));
             cell.background = QColor(QStringLiteral("#1b2430"));
-            cell.styleForegroundSource = TerminalColorSource::Rgb;
-            cell.backgroundExplicit = true;
+            cell.setStyleForegroundSource(TerminalColorSource::Rgb);
+            cell.setBackgroundExplicit(true);
         }
         return update;
     }
@@ -1284,12 +1284,12 @@ private:
         for (TerminalCell &cell : update.cells) {
             cell.foreground = foreground;
             cell.background = QColor(QStringLiteral("#1b2430"));
-            cell.backgroundExplicit = true;
-            cell.styleForegroundSource = paletteDerived
-                ? TerminalColorSource::Palette
-                : TerminalColorSource::Rgb;
-            cell.styleForegroundPaletteIndex = paletteDerived ? 0 : -1;
-            cell.bold = true;
+            cell.setBackgroundExplicit(true);
+            cell.setStyleForegroundSource(paletteDerived
+                                              ? TerminalColorSource::Palette
+                                              : TerminalColorSource::Rgb);
+            cell.setStyleForegroundPaletteIndex(paletteDerived ? 0 : -1);
+            cell.setBold(true);
         }
         return update;
     }

@@ -1812,14 +1812,14 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
         for (TerminalCell &cell : update.cells) {
             cell.foreground = color;
             cell.background = Qt::black;
-            cell.styleForegroundSource = TerminalColorSource::Rgb;
+            cell.setStyleForegroundSource(TerminalColorSource::Rgb);
         }
         update.cells[1].background = color;
-        update.cells[1].backgroundExplicit = true;
-        update.cells[2].overline = true;
+        update.cells[1].setBackgroundExplicit(true);
+        update.cells[2].setOverline(true);
         if (withGlyph) {
             update.cells[0].text = QString(QChar(0x2588));
-            update.cells[3].strikeThrough = true;
+            update.cells[3].setStrikeThrough(true);
         }
         return update;
     };
@@ -2357,13 +2357,13 @@ void TerminalPaneTest::invalidatesOnlyRowsAffectedByGlobalColors()
         for (TerminalCell &cell : update.cells) {
             cell.text = QStringLiteral("M");
             cell.baseCodepoint = 'M';
-            cell.plainCodepoint = true;
+            cell.setPlainCodepoint(true);
             cell.foreground = foreground;
             cell.background = initialBackground;
-            cell.backgroundExplicit = true;
-            cell.styleForegroundSource = source;
-            cell.styleForegroundPaletteIndex = paletteIndex;
-            cell.bold = bold;
+            cell.setBackgroundExplicit(true);
+            cell.setStyleForegroundSource(source);
+            cell.setStyleForegroundPaletteIndex(paletteIndex);
+            cell.setBold(bold);
         }
         return update;
     };
@@ -2386,7 +2386,7 @@ void TerminalPaneTest::invalidatesOnlyRowsAffectedByGlobalColors()
     };
     TerminalRowUpdate selectedRow =
         makeRow(4, explicitFirst, TerminalColorSource::Rgb, false);
-    for (TerminalCell &cell : selectedRow.cells) cell.selected = true;
+    for (TerminalCell &cell : selectedRow.cells) cell.setSelected(true);
     frame.dirtyRows.append(std::move(selectedRow));
     frame.dirtyRows.append(
         makeRow(5, explicitLast, TerminalColorSource::Rgb, false));
@@ -2558,12 +2558,12 @@ void TerminalPaneTest::invalidatesHoveredExemptGlyphForContrastChanges()
         TerminalCell &cell = rowUpdate.cells[0];
         cell.text = QString(QChar(0x2588));
         cell.baseCodepoint = 0x2588;
-        cell.plainCodepoint = true;
+        cell.setPlainCodepoint(true);
         cell.foreground = lowContrast;
         cell.background = initialBackground;
-        cell.styleForegroundSource = TerminalColorSource::Rgb;
-        cell.minimumContrastExemptGlyph = true;
-        cell.hasHyperlink = row == 0;
+        cell.setStyleForegroundSource(TerminalColorSource::Rgb);
+        cell.setMinimumContrastExemptGlyph(true);
+        cell.setHasHyperlink(row == 0);
         frame.dirtyRows.append(std::move(rowUpdate));
     }
     controller->terminalUpdated(frame);
@@ -3085,16 +3085,16 @@ void TerminalPaneTest::invalidatesOnlyChangedSearchDecorationRows()
             cell.text = QStringLiteral("x");
             cell.foreground = baseForeground;
             cell.background = baseBackground;
-            cell.backgroundExplicit = true;
+            cell.setBackgroundExplicit(true);
         }
         frame.dirtyRows.append(std::move(rowUpdate));
     }
     TerminalCell &wideHead = frame.dirtyRows[2].cells[1];
     wideHead.text = QString(QChar(0x754c));
-    wideHead.columnSpan = 2;
+    wideHead.setColumnSpan(2);
     TerminalCell &wideSpacer = frame.dirtyRows[2].cells[2];
     wideSpacer.text.clear();
-    wideSpacer.spacer = true;
+    wideSpacer.setSpacer(true);
     controller->terminalUpdated(frame);
 
     const auto paint = [&] {
@@ -3892,7 +3892,7 @@ void TerminalPaneTest::reloadsShapingAndTracksLogicalCursorRows()
                 static_cast<char16_t>(u'a' + row * columns + column));
             cell.text = QString(codepoint);
             cell.baseCodepoint = codepoint.unicode();
-            cell.plainCodepoint = true;
+            cell.setPlainCodepoint(true);
             cell.foreground = Qt::white;
             cell.background = Qt::black;
         }
@@ -8092,7 +8092,7 @@ void TerminalPaneTest::restoresHyperlinkPointerAfterTyping()
     row.row = 0;
     row.cells.resize(1);
     row.cells[0].text = QStringLiteral("L");
-    row.cells[0].hasHyperlink = true;
+    row.cells[0].setHasHyperlink(true);
     update.dirtyRows.append(std::move(row));
     controller->terminalUpdated(update);
 
@@ -8279,12 +8279,12 @@ void TerminalPaneTest::rendersBackgroundOpacityAndReloadsInPlace()
     }
     // A default cell and an explicit cell may resolve to the same RGB but
     // must remain distinguishable for cell-opacity policy.
-    row.cells[1].backgroundExplicit = true;
+    row.cells[1].setBackgroundExplicit(true);
     row.cells[2].background = explicitBackground;
-    row.cells[2].backgroundExplicit = true;
+    row.cells[2].setBackgroundExplicit(true);
     row.cells[3].background = inverseBackground;
-    row.cells[3].inverse = true;
-    row.cells[4].selected = true;
+    row.cells[3].setInverse(true);
+    row.cells[4].setSelected(true);
     update.dirtyRows.append(std::move(row));
     controller->terminalUpdated(update);
 
@@ -8387,9 +8387,9 @@ void TerminalPaneTest::rendersBackgroundOpacityAndReloadsInPlace()
     for (TerminalCell &cell : contrastUpdate.dirtyRows.first().cells) {
         cell.background = Qt::white;
     }
-    contrastUpdate.dirtyRows.first().cells[1].backgroundExplicit = true;
+    contrastUpdate.dirtyRows.first().cells[1].setBackgroundExplicit(true);
     contrastUpdate.dirtyRows.first().cells[2].background = Qt::black;
-    contrastUpdate.dirtyRows.first().cells[2].backgroundExplicit = true;
+    contrastUpdate.dirtyRows.first().cells[2].setBackgroundExplicit(true);
     controller->terminalUpdated(contrastUpdate);
 
     LaunchOptions contrastOpaqueCells = options;
@@ -8671,26 +8671,26 @@ void TerminalPaneTest::rendersMinimumContrastAndReloadsLive()
 
     TerminalCell &graphics = update.dirtyRows[0].cells[2];
     graphics.text = QString(QChar(0x2588));
-    graphics.minimumContrastExemptGlyph = true;
-    graphics.underlineStyle = TerminalUnderlineStyle::Single;
-    graphics.strikeThrough = true;
-    graphics.overline = true;
+    graphics.setMinimumContrastExemptGlyph(true);
+    graphics.setUnderlineStyle(TerminalUnderlineStyle::Single);
+    graphics.setStrikeThrough(true);
+    graphics.setOverline(true);
 
     TerminalCell &explicitUnderline = update.dirtyRows[0].cells[3];
     explicitUnderline.foreground = Qt::cyan;
-    explicitUnderline.underlineStyle = TerminalUnderlineStyle::Single;
-    explicitUnderline.underlineUsesForeground = false;
+    explicitUnderline.setUnderlineStyle(TerminalUnderlineStyle::Single);
+    explicitUnderline.setUnderlineUsesForeground(false);
 
-    update.dirtyRows[0].cells[4].selected = true;
+    update.dirtyRows[0].cells[4].setSelected(true);
 
     TerminalCell &faint = update.dirtyRows[0].cells[6];
     faint.foreground = Qt::white;
-    faint.faint = true;
+    faint.setFaint(true);
 
     TerminalCell &bold = update.dirtyRows[0].cells[7];
     bold.foreground = Qt::white;
-    bold.bold = true;
-    bold.styleForegroundSource = TerminalColorSource::Default;
+    bold.setBold(true);
+    bold.setStyleForegroundSource(TerminalColorSource::Default);
 
     controller->terminalUpdated(update);
     TerminalSearchUpdate search;
@@ -8842,35 +8842,35 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     TerminalCell &selection = update.dirtyRows[0].cells[0];
     selection.foreground = QColor(QStringLiteral("#ff0000"));
     selection.background = QColor(QStringLiteral("#0000ff"));
-    selection.selected = true;
+    selection.setSelected(true);
 
     TerminalCell &bold = update.dirtyRows[0].cells[1];
     bold.text = QString(QChar(0x2588));
     bold.foreground = QColor(QStringLiteral("#800000"));
-    bold.bold = true;
-    bold.styleForegroundSource = TerminalColorSource::Palette;
-    bold.styleForegroundPaletteIndex = 0;
+    bold.setBold(true);
+    bold.setStyleForegroundSource(TerminalColorSource::Palette);
+    bold.setStyleForegroundPaletteIndex(0);
 
     TerminalCell &faint = update.dirtyRows[0].cells[2];
     faint.text = QString(QChar(0x2588));
-    faint.faint = true;
+    faint.setFaint(true);
 
     TerminalCell &cursorHead = update.dirtyRows[0].cells[3];
     cursorHead.text = QStringLiteral("I");
-    cursorHead.columnSpan = 2;
-    cursorHead.faint = true;
-    cursorHead.underlineStyle = TerminalUnderlineStyle::Single;
-    cursorHead.underlineUsesForeground = false;
+    cursorHead.setColumnSpan(2);
+    cursorHead.setFaint(true);
+    cursorHead.setUnderlineStyle(TerminalUnderlineStyle::Single);
+    cursorHead.setUnderlineUsesForeground(false);
     cursorHead.underlineColor = Qt::red;
-    cursorHead.strikeThrough = true;
-    cursorHead.overline = true;
+    cursorHead.setStrikeThrough(true);
+    cursorHead.setOverline(true);
     TerminalCell &cursorTail = update.dirtyRows[0].cells[4];
-    cursorTail.spacer = true;
-    cursorTail.underlineStyle = TerminalUnderlineStyle::Single;
-    cursorTail.underlineUsesForeground = false;
+    cursorTail.setSpacer(true);
+    cursorTail.setUnderlineStyle(TerminalUnderlineStyle::Single);
+    cursorTail.setUnderlineUsesForeground(false);
     cursorTail.underlineColor = Qt::red;
-    cursorTail.strikeThrough = true;
-    cursorTail.overline = true;
+    cursorTail.setStrikeThrough(true);
+    cursorTail.setOverline(true);
 
     const std::array<TerminalUnderlineStyle, 6> underlines{
         TerminalUnderlineStyle::None,
@@ -8882,27 +8882,27 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     };
     for (int i = 0; i < static_cast<int>(underlines.size()); ++i) {
         TerminalCell &cell = update.dirtyRows[0].cells[6 + i];
-        cell.underlineStyle = underlines[static_cast<size_t>(i)];
-        cell.underlineUsesForeground = false;
+        cell.setUnderlineStyle(underlines[static_cast<size_t>(i)]);
+        cell.setUnderlineUsesForeground(false);
     }
 
     TerminalCell &invisible = update.dirtyRows[1].cells[0];
-    invisible.underlineStyle = TerminalUnderlineStyle::Single;
-    invisible.underlineUsesForeground = false;
-    invisible.invisible = true;
+    invisible.setUnderlineStyle(TerminalUnderlineStyle::Single);
+    invisible.setUnderlineUsesForeground(false);
+    invisible.setInvisible(true);
     TerminalCell &retainedBlink = update.dirtyRows[1].cells[1];
     retainedBlink.text = QString(QChar(0x2588));
     retainedBlink.foreground = QColor(QStringLiteral("#ffff00"));
-    retainedBlink.textBlink = true;
+    retainedBlink.setTextBlink(true);
 
     TerminalCell &selectedOverSearch = update.dirtyRows[1].cells[4];
     selectedOverSearch.foreground = QColor(QStringLiteral("#aa0000"));
     selectedOverSearch.background = QColor(QStringLiteral("#0000aa"));
-    selectedOverSearch.selected = true;
+    selectedOverSearch.setSelected(true);
     TerminalCell &searchWideHead = update.dirtyRows[1].cells[5];
-    searchWideHead.columnSpan = 2;
+    searchWideHead.setColumnSpan(2);
     TerminalCell &searchWideTail = update.dirtyRows[1].cells[6];
-    searchWideTail.spacer = true;
+    searchWideTail.setSpacer(true);
 
     controller->terminalUpdated(update);
     TerminalSearchUpdate searchUpdate;
@@ -9176,13 +9176,13 @@ void TerminalPaneTest::rendersResolvedTypographyAndPhysicalGeometry()
         TerminalCell &cell =
             update.dirtyRows[0].cells[static_cast<qsizetype>(index)];
         cell.text = QStringLiteral("M");
-        cell.bold = roles[index].first;
-        cell.italic = roles[index].second;
+        cell.setBold(roles[index].first);
+        cell.setItalic(roles[index].second);
     }
     TerminalCell &decorated = update.dirtyRows[0].cells[0];
-    decorated.underlineStyle = TerminalUnderlineStyle::Single;
-    decorated.strikeThrough = true;
-    decorated.overline = true;
+    decorated.setUnderlineStyle(TerminalUnderlineStyle::Single);
+    decorated.setStrikeThrough(true);
+    decorated.setOverline(true);
 
     controller->terminalUpdated(update);
     QVERIFY(!window.grabWindow().isNull());
@@ -9442,10 +9442,10 @@ void TerminalPaneTest::clipsDecorationAndCursorSprites()
             row.cells.resize(1);
             row.cells[0].foreground = Qt::white;
             row.cells[0].background = Qt::black;
-            row.cells[0].underlineStyle = underlineStyle;
-            row.cells[0].underlineUsesForeground = true;
-            row.cells[0].strikeThrough = strikethrough;
-            row.cells[0].overline = overline;
+            row.cells[0].setUnderlineStyle(underlineStyle);
+            row.cells[0].setUnderlineUsesForeground(true);
+            row.cells[0].setStrikeThrough(strikethrough);
+            row.cells[0].setOverline(overline);
             update.dirtyRows.append(std::move(row));
 
             controller->terminalUpdated(update);
@@ -12297,9 +12297,9 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
                             .arg(updates.count())));
     const TerminalFrame frame = accumulatedFrame(updates);
     QVERIFY(frame.contentRevision != 0);
-    QVERIFY(frame.cells.at(0).hasHyperlink);
-    QVERIFY(frame.cells.at(1).hasHyperlink);
-    QVERIFY(frame.cells.at(3).hasHyperlink);
+    QVERIFY(frame.cells.at(0).hasHyperlink());
+    QVERIFY(frame.cells.at(1).hasHyperlink());
+    QVERIFY(frame.cells.at(3).hasHyperlink());
 
     const QPointF validPosition(cellWidth * 0.5, cellHeight * 0.5);
     const QPointF validSecondPosition(cellWidth * 1.5, cellHeight * 0.5);

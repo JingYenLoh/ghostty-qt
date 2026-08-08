@@ -94,7 +94,7 @@ private:
     {
         qsizetype linkedIndex = 0;
         for (int column = 0; column < row.cells.size(); ++column) {
-            if (!row.cells.at(column).hasHyperlink) {
+            if (!row.cells.at(column).hasHyperlink()) {
                 continue;
             }
             if (linkedIndex >= linkedColumns.size()
@@ -111,7 +111,7 @@ private:
     {
         linkedColumns.clear();
         for (int column = 0; column < row.cells.size(); ++column) {
-            if (row.cells.at(column).hasHyperlink) {
+            if (row.cells.at(column).hasHyperlink()) {
                 linkedColumns.append(column);
             }
         }

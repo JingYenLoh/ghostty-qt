@@ -5366,7 +5366,7 @@ void TerminalPane::refreshHyperlinkHover()
             hoverCell_.y() * frame_.columns + hoverCell_.x();
         targetMayHaveLink = options_.linkUrl
             || (targetIndex >= 0 && targetIndex < frame_.cells.size()
-                && frame_.cells.at(targetIndex).hasHyperlink);
+                && frame_.cells.at(targetIndex).hasHyperlink());
     }
 
     if (!targetMayHaveLink) {
@@ -5536,7 +5536,7 @@ bool TerminalPane::hyperlinkCellCandidate(const QPoint &cell,
     }
     const int index = cell.y() * frame_.columns + cell.x();
     const bool osc8Candidate = index >= 0 && index < frame_.cells.size()
-        && frame_.cells.at(index).hasHyperlink;
+        && frame_.cells.at(index).hasHyperlink();
     const bool resolvedRegexCandidate = options_.linkUrl
         && hoveredLinkKind_ == TerminalLinkKind::Regex
         && hoveredHyperlinkColumns_ == frame_.columns

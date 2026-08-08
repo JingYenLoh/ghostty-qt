@@ -241,10 +241,10 @@ void TerminalTextRunsTest::excludesBackgroundFromTheStyleKey()
     TerminalCell left;
     left.foreground = Qt::white;
     left.background = Qt::black;
-    left.backgroundExplicit = false;
+    left.setBackgroundExplicit(false);
     TerminalCell right = left;
     right.background = Qt::red;
-    right.backgroundExplicit = true;
+    right.setBackgroundExplicit(true);
 
     QCOMPARE(terminalShapingStyle(left), terminalShapingStyle(right));
 }

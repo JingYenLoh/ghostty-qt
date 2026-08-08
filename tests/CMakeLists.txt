@@ -1045,6 +1045,18 @@ if(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
         ghostty-qt-vt-adapter
     )
 
+    qt_add_executable(bench-terminal-frame-materialization
+        bench_terminal_frame_materialization.cpp
+    )
+    target_include_directories(bench-terminal-frame-materialization PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    )
+    target_link_libraries(bench-terminal-frame-materialization PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        ghostty-qt-vt-adapter
+    )
+
     qt_add_executable(bench-terminal-search
         bench_terminal_search.cpp
     )
