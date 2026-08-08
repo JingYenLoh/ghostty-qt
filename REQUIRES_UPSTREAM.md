@@ -729,7 +729,10 @@ ghostty-qt therefore implements the largest safe frontend-owned subset:
   one-glyph-per-cell printable ASCII from the already-shaped line, rasterize it
   through `QRawFont` into a compact CPU Alpha8 atlas, expand it once to an
   explicit RGBA coverage texture, and emit it through retained per-row indexed
-  batches. Every other row keeps the general Qt text path.
+  batches. The atlas is retained across frontend-only palette, color, alpha,
+  and grid-shape invalidations when its font program, DPR, window, and graphics
+  API remain compatible. Every other row keeps a lazily created general Qt text
+  path.
 
 This gives visible feature and ligature support without allowing a platform
 shaper to move later cells off-grid. The parity ledger remains conservative:

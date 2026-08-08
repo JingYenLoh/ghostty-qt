@@ -757,6 +757,7 @@ struct TerminalTextRowRenderResult {
     quint64 nativeCellCount = 0;
     quint64 batchedGlyphCount = 0;
     quint64 glyphBatchGeometryWriteCount = 0;
+    bool complete = true;
 };
 
 [[nodiscard]] bool appendTerminalGlyphPlan(QVector<TerminalGlyphQuad> &quads,
@@ -790,13 +791,13 @@ struct TerminalTextRowRenderResult {
     return true;
 }
 
-TerminalTextRowRenderResult
-renderTerminalTextRow(QSGTextNode *textNode, TerminalGlyphBatch *glyphBatch,
-                      const TerminalGlyphAtlas *glyphAtlas,
-                      QSGTexture *glyphTexture,
-                      const QVector<TerminalTextRun> &runs, qreal top,
-                      qreal baseline, qreal cellWidth, qreal devicePixelRatio,
-                      TerminalAlphaBlending alphaBlending)
+template <typename EnsureNativeTextNode>
+TerminalTextRowRenderResult renderTerminalTextRow(
+    EnsureNativeTextNode &&ensureNativeTextNode, TerminalGlyphBatch *glyphBatch,
+    const TerminalGlyphAtlas *glyphAtlas, QSGTexture *glyphTexture,
+    const QVector<TerminalTextRun> &runs, qreal top, qreal baseline,
+    qreal cellWidth, qreal devicePixelRatio,
+    TerminalAlphaBlending alphaBlending)
 {
     TerminalTextRowRenderResult result;
     const auto appendNativeResult = [&result](TerminalRunLayoutResult native) {
@@ -806,6 +807,15 @@ renderTerminalTextRow(QSGTextNode *textNode, TerminalGlyphBatch *glyphBatch,
     };
     if (glyphBatch == nullptr || glyphAtlas == nullptr
         || glyphTexture == nullptr) {
+        if (glyphBatch != nullptr) {
+            glyphBatch->beginUpdate().clear();
+            (void)glyphBatch->commit(nullptr, alphaBlending);
+        }
+        QSGTextNode *const textNode = ensureNativeTextNode();
+        if (textNode == nullptr) {
+            result.complete = false;
+            return result;
+        }
         for (const TerminalTextRun &run : runs) {
             appendNativeResult(
                 appendTerminalTextRun(textNode, run, top, baseline, cellWidth,
@@ -830,6 +840,11 @@ renderTerminalTextRow(QSGTextNode *textNode, TerminalGlyphBatch *glyphBatch,
         if (eligible && committed != TerminalGlyphBatchCommitResult::Fallback) {
             result.batchedGlyphCount = plannedGlyphCount;
         } else {
+            QSGTextNode *const textNode = ensureNativeTextNode();
+            if (textNode == nullptr) {
+                result.complete = false;
+                return result;
+            }
             appendNativeResult(appendTerminalShapedTextRun(
                 textNode, shaped, top, baseline, cellWidth, alphaBlending));
         }
@@ -854,6 +869,11 @@ renderTerminalTextRow(QSGTextNode *textNode, TerminalGlyphBatch *glyphBatch,
         if (eligible && committed != TerminalGlyphBatchCommitResult::Fallback) {
             result.batchedGlyphCount = plannedGlyphCount;
         } else {
+            QSGTextNode *const textNode = ensureNativeTextNode();
+            if (textNode == nullptr) {
+                result.complete = false;
+                return result;
+            }
             for (const auto &shaped : shapedRuns) {
                 appendNativeResult(appendTerminalShapedTextRun(
                     textNode, *shaped, top, baseline, cellWidth,
@@ -968,9 +988,25 @@ struct TerminalTextRenderState {
     int frameRows = 0;
     int visibleColumns = 0;
     int visibleRows = 0;
+    bool glyphBatchEnabled = false;
     TerminalAlphaBlending alphaBlending = TerminalAlphaBlending::Native;
 
     bool operator==(const TerminalTextRenderState &) const = default;
+};
+
+struct TerminalGlyphAtlasRenderState {
+    QQuickWindow *window = nullptr;
+    std::shared_ptr<const TerminalFontProgram> fontProgram;
+    qreal devicePixelRatio = 1.0;
+    int graphicsApi = -1;
+
+    bool operator==(const TerminalGlyphAtlasRenderState &) const = default;
+};
+
+struct TerminalGlyphAtlasResources {
+    TerminalGlyphAtlasRenderState state;
+    TerminalGlyphAtlas atlas;
+    std::unique_ptr<QSGTexture> texture;
 };
 
 struct BlockCursorTextState {
@@ -1175,17 +1211,14 @@ public:
         }
     }
 
-    void clearMainText()
+    void clearTextRows()
     {
-        // Batches hold non-owning texture pointers. Destroy every glyph node
-        // before releasing the texture and render-thread-local QRawFonts.
         clearNodeChildren(mainTextRows);
         rowContainers.clear();
         rowTextNodes.clear();
         rowGlyphBatches.clear();
         builtRowEpochs.clear();
-        glyphAtlasTexture.reset();
-        glyphAtlas.reset();
+        builtTextRows.clear();
         textState.reset();
         shapingCursorState = {};
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
@@ -1193,7 +1226,24 @@ public:
         rowBuildCounts.clear();
         rowLayoutCounts.clear();
         rowFallbackCellCounts.clear();
+        rowBatchedGlyphCounts.clear();
 #endif
+    }
+
+    void clearGlyphAtlas()
+    {
+        glyphAtlasResources.reset();
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+        glyphAtlasSerial = 0;
+#endif
+    }
+
+    void clearMainText()
+    {
+        // Batches hold non-owning texture pointers. Destroy every glyph node
+        // before releasing the texture and render-thread-local QRawFonts.
+        clearTextRows();
+        clearGlyphAtlas();
     }
 
     void clearSolidRows()
@@ -1275,17 +1325,22 @@ public:
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
         QVector<quint64> cumulativeBuildCounts = rowBuildCounts;
 #endif
-        clearMainText();
+        // Keep a compatible atlas alive while replacing row topology. The old
+        // batches must be destroyed before ensureGlyphAtlas may replace its
+        // non-owning texture pointer.
+        clearTextRows();
         rowContainers.reserve(rowCount);
         rowTextNodes.fill(nullptr, rowCount);
         rowGlyphBatches.fill(nullptr, rowCount);
         builtRowEpochs.fill(0, rowCount);
+        builtTextRows.fill(false, rowCount);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
         rowNodeSerials.fill(0, rowCount);
         cumulativeBuildCounts.resize(rowCount);
         rowBuildCounts = std::move(cumulativeBuildCounts);
         rowLayoutCounts.fill(0, rowCount);
         rowFallbackCellCounts.fill(0, rowCount);
+        rowBatchedGlyphCounts.fill(0, rowCount);
 #endif
         for (int row = 0; row < rowCount; ++row) {
             auto *container = new QSGNode;
@@ -1301,11 +1356,21 @@ public:
         fonts = newFonts;
     }
 
-    bool prepareGlyphAtlas(QQuickWindow *window, qreal devicePixelRatio)
+    bool ensureGlyphAtlas(const TerminalGlyphAtlasRenderState &state)
     {
-        glyphAtlasTexture.reset();
-        glyphAtlas.reset();
-        if (window == nullptr) return false;
+        if (glyphAtlasResources.has_value()
+            && glyphAtlasResources->state == state) {
+            return true;
+        }
+        Q_ASSERT(std::ranges::all_of(
+            rowGlyphBatches, [](const TerminalGlyphBatch *batch) {
+                return batch == nullptr
+                    || batch->result() == TerminalGlyphBatchCommitResult::Empty;
+            }));
+        if (state.window == nullptr || state.fontProgram == nullptr) {
+            clearGlyphAtlas();
+            return false;
+        }
 
         QString printableAscii;
         printableAscii.reserve(0x7f - 0x20);
@@ -1314,14 +1379,20 @@ public:
         }
 
         QVector<TerminalGlyphAtlasKey> requests;
-        requests.reserve(static_cast<qsizetype>(fonts.size())
+        requests.reserve(static_cast<qsizetype>(state.fontProgram->fonts.size())
                          * printableAscii.size());
-        for (const QFont &font : fonts) {
+        for (const QFont &font : state.fontProgram->fonts) {
             const QRawFont rawFont = QRawFont::fromFont(font);
-            if (!rawFont.isValid()) return false;
+            if (!rawFont.isValid()) {
+                clearGlyphAtlas();
+                return false;
+            }
             const QList<quint32> glyphIndexes =
                 rawFont.glyphIndexesForString(printableAscii);
-            if (glyphIndexes.size() != printableAscii.size()) return false;
+            if (glyphIndexes.size() != printableAscii.size()) {
+                clearGlyphAtlas();
+                return false;
+            }
             for (const quint32 glyphIndex : glyphIndexes) {
                 requests.append({.font = rawFont, .glyphIndex = glyphIndex});
             }
@@ -1331,31 +1402,56 @@ public:
             std::span<const TerminalGlyphAtlasKey>(
                 requests.constData(),
                 static_cast<std::size_t>(requests.size())),
-            {.devicePixelRatio = devicePixelRatio});
-        if (!nextAtlas.has_value()) return false;
+            {.devicePixelRatio = state.devicePixelRatio});
+        if (!nextAtlas.has_value()) {
+            clearGlyphAtlas();
+            return false;
+        }
 
         QImage textureImage = nextAtlas->textureImage();
-        if (textureImage.isNull()) return false;
-        std::unique_ptr<QSGTexture> nextTexture(window->createTextureFromImage(
-            textureImage, QQuickWindow::TextureHasAlphaChannel));
-        if (nextTexture == nullptr) return false;
+        if (textureImage.isNull()) {
+            clearGlyphAtlas();
+            return false;
+        }
+        std::unique_ptr<QSGTexture> nextTexture(
+            state.window->createTextureFromImage(
+                textureImage, QQuickWindow::TextureHasAlphaChannel));
+        if (nextTexture == nullptr) {
+            clearGlyphAtlas();
+            return false;
+        }
         nextTexture->setFiltering(QSGTexture::Linear);
         nextTexture->setMipmapFiltering(QSGTexture::None);
         nextTexture->setHorizontalWrapMode(QSGTexture::ClampToEdge);
         nextTexture->setVerticalWrapMode(QSGTexture::ClampToEdge);
 
-        glyphAtlas = std::move(nextAtlas);
-        glyphAtlasTexture = std::move(nextTexture);
+        glyphAtlasResources = TerminalGlyphAtlasResources{
+            .state = state,
+            .atlas = std::move(*nextAtlas),
+            .texture = std::move(nextTexture),
+        };
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
         ++glyphAtlasUploadCount;
+        glyphAtlasSerial =
+            nextRenderNodeSerial.fetch_add(1, std::memory_order_relaxed);
 #endif
         return true;
     }
 
-    QSGTextNode *prepareTextRow(int row, QQuickWindow *window,
-                                const QRectF &viewport,
-                                const QColor &defaultColor,
-                                TerminalAlphaBlending alphaBlending)
+    void beginTextRowBuild(int row)
+    {
+        if (QSGTextNode *const textNode = rowTextNodes.at(row)) {
+            textNode->clear();
+        }
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+        ++rowBuildCounts[row];
+#endif
+    }
+
+    QSGTextNode *ensureTextRow(int row, QQuickWindow *window,
+                               const QRectF &viewport,
+                               const QColor &defaultColor,
+                               TerminalAlphaBlending alphaBlending)
     {
         QSGTextNode *&textNode = rowTextNodes[row];
         if (textNode == nullptr) {
@@ -1368,14 +1464,7 @@ public:
                     1, std::memory_order_relaxed);
 #endif
             }
-        } else {
-            textNode->clear();
         }
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-        if (textNode != nullptr) {
-            ++rowBuildCounts[row];
-        }
-#endif
         return textNode;
     }
 
@@ -1501,8 +1590,8 @@ public:
     QVector<QSGTextNode *> rowTextNodes;
     QVector<TerminalGlyphBatch *> rowGlyphBatches;
     QVector<quint64> builtRowEpochs;
-    std::optional<TerminalGlyphAtlas> glyphAtlas;
-    std::unique_ptr<QSGTexture> glyphAtlasTexture;
+    QBitArray builtTextRows;
+    std::optional<TerminalGlyphAtlasResources> glyphAtlasResources;
     QVector<TerminalSolidRowCache> solidRows;
     std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> fonts;
     std::optional<TerminalTextRenderState> textState;
@@ -1534,8 +1623,10 @@ public:
     quint64 batchedGlyphCount = 0;
     quint64 glyphBatchGeometryWriteCount = 0;
     quint64 glyphAtlasUploadCount = 0;
+    quint64 glyphAtlasSerial = 0;
     QVector<quint64> rowLayoutCounts;
     QVector<quint64> rowFallbackCellCounts;
+    QVector<quint64> rowBatchedGlyphCounts;
 #endif
 };
 
@@ -1659,6 +1750,10 @@ void publishRenderProbe(
         snapshot.backdropBaseRects.append(rect);
     }
     snapshot.rowNodeSerials = root.rowNodeSerials;
+    snapshot.nativeTextNodeCount = static_cast<qsizetype>(
+        std::ranges::count_if(root.rowTextNodes, [](const QSGTextNode *node) {
+            return node != nullptr;
+        }));
     snapshot.rowBuildCounts = root.rowBuildCounts;
     snapshot.rowSolidBuildCounts = root.solidRowBuildCounts;
     snapshot.retainedSolidRowGeometry = root.retainedSolidRows;
@@ -1683,13 +1778,17 @@ void publishRenderProbe(
     snapshot.batchedGlyphCount = root.batchedGlyphCount;
     snapshot.glyphBatchGeometryWriteCount = root.glyphBatchGeometryWriteCount;
     snapshot.glyphAtlasUploadCount = root.glyphAtlasUploadCount;
-    snapshot.glyphAtlasEntryCount =
-        root.glyphAtlas.has_value() ? root.glyphAtlas->entryCount() : 0;
-    snapshot.glyphAtlasBytes = root.glyphAtlas.has_value()
-        ? static_cast<quint64>(root.glyphAtlas->textureByteSize())
+    snapshot.glyphAtlasSerial = root.glyphAtlasSerial;
+    snapshot.glyphAtlasEntryCount = root.glyphAtlasResources.has_value()
+        ? root.glyphAtlasResources->atlas.entryCount()
+        : 0;
+    snapshot.glyphAtlasBytes = root.glyphAtlasResources.has_value()
+        ? static_cast<quint64>(
+              root.glyphAtlasResources->atlas.textureByteSize())
         : 0;
     snapshot.rowLayoutCounts = root.rowLayoutCounts;
     snapshot.rowFallbackCellCounts = root.rowFallbackCellCounts;
+    snapshot.rowBatchedGlyphCounts = root.rowBatchedGlyphCounts;
     snapshot.metrics = metrics;
     snapshot.renderFonts = root.fonts;
     snapshot.fontRoleCellCounts = fontRoleCellCounts;
@@ -2030,16 +2129,25 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
         textState.frameRows = frame.rows;
         textState.visibleColumns = visibleColumns;
         textState.visibleRows = visibleRows;
+        textState.glyphBatchEnabled = glyphBatchEnabled;
         textState.alphaBlending = alphaBlending;
 
         const bool rebuildAllText = !root->textState.has_value()
             || *root->textState != textState
-            || root->rowTextNodes.size() != visibleRows;
+            || root->rowTextNodes.size() != visibleRows
+            || root->builtTextRows.size() != visibleRows;
         if (rebuildAllText) {
             root->resetTextRows(visibleRows, metrics.fontProgram->fonts,
                                 glyphBatchEnabled);
             if (glyphBatchEnabled) {
-                (void)root->prepareGlyphAtlas(window(), devicePixelRatio);
+                (void)root->ensureGlyphAtlas({
+                    .window = window(),
+                    .fontProgram = metrics.fontProgram,
+                    .devicePixelRatio = devicePixelRatio,
+                    .graphicsApi = textState.graphicsApi,
+                });
+            } else {
+                root->clearGlyphAtlas();
             }
             root->textState = textState;
         } else {
@@ -2128,7 +2236,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                     || (shapingCursorState.active
                         && shapingCursorState.row == row));
             const bool rebuildRowText = rebuildAllText
-                || root->rowTextNodes.at(row) == nullptr
+                || !root->builtTextRows.testBit(row)
                 || root->builtRowEpochs.at(row) != textRowEpoch
                 || cursorChangedThisRow || shapingCursorChangedThisRow;
             const bool blockCursorChangedThisRow = blockCursorStateChanged
@@ -2142,12 +2250,9 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                 || solidRow.glyphForegrounds.size() != visibleColumns
                 || solidRow.builtEpoch != solidRowEpoch
                 || blockCursorChangedThisRow;
-            QSGTextNode *rowText = rebuildRowText
-                ? root->prepareTextRow(row, window(), gridViewport,
-                                       frame.foreground, alphaBlending)
-                : nullptr;
+            if (rebuildRowText) root->beginTextRowBuild(row);
             QVector<TerminalTextCell> rowTextCells;
-            if (rowText != nullptr) {
+            if (rebuildRowText) {
                 rowTextCells.reserve(visibleColumns);
             }
             if (rebuildRowSolids) {
@@ -2172,9 +2277,10 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
             if (rebuildRowText) {
                 root->rowLayoutCounts[row] = 0;
                 root->rowFallbackCellCounts[row] = 0;
+                root->rowBatchedGlyphCounts[row] = 0;
             }
 #endif
-            if (rebuildRowSolids || rowText != nullptr) {
+            if (rebuildRowSolids || rebuildRowText) {
                 for (int column = 0; column < visibleColumns; ++column) {
                     const qsizetype index =
                         static_cast<qsizetype>(row) * frame.columns + column;
@@ -2380,7 +2486,7 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                         }
                     }
 
-                    if (rowText != nullptr) {
+                    if (rebuildRowText) {
                         rowTextCells.append({
                             .text = cell.text,
                             .font = metrics.fontForText(fontRole, cell.text),
@@ -2401,7 +2507,8 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                     }
                 }
             }
-            if (rowText != nullptr) {
+            bool rowTextComplete = !rebuildRowText;
+            if (rebuildRowText) {
                 const QVector<TerminalTextRun> runs = planTerminalTextRuns(
                     std::span<const TerminalTextCell>(
                         rowTextCells.constData(),
@@ -2413,12 +2520,21 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                     : nullptr;
                 const TerminalTextRowRenderResult result =
                     renderTerminalTextRow(
-                        rowText, glyphBatch,
-                        root->glyphAtlas.has_value()
-                            ? std::addressof(*root->glyphAtlas)
+                        [&] {
+                            return root->ensureTextRow(
+                                row, window(), gridViewport, frame.foreground,
+                                alphaBlending);
+                        },
+                        glyphBatch,
+                        root->glyphAtlasResources.has_value()
+                            ? std::addressof(root->glyphAtlasResources->atlas)
                             : nullptr,
-                        root->glyphAtlasTexture.get(), runs, top, baseline,
-                        cellWidth, devicePixelRatio, alphaBlending);
+                        root->glyphAtlasResources.has_value()
+                            ? root->glyphAtlasResources->texture.get()
+                            : nullptr,
+                        runs, top, baseline, cellWidth, devicePixelRatio,
+                        alphaBlending);
+                rowTextComplete = result.complete;
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
                 root->rowLayoutCounts[row] += result.nativeLayoutCount;
                 root->rowFallbackCellCounts[row] += result.fallbackCellCount;
@@ -2427,13 +2543,12 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                 root->batchedGlyphCount += result.batchedGlyphCount;
                 root->glyphBatchGeometryWriteCount +=
                     result.glyphBatchGeometryWriteCount;
-#else
-                Q_UNUSED(result);
+                root->rowBatchedGlyphCounts[row] = result.batchedGlyphCount;
 #endif
             }
             if (rebuildRowText) {
-                root->builtRowEpochs[row] =
-                    rowText != nullptr ? textRowEpoch : 0;
+                root->builtTextRows.setBit(row, rowTextComplete);
+                root->builtRowEpochs[row] = rowTextComplete ? textRowEpoch : 0;
             }
             if (rebuildRowSolids) {
                 solidRow.builtEpoch = solidRowEpoch;

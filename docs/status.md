@@ -80,9 +80,12 @@ for intentional upgrade procedure.
   records this as blocked upstream rather than planned frontend work.
 - Renderer damage, general text nodes, printable-ASCII glyph batches, and
   cell-derived solid geometry are retained per row on OpenGL and Vulkan. One
-  text-state-scoped compact CPU Alpha8 atlas and explicit RGBA coverage texture
-  are reused across dirty rows; unsafe or complex text and the software
-  renderer retain Qt's general fallback. A host qualification runner combines
+  font/DPR/render-context-scoped compact CPU Alpha8 atlas and explicit RGBA
+  coverage texture are reused across dirty rows and compatible global
+  invalidations. Rows that remain fully batched allocate no native text node;
+  unsafe or complex text creates the Qt fallback lazily and retains it cleared
+  for reuse, while the software renderer retains Qt's general path. A host
+  qualification runner combines
   the full offscreen OpenGL/Vulkan scenario matrix with a real production-window
   swapchain/frame-swap probe and atomic machine-readable evidence. A strict
   baseline comparator validates

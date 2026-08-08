@@ -50,19 +50,23 @@ scenarios rebuild the intended text rows and visit the intended number of solid
 cells, preventing a faster result caused by accidentally skipping work. Text
 telemetry distinguishes layouts submitted to the native Qt text node from
 glyphs emitted by the terminal-owned batch; both paths still begin with
-`QTextLayout` shaping. `search-update` moves one candidate highlight between
-rows and requires two text-row builds and `2 * columns` solid-cell visits per
-frame.
+`QTextLayout` shaping. Before cursor, search, or Kitty measurement, the
+benchmark renders the same cursor-free, search-free, Kitty-free native control
+frame. Scenario work is therefore independent of catalog order and a single
+RenderDoc capture exercises the same retained base as the complete run.
+`search-update` moves one candidate highlight between rows and requires two
+text-row builds and `2 * columns` solid-cell visits per frame.
 `search-selection-update` toggles a candidate between ordinary and selected
 presentation on one row, while `search-clear` toggles one row of highlights on
 and off. Both require one text-row build and `columns` solid-cell visits per
-frame. The software/general fallback retains the native-layout expectations;
-eligible OpenGL/Vulkan ASCII instead requires batched glyphs and no native text
-submissions. Those counts prohibit extra row rebuilds or silent fallback; the
-terminal-pane row-damage tests separately assert the affected row identities
-and retention of every unaffected row. Search-color, geometry, and other global
-style invalidations remain deliberately outside these sparse benchmark
-scenarios.
+frame. These sparse scenarios deliberately use the native control content;
+the explicit ASCII text scenarios instead require batched glyphs and no native
+text submissions on OpenGL/Vulkan. Every scenario validates native submissions,
+batched glyphs, glyph geometry, and atlas churn in addition to its row/layout
+counts, prohibiting extra work or silent path changes. The terminal-pane
+row-damage tests separately assert the affected row identities and retention of
+every unaffected row. Search-color, geometry, and other global style
+invalidations remain deliberately outside these sparse benchmark scenarios.
 
 Use a Release build and compare results only on the same machine, Qt version,
 backend, dimensions, warmup, and iteration count:
@@ -79,13 +83,16 @@ cmake --build --preset release \
     -j"$(nproc)"
 ./build/release/tests/bench-terminal-pane-renderer \
     --graphics-api software --warmup 20 --iterations 200
-QT_QPA_PLATFORM=xcb \
+./build/release/tests/bench-terminal-pane-renderer \
+    --graphics-api software --scenario cursor-only \
+    --warmup 20 --iterations 200
+QT_QPA_PLATFORM=wayland \
     ./build/release/tests/bench-terminal-pane-renderer \
     --graphics-api opengl --warmup 200 --iterations 200
-QT_QPA_PLATFORM=xcb \
+QT_QPA_PLATFORM=wayland \
     ./build/release/tests/bench-terminal-pane-renderer \
     --graphics-api vulkan --warmup 200 --iterations 200
-LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb \
+LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=wayland \
     ./build/release/tests/bench-terminal-pane-renderer \
     --graphics-api opengl --warmup 200 --iterations 200
 ./build/release/tests/bench-terminal-custom-shader-compiler \
@@ -107,6 +114,11 @@ LIBGL_ALWAYS_SOFTWARE=1 \
     --width 640 --height 360 --warmup 10 --iterations 100
 ```
 
+`--scenario NAME` runs one authoritative pane scenario without requiring
+RenderDoc. It uses the same isolated setup as `--renderdoc-capture NAME`, which
+makes it useful for checking a capture workload and its deterministic counters
+before collecting GPU evidence.
+
 The terminal-search benchmark loads a deterministic fixed-width fixture once,
 scrolls to an older quarter of history, and excludes fixture construction from
 all timings. It reports time to the first visible highlight, canonical
@@ -121,15 +133,21 @@ The pane RHI mode separately reports CPU synthetic-update preparation and
 delivery, scene-graph command recording, completion, and total timings, plus
 whole-command-buffer GPU timestamps where supported. Each scenario also reports
 and validates paint and cell-visit counts, native text submissions and cells,
-batched glyphs, glyph-batch geometry writes, atlas uploads, final atlas entries
-and logical GPU atlas bytes at four RGBA bytes per texel, plus Kitty texture
+batched glyphs, glyph-batch geometry writes, atlas uploads and resource identity,
+native fallback-node residency, final atlas entries and logical GPU atlas bytes
+at four RGBA bytes per texel, plus Kitty texture
 uploads, live generation-keyed texture-set cache entries, texture-set
 evictions, placement-node creation/deletion, geometry writes, and node material
-assignments. Atlas entry and byte deltas expose accidental rebuild or eviction;
-the compact CPU Alpha8 staging image is not included in that GPU figure. Untimed
+assignments. Upload count and resource identity expose accidental atlas churn;
+entry and byte deltas describe residency changes but cannot by themselves
+distinguish same-sized recreation. The compact CPU Alpha8 staging image is not
+included in that GPU figure. Untimed
 initialization readbacks first force a printable-ASCII frame through the glyph
 shader, then verify straight-alpha Kitty upload and composition on the selected
-RHI backend. The Kitty cases use 512 placements sharing assets and separately
+RHI backend. The `text-atlas-retained-rebuild` case alternates row-affecting
+palette state on a canonical ASCII frame and requires zero atlas uploads while
+the compatible font/DPR/render context remains live. The Kitty cases use 512
+placements sharing assets and separately
 exercise opaque and translucent first upload, same-snapshot redraw, and same-ID
 replacement, plus opaque movement and eviction.
 Their churn guards require retained redraws to perform no scene-graph work,
@@ -271,11 +289,11 @@ movement, replacement, and eviction cases. On OpenGL and Vulkan the ASCII
 cases exercise the terminal-owned glyph batch, while the ligature cases are a
 deliberate control for the native Qt fallback.
 Capture mode records one frame of the selected scenario on the 120×40 grid
-after warmup and intentionally suppresses its instrumented timings. The output
-texture is named
+after that scenario's own untimed base setup and warmup, and intentionally
+suppresses its instrumented timings. The output texture is named
 `ghostty-qt terminal-pane benchmark output`. Pass `opengl` as the first
 argument to select it instead; Vulkan is preferred. Set
-`QT_QPA_PLATFORM=xcb` or `wayland` before the command when automatic platform
+Set `QT_QPA_PLATFORM=wayland` before the command when automatic platform
 selection is unsuitable.
 
 ### Native Wayland renderer qualification

@@ -176,6 +176,10 @@ struct ScenarioResult {
     qsizetype expectedFinalKittyTextureSetCount = 0;
     quint64 finalKittyTextureBytes = 0;
     quint64 expectedFinalKittyTextureBytes = 0;
+    qsizetype finalNativeTextNodeCount = 0;
+    std::optional<qsizetype> expectedFinalNativeTextNodeCount;
+    quint64 finalGlyphAtlasSerial = 0;
+    std::optional<quint64> expectedFinalGlyphAtlasSerial;
     qsizetype finalGlyphAtlasEntryCount = 0;
     quint64 finalGlyphAtlasBytes = 0;
     int measuredFrames = 0;
@@ -549,7 +553,9 @@ public:
             {.paintSerial = 1,
              .solidCellVisits = static_cast<quint64>(grid_.columns),
              .textRowBuilds = 1,
-             .textLayouts = 1},
+             .textLayouts = 1,
+             .nativeTextSubmissions = 1,
+             .nativeTextCells = nativeControlCellsPerRow()},
             0, 0, {},
             [this, &odd] {
                 odd = !odd;
@@ -608,19 +614,72 @@ public:
                                    capture, error);
     }
 
+    ScenarioResult textAtlasRetainedRebuild(int warmupIterations,
+                                            int measuredIterations,
+                                            RenderDocCapture *capture,
+                                            QString *error)
+    {
+        clearSearch();
+        const QStringView pattern = u"ab+cd=ef+gh-";
+
+        // Establish this scenario's own row topology. The second palette is a
+        // guaranteed text-state transition regardless of state inherited from
+        // a previously measured scenario.
+        publishTextFrame(pattern, false);
+        if (!renderUntimed(error)) return {};
+        publishTextPalette(true);
+        if (!renderUntimed(error)) return {};
+
+        const TerminalPaneRenderProbeSnapshot baseline =
+            terminalPaneRenderProbe(pane_);
+        const bool expectBatch = glyphBatchExpected();
+        const quint64 rows = static_cast<quint64>(grid_.rows);
+        const quint64 cells = static_cast<quint64>(grid_.columns) * rows;
+        bool alternatePalette = true;
+        ScenarioResult result = measure(
+            QStringLiteral("text-atlas-retained-rebuild"), warmupIterations,
+            measuredIterations,
+            {.paintSerial = 1,
+             .solidCellVisits = cells,
+             .textRowBuilds = rows,
+             .textLayouts = expectBatch ? 0 : rows,
+             .nativeTextSubmissions = expectBatch ? 0 : rows,
+             .nativeTextCells = expectBatch ? 0 : cells,
+             .batchedGlyphs = expectBatch ? cells : 0,
+             .glyphBatchGeometryWrites = expectBatch ? rows : 0},
+            0, 0, {},
+            [this, &alternatePalette] {
+                alternatePalette = !alternatePalette;
+                publishTextPalette(alternatePalette);
+            },
+            capture, error);
+        if (result.name.isEmpty()) return result;
+
+        result.expectedFinalNativeTextNodeCount =
+            expectBatch ? qsizetype{0} : static_cast<qsizetype>(grid_.rows);
+        result.expectedFinalGlyphAtlasSerial = baseline.glyphAtlasSerial;
+
+        return result;
+    }
+
     ScenarioResult cursorOnly(int warmupIterations, int measuredIterations,
                               RenderDocCapture *capture, QString *error)
     {
+        if (!prepareNativeControlFrame(error)) return {};
         cursorRow_ = 0;
         publishCursor();
         if (!renderUntimed(error)) return {};
+
+        const quint64 nativeCells = 2 * nativeControlCellsPerRow();
 
         return measure(
             QStringLiteral("cursor-only"), warmupIterations, measuredIterations,
             {.paintSerial = 1,
              .solidCellVisits = static_cast<quint64>(2 * grid_.columns),
              .textRowBuilds = 2,
-             .textLayouts = 4},
+             .textLayouts = 3,
+             .nativeTextSubmissions = 3,
+             .nativeTextCells = nativeCells},
             0, 0, {},
             [this] {
                 cursorRow_ = cursorRow_ == 0 ? grid_.rows - 1 : 0;
@@ -641,7 +700,10 @@ public:
              .solidCellVisits =
                  static_cast<quint64>(grid_.columns * grid_.rows),
              .textRowBuilds = static_cast<quint64>(grid_.rows),
-             .textLayouts = static_cast<quint64>(grid_.rows)},
+             .textLayouts = static_cast<quint64>(grid_.rows),
+             .nativeTextSubmissions = static_cast<quint64>(grid_.rows),
+             .nativeTextCells =
+                 nativeControlCellsPerRow() * static_cast<quint64>(grid_.rows)},
             0, 0, {},
             [this, &odd] {
                 odd = !odd;
@@ -653,6 +715,7 @@ public:
     ScenarioResult searchUpdate(int warmupIterations, int measuredIterations,
                                 RenderDocCapture *capture, QString *error)
     {
+        if (!prepareNativeControlFrame(error)) return {};
         publishSearch(0);
         if (!renderUntimed(error)) return {};
         int row = 0;
@@ -662,7 +725,9 @@ public:
             {.paintSerial = 1,
              .solidCellVisits = static_cast<quint64>(2 * grid_.columns),
              .textRowBuilds = 2,
-             .textLayouts = 3},
+             .textLayouts = 3,
+             .nativeTextSubmissions = 3,
+             .nativeTextCells = 2 * nativeControlCellsPerRow()},
             0, 0, {},
             [this, &row] {
                 row = row == 1 ? 2 : 1;
@@ -676,6 +741,7 @@ public:
                                          RenderDocCapture *capture,
                                          QString *error)
     {
+        if (!prepareNativeControlFrame(error)) return {};
         constexpr int row = 1;
         publishSearch(row);
         if (!renderUntimed(error)) return {};
@@ -686,7 +752,9 @@ public:
             {.paintSerial = 1,
              .solidCellVisits = static_cast<quint64>(grid_.columns),
              .textRowBuilds = 1,
-             .textLayouts = 2},
+             .textLayouts = 2,
+             .nativeTextSubmissions = 2,
+             .nativeTextCells = nativeControlCellsPerRow()},
             0, 0, {},
             [this, &selected] {
                 selected = !selected;
@@ -698,6 +766,7 @@ public:
     ScenarioResult searchClear(int warmupIterations, int measuredIterations,
                                RenderDocCapture *capture, QString *error)
     {
+        if (!prepareNativeControlFrame(error)) return {};
         constexpr int row = 1;
         return measure(
             QStringLiteral("search-clear"), warmupIterations,
@@ -705,7 +774,9 @@ public:
             {.paintSerial = 1,
              .solidCellVisits = static_cast<quint64>(grid_.columns),
              .textRowBuilds = 1,
-             .textLayouts = 1},
+             .textLayouts = 1,
+             .nativeTextSubmissions = 1,
+             .nativeTextCells = nativeControlCellsPerRow()},
             0, 0,
             [this, error] {
                 publishSearch(row);
@@ -739,7 +810,7 @@ public:
                                             RenderDocCapture *capture,
                                             QString *error)
     {
-        clearSearch();
+        if (!prepareNativeControlFrame(error)) return {};
         quint64 generation = ++kittyGeneration_;
         std::shared_ptr<const TerminalKittyGraphicsSnapshot> nextSnapshot;
         return measure(
@@ -791,7 +862,7 @@ public:
                                                RenderDocCapture *capture,
                                                QString *error)
     {
-        clearSearch();
+        if (!prepareNativeControlFrame(error)) return {};
         const auto snapshot = makeKittySnapshot(
             makeKittyImage(++kittyGeneration_, QColor(48, 144, 208), opacity),
             0);
@@ -806,7 +877,7 @@ public:
     ScenarioResult kittyMovement(int warmupIterations, int measuredIterations,
                                  RenderDocCapture *capture, QString *error)
     {
-        clearSearch();
+        if (!prepareNativeControlFrame(error)) return {};
         const auto asset =
             makeKittyImage(++kittyGeneration_, QColor(64, 176, 112));
         const auto left = makeKittySnapshot(asset, 0);
@@ -854,7 +925,7 @@ public:
                                             RenderDocCapture *capture,
                                             QString *error)
     {
-        clearSearch();
+        if (!prepareNativeControlFrame(error)) return {};
         const auto first = makeKittySnapshot(
             makeKittyImage(++kittyGeneration_, QColor(224, 96, 48), opacity),
             0);
@@ -883,7 +954,7 @@ public:
     ScenarioResult kittyEviction(int warmupIterations, int measuredIterations,
                                  RenderDocCapture *capture, QString *error)
     {
-        clearSearch();
+        if (!prepareNativeControlFrame(error)) return {};
         quint64 generation = ++kittyGeneration_;
         return measure(
             QStringLiteral("kitty-eviction"), warmupIterations,
@@ -904,6 +975,32 @@ public:
     }
 
 private:
+    [[nodiscard]] quint64 nativeControlCellsPerRow() const noexcept
+    {
+        constexpr int glyphInterval = 16;
+        return static_cast<quint64>((grid_.columns + glyphInterval - 1)
+                                    / glyphInterval);
+    }
+
+    bool prepareNativeControlFrame(QString *error)
+    {
+        clearSearch();
+        publishFullFrame(false);
+        publishKitty(nullptr);
+        return renderUntimed(error);
+    }
+
+    bool glyphBatchExpected() const
+    {
+        bool disabledParsed = false;
+        const int disabledValue = qEnvironmentVariableIntValue(
+            "GHOSTTY_QT_DISABLE_GLYPH_BATCH", &disabledParsed);
+        const bool batchDisabled = disabledParsed
+            ? disabledValue != 0
+            : qEnvironmentVariableIsSet("GHOSTTY_QT_DISABLE_GLYPH_BATCH");
+        return graphicsApi_ != GraphicsApi::Software && !batchDisabled;
+    }
+
     ScenarioResult
     textShapingScenario(const QString &name, QStringView firstPattern,
                         QStringView secondPattern, bool fullFrame,
@@ -915,14 +1012,7 @@ private:
         bool alternate = false;
         const quint64 rebuiltRows =
             static_cast<quint64>(fullFrame ? grid_.rows : 1);
-        bool disabledParsed = false;
-        const int disabledValue = qEnvironmentVariableIntValue(
-            "GHOSTTY_QT_DISABLE_GLYPH_BATCH", &disabledParsed);
-        const bool batchDisabled = disabledParsed
-            ? disabledValue != 0
-            : qEnvironmentVariableIsSet("GHOSTTY_QT_DISABLE_GLYPH_BATCH");
-        const bool expectBatch = batchCandidate
-            && graphicsApi_ != GraphicsApi::Software && !batchDisabled;
+        const bool expectBatch = batchCandidate && glyphBatchExpected();
         const quint64 cells = static_cast<quint64>(grid_.columns) * rebuiltRows;
         return measure(
             name, warmupIterations, measuredIterations,
@@ -1079,6 +1169,9 @@ private:
         update.background = Qt::black;
         update.cursorColor = QColor(QStringLiteral("#f0f0f0"));
         update.cursorColorExplicit = true;
+        update.cursorChanged = true;
+        update.cursorVisible = false;
+        update.cursorBlinking = false;
         update.contentRevision = ++revision_;
         const QColor first = alternate ? QColor(QStringLiteral("#18222c"))
                                        : QColor(QStringLiteral("#202a34"));
@@ -1102,21 +1195,56 @@ private:
         controller_->terminalUpdated(update);
     }
 
-    void publishTextFrame(QStringView pattern)
+    QVector<QColor> textPalette(bool alternate) const
+    {
+        QVector<QColor> result;
+        result.reserve(16);
+        for (int index = 0; index < 16; ++index) {
+            const int offset = alternate ? 29 : 0;
+            result.append(QColor::fromRgb((index * 47 + offset) & 0xff,
+                                          (index * 83 + offset) & 0xff,
+                                          (index * 131 + offset) & 0xff));
+        }
+        return result;
+    }
+
+    void publishTextFrame(QStringView pattern,
+                          std::optional<bool> paletteVariant = std::nullopt)
     {
         TerminalUpdate update;
         update.columns = grid_.columns;
         update.rows = grid_.rows;
         update.fullFrame = true;
-        update.foreground = QColor(QStringLiteral("#d8dee9"));
+        update.foreground = paletteVariant.value_or(false)
+            ? QColor(QStringLiteral("#eceff4"))
+            : QColor(QStringLiteral("#d8dee9"));
         update.background = Qt::black;
         update.cursorColor = QColor(QStringLiteral("#f0f0f0"));
         update.cursorColorExplicit = true;
+        if (paletteVariant.has_value()) {
+            update.palette = textPalette(*paletteVariant);
+        }
         update.contentRevision = ++revision_;
         update.dirtyRows.reserve(grid_.rows);
         for (int row = 0; row < grid_.rows; ++row) {
             update.dirtyRows.append(makeTextRow(row, pattern));
         }
+        controller_->terminalUpdated(update);
+    }
+
+    void publishTextPalette(bool alternate)
+    {
+        TerminalUpdate update;
+        update.columns = grid_.columns;
+        update.rows = grid_.rows;
+        update.colorsChanged = true;
+        update.foreground = alternate ? QColor(QStringLiteral("#eceff4"))
+                                      : QColor(QStringLiteral("#d8dee9"));
+        update.background = Qt::black;
+        update.cursorColor = QColor(QStringLiteral("#f0f0f0"));
+        update.cursorColorExplicit = true;
+        update.palette = textPalette(alternate);
+        update.contentRevision = ++revision_;
         controller_->terminalUpdated(update);
     }
 
@@ -1392,6 +1520,8 @@ private:
         ProbeDelta accumulatedDelta;
         qsizetype finalTextureSetCount = 0;
         quint64 finalTextureBytes = 0;
+        qsizetype finalNativeTextNodeCount = 0;
+        quint64 finalGlyphAtlasSerial = 0;
         qsizetype finalGlyphAtlasEntryCount = 0;
         quint64 finalGlyphAtlasBytes = 0;
         for (int iteration = 0; iteration < frameCount; ++iteration) {
@@ -1421,6 +1551,8 @@ private:
             accumulatedDelta += after - before;
             finalTextureSetCount = after.kittyGraphicsTextureCount;
             finalTextureBytes = after.kittyGraphicsTextureBytes;
+            finalNativeTextNodeCount = after.nativeTextNodeCount;
+            finalGlyphAtlasSerial = after.glyphAtlasSerial;
             finalGlyphAtlasEntryCount = after.glyphAtlasEntryCount;
             finalGlyphAtlasBytes = after.glyphAtlasBytes;
             if (timing.cpuUpdateNanoseconds.has_value()) {
@@ -1466,6 +1598,8 @@ private:
                 expectedFinalKittyTextureSetCount,
             .finalKittyTextureBytes = finalTextureBytes,
             .expectedFinalKittyTextureBytes = expectedFinalKittyTextureBytes,
+            .finalNativeTextNodeCount = finalNativeTextNodeCount,
+            .finalGlyphAtlasSerial = finalGlyphAtlasSerial,
             .finalGlyphAtlasEntryCount = finalGlyphAtlasEntryCount,
             .finalGlyphAtlasBytes = finalGlyphAtlasBytes,
             .measuredFrames = frameCount,
@@ -1545,6 +1679,8 @@ const QVector<std::pair<QString, ScenarioFunction>> &scenarioFunctions()
          &RendererBenchmark::textAsciiFullFrame},
         {QStringLiteral("text-ligature-full-frame"),
          &RendererBenchmark::textLigatureFullFrame},
+        {QStringLiteral("text-atlas-retained-rebuild"),
+         &RendererBenchmark::textAtlasRetainedRebuild},
         {QStringLiteral("cursor-only"), &RendererBenchmark::cursorOnly},
         {QStringLiteral("full-invalidation"),
          &RendererBenchmark::fullInvalidation},
@@ -1629,10 +1765,12 @@ bool printResult(GridSize grid, const ScenarioResult &result,
            << " native_text_submissions="
            << result.probeDelta.nativeTextSubmissions
            << " native_text_cells=" << result.probeDelta.nativeTextCells
+           << " native_text_nodes_final=" << result.finalNativeTextNodeCount
            << " batched_glyphs=" << result.probeDelta.batchedGlyphs
            << " glyph_batch_geometry_writes="
            << result.probeDelta.glyphBatchGeometryWrites
            << " glyph_atlas_uploads=" << result.probeDelta.glyphAtlasUploads
+           << " glyph_atlas_serial_final=" << result.finalGlyphAtlasSerial
            << " glyph_atlas_entry_count_delta="
            << result.probeDelta.glyphAtlasEntryCount
            << " glyph_atlas_entry_count_final="
@@ -1675,36 +1813,46 @@ bool printResult(GridSize grid, const ScenarioResult &result,
     requireEqual(result.probeDelta.textFallbackCells,
                  result.expectedProbeDelta.textFallbackCells,
                  u"text fallback-cell count");
-    if (result.name.startsWith(QLatin1StringView("text-"))) {
-        requireEqual(result.probeDelta.nativeTextSubmissions,
-                     result.expectedProbeDelta.nativeTextSubmissions,
-                     u"native text submission count");
-        requireEqual(result.probeDelta.nativeTextCells,
-                     result.expectedProbeDelta.nativeTextCells,
-                     u"native text cell count");
-        requireEqual(result.probeDelta.batchedGlyphs,
-                     result.expectedProbeDelta.batchedGlyphs,
-                     u"batched glyph count");
-        requireEqual(result.probeDelta.glyphBatchGeometryWrites,
-                     result.expectedProbeDelta.glyphBatchGeometryWrites,
-                     u"glyph-batch geometry write count");
-        requireEqual(result.probeDelta.glyphAtlasUploads,
-                     result.expectedProbeDelta.glyphAtlasUploads,
-                     u"glyph-atlas upload count");
-        requireEqual(result.probeDelta.glyphAtlasEntryCount,
-                     result.expectedProbeDelta.glyphAtlasEntryCount,
-                     u"glyph-atlas entry-count delta");
-        requireEqual(result.probeDelta.glyphAtlasBytes,
-                     result.expectedProbeDelta.glyphAtlasBytes,
-                     u"glyph-atlas byte delta");
-        if (result.expectedProbeDelta.batchedGlyphs > 0
-            && (result.finalGlyphAtlasEntryCount <= 0
-                || result.finalGlyphAtlasBytes == 0)) {
-            output << "missing resident glyph atlas for " << result.name
-                   << ": entries=" << result.finalGlyphAtlasEntryCount
-                   << " bytes=" << result.finalGlyphAtlasBytes << '\n';
-            valid = false;
-        }
+    requireEqual(result.probeDelta.nativeTextSubmissions,
+                 result.expectedProbeDelta.nativeTextSubmissions,
+                 u"native text submission count");
+    requireEqual(result.probeDelta.nativeTextCells,
+                 result.expectedProbeDelta.nativeTextCells,
+                 u"native text cell count");
+    requireEqual(result.probeDelta.batchedGlyphs,
+                 result.expectedProbeDelta.batchedGlyphs,
+                 u"batched glyph count");
+    requireEqual(result.probeDelta.glyphBatchGeometryWrites,
+                 result.expectedProbeDelta.glyphBatchGeometryWrites,
+                 u"glyph-batch geometry write count");
+    requireEqual(result.probeDelta.glyphAtlasUploads,
+                 result.expectedProbeDelta.glyphAtlasUploads,
+                 u"glyph-atlas upload count");
+    requireEqual(result.probeDelta.glyphAtlasEntryCount,
+                 result.expectedProbeDelta.glyphAtlasEntryCount,
+                 u"glyph-atlas entry-count delta");
+    requireEqual(result.probeDelta.glyphAtlasBytes,
+                 result.expectedProbeDelta.glyphAtlasBytes,
+                 u"glyph-atlas byte delta");
+    if (result.expectedProbeDelta.batchedGlyphs > 0
+        && (result.finalGlyphAtlasSerial == 0
+            || result.finalGlyphAtlasEntryCount <= 0
+            || result.finalGlyphAtlasBytes == 0)) {
+        output << "missing resident glyph atlas for " << result.name
+               << ": serial=" << result.finalGlyphAtlasSerial
+               << " entries=" << result.finalGlyphAtlasEntryCount
+               << " bytes=" << result.finalGlyphAtlasBytes << '\n';
+        valid = false;
+    }
+    if (result.expectedFinalNativeTextNodeCount.has_value()) {
+        requireEqual(result.finalNativeTextNodeCount,
+                     *result.expectedFinalNativeTextNodeCount,
+                     u"final native text-node count");
+    }
+    if (result.expectedFinalGlyphAtlasSerial.has_value()) {
+        requireEqual(result.finalGlyphAtlasSerial,
+                     *result.expectedFinalGlyphAtlasSerial,
+                     u"final glyph-atlas serial");
     }
     requireEqual(result.probeDelta.kittyTextureUploads,
                  result.expectedProbeDelta.kittyTextureUploads,
@@ -1737,7 +1885,7 @@ bool printResult(GridSize grid, const ScenarioResult &result,
 }
 
 int runGrid(GridSize grid, GraphicsApi graphicsApi, int warmupIterations,
-            int measuredIterations, const QString &captureScenario,
+            int measuredIterations, const QString &selectedScenario,
             RenderDocCapture *capture, QTextStream &output)
 {
     QString error;
@@ -1774,7 +1922,7 @@ int runGrid(GridSize grid, GraphicsApi graphicsApi, int warmupIterations,
     output << '\n';
 
     for (const auto &[name, function] : scenarioFunctions()) {
-        if (!captureScenario.isEmpty() && name != captureScenario) continue;
+        if (!selectedScenario.isEmpty() && name != selectedScenario) continue;
         const ScenarioResult result = (benchmark.*function)(
             warmupIterations, measuredIterations, capture, &error);
         if (result.name.isEmpty()) {
@@ -1823,6 +1971,10 @@ int main(int argc, char *argv[])
         QStringLiteral("renderdoc-capture"),
         QStringLiteral("Capture one named scenario after warmup."),
         QStringLiteral("scenario"));
+    const QCommandLineOption scenarioOption(
+        QStringLiteral("scenario"),
+        QStringLiteral("Run one named scenario without a RenderDoc capture."),
+        QStringLiteral("scenario"));
     const QCommandLineOption renderDocCapturePathOption(
         QStringLiteral("renderdoc-capture-path"),
         QStringLiteral("UTF-8 RenderDoc capture filename template."),
@@ -1834,6 +1986,7 @@ int main(int argc, char *argv[])
     parser.addOption(warmupOption);
     parser.addOption(iterationsOption);
     parser.addOption(renderDocCaptureOption);
+    parser.addOption(scenarioOption);
     parser.addOption(renderDocCapturePathOption);
     parser.addOption(listScenariosOption);
     parser.process(application);
@@ -1887,22 +2040,30 @@ int main(int argc, char *argv[])
 
     const QString captureScenario =
         parser.value(renderDocCaptureOption).trimmed();
-    if (!captureScenario.isEmpty()) {
+    const QString requestedScenario = parser.value(scenarioOption).trimmed();
+    if (!captureScenario.isEmpty() && !requestedScenario.isEmpty()) {
+        QTextStream(stderr)
+            << "--scenario and --renderdoc-capture are mutually exclusive\n";
+        return 2;
+    }
+    const QString selectedScenario =
+        captureScenario.isEmpty() ? requestedScenario : captureScenario;
+    if (!selectedScenario.isEmpty()) {
         const auto found = std::ranges::find_if(
-            scenarioFunctions(), [&captureScenario](const auto &entry) {
-                return entry.first == captureScenario;
+            scenarioFunctions(), [&selectedScenario](const auto &entry) {
+                return entry.first == selectedScenario;
             });
         if (found == scenarioFunctions().cend()) {
             QTextStream(stderr)
-                << "unknown RenderDoc scenario " << captureScenario << '\n';
+                << "unknown scenario " << selectedScenario << '\n';
             return 2;
         }
-        if (*graphicsApi == GraphicsApi::Software) {
-            QTextStream(stderr)
-                << "RenderDoc capture requires opengl or vulkan\n";
-            return 2;
-        }
-    } else if (parser.isSet(renderDocCapturePathOption)) {
+    }
+    if (!captureScenario.isEmpty() && *graphicsApi == GraphicsApi::Software) {
+        QTextStream(stderr) << "RenderDoc capture requires opengl or vulkan\n";
+        return 2;
+    }
+    if (captureScenario.isEmpty() && parser.isSet(renderDocCapturePathOption)) {
         QTextStream(stderr)
             << "renderdoc-capture-path requires renderdoc-capture\n";
         return 2;
@@ -1949,7 +2110,7 @@ int main(int argc, char *argv[])
           };
     for (const GridSize grid : grids) {
         const int result = runGrid(grid, *graphicsApi, *warmup, *iterations,
-                                   captureScenario, capture.get(), output);
+                                   selectedScenario, capture.get(), output);
         if (result != 0) return result;
     }
     if (capture != nullptr) {

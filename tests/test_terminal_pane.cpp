@@ -19,6 +19,7 @@
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFocusEvent>
 #include <QFontDatabase>
@@ -487,6 +488,7 @@ private Q_SLOTS:
     void runsCursorBlinkTimerOnlyWhenNeeded();
     void defaultCursorBlinkPublishesBothRenderPhases();
     void retainsMainTextRowsAcrossIncrementalUpdates();
+    void retainsGlyphAtlasAndLazilyCreatesNativeTextRows();
     void invalidatesOnlyChangedSearchDecorationRows();
     void rendersAndRetainsKittyGraphics();
     void reloadsShapingAndTracksLogicalCursorRows();
@@ -2271,6 +2273,267 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
 
     window.close();
     delete pane;
+}
+
+void TerminalPaneTest::retainsGlyphAtlasAndLazilyCreatesNativeTextRows()
+{
+    if (qEnvironmentVariableIntValue("GHOSTTY_QT_EXPECT_RHI") == 0) {
+        QSKIP("OpenGL RHI integration runs through the Wayland wrapper");
+    }
+
+    qRegisterMetaType<TerminalUpdate>();
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+
+    const QString fontPath =
+        QFINDTESTDATA("../ghostty/src/font/res/Inconsolata-Regular.ttf");
+    QVERIFY2(!fontPath.isEmpty(), "Pinned glyph-batch test font was not found");
+    const int fontId = QFontDatabase::addApplicationFont(fontPath);
+    QVERIFY2(fontId >= 0, "Unable to load pinned glyph-batch test font");
+    const auto removeFont = qScopeGuard(
+        [fontId] { (void)QFontDatabase::removeApplicationFont(fontId); });
+    const QStringList families = QFontDatabase::applicationFontFamilies(fontId);
+    QVERIFY(!families.isEmpty());
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.typography.pointSize = 16.0;
+    options.typography.face(TerminalFontRole::Regular).families = {
+        families.constFirst(),
+    };
+    options.appearance.foregroundColor = Qt::white;
+    options.appearance.backgroundColor = Qt::black;
+
+    constexpr int columns = 6;
+    constexpr int rows = 3;
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(qCeil(metrics.cellWidth * columns),
+                  qCeil(metrics.cellHeight * rows));
+    auto pane = std::make_unique<TerminalPane>(
+        options, window.contentItem(), std::nullopt,
+        TerminalSessionStartMode::Deferred);
+    pane->setSize(window.size());
+    auto *const controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    window.show();
+    QElapsedTimer exposureTimer;
+    exposureTimer.start();
+    while (!window.isExposed() && exposureTimer.elapsed() < 3000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        QTest::qWait(10);
+    }
+    if (!window.isExposed()) {
+        QSKIP("platform cannot expose the requested OpenGL RHI window");
+    }
+
+    TerminalUpdate full;
+    full.columns = columns;
+    full.rows = rows;
+    full.fullFrame = true;
+    full.colorsChanged = true;
+    full.foreground = Qt::white;
+    full.background = Qt::black;
+    full.cursorColor = Qt::white;
+    full.cursorVisible = false;
+    full.contentRevision = 1;
+    for (int row = 0; row < rows; ++row) {
+        TerminalRowUpdate rowUpdate;
+        rowUpdate.row = row;
+        rowUpdate.cells.resize(columns);
+        for (TerminalCell &cell : rowUpdate.cells) {
+            cell.text = QString(QChar(u'A' + row));
+            cell.foreground = Qt::white;
+            cell.background = Qt::black;
+        }
+        full.dirtyRows.append(std::move(rowUpdate));
+    }
+    controller->terminalUpdated(full);
+
+    const QImage initialImage = window.grabWindow();
+    QVERIFY(!initialImage.isNull());
+    const QSGRendererInterface::GraphicsApi graphicsApi =
+        window.rendererInterface()->graphicsApi();
+    if (graphicsApi != QSGRendererInterface::OpenGL) {
+        QSKIP("platform cannot initialize the requested OpenGL RHI context");
+    }
+    QVERIFY(QSGRendererInterface::isApiRhiBased(graphicsApi));
+
+    const TerminalPaneRenderProbeSnapshot initial =
+        terminalPaneRenderProbe(pane.get());
+    QVERIFY(initial.glyphAtlasSerial != 0);
+    QVERIFY(initial.glyphAtlasEntryCount > 0);
+    QVERIFY(initial.glyphAtlasBytes > 0);
+    QVERIFY(initial.glyphAtlasUploadCount > 0);
+    QCOMPARE(initial.nativeTextNodeCount, qsizetype{0});
+    QCOMPARE(initial.rowNodeSerials, QVector<quint64>(rows, 0));
+    QCOMPARE(initial.rowLayoutCounts, QVector<quint64>(rows, 0));
+    QCOMPARE(initial.rowFallbackCellCounts, QVector<quint64>(rows, 0));
+    QCOMPARE(initial.rowBatchedGlyphCounts, QVector<quint64>(rows, columns));
+    QCOMPARE(initial.nativeTextSubmissionCount, quint64{0});
+    QCOMPARE(initial.nativeTextCellCount, quint64{0});
+    QCOMPARE(initial.batchedGlyphCount, static_cast<quint64>(rows * columns));
+
+    pane->update();
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot unchanged =
+        terminalPaneRenderProbe(pane.get());
+    QCOMPARE(unchanged.glyphAtlasSerial, initial.glyphAtlasSerial);
+    QCOMPARE(unchanged.glyphAtlasUploadCount, initial.glyphAtlasUploadCount);
+    QCOMPARE(unchanged.rowBuildCounts, initial.rowBuildCounts);
+    QCOMPARE(unchanged.rowNodeSerials, initial.rowNodeSerials);
+    QCOMPARE(unchanged.rowLayoutCounts, initial.rowLayoutCounts);
+    QCOMPARE(unchanged.rowBatchedGlyphCounts, initial.rowBatchedGlyphCounts);
+    QCOMPARE(unchanged.glyphBatchGeometryWriteCount,
+             initial.glyphBatchGeometryWriteCount);
+
+    TerminalUpdate fallback;
+    fallback.columns = columns;
+    fallback.rows = rows;
+    fallback.contentRevision = 2;
+    TerminalRowUpdate fallbackRow;
+    fallbackRow.row = 1;
+    fallbackRow.cells.resize(columns);
+    for (TerminalCell &cell : fallbackRow.cells) {
+        cell.text = QString(QChar(0x2588));
+        cell.foreground = Qt::red;
+        cell.background = Qt::black;
+    }
+    fallback.dirtyRows.append(std::move(fallbackRow));
+    controller->terminalUpdated(fallback);
+
+    const QImage fallbackImage = window.grabWindow();
+    QVERIFY(!fallbackImage.isNull());
+    const TerminalPaneRenderProbeSnapshot native =
+        terminalPaneRenderProbe(pane.get());
+    QCOMPARE(native.glyphAtlasSerial, initial.glyphAtlasSerial);
+    QCOMPARE(native.glyphAtlasUploadCount, initial.glyphAtlasUploadCount);
+    QCOMPARE(native.nativeTextNodeCount, qsizetype{1});
+    QCOMPARE(native.rowNodeSerials.at(0), quint64{0});
+    QVERIFY(native.rowNodeSerials.at(1) != 0);
+    QCOMPARE(native.rowNodeSerials.at(2), quint64{0});
+    QCOMPARE(native.rowLayoutCounts, QVector<quint64>({0, 1, 0}));
+    QCOMPARE(native.rowFallbackCellCounts, QVector<quint64>(rows, 0));
+    QCOMPARE(native.rowBatchedGlyphCounts,
+             QVector<quint64>({columns, 0, columns}));
+    QCOMPARE(native.nativeTextSubmissionCount,
+             initial.nativeTextSubmissionCount + 1);
+    QCOMPARE(native.nativeTextCellCount, initial.nativeTextCellCount + columns);
+
+    const auto layout = terminalViewportLayout({
+        .surfaceSize = pane->size(),
+        .cellSize = QSizeF(native.metrics.cellWidth, native.metrics.cellHeight),
+        .devicePixelRatio = window.devicePixelRatio(),
+        .padding = options.padding,
+    });
+    QVERIFY(layout.has_value());
+    const QPointF fallbackCenter(
+        layout->gridRect.left() + native.metrics.cellWidth / 2.0,
+        layout->gridRect.top() + native.metrics.cellHeight * 1.5);
+    QVERIFY2(
+        approximatelyEqual(
+            itemPixel(window, *pane, fallbackImage, fallbackCenter), Qt::red),
+        "The guaranteed native block-glyph fallback did not render");
+
+    TerminalUpdate restore;
+    restore.columns = columns;
+    restore.rows = rows;
+    restore.contentRevision = 3;
+    TerminalRowUpdate restoredRow;
+    restoredRow.row = 1;
+    restoredRow.cells.resize(columns);
+    for (TerminalCell &cell : restoredRow.cells) {
+        cell.text = QStringLiteral("B");
+        cell.foreground = Qt::white;
+        cell.background = Qt::black;
+    }
+    restore.dirtyRows.append(std::move(restoredRow));
+    controller->terminalUpdated(restore);
+
+    const QImage restoredImage = window.grabWindow();
+    QVERIFY(!restoredImage.isNull());
+    const TerminalPaneRenderProbeSnapshot restored =
+        terminalPaneRenderProbe(pane.get());
+    QCOMPARE(restored.glyphAtlasSerial, initial.glyphAtlasSerial);
+    QCOMPARE(restored.glyphAtlasUploadCount, initial.glyphAtlasUploadCount);
+    QCOMPARE(restored.nativeTextNodeCount, qsizetype{1});
+    QCOMPARE(restored.rowLayoutCounts, QVector<quint64>(rows, 0));
+    QCOMPARE(restored.rowFallbackCellCounts, QVector<quint64>(rows, 0));
+    QCOMPARE(restored.rowBatchedGlyphCounts, QVector<quint64>(rows, columns));
+    QCOMPARE(restored.rowNodeSerials.at(1), native.rowNodeSerials.at(1));
+    QVERIFY2(
+        !approximatelyEqual(
+            itemPixel(window, *pane, restoredImage, fallbackCenter), Qt::red),
+        "The reusable native text node retained stale fallback glyphs");
+
+    TerminalUpdate colors;
+    colors.columns = columns;
+    colors.rows = rows;
+    colors.colorsChanged = true;
+    colors.foreground = Qt::white;
+    colors.background = Qt::black;
+    colors.cursorColor = Qt::white;
+    colors.palette = {QColor(QStringLiteral("#112233"))};
+    colors.contentRevision = 4;
+    controller->terminalUpdated(colors);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot paletteChanged =
+        terminalPaneRenderProbe(pane.get());
+    QCOMPARE(paletteChanged.glyphAtlasSerial, initial.glyphAtlasSerial);
+    QCOMPARE(paletteChanged.glyphAtlasUploadCount,
+             initial.glyphAtlasUploadCount);
+    QCOMPARE(paletteChanged.nativeTextNodeCount, qsizetype{0});
+    QCOMPARE(paletteChanged.rowLayoutCounts, QVector<quint64>(rows, 0));
+    QCOMPARE(paletteChanged.rowBatchedGlyphCounts,
+             QVector<quint64>(rows, columns));
+
+    LaunchOptions faintChanged = options;
+    faintChanged.appearance.faintOpacity = 0.75;
+    pane->applyRuntimeOptions(faintChanged);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot faint =
+        terminalPaneRenderProbe(pane.get());
+    QCOMPARE(faint.glyphAtlasSerial, initial.glyphAtlasSerial);
+    QCOMPARE(faint.glyphAtlasUploadCount, initial.glyphAtlasUploadCount);
+    QCOMPARE(faint.nativeTextNodeCount, qsizetype{0});
+    QCOMPARE(faint.rowLayoutCounts, QVector<quint64>(rows, 0));
+
+    pane->setWidth(std::max(1.0, pane->width() - initial.metrics.cellWidth));
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot gridChanged =
+        terminalPaneRenderProbe(pane.get());
+    QCOMPARE(gridChanged.glyphAtlasSerial, initial.glyphAtlasSerial);
+    QCOMPARE(gridChanged.glyphAtlasUploadCount, initial.glyphAtlasUploadCount);
+    QCOMPARE(gridChanged.nativeTextNodeCount, qsizetype{0});
+    QCOMPARE(gridChanged.rowLayoutCounts, QVector<quint64>(rows, 0));
+    for (const quint64 glyphCount : gridChanged.rowBatchedGlyphCounts) {
+        QVERIFY(glyphCount > 0);
+        QVERIFY(glyphCount < static_cast<quint64>(columns));
+    }
+
+    LaunchOptions fontChanged = faintChanged;
+    fontChanged.typography.pointSize += 2.0;
+    pane->applyRuntimeOptions(fontChanged);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot replacement =
+        terminalPaneRenderProbe(pane.get());
+    QVERIFY(replacement.metrics.fontProgram != gridChanged.metrics.fontProgram);
+    QVERIFY(replacement.glyphAtlasSerial != 0);
+    QVERIFY(replacement.glyphAtlasSerial != gridChanged.glyphAtlasSerial);
+    QCOMPARE(replacement.glyphAtlasUploadCount,
+             gridChanged.glyphAtlasUploadCount + 1);
+    QVERIFY(replacement.glyphAtlasEntryCount > 0);
+    QVERIFY(replacement.glyphAtlasBytes > 0);
+    QCOMPARE(replacement.nativeTextNodeCount, qsizetype{0});
+    for (const quint64 layoutCount : replacement.rowLayoutCounts) {
+        QCOMPARE(layoutCount, quint64{0});
+    }
+
+    pane.reset();
+    window.close();
 }
 
 void TerminalPaneTest::invalidatesOnlyChangedSearchDecorationRows()

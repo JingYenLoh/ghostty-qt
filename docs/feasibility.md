@@ -46,9 +46,11 @@ scaffolding them:
 - A `QQuickItem` renderer shapes maximal compatible runs with `QTextLayout`.
   OpenGL and Vulkan render exact one-glyph-per-cell printable ASCII through a
   compact terminal-owned CPU Alpha8 atlas, one explicit RGBA coverage texture,
-  and retained indexed row batches; public `QSGTextNode` objects preserve the
-  general and software fallback. Batched colored geometry handles backgrounds,
-  selection, cursors, and decorations.
+  and retained indexed row batches. Compatible palette and grid invalidations
+  retain that font/DPR/render-context resource, and public `QSGTextNode` objects
+  are created lazily for the general fallback while preserving the software
+  path. Batched colored geometry handles backgrounds, selection, cursors, and
+  decorations.
 - Key, mouse, focus, paste, and tracked selection-gesture paths use Ghostty's
   encoders and terminal modes.
 - A narrow project-owned Zig/C matcher imports Ghostty's pinned default URL/path
@@ -77,8 +79,8 @@ advanced text/graphics support, and distribution:
   for unsafe runs, while the narrower ASCII path removes native text submissions
   without replacing Qt shaping. Reproducible host reports and a noise-aware
   comparator gate structural work and full-profile timing; collecting
-  representative baselines and reducing global invalidation cost remain the
-  principal renderer performance risks.
+  representative baselines and further reducing global row invalidation cost
+  remain the principal renderer performance risks.
 - The libghostty revision should remain pinned; upgrades need focused ABI/API
   review and protocol regressions.
 - Color emoji and exact Ghostty font shaping still require explicit renderer

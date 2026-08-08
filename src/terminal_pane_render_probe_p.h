@@ -66,7 +66,10 @@ struct TerminalPaneRenderProbeSnapshot {
     QVector<QRectF> backdropBaseRects;
     QRectF unfocusedSplitOverlayRect;
     QColor unfocusedSplitOverlayColor;
+    // Zero means that the row has never required a native QSGTextNode since
+    // its current row topology was created.
     QVector<quint64> rowNodeSerials;
+    qsizetype nativeTextNodeCount = 0;
     // Cumulative rebuilds by visible row for the current scene-graph root.
     QVector<quint64> rowBuildCounts;
     // Cumulative cell-derived solid-plan rebuilds by visible row. Flattening a
@@ -91,6 +94,9 @@ struct TerminalPaneRenderProbeSnapshot {
     quint64 batchedGlyphCount = 0;
     quint64 glyphBatchGeometryWriteCount = 0;
     quint64 glyphAtlasUploadCount = 0;
+    // Identity of the current atlas resource; stable across compatible row
+    // rebuilds and zero when no hardware atlas is resident.
+    quint64 glyphAtlasSerial = 0;
     // Current terminal-owned glyph-atlas residency.
     qsizetype glyphAtlasEntryCount = 0;
     quint64 glyphAtlasBytes = 0;
@@ -99,6 +105,7 @@ struct TerminalPaneRenderProbeSnapshot {
     // a rejected run counts once per exact-position fallback cell.
     QVector<quint64> rowLayoutCounts;
     QVector<quint64> rowFallbackCellCounts;
+    QVector<quint64> rowBatchedGlyphCounts;
     TerminalCellMetrics metrics;
     std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> renderFonts;
     std::array<quint64, terminalEnumIndex(TerminalFontRole::Count)>

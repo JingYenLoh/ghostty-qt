@@ -958,6 +958,19 @@ set_tests_properties(terminal-pane-kitty-rhi PROPERTIES
         "GHOSTTY_QT_ASAN_BUILD=${ghostty_qt_test_asan_build};GHOSTTY_QT_EXPECT_RHI=1;GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};LIBGL_ALWAYS_SOFTWARE=1;QT_QPA_PLATFORM=xcb;QT_QUICK_BACKEND=rhi;QSG_RHI_BACKEND=opengl;QT_SCALE_FACTOR=1"
 )
 add_test(
+    NAME terminal-pane-glyph-batch-wayland-rhi
+    COMMAND
+        "${CMAKE_CURRENT_SOURCE_DIR}/run_wayland_rhi_test.sh"
+        "$<TARGET_FILE:test-terminal-pane>"
+        retainsGlyphAtlasAndLazilyCreatesNativeTextRows
+)
+set_tests_properties(terminal-pane-glyph-batch-wayland-rhi PROPERTIES
+    TIMEOUT 30
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT
+        "GHOSTTY_QT_ASAN_BUILD=${ghostty_qt_test_asan_build};GHOSTTY_QT_DISABLE_GLYPH_BATCH=0;GHOSTTY_QT_EXPECT_RHI=1;GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};QT_QPA_PLATFORM=wayland;QT_QUICK_BACKEND=rhi;QSG_RHI_BACKEND=opengl;QT_SCALE_FACTOR=1"
+)
+add_test(
     NAME terminal-pane-retained-solids-rhi
     COMMAND test-terminal-pane retainsMainTextRowsAcrossIncrementalUpdates
 )

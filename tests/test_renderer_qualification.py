@@ -787,7 +787,11 @@ class RendererQualificationTest(unittest.TestCase):
         for _ in range(50):
             if not process_path.exists():
                 break
-            fields = (process_path / "stat").read_text(encoding="utf-8").split()
+            try:
+                fields = (process_path / "stat").read_text(encoding="utf-8").split()
+            except FileNotFoundError:
+                # The descendant may exit between exists() and opening stat.
+                break
             if len(fields) > 2 and fields[2] == "Z":
                 break
             time.sleep(0.02)

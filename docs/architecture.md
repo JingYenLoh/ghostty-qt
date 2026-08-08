@@ -694,9 +694,12 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    or removed. Moving between layers or changing the scene-graph context
    recreates the affected node.
    Main terminal text is retained in one container per visible row. OpenGL and
-   Vulkan containers pair one indexed `TerminalGlyphBatch` with a public
-   `QSGTextNode` fallback; other backends use only the text node. `QTextLayout`
-   remains the sole shaper. A run enters the terminal-owned batch only when its
+   Vulkan containers start with one indexed `TerminalGlyphBatch` and create a
+   public `QSGTextNode` only when that row first needs the general fallback;
+   other backends use the text node. Row build state is tracked independently
+   of native-node existence, so a fully batched row does not rebuild merely
+   because it has no text node. `QTextLayout` remains the sole shaper. A run
+   enters the terminal-owned batch only when its
    metadata proves one glyph for every fixed-pitch printable-ASCII cell. If any
    run in a row is non-ASCII, wide, clustered, decorated, off-grid, or otherwise
    unsafe, the complete row uses the text node without partial batching.
@@ -704,8 +707,11 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    printable ASCII for all four role faces at the current device scale. It is
    expanded once to an explicit premultiplied-RGBA coverage texture because
    public QSG texture sampling does not portably expose Alpha8 coverage on both
-   OpenGL and Vulkan. Global text-state changes rebuild and upload that atlas;
-   ordinary dirty-row updates reuse it.
+   OpenGL and Vulkan. The atlas resource is keyed only by its immutable font
+   program, device scale, window, and graphics API. Palette, color, alpha,
+   grid-shape, and other row-state rebuilds replace row topology while retaining
+   the compatible atlas and texture; font, DPR, window, or backend changes
+   replace it after the old non-owning batch references have been destroyed.
    The fallback node uses `QtRendering`, which stores distance-field glyphs in
    Qt's GPU atlases on hardware RHI backends.
 
@@ -916,8 +922,9 @@ public vertex-color material, so the test/fallback path retains one reusable
 `QSGSimpleRectNode` pool per layer for correctness.
 No full-frame raster-image upload sits between the frame and the scene graph.
 The glyph fast path performs one compact RGBA coverage upload from its CPU
-Alpha8 atlas when global text state is rebuilt and then reuses it across row
-damage. Qt's implicitly shared frame snapshot is normally an O(1)
+Alpha8 atlas for each font/DPR/render-context resource generation, then reuses
+it across row damage and unrelated full-row invalidations. Qt's implicitly
+shared frame snapshot is normally an O(1)
 reference-count operation rather than a deep cell copy. During ordinary sparse
 updates, the renderer resolves solid presentation and shapes text only for rows
 whose persistent epochs or derived block-cursor state changed. Metadata-only,
@@ -1971,7 +1978,9 @@ then replaces Qt text submissions for a fully eligible row. Atlas allocation,
 texture creation, a missing lookup, or any ineligible run fails the complete
 row back to its already-shaped `QSGTextNode` representation. This preserves
 ligatures, fallback fonts, complex scripts, color glyphs, and the software
-renderer while keeping the common terminal path narrow.
+renderer while keeping the common terminal path narrow. The native node is
+allocated only on first fallback and cleared for reuse when later contents
+become batchable.
 
 These mappings do not claim Ghostty's embedded production fallback stack,
 FreeType load and synthesis internals, or HarfBuzz positioned-glyph plan:
@@ -3077,7 +3086,11 @@ The default CTest suite has focused layers for each ownership boundary:
   reuse, texture-only rebinding without a geometry rewrite, and empty or invalid
   whole-batch fallback. Its OpenGL/Vulkan RHI companion reads back a two-texel
   mask and distinguishes transparent, half-coverage, and incorrectly solid or
-  never-uploaded output.
+  never-uploaded output. The pane RHI integration case additionally verifies
+  that all-ASCII rows allocate no native text nodes, a rejected row lazily
+  allocates exactly one, returning to ASCII clears stale native content, and
+  palette/grid invalidations retain atlas identity while a font change replaces
+  it.
 - `ghostty-smoke` exercises terminal parsing/render-state iteration, CJK wide
   cells, key and 1002 mouse-drag encoding, bracketed paste, and terminal query
   callbacks directly through the C API.
@@ -3503,8 +3516,9 @@ actual presentation timestamps require explicit color-management and
   solid damage boundary. The software fallback still flattens cached solid
   plans into global node pools because per-row scene-node traversal costs more
   than it saves there. A global appearance, geometry, palette, search-style, or
-  renderer-backend change still rebuilds every visible row and the glyph atlas
-  by design.
+  renderer-backend change can still rebuild every visible row, but it retains
+  the atlas whenever the immutable font program, DPR, window, and graphics API
+  are unchanged.
 - Qt still shapes every run. The custom atlas consumes only Qt-owned exact
   one-glyph-per-cell printable ASCII; Qt's distance-field text path handles
   ligatures, fallback faces, complex text, and other rejected rows. Neither
