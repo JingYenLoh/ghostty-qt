@@ -50,6 +50,15 @@ struct GridSize {
     int rows = 0;
 };
 
+int logicalExtentForCells(qreal cellExtent, int cellCount,
+                          qreal devicePixelRatio)
+{
+    const int cellPixels = qMax(1, qRound(cellExtent * devicePixelRatio));
+    return qMax(
+        1,
+        qCeil(static_cast<qreal>(cellPixels) * cellCount / devicePixelRatio));
+}
+
 enum class GraphicsApi {
     Software,
     OpenGl,
@@ -347,11 +356,14 @@ public:
         options.appearance.cursorTextColor =
             TerminalColorValue::fromColor(QColor(QStringLiteral("#101010")));
 
+        const qreal devicePixelRatio = window_->devicePixelRatio();
         const TerminalCellMetrics metrics =
-            terminalCellMetrics(options.typography);
+            terminalCellMetrics(options.typography, devicePixelRatio);
         logicalSize_ =
-            QSize(qCeil(metrics.cellWidth * static_cast<qreal>(grid_.columns)),
-                  qCeil(metrics.cellHeight * static_cast<qreal>(grid_.rows)));
+            QSize(logicalExtentForCells(metrics.cellWidth, grid_.columns,
+                                        devicePixelRatio),
+                  logicalExtentForCells(metrics.cellHeight, grid_.rows,
+                                        devicePixelRatio));
         window_->setColor(Qt::black);
         window_->setGeometry(QRect(QPoint{}, logicalSize_));
         window_->contentItem()->setSize(logicalSize_);
@@ -1626,7 +1638,12 @@ int runGrid(GridSize grid, GraphicsApi graphicsApi, int warmupIterations,
         output << (initialized == InitializationResult::BackendUnavailable
                        ? "backend unavailable for "
                        : "failed to initialize ")
-               << grid.columns << 'x' << grid.rows << ": " << error << '\n';
+               << grid.columns << 'x' << grid.rows << ": " << error
+               << " dpr=" << benchmark.devicePixelRatio()
+               << " logical=" << benchmark.logicalSize().width() << 'x'
+               << benchmark.logicalSize().height()
+               << " framebuffer=" << benchmark.framebufferSize().width() << 'x'
+               << benchmark.framebufferSize().height() << '\n';
         return initialized == InitializationResult::BackendUnavailable ? 77 : 1;
     }
     const QSize framebuffer = benchmark.framebufferSize();
