@@ -8890,7 +8890,9 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     invisible.setUnderlineStyle(TerminalUnderlineStyle::Single);
     invisible.setUnderlineUsesForeground(false);
     invisible.setInvisible(true);
-    TerminalCell &retainedBlink = update.dirtyRows[1].cells[1];
+    // Keep the full-block glyph away from the invisible cell: some Qt font
+    // backends rasterize its antialiased edge one pixel outside its cell.
+    TerminalCell &retainedBlink = update.dirtyRows[1].cells[8];
     retainedBlink.text = QString(QChar(0x2588));
     retainedBlink.foreground = QColor(QStringLiteral("#ffff00"));
     retainedBlink.setTextBlink(true);
@@ -9019,7 +9021,7 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
         }
     }
     QCOMPARE(invisiblePixels, 0);
-    QVERIFY(approximatelyEqual(secondRowCenterColor(1, image),
+    QVERIFY(approximatelyEqual(secondRowCenterColor(8, image),
                                QColor(QStringLiteral("#ffff00"))));
     QVERIFY(approximatelyEqual(secondRowCenterColor(2, image),
                                QColor(QStringLiteral("#123456"))));
@@ -9037,7 +9039,7 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     QTest::qWait(650);
     const QImage laterImage = window.grabWindow();
     QVERIFY(!laterImage.isNull());
-    QVERIFY(approximatelyEqual(secondRowCenterColor(1, laterImage),
+    QVERIFY(approximatelyEqual(secondRowCenterColor(8, laterImage),
                                QColor(QStringLiteral("#ffff00"))));
 
     const auto cursorContains = [&](const QImage &source,

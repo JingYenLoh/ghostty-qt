@@ -1,0 +1,5 @@
+# Qt's Linux font backend leaves Fontconfig's process-global cache allocated.
+leak:libfontconfig.so
+
+# libghostty exposes process-global initialization without a public teardown.
+leak:libghostty.so

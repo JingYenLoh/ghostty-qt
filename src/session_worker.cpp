@@ -843,6 +843,7 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
     waitingForExitKey_ = false;
     semanticPromptObserved_ = false;
     semanticPromptExpected_ = false;
+    interactiveShellProcessGroup_ = -1;
     childRuntimeTimer_.invalidate();
     potentialActivityTimer_.invalidate();
     batchPtyReads_ = qEnvironmentVariable("GHOSTTY_QT_PTY_READ_BATCHING")
@@ -4361,12 +4362,6 @@ void SessionWorker::updateProcessActivity()
         GhosttyVtAdapter::SemanticPromptState::Unavailable;
     if (vt_ != nullptr) {
         semanticState = vt_->semanticPromptState();
-        // Sample before every conservative early return. In particular, a
-        // prompt reached inside the submission grace window must remain
-        // latched if same-process-group work starts before the next poll.
-        if (semanticState == GhosttyVtAdapter::SemanticPromptState::AtPrompt) {
-            semanticPromptObserved_ = true;
-        }
     }
 
     // forkpty makes the shell the session and process-group leader. While the
@@ -4375,8 +4370,20 @@ void SessionWorker::updateProcessActivity()
     // Treat query failures conservatively so an unusual PTY state cannot make
     // us silently discard active work.
     const pid_t foregroundGroup = masterFd_ >= 0 ? ::tcgetpgrp(masterFd_) : -1;
+    // The integration launcher is allowed to remain as forkpty's immediate
+    // child while the actual interactive shell owns a different foreground
+    // group. Its first semantic prompt identifies that stable idle group.
+    if (!semanticPromptObserved_
+        && semanticState == GhosttyVtAdapter::SemanticPromptState::AtPrompt
+        && foregroundGroup > 0) {
+        semanticPromptObserved_ = true;
+        interactiveShellProcessGroup_ = foregroundGroup;
+    }
+    const pid_t idleProcessGroup = interactiveShellProcessGroup_ > 0
+        ? static_cast<pid_t>(interactiveShellProcessGroup_)
+        : static_cast<pid_t>(childPid_);
     if (foregroundGroup < 0
-        || foregroundGroup != static_cast<pid_t>(childPid_)) {
+        || foregroundGroup != idleProcessGroup) {
         setActiveProcess(true);
         scheduleActivityReconciliation(kForegroundActivityProbeMilliseconds);
         return;
@@ -4596,6 +4603,7 @@ void SessionWorker::shutdown()
     running_ = false;
     semanticPromptObserved_ = false;
     semanticPromptExpected_ = false;
+    interactiveShellProcessGroup_ = -1;
     potentialActivityTimer_.invalidate();
     setActiveProcess(false);
     closePty();

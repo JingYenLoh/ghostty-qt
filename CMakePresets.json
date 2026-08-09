@@ -61,6 +61,7 @@
       "output": { "outputOnFailure": true },
       "environment": {
         "ASAN_OPTIONS": "abort_on_error=1:detect_leaks=1:strict_string_checks=1",
+        "LSAN_OPTIONS": "suppressions=${sourceDir}/tests/lsan.supp:print_suppressions=0",
         "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"
       }
     }

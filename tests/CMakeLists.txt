@@ -606,6 +606,13 @@ target_compile_options(pty-io-probe PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )
 
+add_executable(environment-probe
+    environment_probe.cpp
+)
+target_compile_options(environment-probe PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
+)
+
 qt_add_executable(test-ghostty-cli-delegation
     test_ghostty_cli_delegation.cpp
 )
@@ -897,6 +904,7 @@ qt_add_executable(test-session-worker
 target_include_directories(test-session-worker PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 target_compile_definitions(test-session-worker PRIVATE
     GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
+    GHOSTTY_QT_TEST_ENVIRONMENT_PROBE="$<TARGET_FILE:environment-probe>"
     GHOSTTY_QT_TEST_PTY_GEOMETRY_PROBE="$<TARGET_FILE:pty-geometry-probe>"
     GHOSTTY_QT_TEST_PTY_IO_PROBE="$<TARGET_FILE:pty-io-probe>"
     GHOSTTY_QT_TEST_SHELL_INTEGRATION_ENABLED=$<BOOL:${GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG}>
@@ -908,6 +916,7 @@ target_link_libraries(test-session-worker PRIVATE
     ghostty-qt-session-worker
 )
 add_dependencies(test-session-worker
+    environment-probe
     ghostty-qt-terminfo
     pty-geometry-probe
     pty-io-probe

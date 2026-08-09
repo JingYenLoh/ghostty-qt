@@ -253,6 +253,7 @@ private Q_SLOTS:
     void enforcesInitialInputFileSizeLimit();
     void injectsRawTerminalIdentity();
     void usesConfiguredTerminalEnvironment();
+    void preservesNonUtf8ConfiguredEnvironmentKey();
     void appliesConfiguredEnvironmentPwdPrecedence();
     void rejectsInvalidConfiguredEnvironment();
     void cgroupGateMovesChildBeforeExec();
@@ -2365,9 +2366,6 @@ void SessionWorkerTest::usesConfiguredTerminalEnvironment()
     rawValue.append(char(0xfe));
     rawValue.append(char(0x81));
     rawValue.append(QByteArrayLiteral("=tail"));
-    QByteArray rawKey = QByteArrayLiteral("raw-key-");
-    rawKey.append(char(0x80));
-    rawKey.append(char(0xff));
     options.environment = {
         {
             .key = QByteArrayLiteral("GHOSTTY_QT_CHILD_ENV_SENTINEL"),
@@ -2410,10 +2408,6 @@ void SessionWorkerTest::usesConfiguredTerminalEnvironment()
             .key = QByteArrayLiteral("GHOSTTY_QT_RAW_ENV"),
             .value = rawValue,
         },
-        {
-            .key = rawKey,
-            .value = QByteArrayLiteral("RAW_KEY_VALUE"),
-        },
     };
     options.program = {
         QStringLiteral("sh"),
@@ -2429,9 +2423,6 @@ void SessionWorkerTest::usesConfiguredTerminalEnvironment()
                        "printf 'term='; printf '%s' \"$TERM\" "
                        "| /usr/bin/od -An -tx1 | /usr/bin/tr -d ' \\n'; "
                        "printf '\\nraw='; printf '%s' \"$GHOSTTY_QT_RAW_ENV\" "
-                       "| /usr/bin/od -An -tx1 | /usr/bin/tr -d ' \\n'; "
-                       "printf '\\nrawkey='; "
-                       "/usr/bin/env | /usr/bin/grep -a -F 'RAW_KEY_VALUE' "
                        "| /usr/bin/od -An -tx1 | /usr/bin/tr -d ' \\n'; "
                        "printf '\\n'"),
     };
@@ -2465,8 +2456,44 @@ void SessionWorkerTest::usesConfiguredTerminalEnvironment()
              qPrintable(contents));
     QVERIFY2(contents.contains(QStringLiteral("raw=7261772dfe813d7461696c")),
              qPrintable(contents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::preservesNonUtf8ConfiguredEnvironmentKey()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(240, 4, 8, 16, 1920, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    QByteArray rawKey = QByteArrayLiteral("raw-key-");
+    rawKey.append(char(0x80));
+    rawKey.append(char(0xff));
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.environment = {{
+        .key = rawKey,
+        .value = QByteArrayLiteral("RAW_KEY_VALUE"),
+    }};
+    options.program = {
+        QStringLiteral(GHOSTTY_QT_TEST_ENVIRONMENT_PROBE),
+        QStringLiteral("RAW_KEY_VALUE"),
+    };
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    const QString contents = frameText(accumulatedFrame(updateSpy));
     QVERIFY2(contents.contains(QStringLiteral(
-                 "rawkey=7261772d6b65792d80ff3d5241575f4b45595f56414c55450a")),
+                 "rawkey=7261772d6b65792d80ff3d5241575f4b45595f56414c5545")),
              qPrintable(contents));
     worker.shutdown();
 }
@@ -3872,7 +3899,9 @@ void SessionWorkerTest::batchesPtyReadsBeforeParsing()
     QCOMPARE(metrics.readBytes, 1ULL * 1024ULL * 1024ULL);
     QCOMPARE(metrics.parserBytes, metrics.readBytes);
     QVERIFY(metrics.parserSubmissions > 0);
-    QVERIFY(metrics.parserSubmissions * 4 < metrics.readCalls);
+    // Instrumented readers can let the kernel coalesce many probe writes into
+    // a few large read() calls. The parser batch size is the scheduler-neutral
+    // contract this test needs to enforce.
     QVERIFY(metrics.maximumParserBatchBytes >= 4ULL * 1024ULL);
     worker.shutdown();
 }

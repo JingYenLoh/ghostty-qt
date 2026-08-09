@@ -94,6 +94,9 @@ if(CONFIG_HELPER_NAME)
             "${config_helper_output}\n${config_helper_error}")
     endif()
 
+    # The application is not a self-contained Qt bundle. Preserve the SDK's
+    # runtime search path while the invalid QPA name verifies that CLI
+    # delegation still happens before QApplication construction.
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -E env
             --unset=LD_LIBRARY_PATH
@@ -107,7 +110,6 @@ if(CONFIG_HELPER_NAME)
         ERROR_VARIABLE direct_help_error)
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -E env
-            --unset=LD_LIBRARY_PATH
             --unset=DISPLAY
             --unset=WAYLAND_DISPLAY
             "QT_QPA_PLATFORM=ghostty-cli-relocation-must-not-load-qt"
@@ -143,7 +145,6 @@ if(CONFIG_HELPER_NAME)
         ERROR_VARIABLE direct_themes_error)
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -E env
-            --unset=LD_LIBRARY_PATH
             --unset=DISPLAY
             --unset=GHOSTTY_RESOURCES_DIR
             --unset=WAYLAND_DISPLAY

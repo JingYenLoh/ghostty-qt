@@ -329,6 +329,11 @@ private:
     // its first prompt, an Away/Unavailable query represents startup work,
     // not an idle unintegrated shell.
     bool semanticPromptExpected_ = false;
+    // Shell integration can interpose a launcher whose child becomes the
+    // long-lived interactive shell. Capture the foreground group at the first
+    // definitive prompt instead of assuming forkpty's immediate child remains
+    // the shell process-group leader.
+    qint64 interactiveShellProcessGroup_ = -1;
     bool activeProcess_ = false;
     bool selectionAvailable_ = false;
     bool readOnly_ = false;
