@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QScopeGuard>
 #include <QSignalSpy>
+#include <QSocketNotifier>
 #include <QStandardPaths>
 #include <QStringView>
 #include <QTemporaryDir>
@@ -7373,6 +7374,24 @@ void SessionWorkerTest::interactiveShellTracksForegroundJobs()
         1000);
     activitySpy.clear();
 
+    QTimer *const exitPollTimer =
+        worker.findChild<QTimer *>(QStringLiteral("childExitPollTimer"));
+    QTimer *const activityTimer =
+        worker.findChild<QTimer *>(QStringLiteral("processActivityTimer"));
+    QVERIFY(exitPollTimer != nullptr);
+    QVERIFY(activityTimer != nullptr);
+    QVERIFY(!activityTimer->isActive());
+    if (worker.findChild<QSocketNotifier *>(
+            QStringLiteral("pidfdChildExitNotifier")) != nullptr) {
+        QVERIFY(!exitPollTimer->isActive());
+    } else {
+        QVERIFY(exitPollTimer->isActive());
+    }
+    // Once an unintegrated shell has settled at its prompt, neither exit nor
+    // activity monitoring may wake a pidfd-backed worker periodically.
+    QTest::qWait(350);
+    QVERIFY(!activityTimer->isActive());
+
     // Merely rejecting or cancelling an unsafe request is not process
     // activity. Confirmation applies the hint only when bytes are accepted.
     worker.paste(QStringLiteral("cancelled\n"));
@@ -7439,10 +7458,12 @@ void SessionWorkerTest::interactiveShellTracksForegroundJobs()
     // The activity hint is synchronous at flush, closing in the interval
     // before the next tcgetpgrp poll cannot lose foreground-job confirmation.
     QVERIFY(spyContainsBool(activitySpy, true));
+    QVERIFY(activityTimer->isActive());
     QTRY_VERIFY_WITH_TIMEOUT(
         !activitySpy.isEmpty()
             && !activitySpy.constLast().constFirst().toBool(),
         3000);
+    QVERIFY(!activityTimer->isActive());
 
     // Keep the direct-key path covered independently of sequence staging.
     activitySpy.clear();

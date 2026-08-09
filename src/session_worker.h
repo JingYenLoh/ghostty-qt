@@ -234,6 +234,7 @@ private:
     void processDeferredEffects();
     void drainPty(bool finalDrain);
     void notePotentialActivity();
+    void scheduleActivityReconciliation(int delayMilliseconds);
     void updateProcessActivity();
     void setActiveProcess(bool active);
     void handleChildStatus(int status);
@@ -283,7 +284,8 @@ private:
     QSocketNotifier *writeNotifier_ = nullptr;
     int childExitFd_ = -1;
     QSocketNotifier *childExitNotifier_ = nullptr;
-    QTimer *childTimer_ = nullptr;
+    QTimer *childExitPollTimer_ = nullptr;
+    QTimer *activityTimer_ = nullptr;
     QTimer *frameTimer_ = nullptr;
     QTimer *compressionTimer_ = nullptr;
     QTimer *selectionAutoscrollTimer_ = nullptr;

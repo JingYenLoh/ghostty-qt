@@ -62,6 +62,7 @@ constexpr int kSelectionAutoscrollMilliseconds = 15;
 constexpr int kCursorBlinkResetThrottleMilliseconds = 500;
 constexpr int kShutdownGraceMilliseconds = 2000;
 constexpr int kPotentialActivityGraceMilliseconds = 250;
+constexpr int kForegroundActivityProbeMilliseconds = 250;
 constexpr int kSearchRowsPerChunk = 8;
 constexpr int kSearchChunkBudgetMilliseconds = 2;
 constexpr int kSearchPublishIntervalMilliseconds = 33;
@@ -876,9 +877,17 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
     frameTimer_->setInterval(kFrameCoalesceMilliseconds);
     connect(frameTimer_, &QTimer::timeout, this, &SessionWorker::publishFrame);
 
-    childTimer_ = new QTimer(this);
-    childTimer_->setInterval(100);
-    connect(childTimer_, &QTimer::timeout, this, &SessionWorker::checkChild);
+    childExitPollTimer_ = new QTimer(this);
+    childExitPollTimer_->setObjectName(QStringLiteral("childExitPollTimer"));
+    childExitPollTimer_->setInterval(100);
+    connect(childExitPollTimer_, &QTimer::timeout, this,
+            &SessionWorker::checkChild);
+
+    activityTimer_ = new QTimer(this);
+    activityTimer_->setObjectName(QStringLiteral("processActivityTimer"));
+    activityTimer_->setSingleShot(true);
+    connect(activityTimer_, &QTimer::timeout, this,
+            &SessionWorker::updateProcessActivity);
 
     compressionTimer_ = new QTimer(this);
     compressionTimer_->setObjectName(
@@ -1534,6 +1543,8 @@ bool SessionWorker::spawnChild()
     if (childExitFd_ >= 0) {
         childExitNotifier_ =
             new QSocketNotifier(childExitFd_, QSocketNotifier::Read, this);
+        childExitNotifier_->setObjectName(
+            QStringLiteral("pidfdChildExitNotifier"));
         connect(childExitNotifier_, &QSocketNotifier::activated, this,
                 &SessionWorker::checkChild);
     }
@@ -1573,7 +1584,11 @@ bool SessionWorker::spawnChild()
         queuePtyWrite(chunk);
     }
 
-    childTimer_->start();
+    // pidfd readiness is the normal exit path. Poll waitpid only on kernels
+    // where pidfd_open is unavailable or denied.
+    if (childExitFd_ < 0) {
+        childExitPollTimer_->start();
+    }
     if (!options_.inheritWorkingDirectory) {
         Q_EMIT currentDirectoryChanged(requestedWorkingDirectory);
     }
@@ -4252,15 +4267,18 @@ void SessionWorker::checkChild()
     if (result == static_cast<pid_t>(childPid_)) {
         handleChildStatus(status);
     } else if (result == 0) {
-        updateProcessActivity();
+        return;
     } else if (result < 0 && errno == ECHILD) {
         drainPty(true);
         running_ = false;
         childPid_ = -1;
         potentialActivityTimer_.invalidate();
         setActiveProcess(false);
-        if (childTimer_ != nullptr) {
-            childTimer_->stop();
+        if (childExitPollTimer_ != nullptr) {
+            childExitPollTimer_->stop();
+        }
+        if (activityTimer_ != nullptr) {
+            activityTimer_->stop();
         }
         childRuntimeTimer_.invalidate();
         closePty();
@@ -4278,6 +4296,9 @@ void SessionWorker::checkChild()
 
 void SessionWorker::updateProcessActivity()
 {
+    if (activityTimer_ != nullptr) {
+        activityTimer_->stop();
+    }
     if (!running_ || childPid_ <= 0) {
         setActiveProcess(false);
         return;
@@ -4308,6 +4329,7 @@ void SessionWorker::updateProcessActivity()
     if (foregroundGroup < 0
         || foregroundGroup != static_cast<pid_t>(childPid_)) {
         setActiveProcess(true);
+        scheduleActivityReconciliation(kForegroundActivityProbeMilliseconds);
         return;
     }
 
@@ -4319,6 +4341,9 @@ void SessionWorker::updateProcessActivity()
         && potentialActivityTimer_.elapsed()
             < kPotentialActivityGraceMilliseconds) {
         setActiveProcess(true);
+        scheduleActivityReconciliation(static_cast<int>(
+            kPotentialActivityGraceMilliseconds
+            - potentialActivityTimer_.elapsed()));
         return;
     }
     potentialActivityTimer_.invalidate();
@@ -4346,6 +4371,13 @@ void SessionWorker::notePotentialActivity()
     }
     potentialActivityTimer_.restart();
     setActiveProcess(true);
+    scheduleActivityReconciliation(kPotentialActivityGraceMilliseconds);
+}
+
+void SessionWorker::scheduleActivityReconciliation(int delayMilliseconds)
+{
+    if (activityTimer_ == nullptr || !running_ || !interactiveShell_) return;
+    activityTimer_->start(std::max(0, delayMilliseconds));
 }
 
 void SessionWorker::setActiveProcess(bool active)
@@ -4394,8 +4426,11 @@ void SessionWorker::handleChildStatus(int status)
     childPid_ = -1;
     potentialActivityTimer_.invalidate();
     setActiveProcess(false);
-    if (childTimer_ != nullptr) {
-        childTimer_->stop();
+    if (childExitPollTimer_ != nullptr) {
+        childExitPollTimer_->stop();
+    }
+    if (activityTimer_ != nullptr) {
+        activityTimer_->stop();
     }
     waitingForExitKey_ = !shuttingDown_ && !options_.hold
         && (options_.runtime.waitAfterCommand || abnormal);
@@ -4473,8 +4508,11 @@ void SessionWorker::shutdown()
     if (frameTimer_ != nullptr) {
         frameTimer_->stop();
     }
-    if (childTimer_ != nullptr) {
-        childTimer_->stop();
+    if (childExitPollTimer_ != nullptr) {
+        childExitPollTimer_->stop();
+    }
+    if (activityTimer_ != nullptr) {
+        activityTimer_->stop();
     }
     if (compressionTimer_ != nullptr) {
         compressionTimer_->stop();
