@@ -1,8 +1,8 @@
 #include "terminal_font_resolver.h"
 
-#include <QByteArrayView>
 #include <QFontDatabase>
 #include <QFontInfo>
+#include <QFontVariableAxis>
 #include <QGuiApplication>
 #include <QHash>
 #include <QPointer>
@@ -11,7 +11,6 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cmath>
 #include <concepts>
 #include <cstdint>
@@ -299,95 +298,6 @@ fontWithNamedStyle(FontDatabaseSnapshot &database,
     return false;
 }
 
-[[nodiscard]] std::optional<quint16>
-bigEndianUInt16(QByteArrayView bytes, qsizetype offset) noexcept
-{
-    constexpr qsizetype Width = 2;
-    if (offset < 0 || bytes.size() < Width
-        || offset > bytes.size() - Width) {
-        return std::nullopt;
-    }
-    return static_cast<quint16>(
-        (static_cast<quint16>(static_cast<quint8>(bytes[offset])) << 8U)
-        | static_cast<quint8>(bytes[offset + 1]));
-}
-
-[[nodiscard]] std::optional<quint32>
-bigEndianUInt32(QByteArrayView bytes, qsizetype offset) noexcept
-{
-    constexpr qsizetype Width = 4;
-    if (offset < 0 || bytes.size() < Width
-        || offset > bytes.size() - Width) {
-        return std::nullopt;
-    }
-    return (static_cast<quint32>(static_cast<quint8>(bytes[offset])) << 24U)
-        | (static_cast<quint32>(static_cast<quint8>(bytes[offset + 1]))
-           << 16U)
-        | (static_cast<quint32>(static_cast<quint8>(bytes[offset + 2])) << 8U)
-        | static_cast<quint8>(bytes[offset + 3]);
-}
-
-[[nodiscard]] std::optional<double>
-bigEndianFixed(QByteArrayView bytes, qsizetype offset) noexcept
-{
-    const auto encoded = bigEndianUInt32(bytes, offset);
-    if (!encoded) {
-        return std::nullopt;
-    }
-    return static_cast<double>(std::bit_cast<qint32>(*encoded)) / 65536.0;
-}
-
-struct FontVariationAxis {
-    quint32 tag = 0;
-    double minimum = 0.0;
-    double maximum = 0.0;
-};
-
-[[nodiscard]] std::vector<FontVariationAxis>
-fontVariationAxes(const QFont &font)
-{
-    const QByteArray table = QRawFont::fromFont(font).fontTable("fvar");
-    const QByteArrayView bytes(table);
-    const auto version = bigEndianUInt32(bytes, 0);
-    const auto dataOffset = bigEndianUInt16(bytes, 4);
-    const auto axisCount = bigEndianUInt16(bytes, 8);
-    const auto axisSize = bigEndianUInt16(bytes, 10);
-    constexpr quint32 Version1 = 0x00010000U;
-    constexpr qsizetype MinimumAxisSize = 20;
-    if (!version || *version != Version1 || !dataOffset || !axisCount
-        || !axisSize || *axisSize < MinimumAxisSize) {
-        return {};
-    }
-
-    const qsizetype first = *dataOffset;
-    const qsizetype count = *axisCount;
-    const qsizetype stride = *axisSize;
-    if (first > bytes.size()
-        || count > (bytes.size() - first) / stride) {
-        return {};
-    }
-
-    std::vector<FontVariationAxis> result;
-    result.reserve(static_cast<std::size_t>(count));
-    for (qsizetype index = 0; index < count; ++index) {
-        const qsizetype offset = first + index * stride;
-        const auto tag = bigEndianUInt32(bytes, offset);
-        const auto minimum = bigEndianFixed(bytes, offset + 4);
-        const auto maximum = bigEndianFixed(bytes, offset + 12);
-        if (!tag || !minimum || !maximum) {
-            return {};
-        }
-        if (*minimum <= *maximum) {
-            result.push_back({
-                .tag = *tag,
-                .minimum = *minimum,
-                .maximum = *maximum,
-            });
-        }
-    }
-    return result;
-}
-
 void applyVariations(QFont &font,
                      const QVector<TerminalFontVariation> &variations)
 {
@@ -395,7 +305,7 @@ void applyVariations(QFont &font,
         return;
     }
 
-    const std::vector<FontVariationAxis> supported = fontVariationAxes(font);
+    const QList<QFontVariableAxis> supported = QFontInfo(font).variableAxes();
     QSet<quint32> applied;
     applied.reserve(variations.size());
     for (const TerminalFontVariation &variation : variations) {
@@ -414,11 +324,12 @@ void applyVariations(QFont &font,
             continue;
         }
         const auto axis = std::ranges::find_if(
-            supported, [&variation](const FontVariationAxis &candidate) {
-                return candidate.tag == variation.tag;
+            supported, [&tag](const QFontVariableAxis &candidate) {
+                return candidate.tag() == *tag;
             });
         if (axis == supported.end()
-            || value < axis->minimum || value > axis->maximum) {
+            || value < axis->minimumValue()
+            || value > axis->maximumValue()) {
             continue;
         }
         font.setVariableAxis(*tag, static_cast<float>(value));

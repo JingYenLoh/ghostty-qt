@@ -116,7 +116,7 @@ if(Git_FOUND AND EXISTS "${GHOSTTY_SOURCE_DIR}/.git")
     endif()
 endif()
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS
+find_package(Qt6 6.10 REQUIRED COMPONENTS
     Core
     DBus
     Gui
@@ -130,17 +130,17 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS
 # The official Qt SDK exports these targets with their public modules, while
 # distribution packages may split them into standalone CMake components.
 if(NOT TARGET Qt6::GuiPrivate)
-    find_package(Qt6 6.8 REQUIRED COMPONENTS GuiPrivate)
+    find_package(Qt6 6.10 REQUIRED COMPONENTS GuiPrivate)
 endif()
 if(NOT TARGET Qt6::ShaderToolsPrivate)
-    find_package(Qt6 6.8 REQUIRED COMPONENTS ShaderToolsPrivate)
+    find_package(Qt6 6.10 REQUIRED COMPONENTS ShaderToolsPrivate)
 endif()
-find_package(LayerShellQt 6.4 REQUIRED)
+find_package(LayerShellQt 6.6.4 REQUIRED)
 find_package(KF6WindowSystem QUIET)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(XKBCommon REQUIRED IMPORTED_TARGET xkbcommon)
 pkg_check_modules(WaylandClient REQUIRED IMPORTED_TARGET wayland-client)
-qt_standard_project_setup(REQUIRES 6.8)
+qt_standard_project_setup(REQUIRES 6.10)
 
 add_library(ghostty-qt-desktop-quick-controls-style STATIC
     src/desktop_quick_controls_style.cpp
@@ -751,14 +751,6 @@ target_link_libraries(ghostty-qt-quick-terminal PUBLIC
     Qt6::Gui
     LayerShellQt::Interface
 )
-if(LayerShellQt_VERSION VERSION_GREATER_EQUAL "6.5")
-    target_compile_definitions(ghostty-qt-quick-terminal PUBLIC
-        GHOSTTY_QT_HAVE_LAYERSHELLQT_ACTIVATE_ON_SHOW=1)
-endif()
-if(LayerShellQt_VERSION VERSION_GREATER_EQUAL "6.6")
-    target_compile_definitions(ghostty-qt-quick-terminal PUBLIC
-        GHOSTTY_QT_HAVE_LAYERSHELLQT_SCREEN_SELECTION=1)
-endif()
 
 ghostty_qt_add_internal_library(ghostty-qt-window-ui
     src/window_ui_controller.cpp
@@ -1625,7 +1617,7 @@ install(DIRECTORY "${GHOSTTY_QT_SHELL_INTEGRATION_STAGE_DIR}/"
 
 if(GHOSTTY_QT_BUILD_TESTS)
     enable_testing()
-    find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
+    find_package(Qt6 6.10 REQUIRED COMPONENTS Test)
     add_subdirectory(tests)
 elseif(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
     message(FATAL_ERROR

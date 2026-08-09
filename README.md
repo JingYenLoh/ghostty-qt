@@ -29,10 +29,10 @@ boundary.
 ## Requirements
 
 - Linux with a Wayland session and the Qt Wayland platform plugin.
-- Qt 6.8 or newer with Core, D-Bus, Gui, Multimedia, Qml, Quick,
+- Qt 6.10 or newer with Core, D-Bus, Gui, Multimedia, Qml, Quick,
   Quick Controls 2, ShaderTools, Widgets, and Qt Test development components,
   including matching GuiPrivate and ShaderToolsPrivate headers.
-- LayerShellQt.
+- LayerShellQt 6.6.4 or newer.
 - KF6 WindowSystem is optional and enables `background-blur` on KDE Plasma.
 - KDE's `qqc2-desktop-style` is an optional runtime integration for controls
   matching the Plasma style.

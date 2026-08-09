@@ -197,7 +197,6 @@ void QuickTerminalSurface::applyScreen(QuickTerminalScreen selection,
 {
     LayerWindow *const layerShellWindow = layerShellWindow_.data();
     Q_ASSERT(layerShellWindow != nullptr);
-#if GHOSTTY_QT_HAVE_LAYERSHELLQT_SCREEN_SELECTION
     switch (selection) {
     case QuickTerminalScreen::Mouse:
         layerShellWindow->setScreen(nullptr);
@@ -209,18 +208,6 @@ void QuickTerminalSurface::applyScreen(QuickTerminalScreen selection,
         layerShellWindow->setScreen(&sizingScreen);
         break;
     }
-#else
-    if (selection == QuickTerminalScreen::Mouse) {
-        layerShellWindow->setScreenConfiguration(
-            LayerWindow::ScreenFromCompositor);
-    } else {
-        QWindow *const window = window_.data();
-        Q_ASSERT(window != nullptr);
-        if (window->screen() != &sizingScreen) window->setScreen(&sizingScreen);
-        layerShellWindow->setScreenConfiguration(
-            LayerWindow::ScreenFromQWindow);
-    }
-#endif
 }
 
 void QuickTerminalSurface::applyKeyboard(
@@ -230,10 +217,8 @@ void QuickTerminalSurface::applyKeyboard(
     Q_ASSERT(layerShellWindow != nullptr);
     layerShellWindow->setKeyboardInteractivity(
         layerShellKeyboard(interactivity));
-#if GHOSTTY_QT_HAVE_LAYERSHELLQT_ACTIVATE_ON_SHOW
     layerShellWindow->setActivateOnShow(
         interactivity != QuickTerminalKeyboardInteractivity::None);
-#endif
 }
 
 void QuickTerminalSurface::applyDesiredSize()

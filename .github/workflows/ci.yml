@@ -24,25 +24,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: GCC Debug (Qt 6.8 minimum)
+          - name: GCC Debug (Qt 6.10 minimum)
             preset: dev
-            qt_version: '6.8.3'
+            qt_version: '6.10.2'
             config_parser: 'ON'
-          - name: GCC Release (Qt 6.8 minimum)
+          - name: GCC Release (Qt 6.10 minimum)
             preset: release
-            qt_version: '6.8.3'
+            qt_version: '6.10.2'
             config_parser: 'ON'
-          - name: Clang ASan + UBSan (Qt 6.8 minimum)
+          - name: Clang ASan + UBSan (Qt 6.10 minimum)
             preset: sanitize
-            qt_version: '6.8.3'
+            qt_version: '6.10.2'
             config_parser: 'ON'
           - name: GCC Debug (current Qt)
             preset: dev
             qt_version: '6.11.1'
             config_parser: 'ON'
-          - name: GCC Debug, config parser disabled (Qt 6.8 minimum)
+          - name: GCC Debug, config parser disabled (Qt 6.10 minimum)
             preset: dev
-            qt_version: '6.8.3'
+            qt_version: '6.10.2'
             config_parser: 'OFF'
 
     steps:

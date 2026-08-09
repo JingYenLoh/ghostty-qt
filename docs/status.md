@@ -7,7 +7,7 @@ desktop feature set, but does not yet claim complete Ghostty frontend parity.
 ## Supported target
 
 - Linux and Wayland only; X11 and other operating systems are outside scope.
-- Qt Quick 6.8 or newer with LayerShellQt.
+- Qt Quick 6.10 or newer with LayerShellQt 6.6.4 or newer.
 - Public `libghostty-vt` for terminal behavior, plus a private helper around
   the pinned Ghostty application parser.
 - Portable and Linux Ghostty configuration settings where behavior maps to Qt.

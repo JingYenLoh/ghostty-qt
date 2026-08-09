@@ -199,7 +199,7 @@ copying Ghostty internals into the frontend. Record such work in
 
 GitHub Actions currently covers:
 
-- GCC Debug and Release against the minimum Qt 6.8 line;
+- GCC Debug and Release against the minimum Qt 6.10 line;
 - Clang ASan+UBSan against the minimum Qt line;
 - GCC Debug against the current Qt line;
 - GCC Debug with the private Ghostty configuration parser disabled.

@@ -2,10 +2,10 @@
 
 set -eu
 
-ECM_VERSION=6.14.0
-ECM_ARCHIVE_SHA256=d02cbbb3269b39680884abf6f14ba68f448570c554173f5249da3b8761784c13
-LAYERSHELLQT_VERSION=6.4.6
-LAYERSHELLQT_ARCHIVE_SHA256=1bb5bc881af2f5b74c014127c2f701ce346243ac01f897f1dea00f14f7d87993
+ECM_VERSION=6.22.0
+ECM_ARCHIVE_SHA256=cb83a69571b277c20b3a6567ef0b6f39bf29c43a619282bf4bb076feb4c609a6
+LAYERSHELLQT_VERSION=6.6.4
+LAYERSHELLQT_ARCHIVE_SHA256=731af7a222bc1a1e87fd993060ed8fa515b4b38cbc294063b700ec87451e013f
 
 if [ "$#" -ne 1 ]; then
     echo "usage: $0 INSTALL_PREFIX" >&2
@@ -83,7 +83,7 @@ extract_archive()
 download_archive \
     "$ecm_archive" \
     "$ECM_ARCHIVE_SHA256" \
-    "$kde_download_base/stable/frameworks/6.14/extra-cmake-modules-$ECM_VERSION.tar.xz"
+    "$kde_download_base/stable/frameworks/6.22/extra-cmake-modules-$ECM_VERSION.tar.xz"
 download_archive \
     "$layershellqt_archive" \
     "$LAYERSHELLQT_ARCHIVE_SHA256" \
