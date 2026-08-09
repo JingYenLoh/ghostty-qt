@@ -28,8 +28,13 @@ ordering rule.
 
 Each pane has one session thread. PTY reads are nonblocking and notifier-driven,
 use a 64 KiB stack buffer, process at most 1 MiB per normal event-loop
-activation, and coalesce frame publication over 8 ms. The cap protects
-same-pane control requests from an unbounded output loop.
+activation, and coalesce frame publication over 8 ms. Fragmented reads below
+1 KiB are gathered into parser submissions of up to 4 KiB. Larger reads are
+submitted immediately, preserving the producer/consumer pipeline for saturated
+output. At `EAGAIN`, the worker submits a trailing partial batch and retries
+once, allowing the producer to refill without turning an activation into a
+poll. The byte cap protects same-pane control requests from an unbounded output
+loop.
 
 Writes use an offset FIFO. Successful prefixes advance an index rather than
 moving the remaining bytes after every short write; compaction is amortized.
@@ -37,6 +42,14 @@ The write notifier is enabled only while the PTY is backpressured.
 
 This is a competent baseline. There is no evidence yet for replacing it with
 `io_uring` or an additional I/O thread on Linux.
+
+`bench-terminal-session-io` re-executes itself as a raw deterministic PTY
+writer and reports transport topology, throughput, frame latency, and event-loop
+delay. On the development host, a 16 MiB ANSI stream emitted in 64-byte writes
+retained about 60.6 MiB/s while reducing parser submissions from roughly 710k
+to 43k and p99 event-loop gaps from 74.9 ms to 13.3 ms. Set
+`GHOSTTY_QT_PTY_READ_BATCHING=legacy` for benchmark A/B diagnosis; it is not a
+supported user setting.
 
 ### Frame transport
 
@@ -149,6 +162,7 @@ measure the eligible production path.
 | `bench-terminal-kitty-graphics` | Kitty protocol replacement and isolated RGB/RGBA/grayscale materialization |
 | `bench-terminal-frame-materialization` | Ghostty VT snapshots plus retained-frame application while a render snapshot holds row payloads shared |
 | `bench-terminal-search` | Visible-result latency, canonical history scan, cancellation, and recompression |
+| `bench-terminal-session-io` | End-to-end PTY reads, parser submissions, frame latency, and event-loop fairness |
 | `bench-terminal-backdrop` | Background asset preparation and software composition |
 
 Representative invocations:
@@ -184,6 +198,10 @@ QT_QPA_PLATFORM=wayland \
 
 ./build/release/tests/bench-terminal-search \
     --rows 25000 --viewport-rows 32 --warmup 1 --iterations 5
+
+./build/release/tests/bench-terminal-session-io \
+    --bytes 16777216 --chunk-bytes 64 --corpus ansi \
+    --warmup 2 --iterations 7 --mode both
 ```
 
 Use each executable's `--help` and, where available, `--list-scenarios` for the
@@ -293,50 +311,15 @@ suite additionally covers delayed integrated-shell startup, silent foreground
 jobs, same-process shell builtins, semantic prompt transitions, rejected input,
 direct commands, and child-exit policy.
 
-## I/O optimization roadmap
+## Remaining I/O optimization roadmap
 
-The current tests cover PTY correctness, final draining, and write
-backpressure, but do not measure transport throughput or event-loop latency.
-The next I/O stage must begin with a Linux-specific benchmark.
+The end-to-end PTY benchmark and bounded read gathering now cover the primary
+Linux read path. Use `perf stat` or `perf record -g` for further CPU attribution
+and `strace` only for syscall topology because tracing perturbs latency. Do not
+port Ghostty's additional gather/parser thread or buffer ring unless these
+measurements identify remaining kernel backpressure.
 
-### 1. Add a PTY bridge benchmark
-
-Add an opt-in `bench-terminal-session-io` that re-executes itself as a
-deterministic child. Measure:
-
-- output and input bytes per second;
-- read/write syscall counts, bytes per call, and `EAGAIN` counts;
-- calls and bytes submitted to libghostty;
-- continuation activations and pending-write high-water mark;
-- time to first and final frame;
-- p50/p95/p99 delay for queued control requests during sustained output;
-- copies, buffer compactions, and frame/update counts.
-
-Workloads should include interactive one-byte input, 4 KiB chunks, a saturated
-plain stream, ANSI-heavy output, query-heavy terminal replies, backpressured
-large paste, and continuous output mixed with latency probes. Compare the same
-corpus with direct `GhosttyVtAdapter::writeVt` and Ghostty's terminal-stream
-benchmark to separate frontend transport from parser cost.
-
-Use `perf stat` or `perf record -g` on Release builds to attribute CPU cost.
-Use `strace` only for syscall topology because tracing perturbs latency.
-
-### 2. Evaluate read batching
-
-The worker currently calls libghostty after every successful PTY `read`.
-Gathering repeated small nonblocking reads into one 64 KiB batch before parsing
-could reduce C-API calls and drain the kernel sooner. Parse immediately on
-`EAGAIN` so interactive output does not wait for a full buffer.
-
-Compare byte quotas with a short elapsed-time budget and reject any change that
-regresses p99 control/input latency.
-
-Upstream Ghostty also has a separate gather/parser pipeline. Much of its stated
-motivation concerns small macOS PTY reads; do not port the extra thread and
-buffer ring until Linux measurements show that single-thread batching still
-leaves meaningful kernel backpressure.
-
-### 3. Remove avoidable write copies
+### 1. Remove avoidable write copies
 
 Terminal-generated replies currently cross a borrowed libghostty callback into
 an owning `QByteArray`, then copy again into `PtyWriteBuffer`.
@@ -351,7 +334,7 @@ Candidate changes:
 The benchmark must cover allocation/copy counts, query latency, ordering, and
 backpressure before and after the change.
 
-### 4. Reduce remaining auxiliary process and IPC I/O
+### 2. Reduce remaining auxiliary process and IPC I/O
 
 These are lower-frequency but concrete costs:
 
@@ -360,7 +343,7 @@ These are lower-frequency but concrete costs:
 - use exponential retry backoff for unchanged invalid configuration, reset by
   watcher or manual reload events.
 
-### 5. Isolate cold filesystem work
+### 3. Isolate cold filesystem work
 
 Terminal file actions currently format and write the artifact synchronously on
 the session worker. Very large history or a stalled temporary filesystem can

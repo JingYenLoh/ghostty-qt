@@ -53,6 +53,8 @@
 namespace {
 
 constexpr qsizetype kReadBufferSize = 64 * 1024;
+constexpr qsizetype kPtyReadBatchSize = 4 * 1024;
+constexpr qsizetype kImmediatePtyParseReadSize = 1024;
 constexpr qsizetype kMaximumReadPerActivation = 1024 * 1024;
 constexpr qsizetype kMaximumFinalRead = 8 * 1024 * 1024;
 constexpr int kFrameCoalesceMilliseconds = 8;
@@ -816,6 +818,11 @@ bool SessionWorker::isAbnormalCommandExit(
         && runtimeMilliseconds <= thresholdMilliseconds;
 }
 
+TerminalSessionIoMetrics SessionWorker::sessionIoMetrics() const noexcept
+{
+    return ioMetrics_;
+}
+
 bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
                                InitializationObserver observer)
 {
@@ -838,6 +845,12 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
     semanticPromptExpected_ = false;
     childRuntimeTimer_.invalidate();
     potentialActivityTimer_.invalidate();
+    batchPtyReads_ = qEnvironmentVariable("GHOSTTY_QT_PTY_READ_BATCHING")
+                         .trimmed()
+                         .compare(QStringLiteral("legacy"),
+                                  Qt::CaseInsensitive)
+        != 0;
+    ioMetrics_ = {};
     cursorBlinkResetTimer_.invalidate();
     cursorBlinkResetPending_ = false;
     stagedSequenceBytes_.clear();
@@ -1645,19 +1658,43 @@ void SessionWorker::drainPty(bool finalDrain)
     // zero-filling this 64 KiB buffer on every notifier activation is wasted.
     std::array<uint8_t, static_cast<size_t>(kReadBufferSize)> buffer;
     qsizetype totalRead = 0;
+    qsizetype batchSize = 0;
     bool receivedData = false;
+    bool retriedAfterWouldBlock = false;
+
+    ++ioMetrics_.readActivations;
+    const auto submitBatch = [&] {
+        if (batchSize <= 0) return;
+        vt_->writeVt(QByteArrayView(
+            reinterpret_cast<const char *>(buffer.data()), batchSize));
+        ++ioMetrics_.parserSubmissions;
+        ioMetrics_.parserBytes += static_cast<quint64>(batchSize);
+        ioMetrics_.maximumParserBatchBytes = std::max(
+            ioMetrics_.maximumParserBatchBytes,
+            static_cast<quint64>(batchSize));
+        batchSize = 0;
+    };
 
     const qsizetype readLimit =
         finalDrain ? kMaximumFinalRead : kMaximumReadPerActivation;
     while (totalRead < readLimit) {
-        const ssize_t count = ::read(masterFd_, buffer.data(), buffer.size());
+        const qsizetype remainingLimit = readLimit - totalRead;
+        const qsizetype batchCapacity = kReadBufferSize - batchSize;
+        const size_t requestSize = static_cast<size_t>(
+            std::min(remainingLimit, batchCapacity));
+        ++ioMetrics_.readCalls;
+        const ssize_t count =
+            ::read(masterFd_, buffer.data() + batchSize, requestSize);
         if (count > 0) {
-            const auto size = static_cast<size_t>(count);
-            vt_->writeVt(
-                QByteArrayView(reinterpret_cast<const char *>(buffer.data()),
-                               static_cast<qsizetype>(size)));
             totalRead += static_cast<qsizetype>(count);
+            batchSize += static_cast<qsizetype>(count);
+            ioMetrics_.readBytes += static_cast<quint64>(count);
             receivedData = true;
+            if (!batchPtyReads_
+                || count >= static_cast<ssize_t>(kImmediatePtyParseReadSize)
+                || batchSize >= kPtyReadBatchSize) {
+                submitBatch();
+            }
             continue;
         }
         if (count == 0) {
@@ -1670,6 +1707,16 @@ void SessionWorker::drainPty(bool finalDrain)
             continue;
         }
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            ++ioMetrics_.readWouldBlock;
+            // Parsing the trailing partial batch gives a streaming producer a
+            // chance to refill the PTY. Retry once to preserve producer/
+            // consumer overlap without turning an activation into a poll.
+            if (batchPtyReads_ && batchSize > 0
+                && !retriedAfterWouldBlock) {
+                submitBatch();
+                retriedAfterWouldBlock = true;
+                continue;
+            }
             break;
         }
         if (errno == EIO) {
@@ -1683,6 +1730,7 @@ void SessionWorker::drainPty(bool finalDrain)
                 .arg(QString::fromLocal8Bit(std::strerror(errno))));
         break;
     }
+    submitBatch();
 
     if (receivedData) {
         markTerminalContentChanged();
@@ -1709,6 +1757,7 @@ void SessionWorker::drainPty(bool finalDrain)
         scheduleFrame();
     }
     if (!finalDrain && totalRead >= kMaximumReadPerActivation) {
+        ++ioMetrics_.continuationActivations;
         QTimer::singleShot(0, this, &SessionWorker::readFromPty);
     }
 }

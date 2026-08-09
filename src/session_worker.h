@@ -27,6 +27,17 @@ class QTimer;
 class GhosttyLinkMatcher;
 class GhosttyVtAdapter;
 
+struct TerminalSessionIoMetrics {
+    quint64 readActivations = 0;
+    quint64 continuationActivations = 0;
+    quint64 readCalls = 0;
+    quint64 readBytes = 0;
+    quint64 readWouldBlock = 0;
+    quint64 parserSubmissions = 0;
+    quint64 parserBytes = 0;
+    quint64 maximumParserBatchBytes = 0;
+};
+
 class SessionWorker final : public QObject {
     Q_OBJECT
 
@@ -47,6 +58,9 @@ public:
     isAbnormalCommandExit(int exitCode, int signalNumber,
                           quint64 runtimeMilliseconds,
                           quint32 thresholdMilliseconds) noexcept;
+    // Deterministic transport counters for benchmarks and regression probes.
+    // Read only from the worker's owning thread.
+    [[nodiscard]] TerminalSessionIoMetrics sessionIoMetrics() const noexcept;
     using InitializationObserver = std::move_only_function<void(bool)>;
 
     // True means libghostty-vt was created for this worker. A later child
@@ -324,6 +338,8 @@ private:
     QElapsedTimer potentialActivityTimer_;
     QElapsedTimer cursorBlinkResetTimer_;
     bool cursorBlinkResetPending_ = false;
+    bool batchPtyReads_ = true;
+    TerminalSessionIoMetrics ioMetrics_;
     bool shuttingDown_ = false;
     bool mouseTracking_ = false;
     bool keyboardActionMode_ = false;

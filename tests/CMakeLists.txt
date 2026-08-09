@@ -599,6 +599,13 @@ target_compile_options(pty-geometry-probe PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )
 
+add_executable(pty-io-probe
+    pty_io_probe.cpp
+)
+target_compile_options(pty-io-probe PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
+)
+
 qt_add_executable(test-ghostty-cli-delegation
     test_ghostty_cli_delegation.cpp
 )
@@ -891,6 +898,7 @@ target_include_directories(test-session-worker PRIVATE "${CMAKE_CURRENT_SOURCE_D
 target_compile_definitions(test-session-worker PRIVATE
     GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
     GHOSTTY_QT_TEST_PTY_GEOMETRY_PROBE="$<TARGET_FILE:pty-geometry-probe>"
+    GHOSTTY_QT_TEST_PTY_IO_PROBE="$<TARGET_FILE:pty-io-probe>"
     GHOSTTY_QT_TEST_SHELL_INTEGRATION_ENABLED=$<BOOL:${GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG}>
 )
 target_link_libraries(test-session-worker PRIVATE
@@ -902,6 +910,7 @@ target_link_libraries(test-session-worker PRIVATE
 add_dependencies(test-session-worker
     ghostty-qt-terminfo
     pty-geometry-probe
+    pty-io-probe
 )
 if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
     add_dependencies(test-session-worker
@@ -1107,6 +1116,23 @@ if(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
         ghostty-qt-session-worker
     )
     add_dependencies(bench-terminal-search ghostty-qt-terminfo)
+
+    qt_add_executable(bench-terminal-session-io
+        bench_terminal_session_io.cpp
+    )
+    target_include_directories(
+        bench-terminal-session-io PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    )
+    target_compile_definitions(bench-terminal-session-io PRIVATE
+        GHOSTTY_QT_BENCH_TERMINFO="${GHOSTTY_QT_TERMINFO_DIR}"
+    )
+    target_link_libraries(bench-terminal-session-io PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        ghostty-qt-session-worker
+    )
+    add_dependencies(bench-terminal-session-io ghostty-qt-terminfo)
 
     qt_add_executable(bench-terminal-backdrop
         bench_terminal_backdrop.cpp
