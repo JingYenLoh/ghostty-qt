@@ -2531,10 +2531,11 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                 || terminalRowPaintDependsOn(solidRow.paintDependencies,
                                              rowPaintChanges);
             bool glyphForegroundsChanged = false;
-            const bool buildRowTextCells = rebuildRowText || rebuildRowSolids;
-            QVector<TerminalTextCell> rowTextCells;
-            if (buildRowTextCells) {
-                rowTextCells.reserve(visibleColumns);
+            const bool buildRowTextRuns = rebuildRowText || rebuildRowSolids;
+            std::optional<TerminalTextRunBuilder> rowTextRunBuilder;
+            if (buildRowTextRuns) {
+                rowTextRunBuilder.emplace(visibleColumns,
+                                          metrics.shapingBreakCursor);
             }
             if (rebuildRowSolids) {
                 solidRow.paintDependencies = 0;
@@ -2780,8 +2781,8 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                         }
                     }
 
-                    if (buildRowTextCells) {
-                        rowTextCells.append({
+                    if (buildRowTextRuns) {
+                        rowTextRunBuilder->append({
                             .text = cell.text,
                             .font = metrics.fontForText(fontRole, cell.text),
                             .color = solidRow.glyphForegrounds.at(column),
@@ -2814,11 +2815,9 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                 root->rowFallbackCellCounts[row] = 0;
                 root->rowBatchedGlyphCounts[row] = 0;
 #endif
-                const QVector<TerminalTextRun> runs = planTerminalTextRuns(
-                    std::span<const TerminalTextCell>(
-                        rowTextCells.constData(),
-                        static_cast<std::size_t>(rowTextCells.size())),
-                    metrics.shapingBreakCursor);
+                Q_ASSERT(rowTextRunBuilder.has_value());
+                const QVector<TerminalTextRun> runs =
+                    std::move(*rowTextRunBuilder).takeRuns();
                 TerminalGlyphBatch *const glyphBatch =
                     row < root->rowGlyphBatches.size()
                     ? root->rowGlyphBatches.at(row)

@@ -93,6 +93,8 @@ The retained renderer already avoids the largest terminal-frontend costs:
 - Qt text nodes are created lazily for complex shaping and the software path;
 - exact per-cell fallback layouts are reconstructed from run boundaries only
   after grid-fit rejection instead of being retained for every ordinary cell;
+- text runs are planned while the renderer already visits a dirty row, avoiding
+  a second traversal and a transient 128-byte staging object per visible cell;
 - shaping compatibility keys compare packed RGB8 cell colors directly instead
   of expanding two colors per visited cell into `QColor` temporaries;
 - validated glyph plans omit unused UTF-16 source indexes, and retained glyph

@@ -7,6 +7,7 @@
 #include <QString>
 #include <QVector>
 
+#include <optional>
 #include <span>
 
 // Ghostty permits background-only changes inside a shaped run. Every other
@@ -80,6 +81,61 @@ struct TerminalTextRun {
     QVector<TerminalTextBoundary> boundaries;
 
     bool operator==(const TerminalTextRun &) const = default;
+};
+
+// Lightweight view consumed while a renderer row is already being visited.
+// Keeping the owned TerminalTextCell representation out of that hot path
+// avoids staging and then walking a second 128-byte object per grid cell.
+struct TerminalTextCellView {
+    QStringView text;
+    const QFont &font;
+    const QColor &color;
+    TerminalShapingStyle style;
+    quint32 baseCodepoint = 0;
+    int column = 0;
+    int columnSpan = 1;
+    bool plainCodepoint = false;
+    bool extendedGrapheme = false;
+    bool selected = false;
+    bool invisible = false;
+    bool spacer = false;
+    bool cursor = false;
+};
+
+// Incrementally plans maximal compatible runs. The renderer can feed this
+// directly from its existing cell traversal instead of materializing an
+// intermediate QVector<TerminalTextCell> for every rebuilt row.
+class TerminalTextRunBuilder {
+public:
+    explicit TerminalTextRunBuilder(qsizetype expectedCellCount,
+                                    bool breakAtCursor);
+
+    void append(TerminalTextCellView cell);
+    [[nodiscard]] QVector<TerminalTextRun> takeRuns() &&;
+
+private:
+    struct PreviousCell {
+        quint32 baseCodepoint = 0;
+        int column = 0;
+        int columnSpan = 1;
+        bool plainCodepoint = false;
+        bool extendedGrapheme = false;
+        bool cursor = false;
+    };
+
+    void finishPending();
+    void startPending(TerminalTextCellView cell);
+    void appendToPending(TerminalTextCellView cell);
+    [[nodiscard]] bool compatibleWithPending(TerminalTextCellView cell) const;
+
+    QVector<TerminalTextRun> runs_;
+    std::optional<TerminalTextRun> pending_;
+    std::optional<PreviousCell> previous_;
+    TerminalShapingStyle pendingStyle_;
+    qsizetype expectedCellCount_ = 0;
+    bool pendingSelected_ = false;
+    bool reservedFullRow_ = false;
+    bool breakAtCursor_ = true;
 };
 
 // Reconstructs exact cell text and grid geometry only for the native fallback
