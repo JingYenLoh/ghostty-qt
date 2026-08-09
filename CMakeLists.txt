@@ -127,10 +127,14 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS
     ShaderTools
     Widgets
 )
-find_package(Qt6 6.8 REQUIRED COMPONENTS
-    GuiPrivate
-    ShaderToolsPrivate
-)
+# The official Qt SDK exports these targets with their public modules, while
+# distribution packages may split them into standalone CMake components.
+if(NOT TARGET Qt6::GuiPrivate)
+    find_package(Qt6 6.8 REQUIRED COMPONENTS GuiPrivate)
+endif()
+if(NOT TARGET Qt6::ShaderToolsPrivate)
+    find_package(Qt6 6.8 REQUIRED COMPONENTS ShaderToolsPrivate)
+endif()
 find_package(LayerShellQt 6.4 REQUIRED)
 find_package(KF6WindowSystem QUIET)
 find_package(PkgConfig REQUIRED)
