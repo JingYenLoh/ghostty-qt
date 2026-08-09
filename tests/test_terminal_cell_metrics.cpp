@@ -3,7 +3,6 @@
 #include <QFontDatabase>
 #include <QFontInfo>
 #include <QFontMetricsF>
-#include <QFontVariableAxis>
 #include <QRawFont>
 #include <QTest>
 
@@ -514,34 +513,39 @@ void TerminalCellMetricsTest::appliesFirstMatchingVariation()
 
     TerminalTypography typography = typographyFor({families.front()});
     const QFont probe({families.front()}, 12);
-    const QList<QFontVariableAxis> axes = QFontInfo(probe).variableAxes();
-    if (axes.isEmpty()) {
+    if (QRawFont::fromFont(probe).fontTable("fvar").isEmpty()) {
         QVERIFY(QFontDatabase::removeApplicationFont(fontId));
-        QSKIP("Bundled font exposes no variable axes through this Qt backend");
+        QSKIP("Bundled font exposes no fvar table through this Qt backend");
     }
-    const QFontVariableAxis &axis = axes.front();
-    const double first = axis.minimumValue();
-    const double second = axis.maximumValue();
+    constexpr quint32 WeightTag = 0x77676874U;
+    constexpr double First = 100.0;
+    constexpr double Second = 700.0;
+    const auto axis = QFont::Tag::fromValue(WeightTag);
+    QVERIFY(axis.has_value());
     typography.face(TerminalFontRole::Regular).variations = {
-        TerminalFontVariation::fromValue(axis.tag().value(), first),
-        TerminalFontVariation::fromValue(axis.tag().value(), second),
+        TerminalFontVariation::fromValue(WeightTag, First),
+        TerminalFontVariation::fromValue(WeightTag, Second),
     };
 
     TerminalCellMetrics actual = terminalCellMetrics(typography);
-    QVERIFY(
-        actual.font(TerminalFontRole::Regular).isVariableAxisSet(axis.tag()));
+    QVERIFY(actual.font(TerminalFontRole::Regular).isVariableAxisSet(*axis));
     QCOMPARE(
-        actual.font(TerminalFontRole::Regular).variableAxisValue(axis.tag()),
-        static_cast<float>(first));
+        actual.font(TerminalFontRole::Regular).variableAxisValue(*axis),
+        static_cast<float>(First));
 
     typography.face(TerminalFontRole::Regular).variations = {
         TerminalFontVariation::fromValue(
-            axis.tag().value(), std::numeric_limits<double>::infinity()),
-        TerminalFontVariation::fromValue(axis.tag().value(), second),
+            WeightTag, std::numeric_limits<double>::infinity()),
+        TerminalFontVariation::fromValue(WeightTag, Second),
     };
     actual = terminalCellMetrics(typography);
-    QVERIFY(
-        !actual.font(TerminalFontRole::Regular).isVariableAxisSet(axis.tag()));
+    QVERIFY(!actual.font(TerminalFontRole::Regular).isVariableAxisSet(*axis));
+
+    typography.face(TerminalFontRole::Regular).variations = {
+        TerminalFontVariation::fromValue(WeightTag, Second + 1.0),
+    };
+    actual = terminalCellMetrics(typography);
+    QVERIFY(!actual.font(TerminalFontRole::Regular).isVariableAxisSet(*axis));
     QVERIFY(QFontDatabase::removeApplicationFont(fontId));
 }
 
@@ -555,13 +559,16 @@ void TerminalCellMetricsTest::appliesVariationsToEveryRole()
         QFontDatabase::applicationFontFamilies(fontId).value(0);
     QVERIFY(!family.isEmpty());
 
-    const QList<QFontVariableAxis> axes =
-        QFontInfo(QFont({family}, 12)).variableAxes();
-    if (axes.isEmpty()) {
+    const QFont probe({family}, 12);
+    if (QRawFont::fromFont(probe).fontTable("fvar").isEmpty()) {
         QVERIFY(QFontDatabase::removeApplicationFont(fontId));
-        QSKIP("Bundled font exposes no variable axes through this Qt backend");
+        QSKIP("Bundled font exposes no fvar table through this Qt backend");
     }
-    const QFontVariableAxis &axis = axes.front();
+    constexpr quint32 WeightTag = 0x77676874U;
+    constexpr double Minimum = 100.0;
+    constexpr double Maximum = 700.0;
+    const auto axis = QFont::Tag::fromValue(WeightTag);
+    QVERIFY(axis.has_value());
     TerminalTypography typography = typographyFor({family});
     std::array<float, kRoles.size()> expected{};
     for (std::size_t index = 0; index < kRoles.size(); ++index) {
@@ -569,19 +576,18 @@ void TerminalCellMetricsTest::appliesVariationsToEveryRole()
         typography.face(role).families = {family};
         const double fraction = static_cast<double>(index + 1U)
             / static_cast<double>(kRoles.size() + 1U);
-        const double value = axis.minimumValue()
-            + (axis.maximumValue() - axis.minimumValue()) * fraction;
+        const double value = Minimum + (Maximum - Minimum) * fraction;
         expected[index] = static_cast<float>(value);
         typography.face(role).variations = {
-            TerminalFontVariation::fromValue(axis.tag().value(), value),
+            TerminalFontVariation::fromValue(WeightTag, value),
         };
     }
 
     const TerminalCellMetrics metrics = terminalCellMetrics(typography);
     for (std::size_t index = 0; index < kRoles.size(); ++index) {
         const QFont &font = metrics.font(kRoles[index]);
-        QVERIFY(font.isVariableAxisSet(axis.tag()));
-        QCOMPARE(font.variableAxisValue(axis.tag()), expected[index]);
+        QVERIFY(font.isVariableAxisSet(*axis));
+        QCOMPARE(font.variableAxisValue(*axis), expected[index]);
     }
     QVERIFY(QFontDatabase::removeApplicationFont(fontId));
 }
