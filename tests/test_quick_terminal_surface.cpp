@@ -67,7 +67,7 @@ void QuickTerminalSurfaceTest::configuresInvariantLayerProperties()
     QCOMPARE(layer, LayerWindow::get(&window));
     QCOMPARE(layer->layer(), LayerWindow::LayerTop);
     QCOMPARE(layer->scope(), QStringLiteral("ghostty-quick-terminal"));
-    QCOMPARE(layer->exclusionZone(), 0);
+    QCOMPARE(layer->exclusionZone(), -1);
     QVERIFY(!layer->closeOnDismissed());
     QVERIFY(!window.isVisible());
 }

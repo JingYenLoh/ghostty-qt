@@ -164,7 +164,14 @@ void QuickTerminalSurface::applyStaticOptions()
 {
     LayerWindow *const layerShellWindow = layerShellWindow_.data();
     Q_ASSERT(layerShellWindow != nullptr);
-    layerShellWindow->setExclusiveZone(0);
+    // The requested size is calculated from the complete output geometry.
+    // Zone zero would make the compositor place the surface inside the area
+    // left by exclusive layer surfaces. For an edge quick terminal whose
+    // unanchored dimension spans the output, a panel on one side then makes
+    // the compositor center an output-sized window in a smaller area and
+    // shifts half of the panel extent off-screen. Zone -1 neither reserves
+    // space nor moves the quick terminal around panels.
+    layerShellWindow->setExclusiveZone(-1);
     layerShellWindow->setCloseOnDismissed(false);
 }
 
