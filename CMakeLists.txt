@@ -131,7 +131,7 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS
     GuiPrivate
     ShaderToolsPrivate
 )
-find_package(LayerShellQt REQUIRED)
+find_package(LayerShellQt 6.4 REQUIRED)
 find_package(KF6WindowSystem QUIET)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(XKBCommon REQUIRED IMPORTED_TARGET xkbcommon)
@@ -747,6 +747,14 @@ target_link_libraries(ghostty-qt-quick-terminal PUBLIC
     Qt6::Gui
     LayerShellQt::Interface
 )
+if(LayerShellQt_VERSION VERSION_GREATER_EQUAL "6.5")
+    target_compile_definitions(ghostty-qt-quick-terminal PUBLIC
+        GHOSTTY_QT_HAVE_LAYERSHELLQT_ACTIVATE_ON_SHOW=1)
+endif()
+if(LayerShellQt_VERSION VERSION_GREATER_EQUAL "6.6")
+    target_compile_definitions(ghostty-qt-quick-terminal PUBLIC
+        GHOSTTY_QT_HAVE_LAYERSHELLQT_SCREEN_SELECTION=1)
+endif()
 
 ghostty_qt_add_internal_library(ghostty-qt-window-ui
     src/window_ui_controller.cpp

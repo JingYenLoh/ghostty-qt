@@ -84,6 +84,14 @@ jobs:
           modules: qtmultimedia qtshadertools qtwaylandcompositor
           cache: true
 
+      - name: Install LayerShellQt
+        run: |
+          layershellqt_prefix="$RUNNER_TEMP/layershellqt"
+          ./scripts/bootstrap-layershellqt.sh "$layershellqt_prefix"
+          echo "CMAKE_PREFIX_PATH=$layershellqt_prefix${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$layershellqt_prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          echo "QT_PLUGIN_PATH=$layershellqt_prefix/lib/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}" >> "$GITHUB_ENV"
+
       - name: Install verified Zig toolchain
         run: ./scripts/bootstrap-zig.sh
 
@@ -92,6 +100,7 @@ jobs:
           test "$(./.local/bin/zig version)" = "0.16.0"
           test "$(git -C ghostty rev-parse HEAD)" = "$(cat GHOSTTY_REVISION)"
           test "$(qmake -query QT_VERSION)" = "${{ matrix.qt_version }}"
+          test -f "$RUNNER_TEMP/layershellqt/lib/cmake/LayerShellQt/LayerShellQtConfig.cmake"
           clang-format --version
           cmake --version
 

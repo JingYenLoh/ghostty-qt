@@ -97,7 +97,12 @@ void QuickTerminalSurfaceTest::mapsEveryLayerAndInitialNamespace()
 
         QCOMPARE(layer->layer(), test.layer);
         QCOMPARE(layer->scope(), QStringLiteral("custom-quick-terminal"));
+#if GHOSTTY_QT_HAVE_LAYERSHELLQT_SCREEN_SELECTION
         QVERIFY(window.handle() == nullptr);
+#else
+        // LayerShellQt before 6.6 creates the platform handle while attaching.
+        QVERIFY(window.handle() != nullptr);
+#endif
     }
 }
 
@@ -159,7 +164,9 @@ void QuickTerminalSurfaceTest::mapsEveryKeyboardMode()
         QVERIFY(surface->syncOptions(options, {}, primaryScreen()));
         const LayerWindow *const layer = surface->layerShellWindow();
         QCOMPARE(layer->keyboardInteractivity(), test.layer);
+#if GHOSTTY_QT_HAVE_LAYERSHELLQT_ACTIVATE_ON_SHOW
         QCOMPARE(layer->activateOnShow(), test.activateOnShow);
+#endif
     }
 }
 
@@ -179,21 +186,36 @@ void QuickTerminalSurfaceTest::mapsEveryScreenMode()
         options.screen = selection;
         QVERIFY(surface->syncOptions(options, {}, screen));
         const LayerWindow *const layer = surface->layerShellWindow();
+#if GHOSTTY_QT_HAVE_LAYERSHELLQT_SCREEN_SELECTION
         QCOMPARE(layer->screen(), &screen);
         QVERIFY(!layer->wantsToBeOnActiveScreen());
+#else
+        QCOMPARE(layer->screenConfiguration(), LayerWindow::ScreenFromQWindow);
+        QCOMPARE(window.screen(), &screen);
+#endif
     }
 
     options.screen = QuickTerminalScreen::Mouse;
     QVERIFY(surface->syncOptions(options, {}, screen));
     const LayerWindow *const mouseLayer = surface->layerShellWindow();
+#if GHOSTTY_QT_HAVE_LAYERSHELLQT_SCREEN_SELECTION
     QCOMPARE(mouseLayer->screen(), nullptr);
     QVERIFY(mouseLayer->wantsToBeOnActiveScreen());
+#else
+    QCOMPARE(mouseLayer->screenConfiguration(),
+             LayerWindow::ScreenFromCompositor);
+#endif
 
     options.screen = QuickTerminalScreen::Main;
     QVERIFY(surface->syncOptions(options, {}, screen));
     const LayerWindow *const mainLayer = surface->layerShellWindow();
+#if GHOSTTY_QT_HAVE_LAYERSHELLQT_SCREEN_SELECTION
     QCOMPARE(mainLayer->screen(), &screen);
     QVERIFY(!mainLayer->wantsToBeOnActiveScreen());
+#else
+    QCOMPARE(mainLayer->screenConfiguration(), LayerWindow::ScreenFromQWindow);
+    QCOMPARE(window.screen(), &screen);
+#endif
 }
 
 void QuickTerminalSurfaceTest::calculatesEveryPositionFromFullLogicalGeometry()
@@ -232,9 +254,11 @@ void QuickTerminalSurfaceTest::unchangedSyncIsANoOp()
     QSignalSpy margins(layer, &LayerWindow::marginsChanged);
     QSignalSpy desiredSize(layer, &LayerWindow::desiredSizeChanged);
     QSignalSpy keyboard(layer, &LayerWindow::keyboardInteractivityChanged);
+#if GHOSTTY_QT_HAVE_LAYERSHELLQT_SCREEN_SELECTION
     QSignalSpy activeScreen(layer,
                             &LayerWindow::wantsToBeOnActiveScreenChanged);
     QSignalSpy explicitScreen(layer, &LayerWindow::screenChanged);
+#endif
     QSignalSpy layerChanged(layer, &LayerWindow::layerChanged);
 
     QVERIFY(surface->syncOptions(options, {}, screen));
@@ -243,8 +267,10 @@ void QuickTerminalSurfaceTest::unchangedSyncIsANoOp()
     QCOMPARE(margins.count(), 0);
     QCOMPARE(desiredSize.count(), 0);
     QCOMPARE(keyboard.count(), 0);
+#if GHOSTTY_QT_HAVE_LAYERSHELLQT_SCREEN_SELECTION
     QCOMPARE(activeScreen.count(), 0);
     QCOMPARE(explicitScreen.count(), 0);
+#endif
     QCOMPARE(layerChanged.count(), 0);
 }
 
@@ -261,9 +287,11 @@ void QuickTerminalSurfaceTest::liveSyncUpdatesOnlyRelevantLayerProperties()
     QSignalSpy margins(layer, &LayerWindow::marginsChanged);
     QSignalSpy desiredSize(layer, &LayerWindow::desiredSizeChanged);
     QSignalSpy keyboard(layer, &LayerWindow::keyboardInteractivityChanged);
+#if GHOSTTY_QT_HAVE_LAYERSHELLQT_SCREEN_SELECTION
     QSignalSpy activeScreen(layer,
                             &LayerWindow::wantsToBeOnActiveScreenChanged);
     QSignalSpy explicitScreen(layer, &LayerWindow::screenChanged);
+#endif
     QSignalSpy layerChanged(layer, &LayerWindow::layerChanged);
 
     options.autohide = true;
@@ -272,8 +300,10 @@ void QuickTerminalSurfaceTest::liveSyncUpdatesOnlyRelevantLayerProperties()
     QCOMPARE(margins.count(), 0);
     QCOMPARE(desiredSize.count(), 0);
     QCOMPARE(keyboard.count(), 0);
+#if GHOSTTY_QT_HAVE_LAYERSHELLQT_SCREEN_SELECTION
     QCOMPARE(activeScreen.count(), 0);
     QCOMPARE(explicitScreen.count(), 0);
+#endif
     QCOMPARE(layerChanged.count(), 0);
 
     options.position = QuickTerminalPosition::Right;
@@ -292,9 +322,15 @@ void QuickTerminalSurfaceTest::liveSyncUpdatesOnlyRelevantLayerProperties()
                                screen.geometry().size()));
     QCOMPARE(layer->keyboardInteractivity(),
              LayerWindow::KeyboardInteractivityNone);
+#if GHOSTTY_QT_HAVE_LAYERSHELLQT_ACTIVATE_ON_SHOW
     QVERIFY(!layer->activateOnShow());
+#endif
+#if GHOSTTY_QT_HAVE_LAYERSHELLQT_SCREEN_SELECTION
     QCOMPARE(layer->screen(), nullptr);
     QVERIFY(layer->wantsToBeOnActiveScreen());
+#else
+    QCOMPARE(layer->screenConfiguration(), LayerWindow::ScreenFromCompositor);
+#endif
     QCOMPARE(layer->layer(), LayerWindow::LayerOverlay);
     // LayerShellQt stores the replacement scope for the next native layer
     // role. Wayland provides no request that can rename the current role.

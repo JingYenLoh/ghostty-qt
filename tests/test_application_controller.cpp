@@ -578,7 +578,9 @@ void ApplicationControllerTest::
              LayerShellQt::Window::KeyboardInteractivityNone);
     QCOMPARE(layer->layer(), LayerShellQt::Window::LayerOverlay);
     QCOMPARE(layer->scope(), QStringLiteral("recreated-quick-terminal"));
+#if GHOSTTY_QT_HAVE_LAYERSHELLQT_ACTIVATE_ON_SHOW
     QVERIFY(!layer->activateOnShow());
+#endif
     QCOMPARE(ordinaryUi->commandPaletteModel()->count(), 1);
     QCOMPARE(ordinaryUi->commandPaletteModel()
                  ->data(ordinaryUi->commandPaletteModel()->index(0, 0),
