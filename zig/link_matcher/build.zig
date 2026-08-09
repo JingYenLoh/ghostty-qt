@@ -35,9 +35,11 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
     });
     // ReleaseSafe emits Zig stack-probe/runtime helpers that a C++ link does
-    // not otherwise provide. Keep the static ABI self-contained in every
-    // configured optimization mode, matching Ghostty's own lib-vt build.
-    library.bundle_compiler_rt = true;
+    // not otherwise provide. ReleaseFast does not reference compiler-rt, and
+    // bundling it there leaks its weak libc replacements into the final link.
+    // In particular, Zig 0.16's scalar memset can then override libghostty-vt's
+    // vectorized workaround depending on static-archive order.
+    library.bundle_compiler_rt = optimize != .ReleaseFast;
     library.root_module.linkLibrary(oniguruma.artifact("oniguruma"));
     b.installArtifact(library);
     // Zig does not fold a linked static archive into another static archive.
