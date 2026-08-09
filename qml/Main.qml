@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.Basic as Basic
 import QtQuick.Layouts
 import GhosttyQt 1.0
 
@@ -216,6 +217,11 @@ ApplicationWindow {
             }
             text: title
             font.bold: attention
+            width: TabBar.tabBar !== null && TabBar.tabBar.count > 0
+                   ? (TabBar.tabBar.availableWidth
+                      - TabBar.tabBar.spacing * (TabBar.tabBar.count - 1))
+                     / TabBar.tabBar.count
+                   : implicitWidth
             focusPolicy: Qt.NoFocus
             Accessible.description: statusText
             ToolTip.visible: hovered
@@ -322,7 +328,10 @@ ApplicationWindow {
             objectName: "windowToolbarLayout"
             spacing: 4
 
-            TabBar {
+            // KDE's TabBar dereferences contentModel.get(0) while Repeater
+            // delegates are replaced. Use Qt's safe container while retaining
+            // the active desktop style for the TabButton delegates.
+            Basic.TabBar {
                 id: tabs
                 objectName: "windowTabBar"
                 Layout.fillWidth: true
@@ -332,6 +341,7 @@ ApplicationWindow {
                 // implicit content width back into this RowLayout.
                 Layout.minimumWidth: 0
                 Layout.preferredWidth: 0
+                implicitWidth: 0
                 visible: workspace.tabBarVisible
                 currentIndex: workspace.currentIndex
 
