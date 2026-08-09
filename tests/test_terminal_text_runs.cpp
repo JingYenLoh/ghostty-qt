@@ -306,6 +306,13 @@ void TerminalTextRunsTest::excludesBackgroundFromTheStyleKey()
     right.setBackgroundExplicit(true);
 
     QCOMPARE(terminalShapingStyle(left), terminalShapingStyle(right));
+
+    right.foreground = Qt::red;
+    QVERIFY(terminalShapingStyle(left) != terminalShapingStyle(right));
+
+    right = left;
+    right.underlineColor = Qt::red;
+    QVERIFY(terminalShapingStyle(left) != terminalShapingStyle(right));
 }
 
 void TerminalTextRunsTest::acceptsExactGridFit()

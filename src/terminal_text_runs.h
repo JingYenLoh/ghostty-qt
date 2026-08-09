@@ -10,10 +10,13 @@
 #include <span>
 
 // Ghostty permits background-only changes inside a shaped run. Every other
-// terminal style attribute remains part of the compatibility key.
+// terminal style attribute remains part of the compatibility key. Keep the
+// worker's packed RGB8 colors here: this key only compares them for equality,
+// so expanding each one to QColor would add conversion and temporary-storage
+// costs without adding information.
 struct TerminalShapingStyle {
-    QColor foreground;
-    QColor underlineColor;
+    TerminalCellColor foreground;
+    TerminalCellColor underlineColor;
     TerminalColorSource foregroundSource = TerminalColorSource::Default;
     int foregroundPaletteIndex = -1;
     bool bold = false;
