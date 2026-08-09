@@ -243,6 +243,44 @@ Two environment variables provide targeted A/B controls:
 
 They are diagnostic controls, not supported user configuration.
 
+## Idle session monitoring roadmap
+
+Each live pane currently runs a 100 ms timer that combines two responsibilities:
+polling child exit with `waitpid(WNOHANG)` and reconciling interactive-shell
+activity with `tcgetpgrp`. On a pidfd-capable Linux host, the first operation
+duplicates the existing pidfd notifier. The second continues even after an idle
+shell has reached a prompt, although accepted process-starting input and PTY
+output already trigger activity reconciliation.
+
+Because every pane owns a session thread, the idle cost scales with pane count.
+For example, 16 idle interactive panes schedule about 160 worker wakeups and up
+to 320 process-state syscalls per second. This is the next optimization target;
+the expected benefit is lower idle CPU use and wakeup pressure rather than
+higher terminal-stream throughput.
+
+Implement the change incrementally:
+
+1. Add an opt-in idle-session benchmark or equivalent test probe covering 1,
+   16, and 64 panes. Count timer callbacks, `waitpid` calls, foreground-group
+   queries, activity transitions, and child-exit latency after the shell has
+   settled. Use task-clock and context-switch measurements for whole-process
+   confirmation; use `strace` only to validate syscall topology.
+2. Separate child-exit observation from process-activity reconciliation. Use
+   pidfd readiness as the normal exit path and retain periodic `waitpid` only
+   when `pidfd_open` is unavailable.
+3. Replace unconditional activity polling with a single-shot reconciliation at
+   the end of the existing input grace period. Re-arm a slower probe only while
+   an unintegrated foreground job requires observation, and stop it once the
+   shell returns to an inactive prompt. PTY output and semantic prompt markers
+   remain immediate event-driven reconciliation points.
+
+The optimized pidfd path must reach zero recurring `waitpid` and `tcgetpgrp`
+calls after an idle prompt. Existing behavior must remain intact for delayed
+shell startup, silent foreground jobs, same-process shell builtins, semantic
+prompt transitions, direct commands, unexpected reaping, close confirmation,
+and kernels without pidfd support. Child-exit notification latency must not
+regress.
+
 ## I/O optimization roadmap
 
 The current tests cover PTY correctness, final draining, and write
