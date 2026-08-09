@@ -806,6 +806,7 @@ target_compile_definitions(ghostty-qt-runtime-paths PRIVATE
 add_library(ghostty-qt-shell-integration STATIC
     src/ghostty_shell_integration.cpp
     src/ghostty_shell_integration.h
+    src/ghostty_shell_integration_p.h
 )
 target_include_directories(ghostty-qt-shell-integration PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
@@ -817,6 +818,24 @@ target_link_libraries(ghostty-qt-shell-integration PUBLIC
 target_compile_definitions(ghostty-qt-shell-integration PRIVATE
     GHOSTTY_QT_INSTALL_RESOURCES_RELATIVE_DIR="${GHOSTTY_QT_INSTALL_RESOURCES_RELATIVE_DIR}"
 )
+if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+    set(_ghostty_qt_config_runtime_install_file
+        "${CMAKE_INSTALL_LIBDIR}/ghostty-qt/libghostty${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    cmake_path(ABSOLUTE_PATH _ghostty_qt_config_runtime_install_file
+        BASE_DIRECTORY "${CMAKE_INSTALL_PREFIX}"
+        NORMALIZE
+        OUTPUT_VARIABLE _ghostty_qt_config_runtime_install_file_absolute)
+    cmake_path(RELATIVE_PATH
+        _ghostty_qt_config_runtime_install_file_absolute
+        BASE_DIRECTORY "${_ghostty_qt_install_bindir_absolute}"
+        OUTPUT_VARIABLE
+            GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY_RELATIVE_TO_BINDIR)
+    target_compile_definitions(ghostty-qt-shell-integration PRIVATE
+        GHOSTTY_QT_CONFIG_HELPER_BUILD_PATH="$<TARGET_FILE:ghostty-qt-config-helper>"
+        GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY_BUILD_PATH="${GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY}"
+        GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY_RELATIVE_TO_BINDIR="${GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY_RELATIVE_TO_BINDIR}"
+    )
+endif()
 target_compile_options(ghostty-qt-shell-integration PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )

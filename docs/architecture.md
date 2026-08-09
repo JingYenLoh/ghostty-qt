@@ -422,7 +422,11 @@ The GUI process never parses human-oriented `+show-config` output.
 The process boundary contains the private Zig application API and lets the main
 binary retain a small C++/libghostty interface. It also provides exact pinned
 implementations for supported `+` actions, font discovery, themes, SSH, and
-shell-integration finalization.
+shell-integration finalization. Successful shell preparations use a bounded,
+single-flight process cache keyed by the request and the complete helper,
+environment, private-library, and resource identity. Only the expected
+production helper/runtime layout is eligible; other helpers, uncacheable
+requests, and failures retain the same direct helper fallback semantics.
 
 ### Reload
 

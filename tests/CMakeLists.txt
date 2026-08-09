@@ -38,6 +38,21 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
     )
     add_dependencies(test-ghostty-shell-integration
         ghostty-qt-config-helper)
+
+    qt_add_executable(shell-integration-cache-probe
+        shell_integration_cache_probe.cpp
+    )
+    target_include_directories(shell-integration-cache-probe PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    )
+    target_link_libraries(shell-integration-cache-probe PRIVATE
+        Qt6::Core
+        ghostty-qt-shell-integration
+    )
+    set(_ghostty_qt_shell_integration_cache_probe
+        "$<TARGET_FILE:shell-integration-cache-probe>")
+else()
+    set(_ghostty_qt_shell_integration_cache_probe "")
 endif()
 add_test(NAME ghostty-shell-integration
     COMMAND test-ghostty-shell-integration)
@@ -981,6 +996,26 @@ set_tests_properties(terminal-pane-retained-solids-rhi PROPERTIES
 )
 
 if(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
+    if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+        qt_add_executable(bench-ghostty-shell-integration
+            bench_ghostty_shell_integration.cpp
+        )
+        target_include_directories(
+            bench-ghostty-shell-integration PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+        )
+        target_compile_definitions(bench-ghostty-shell-integration PRIVATE
+            GHOSTTY_QT_BENCH_SHELL_HELPER="$<TARGET_FILE:ghostty-qt-config-helper>"
+            GHOSTTY_QT_BENCH_SHELL_RESOURCES="${CMAKE_BINARY_DIR}"
+        )
+        target_link_libraries(bench-ghostty-shell-integration PRIVATE
+            Qt6::Core
+            ghostty-qt-shell-integration
+        )
+        add_dependencies(bench-ghostty-shell-integration
+            ghostty-qt-config-helper)
+    endif()
+
     qt_add_executable(bench-terminal-custom-shader-compiler
         bench_terminal_custom_shader_compiler.cpp
     )
@@ -1682,6 +1717,7 @@ add_test(
         "-DINSTALL_DATADIR=${CMAKE_INSTALL_DATADIR}"
         "-DAPPLICATION_ID=${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}"
         "-DEXPECT_CONFIG_HELPER=${GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG}"
+        "-DSHELL_CACHE_PROBE=${_ghostty_qt_shell_integration_cache_probe}"
         "-DCONFIG=$<CONFIG>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/RunDesktopIntegrationInstallTest.cmake"
 )

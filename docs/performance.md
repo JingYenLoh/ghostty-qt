@@ -104,6 +104,29 @@ boundary reduces byte-to-cell mapping storage from 8 to 2 bytes per byte while
 preserving wide-character, combining-grapheme, wrap, newline, and viewport
 semantics.
 
+### Shell startup
+
+Shell-integration finalization retains successful equivalent preparations in a
+bounded process-wide cache. Concurrent panes with the same launch identity
+share one in-flight helper process; failures are delivered to those waiters but
+are not retained, so a later pane retries. The LRU keeps at most 32 results,
+with a 1 MiB per-result limit and an 8 MiB retained-result payload budget.
+
+The key covers the canonical request, timeout, complete helper-process
+environment, helper executable, its revision-matched private `libghostty`, and
+the resource nodes that the pinned setup code probes. Filesystem identities are
+checked again after a miss and before accepting a hit. Ambiguous inherited
+environments, loader injection, helpers outside the expected runtime layout,
+and inaccessible identities bypass the cache. Results observed while files are
+unstable are returned but not retained.
+
+On the development host, representative Release runs measured median
+preparation around 7.0–7.5 ms uncached and 0.8–0.9 ms on a validated warm hit.
+An eight-pane identical cold burst launched one helper and coalesced seven
+waiters, while eight distinct requests launched concurrently. Warm hits still
+serialize and hash the request, recheck filesystem identity, and return an
+isolated implicitly shared result.
+
 ## Building benchmarks
 
 Benchmarks are opt-in and excluded from CTest:
@@ -113,8 +136,13 @@ cmake --preset release -DGHOSTTY_QT_BUILD_RENDER_BENCHMARKS=ON
 cmake --build --preset release -j"$(nproc)"
 ```
 
+The shell-integration benchmark also requires the default shared Ghostty
+configuration helper. It removes loader-injection variables so its cached cases
+measure the eligible production path.
+
 | Executable | Measures |
 | --- | --- |
+| `bench-ghostty-shell-integration` | Uncached, cold/warm cached, identical-burst, and distinct-burst shell preparation |
 | `bench-terminal-pane-renderer` | Full-frame, dirty-row, cursor, search, glyph-batch, and Kitty scene-graph work |
 | `bench-terminal-custom-shader-compiler` | Cold shader baking and content-cache hits |
 | `bench-terminal-custom-shader-rhi` | Retained versus legacy multi-pass shader recording and GPU work |
@@ -126,6 +154,8 @@ cmake --build --preset release -j"$(nproc)"
 Representative invocations:
 
 ```sh
+./build/release/tests/bench-ghostty-shell-integration
+
 ./build/release/tests/bench-terminal-pane-renderer \
     --graphics-api software --warmup 20 --iterations 200
 
@@ -339,21 +369,14 @@ Candidate changes:
 The benchmark must cover allocation/copy counts, query latency, ordering, and
 backpressure before and after the change.
 
-### 4. Reduce auxiliary process and IPC I/O
+### 4. Reduce remaining auxiliary process and IPC I/O
 
 These are lower-frequency but concrete costs:
 
-- cache successful identical shell-integration results with a bounded,
-  process-wide, single-flight cache keyed by the serialized request plus every
-  behavior-affecting helper, environment, and resource identity;
 - compare the derived global-shortcut registry and avoid closing/recreating an
   unchanged active portal session;
 - use exponential retry backoff for unchanged invalid configuration, reset by
   watcher or manual reload events.
-
-Each uncached pane pays a helper process launch plus JSON/base64 pipe traffic,
-and multiple panes commonly submit identical requests. Cache failures only if
-their retry and invalidation semantics are explicitly defined.
 
 ### 5. Isolate cold filesystem work
 

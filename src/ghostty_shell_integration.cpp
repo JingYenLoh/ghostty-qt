@@ -1,19 +1,36 @@
 #include "ghostty_shell_integration.h"
+#include "ghostty_shell_integration_p.h"
+#include "unique_file_descriptor.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QProcess>
 #include <QSet>
+#include <QWaitCondition>
 
 #include <algorithm>
+#include <array>
+#include <cerrno>
+#include <cstdint>
 #include <limits>
+#include <memory>
+#include <ranges>
+#include <type_traits>
 #include <utility>
+
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace {
 
@@ -24,6 +41,477 @@ constexpr qsizetype kMaximumRequestProtocolBytes = 4 * 1024 * 1024;
 constexpr qsizetype kMaximumResponseProtocolBytes = 8 * 1024 * 1024;
 constexpr qsizetype kMaximumHelperDiagnosticBytes = 256 * 1024;
 constexpr int kProcessDrainIntervalMilliseconds = 50;
+constexpr qsizetype kMaximumCachedEntries = 32;
+constexpr qsizetype kMaximumCachedBytes = 8 * 1024 * 1024;
+constexpr qsizetype kMaximumCachedResultBytes = 1024 * 1024;
+constexpr qsizetype kMaximumInFlightPreparations = 64;
+
+struct OpenedFileStatus {
+    quint64 device = 0;
+    quint64 inode = 0;
+    quint64 mode = 0;
+    quint64 user = 0;
+    quint64 group = 0;
+    quint64 links = 0;
+    qint64 size = -1;
+    qint64 modifiedSeconds = 0;
+    qint64 modifiedNanoseconds = 0;
+    qint64 changedSeconds = 0;
+    qint64 changedNanoseconds = 0;
+
+    bool operator==(const OpenedFileStatus &) const = default;
+};
+
+struct ResourceNodeIdentity {
+    QByteArray path;
+    int openError = 0;
+    std::optional<OpenedFileStatus> status;
+
+    bool operator==(const ResourceNodeIdentity &) const = default;
+};
+
+struct ShellIntegrationFilesystemIdentity {
+    QString helperAbsolutePath;
+    QByteArray helperNativePath;
+    OpenedFileStatus helperStatus;
+    QVector<std::pair<QByteArray, OpenedFileStatus>> helperRuntimeIdentities;
+    QVector<ResourceNodeIdentity> resourceNodes;
+
+    bool operator==(const ShellIntegrationFilesystemIdentity &) const = default;
+};
+
+struct ShellIntegrationCacheIdentity {
+    ShellIntegrationFilesystemIdentity filesystem;
+    QByteArray key;
+};
+
+using ShellIntegrationPreparation =
+    std::expected<GhosttyShellIntegrationResult, QString>;
+
+struct CachedPreparation {
+    GhosttyShellIntegrationResult result;
+    qsizetype cost = 0;
+    quint64 lastAccess = 0;
+};
+
+struct PendingPreparation {
+    QWaitCondition ready;
+    std::optional<ShellIntegrationPreparation> outcome;
+    bool finished = false;
+};
+
+struct ShellIntegrationCacheState {
+    QMutex mutex;
+    QHash<QByteArray, CachedPreparation> successful;
+    QHash<QByteArray, std::shared_ptr<PendingPreparation>> pending;
+    GhosttyShellIntegrationCacheSnapshot counters;
+    quint64 accessSerial = 0;
+    qsizetype retainedBytes = 0;
+    QString trustedTestHelperPath;
+};
+
+ShellIntegrationCacheState &shellIntegrationCacheState()
+{
+    static ShellIntegrationCacheState state;
+    return state;
+}
+
+OpenedFileStatus openedFileStatus(const struct stat &status) noexcept
+{
+    return {
+        .device = static_cast<quint64>(status.st_dev),
+        .inode = static_cast<quint64>(status.st_ino),
+        .mode = static_cast<quint64>(status.st_mode),
+        .user = static_cast<quint64>(status.st_uid),
+        .group = static_cast<quint64>(status.st_gid),
+        .links = static_cast<quint64>(status.st_nlink),
+        .size = static_cast<qint64>(status.st_size),
+        .modifiedSeconds = static_cast<qint64>(status.st_mtim.tv_sec),
+        .modifiedNanoseconds = static_cast<qint64>(status.st_mtim.tv_nsec),
+        .changedSeconds = static_cast<qint64>(status.st_ctim.tv_sec),
+        .changedNanoseconds = static_cast<qint64>(status.st_ctim.tv_nsec),
+    };
+}
+
+int openRetryingInterrupts(const QByteArray &path, int flags) noexcept
+{
+    int descriptor = -1;
+    do {
+        descriptor = ::open(path.constData(), flags);
+    } while (descriptor < 0 && errno == EINTR);
+    return descriptor;
+}
+
+std::optional<OpenedFileStatus> inspectOpenedFile(int descriptor) noexcept
+{
+    struct stat status{};
+    if (::fstat(descriptor, &status) != 0 || status.st_size < 0) {
+        return std::nullopt;
+    }
+    return openedFileStatus(status);
+}
+
+std::optional<std::pair<QString, OpenedFileStatus>>
+helperIdentity(const QString &helperPath)
+{
+    // QProcess PATH-search and lexical `..` resolution are observable. Cache
+    // only the production contract's absolute spelling and execute that exact
+    // spelling rather than normalizing it into a different program path.
+    if (helperPath.isEmpty() || !QFileInfo(helperPath).isAbsolute()) {
+        return std::nullopt;
+    }
+    const QString &absolutePath = helperPath;
+    const QByteArray nativePath = QFile::encodeName(absolutePath);
+    if (nativePath.isEmpty() || nativePath.contains('\0')) return std::nullopt;
+
+    const int descriptor =
+        openRetryingInterrupts(nativePath, O_RDONLY | O_CLOEXEC | O_NOCTTY);
+    if (descriptor < 0) return std::nullopt;
+    UniqueFileDescriptor file(descriptor);
+    const auto status = inspectOpenedFile(file.get());
+    if (!status.has_value()
+        || (status->mode & static_cast<quint64>(S_IFMT))
+            != static_cast<quint64>(S_IFREG)) {
+        return std::nullopt;
+    }
+    if (::access(nativePath.constData(), X_OK) != 0) return std::nullopt;
+    return std::pair(absolutePath, *status);
+}
+
+std::optional<std::pair<QByteArray, OpenedFileStatus>>
+regularFileIdentity(const QString &path)
+{
+    const QByteArray nativePath = QFile::encodeName(QDir::cleanPath(path));
+    if (nativePath.isEmpty() || nativePath.contains('\0')) return std::nullopt;
+    const int descriptor =
+        openRetryingInterrupts(nativePath, O_RDONLY | O_CLOEXEC | O_NOCTTY);
+    if (descriptor < 0) return std::nullopt;
+    UniqueFileDescriptor file(descriptor);
+    const auto status = inspectOpenedFile(file.get());
+    if (!status.has_value()
+        || (status->mode & static_cast<quint64>(S_IFMT))
+            != static_cast<quint64>(S_IFREG)) {
+        return std::nullopt;
+    }
+    return std::pair(nativePath, *status);
+}
+
+std::optional<QVector<std::pair<QByteArray, OpenedFileStatus>>>
+helperRuntimeIdentity(const QString &helperAbsolutePath)
+{
+    // The production helper has one revision-matched DT_NEEDED dependency on
+    // private libghostty. With loader injection disabled below, its build and
+    // installed RUNPATHs select one of these two deterministic locations.
+    // A deliberately private test seam can trust one standalone protocol
+    // fixture. Arbitrary helpers may depend on state this frontend cannot
+    // fingerprint, so they always bypass the production cache.
+    if (QFileInfo(helperAbsolutePath).fileName()
+        != QLatin1StringView("ghostty-qt-config-helper")) {
+        ShellIntegrationCacheState &state = shellIntegrationCacheState();
+        QMutexLocker locker(&state.mutex);
+        if (helperAbsolutePath != state.trustedTestHelperPath) {
+            return std::nullopt;
+        }
+        return QVector<std::pair<QByteArray, OpenedFileStatus>>{};
+    }
+#if defined(GHOSTTY_QT_CONFIG_HELPER_BUILD_PATH)                               \
+    && defined(GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY_BUILD_PATH)                   \
+    && defined(GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY_RELATIVE_TO_BINDIR)
+    const QFileInfo requested(helperAbsolutePath);
+    const QFileInfo buildHelper(
+        QStringLiteral(GHOSTTY_QT_CONFIG_HELPER_BUILD_PATH));
+    const bool buildHelperSelected =
+        requested.absoluteFilePath() == buildHelper.absoluteFilePath()
+        || (!requested.canonicalFilePath().isEmpty()
+            && requested.canonicalFilePath()
+                == buildHelper.canonicalFilePath());
+    const QString selectedHelperPath = requested.canonicalFilePath().isEmpty()
+        ? requested.absoluteFilePath()
+        : requested.canonicalFilePath();
+    const QString runtime = buildHelperSelected
+        ? QStringLiteral(GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY_BUILD_PATH)
+        : QDir(QFileInfo(selectedHelperPath).absolutePath())
+              .absoluteFilePath(QStringLiteral(
+                  GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY_RELATIVE_TO_BINDIR));
+    auto identity = regularFileIdentity(runtime);
+    if (!identity.has_value()) return std::nullopt;
+    QVector<std::pair<QByteArray, OpenedFileStatus>> result;
+    result.append(std::move(*identity));
+    return result;
+#else
+    return std::nullopt;
+#endif
+}
+
+QByteArray resourceNodePath(QByteArray root, QByteArrayView relative)
+{
+    if (!root.endsWith('/')) root.append('/');
+    root.append(relative.data(), relative.size());
+    return root;
+}
+
+std::optional<ResourceNodeIdentity> resourceNodeIdentity(QByteArray path,
+                                                         bool directory)
+{
+    const int flags =
+        O_RDONLY | O_CLOEXEC | O_NOCTTY | (directory ? O_DIRECTORY : 0);
+    const int descriptor = openRetryingInterrupts(path, flags);
+    if (descriptor >= 0) {
+        UniqueFileDescriptor file(descriptor);
+        auto status = inspectOpenedFile(file.get());
+        if (!status.has_value()) return std::nullopt;
+        return ResourceNodeIdentity{
+            .path = std::move(path),
+            .openError = 0,
+            .status = *status,
+        };
+    }
+
+    const int openError = errno;
+    struct stat status{};
+    if (::stat(path.constData(), &status) == 0 && status.st_size >= 0) {
+        // ENOTDIR is a stable, behavior-affecting mismatch for a directory
+        // probe. Other open failures (permissions, descriptor pressure, I/O)
+        // are not safe cache identities even when stat happens to succeed.
+        if (openError != ENOTDIR) return std::nullopt;
+        return ResourceNodeIdentity{
+            .path = std::move(path),
+            .openError = openError,
+            .status = openedFileStatus(status),
+        };
+    }
+    const int statusError = errno;
+    if ((openError != ENOENT && openError != ENOTDIR)
+        || (statusError != ENOENT && statusError != ENOTDIR)) {
+        return std::nullopt;
+    }
+    return ResourceNodeIdentity{
+        .path = std::move(path),
+        .openError = openError,
+        .status = std::nullopt,
+    };
+}
+
+bool hasLoaderInjection(const QProcessEnvironment &environment)
+{
+    return environment.contains(QStringLiteral("LD_PRELOAD"))
+        || environment.contains(QStringLiteral("LD_LIBRARY_PATH"))
+        || environment.contains(QStringLiteral("LD_AUDIT"));
+}
+
+std::optional<ShellIntegrationFilesystemIdentity>
+filesystemIdentity(const GhosttyShellIntegrationProcessOptions &options,
+                   const GhosttyShellIntegrationRequest &request)
+{
+    if (options.environment.inheritsFromParent()
+        || hasLoaderInjection(options.environment)
+        || (request.mode != GhosttyShellIntegrationMode::None
+            && !request.resourceDirectory.isEmpty()
+            && !options.environment.contains(QStringLiteral("HOME")))) {
+        return std::nullopt;
+    }
+
+    const auto helper = helperIdentity(options.helperPath);
+    if (!helper.has_value()) return std::nullopt;
+    const auto helperRuntime = helperRuntimeIdentity(helper->first);
+    if (!helperRuntime.has_value()) return std::nullopt;
+    ShellIntegrationFilesystemIdentity result{
+        .helperAbsolutePath = helper->first,
+        .helperNativePath = QFile::encodeName(helper->first),
+        .helperStatus = helper->second,
+        .helperRuntimeIdentities = std::move(*helperRuntime),
+        .resourceNodes = {},
+    };
+
+    if (request.mode == GhosttyShellIntegrationMode::None
+        || request.resourceDirectory.isEmpty()) {
+        return result;
+    }
+
+    const std::array<std::pair<QByteArrayView, bool>, 3> nodes{
+        std::pair{QByteArrayView("shell-integration"), true},
+        std::pair{QByteArrayView("shell-integration/zsh"), true},
+        std::pair{QByteArrayView("shell-integration/bash/ghostty.bash"), false},
+    };
+    result.resourceNodes.reserve(static_cast<qsizetype>(nodes.size()));
+    for (const auto &[relative, directory] : nodes) {
+        auto identity = resourceNodeIdentity(
+            resourceNodePath(request.resourceDirectory, relative), directory);
+        if (!identity.has_value()) return std::nullopt;
+        result.resourceNodes.append(std::move(*identity));
+    }
+    return result;
+}
+
+void addUnsigned(QCryptographicHash &hash, quint64 value)
+{
+    std::array<char, sizeof(value)> bytes{};
+    for (qsizetype index = 0; index < std::ssize(bytes); ++index) {
+        const auto shift =
+            static_cast<unsigned int>(8 * (std::ssize(bytes) - index - 1));
+        bytes.at(static_cast<size_t>(index)) =
+            static_cast<char>((value >> shift) & 0xffU);
+    }
+    hash.addData(QByteArrayView(bytes.data(), std::ssize(bytes)));
+}
+
+void addSigned(QCryptographicHash &hash, qint64 value)
+{
+    addUnsigned(hash, static_cast<quint64>(value));
+}
+
+void addBytes(QCryptographicHash &hash, QByteArrayView bytes)
+{
+    addUnsigned(hash, static_cast<quint64>(bytes.size()));
+    hash.addData(bytes);
+}
+
+void addString(QCryptographicHash &hash, QStringView value)
+{
+    addUnsigned(hash, static_cast<quint64>(value.size()));
+    for (const QChar character : value) {
+        const quint16 codeUnit = character.unicode();
+        const std::array<char, 2> bytes{
+            static_cast<char>((codeUnit >> 8U) & 0xffU),
+            static_cast<char>(codeUnit & 0xffU),
+        };
+        hash.addData(QByteArrayView(bytes.data(), std::ssize(bytes)));
+    }
+}
+
+void addFileStatus(QCryptographicHash &hash, const OpenedFileStatus &status)
+{
+    addUnsigned(hash, status.device);
+    addUnsigned(hash, status.inode);
+    addUnsigned(hash, status.mode);
+    addUnsigned(hash, status.user);
+    addUnsigned(hash, status.group);
+    addUnsigned(hash, status.links);
+    addSigned(hash, status.size);
+    addSigned(hash, status.modifiedSeconds);
+    addSigned(hash, status.modifiedNanoseconds);
+    addSigned(hash, status.changedSeconds);
+    addSigned(hash, status.changedNanoseconds);
+}
+
+QByteArray cacheKey(const QByteArray &serialized,
+                    const GhosttyShellIntegrationProcessOptions &options,
+                    const ShellIntegrationFilesystemIdentity &filesystem)
+{
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    addBytes(hash, QByteArrayView("ghostty-qt-shell-integration-cache-v1"));
+    addBytes(hash, serialized);
+    addSigned(hash, std::max(1, options.timeoutMilliseconds));
+
+    QStringList environmentKeys = options.environment.keys();
+    std::ranges::sort(environmentKeys);
+    addUnsigned(hash, static_cast<quint64>(environmentKeys.size()));
+    for (const QString &key : environmentKeys) {
+        addString(hash, key);
+        addString(hash, options.environment.value(key));
+    }
+
+    addBytes(hash, filesystem.helperNativePath);
+    addFileStatus(hash, filesystem.helperStatus);
+    addUnsigned(
+        hash, static_cast<quint64>(filesystem.helperRuntimeIdentities.size()));
+    for (const auto &[path, status] : filesystem.helperRuntimeIdentities) {
+        addBytes(hash, path);
+        addFileStatus(hash, status);
+    }
+    addUnsigned(hash, static_cast<quint64>(filesystem.resourceNodes.size()));
+    for (const ResourceNodeIdentity &node : filesystem.resourceNodes) {
+        addBytes(hash, node.path);
+        addSigned(hash, node.openError);
+        addUnsigned(hash, node.status.has_value() ? 1U : 0U);
+        if (node.status.has_value()) addFileStatus(hash, *node.status);
+    }
+    return hash.result();
+}
+
+std::optional<ShellIntegrationCacheIdentity>
+makeCacheIdentity(const GhosttyShellIntegrationProcessOptions &options,
+                  const GhosttyShellIntegrationRequest &request,
+                  const QByteArray &serialized)
+{
+    auto filesystem = filesystemIdentity(options, request);
+    if (!filesystem.has_value()) return std::nullopt;
+    QByteArray key = cacheKey(serialized, options, *filesystem);
+    return ShellIntegrationCacheIdentity{
+        .filesystem = std::move(*filesystem),
+        .key = std::move(key),
+    };
+}
+
+qsizetype retainedResultCost(const GhosttyShellIntegrationResult &result)
+{
+    qsizetype cost = static_cast<qsizetype>(sizeof(result));
+    const auto add = [&cost](qsizetype value) {
+        if (value < 0 || cost > std::numeric_limits<qsizetype>::max() - value) {
+            cost = std::numeric_limits<qsizetype>::max();
+        } else {
+            cost += value;
+        }
+    };
+    add(result.command.shellCommand.size());
+    add(result.command.directArguments.size()
+        * static_cast<qsizetype>(sizeof(QByteArray)));
+    for (const QByteArray &argument : result.command.directArguments) {
+        add(argument.size());
+    }
+    add(result.environment.size()
+        * static_cast<qsizetype>(sizeof(TerminalEnvironmentEntry)));
+    for (const TerminalEnvironmentEntry &entry : result.environment) {
+        add(entry.key.size());
+        add(entry.value.size());
+    }
+    return cost;
+}
+
+void evictLeastRecentlyUsed(ShellIntegrationCacheState &state)
+{
+    auto victim = state.successful.end();
+    for (auto iterator = state.successful.begin();
+         iterator != state.successful.end(); ++iterator) {
+        if (victim == state.successful.end()
+            || iterator->lastAccess < victim->lastAccess) {
+            victim = iterator;
+        }
+    }
+    if (victim == state.successful.end()) return;
+    state.retainedBytes -= victim->cost;
+    state.successful.erase(victim);
+    ++state.counters.evictions;
+}
+
+void retainSuccessfulPreparation(ShellIntegrationCacheState &state,
+                                 const QByteArray &key,
+                                 const GhosttyShellIntegrationResult &result)
+{
+    const qsizetype cost = retainedResultCost(result);
+    if (cost > kMaximumCachedResultBytes) {
+        ++state.counters.oversizedResults;
+        return;
+    }
+    if (const auto existing = state.successful.find(key);
+        existing != state.successful.end()) {
+        state.retainedBytes -= existing->cost;
+        state.successful.erase(existing);
+    }
+    while (!state.successful.isEmpty()
+           && (state.successful.size() >= kMaximumCachedEntries
+               || state.retainedBytes > kMaximumCachedBytes - cost)) {
+        evictLeastRecentlyUsed(state);
+    }
+    state.retainedBytes += cost;
+    state.successful.insert(key,
+                            CachedPreparation{
+                                .result = result,
+                                .cost = cost,
+                                .lastAccess = ++state.accessSerial,
+                            });
+    ++state.counters.insertions;
+}
 
 QString childContext(const QString &parent, QStringView field)
 {
@@ -440,13 +928,12 @@ parseGhosttyShellIntegrationResult(const QByteArray &json)
     };
 }
 
-std::expected<GhosttyShellIntegrationResult, QString>
-prepareGhosttyShellIntegration(
+namespace {
+
+ShellIntegrationPreparation runGhosttyShellIntegrationHelper(
     const GhosttyShellIntegrationProcessOptions &options,
-    const GhosttyShellIntegrationRequest &request)
+    const QByteArray &serialized)
 {
-    auto serialized = serializeGhosttyShellIntegrationRequest(request);
-    if (!serialized) return std::unexpected(std::move(serialized.error()));
     if (options.helperPath.isEmpty()) {
         return std::unexpected(
             QStringLiteral("Shell integration helper path is empty"));
@@ -473,7 +960,7 @@ prepareGhosttyShellIntegration(
     }
 
     qsizetype requestOffset = 0;
-    while (requestOffset < serialized->size()) {
+    while (requestOffset < serialized.size()) {
         if (deadline.hasExpired()) {
             process.kill();
             (void)process.waitForFinished(1'000);
@@ -482,8 +969,8 @@ prepareGhosttyShellIntegration(
                     .arg(std::max(1, options.timeoutMilliseconds)));
         }
         const qint64 accepted = process.write(
-            serialized->constData() + requestOffset,
-            static_cast<qint64>(serialized->size() - requestOffset));
+            serialized.constData() + requestOffset,
+            static_cast<qint64>(serialized.size() - requestOffset));
         if (accepted < 0) {
             process.kill();
             (void)process.waitForFinished(1'000);
@@ -570,6 +1057,176 @@ prepareGhosttyShellIntegration(
                 .arg(process.exitCode())));
     }
     return parseGhosttyShellIntegrationResult(output);
+}
+
+void removeCachedPreparation(ShellIntegrationCacheState &state,
+                             const QByteArray &key)
+{
+    const auto cached = state.successful.find(key);
+    if (cached == state.successful.end()) return;
+    state.retainedBytes -= cached->cost;
+    state.successful.erase(cached);
+}
+
+ShellIntegrationPreparation
+runUncachedBypass(const GhosttyShellIntegrationProcessOptions &options,
+                  const QByteArray &serialized)
+{
+    ShellIntegrationCacheState &state = shellIntegrationCacheState();
+    {
+        QMutexLocker locker(&state.mutex);
+        ++state.counters.bypasses;
+        ++state.counters.launches;
+    }
+    return runGhosttyShellIntegrationHelper(options, serialized);
+}
+
+} // namespace
+
+std::expected<GhosttyShellIntegrationResult, QString>
+prepareGhosttyShellIntegration(
+    const GhosttyShellIntegrationProcessOptions &options,
+    const GhosttyShellIntegrationRequest &request)
+{
+    auto serialized = serializeGhosttyShellIntegrationRequest(request);
+    if (!serialized) return std::unexpected(std::move(serialized.error()));
+    return runGhosttyShellIntegrationHelper(options, *serialized);
+}
+
+std::expected<GhosttyShellIntegrationResult, QString>
+prepareCachedGhosttyShellIntegration(
+    const GhosttyShellIntegrationProcessOptions &options,
+    const GhosttyShellIntegrationRequest &request)
+{
+    auto serialized = serializeGhosttyShellIntegrationRequest(request);
+    if (!serialized) return std::unexpected(std::move(serialized.error()));
+
+    GhosttyShellIntegrationProcessOptions normalizedOptions = options;
+    for (int identityAttempt = 0; identityAttempt < 2; ++identityAttempt) {
+        auto identity =
+            makeCacheIdentity(normalizedOptions, request, *serialized);
+        if (!identity.has_value()) {
+            return runUncachedBypass(normalizedOptions, *serialized);
+        }
+        normalizedOptions.helperPath = identity->filesystem.helperAbsolutePath;
+
+        ShellIntegrationCacheState &state = shellIntegrationCacheState();
+        std::optional<GhosttyShellIntegrationResult> cachedResult;
+        std::shared_ptr<PendingPreparation> flight;
+        bool leader = false;
+        bool capacityBypass = false;
+        {
+            QMutexLocker locker(&state.mutex);
+            const auto cached = state.successful.find(identity->key);
+            if (cached != state.successful.end()) {
+                cached->lastAccess = ++state.accessSerial;
+                cachedResult = cached->result;
+            } else if (const auto pending =
+                           state.pending.constFind(identity->key);
+                       pending != state.pending.cend()) {
+                flight = *pending;
+                ++state.counters.coalesced;
+                while (!flight->finished) {
+                    flight->ready.wait(&state.mutex);
+                }
+                Q_ASSERT(flight->outcome.has_value());
+                return *flight->outcome;
+            } else if (state.pending.size() >= kMaximumInFlightPreparations) {
+                capacityBypass = true;
+            } else {
+                flight = std::make_shared<PendingPreparation>();
+                state.pending.insert(identity->key, flight);
+                ++state.counters.misses;
+                ++state.counters.launches;
+                leader = true;
+            }
+        }
+
+        if (capacityBypass) {
+            return runUncachedBypass(normalizedOptions, *serialized);
+        }
+
+        if (cachedResult.has_value()) {
+            const auto finalFilesystem =
+                filesystemIdentity(normalizedOptions, request);
+            if (finalFilesystem.has_value()
+                && *finalFilesystem == identity->filesystem) {
+                QMutexLocker locker(&state.mutex);
+                ++state.counters.hits;
+                return std::move(*cachedResult);
+            }
+
+            {
+                QMutexLocker locker(&state.mutex);
+                removeCachedPreparation(state, identity->key);
+                ++state.counters.unstableIdentities;
+            }
+            if (identityAttempt == 0) continue;
+            return runUncachedBypass(normalizedOptions, *serialized);
+        }
+
+        Q_ASSERT(leader);
+        ShellIntegrationPreparation outcome =
+            runGhosttyShellIntegrationHelper(normalizedOptions, *serialized);
+        const auto finalFilesystem =
+            filesystemIdentity(normalizedOptions, request);
+        const bool stable = finalFilesystem.has_value()
+            && *finalFilesystem == identity->filesystem;
+        {
+            QMutexLocker locker(&state.mutex);
+            if (stable && outcome.has_value()) {
+                retainSuccessfulPreparation(state, identity->key, *outcome);
+            } else if (!stable) {
+                ++state.counters.unstableIdentities;
+            }
+
+            // The shared flight outlives removal from the lookup map, so every
+            // waiter already holding it observes this exact outcome.
+            flight->outcome = outcome;
+            flight->finished = true;
+            state.pending.remove(identity->key);
+            flight->ready.wakeAll();
+        }
+        return outcome;
+    }
+
+    Q_UNREACHABLE_RETURN(std::unexpected(
+        QStringLiteral("Shell integration cache identity did not stabilize")));
+}
+
+GhosttyShellIntegrationCacheSnapshot
+ghosttyShellIntegrationCacheSnapshotForTest()
+{
+    ShellIntegrationCacheState &state = shellIntegrationCacheState();
+    QMutexLocker locker(&state.mutex);
+    GhosttyShellIntegrationCacheSnapshot result = state.counters;
+    result.entries = state.successful.size();
+    result.retainedBytes = state.retainedBytes;
+    result.inFlight = state.pending.size();
+    return result;
+}
+
+bool setGhosttyShellIntegrationTrustedHelperForTest(const QString &absolutePath)
+{
+    if (!QFileInfo(absolutePath).isAbsolute()) return false;
+    ShellIntegrationCacheState &state = shellIntegrationCacheState();
+    QMutexLocker locker(&state.mutex);
+    if (!state.pending.isEmpty() || !state.successful.isEmpty()) return false;
+    state.trustedTestHelperPath = absolutePath;
+    return true;
+}
+
+bool resetGhosttyShellIntegrationCacheForTest()
+{
+    ShellIntegrationCacheState &state = shellIntegrationCacheState();
+    QMutexLocker locker(&state.mutex);
+    if (!state.pending.isEmpty()) return false;
+    state.successful.clear();
+    state.counters = {};
+    state.accessSerial = 0;
+    state.retainedBytes = 0;
+    state.trustedTestHelperPath.clear();
+    return true;
 }
 
 std::expected<QString, QString> resolveShellIntegrationResourceDirectory(

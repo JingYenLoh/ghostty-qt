@@ -1,4 +1,5 @@
 #include "ghostty_shell_integration.h"
+#include "ghostty_shell_integration_p.h"
 
 #include <QDir>
 #include <QFile>
@@ -8,9 +9,17 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+#include <barrier>
+#include <optional>
 #include <ranges>
+#include <thread>
+#include <utility>
+#include <vector>
 
 namespace {
+
+using ShellIntegrationPreparation =
+    std::expected<GhosttyShellIntegrationResult, QString>;
 
 QString encoded(QByteArrayView value)
 {
@@ -62,24 +71,139 @@ bool writeExecutableScript(const QString &path, QByteArrayView contents)
                                      | QFileDevice::ExeOwner);
 }
 
+bool writeBytes(const QString &path, QByteArrayView contents)
+{
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly | QIODevice::Truncate)
+        && file.write(contents.data(), contents.size()) == contents.size();
+}
+
+qsizetype invocationCount(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return 0;
+    return file.readAll().size();
+}
+
+QByteArray cacheFixtureScript(QByteArrayView suffix = {})
+{
+    QByteArray result =
+        QByteArrayLiteral("#!/bin/sh\n"
+                          "IFS= read -r request || :\n"
+                          "printf x >> \"$GHOSTTY_QT_TEST_COUNT\"\n"
+                          "if [ -n \"$GHOSTTY_QT_TEST_STARTED\" ]; then\n"
+                          "  printf x >> \"$GHOSTTY_QT_TEST_STARTED\"\n"
+                          "  while [ ! -e \"$GHOSTTY_QT_TEST_RELEASE\" ]; do\n"
+                          "    /usr/bin/sleep 0.01\n"
+                          "  done\n"
+                          "fi\n"
+                          "if [ -n \"$GHOSTTY_QT_TEST_EXIT\" ]; then\n"
+                          "  printf 'fixture cached failure' >&2\n"
+                          "  exit \"$GHOSTTY_QT_TEST_EXIT\"\n"
+                          "fi\n"
+                          "/usr/bin/cat \"$GHOSTTY_QT_TEST_RESPONSE\"\n");
+    result.append(suffix.data(), suffix.size());
+    return result;
+}
+
+GhosttyShellIntegrationProcessOptions
+cacheFixtureOptions(const QString &helper, const QString &response,
+                    const QString &count, QString started = {},
+                    QString release = {}, QString exitCode = {},
+                    int timeout = 2'000)
+{
+    QProcessEnvironment environment;
+    environment.insert(QStringLiteral("HOME"), QStringLiteral("/tmp"));
+    environment.insert(QStringLiteral("GHOSTTY_QT_TEST_RESPONSE"), response);
+    environment.insert(QStringLiteral("GHOSTTY_QT_TEST_COUNT"), count);
+    if (!started.isEmpty()) {
+        environment.insert(QStringLiteral("GHOSTTY_QT_TEST_STARTED"), started);
+        environment.insert(QStringLiteral("GHOSTTY_QT_TEST_RELEASE"), release);
+    }
+    if (!exitCode.isEmpty()) {
+        environment.insert(QStringLiteral("GHOSTTY_QT_TEST_EXIT"), exitCode);
+    }
+    return {
+        .helperPath = helper,
+        .environment = environment,
+        .timeoutMilliseconds = timeout,
+    };
+}
+
+GhosttyShellIntegrationRequest cacheFixtureRequest()
+{
+    return {
+        .command = TerminalCommand::shell(QByteArrayLiteral("sh"), true),
+        .mode = GhosttyShellIntegrationMode::None,
+    };
+}
+
+bool prepareCacheFixture(const QTemporaryDir &temporary, QString *helper,
+                         QString *response, QString *count)
+{
+    *helper = temporary.filePath(QStringLiteral("cache-helper"));
+    *response = temporary.filePath(QStringLiteral("response.json"));
+    *count = temporary.filePath(QStringLiteral("invocations"));
+    return writeExecutableScript(*helper, cacheFixtureScript())
+        && writeBytes(
+               *response,
+               responseJson(shellCommand(QByteArrayLiteral("sh"), true), {}))
+        && setGhosttyShellIntegrationTrustedHelperForTest(*helper);
+}
+
+class ScopedGateRelease final {
+public:
+    explicit ScopedGateRelease(QString path)
+        : path_(std::move(path))
+    {}
+
+    ~ScopedGateRelease() { release(); }
+
+    bool release()
+    {
+        if (released_) return true;
+        released_ = writeBytes(path_, QByteArrayView{});
+        return released_;
+    }
+
+private:
+    QString path_;
+    bool released_ = false;
+};
+
 } // namespace
 
 class GhosttyShellIntegrationTest final : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void init();
     void serializesByteExactRequest();
     void rejectsInvalidRequest();
     void parsesStrictResponse();
     void rejectsMalformedResponse();
     void resolvesResourceRoots();
     void reportsHelperProcessFailures();
+    void cachesSequentialEquivalentPreparations();
+    void invalidatesBehaviorAffectingIdentities();
+    void coalescesConcurrentEquivalentPreparations();
+    void launchesConcurrentDistinctPreparations();
+    void fansOutFailureWithoutRetainingIt();
+    void rejectsPreparationWhenIdentityChangesInFlight();
+    void boundsSuccessfulEntriesAndPayloads();
+    void bypassesUntrustedProcessIdentity();
 #ifdef GHOSTTY_QT_TEST_REAL_HELPER
+    void realHelperCachesThroughCanonicalSymlink();
     void realHelperSetsFeaturesWhenInjectionDisabled();
     void realHelperRunsPinnedForcedSetup();
     void realHelperUsesStagedBashResources();
 #endif
 };
+
+void GhosttyShellIntegrationTest::init()
+{
+    QVERIFY(resetGhosttyShellIntegrationCacheForTest());
+}
 
 void GhosttyShellIntegrationTest::serializesByteExactRequest()
 {
@@ -332,7 +456,477 @@ void GhosttyShellIntegrationTest::reportsHelperProcessFailures()
         QStringLiteral("exceeds the 8 MiB protocol limit")));
 }
 
+void GhosttyShellIntegrationTest::cachesSequentialEquivalentPreparations()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QString helper;
+    QString response;
+    QString count;
+    QVERIFY(prepareCacheFixture(temporary, &helper, &response, &count));
+
+    const GhosttyShellIntegrationRequest request = cacheFixtureRequest();
+    const GhosttyShellIntegrationProcessOptions options =
+        cacheFixtureOptions(helper, response, count);
+    auto first = prepareCachedGhosttyShellIntegration(options, request);
+    QVERIFY2(first.has_value(), first ? "" : qPrintable(first.error()));
+    const auto second = prepareCachedGhosttyShellIntegration(options, request);
+    QVERIFY2(second.has_value(), second ? "" : qPrintable(second.error()));
+    QVERIFY(*second == *first);
+
+    first->environment.append({
+        .key = QByteArrayLiteral("CALLER_MUTATION"),
+        .value = QByteArrayLiteral("must detach"),
+    });
+    const auto isolated =
+        prepareCachedGhosttyShellIntegration(options, request);
+    QVERIFY2(isolated.has_value(),
+             isolated ? "" : qPrintable(isolated.error()));
+    QVERIFY(isolated->environment == second->environment);
+
+    GhosttyShellIntegrationProcessOptions reordered = options;
+    QProcessEnvironment reverseEnvironment;
+    reverseEnvironment.insert(QStringLiteral("GHOSTTY_QT_TEST_COUNT"), count);
+    reverseEnvironment.insert(QStringLiteral("GHOSTTY_QT_TEST_RESPONSE"),
+                              response);
+    reverseEnvironment.insert(QStringLiteral("HOME"), QStringLiteral("/tmp"));
+    reordered.environment = reverseEnvironment;
+    QVERIFY(
+        prepareCachedGhosttyShellIntegration(reordered, request).has_value());
+    QCOMPARE(invocationCount(count), 1);
+
+    const auto snapshot = ghosttyShellIntegrationCacheSnapshotForTest();
+    QCOMPARE(snapshot.hits, 3);
+    QCOMPARE(snapshot.misses, 1);
+    QCOMPARE(snapshot.launches, 1);
+    QCOMPARE(snapshot.insertions, 1);
+    QCOMPARE(snapshot.entries, 1);
+    QVERIFY(snapshot.retainedBytes > 0);
+}
+
+void GhosttyShellIntegrationTest::invalidatesBehaviorAffectingIdentities()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QString helper;
+    QString response;
+    QString count;
+    QVERIFY(prepareCacheFixture(temporary, &helper, &response, &count));
+
+    GhosttyShellIntegrationRequest request = cacheFixtureRequest();
+    GhosttyShellIntegrationProcessOptions options =
+        cacheFixtureOptions(helper, response, count);
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, request).has_value());
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, request).has_value());
+    QCOMPARE(invocationCount(count), 1);
+
+    request.features.cursor = !request.features.cursor;
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, request).has_value());
+    QCOMPARE(invocationCount(count), 2);
+
+    options.environment.insert(QStringLiteral("UNUSED_FIXTURE_KEY"),
+                               QStringLiteral("one"));
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, request).has_value());
+    QCOMPARE(invocationCount(count), 3);
+
+    ++options.timeoutMilliseconds;
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, request).has_value());
+    QCOMPARE(invocationCount(count), 4);
+
+    QVERIFY(writeExecutableScript(
+        helper, cacheFixtureScript(QByteArrayLiteral("# replacement\n"))));
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, request).has_value());
+    QCOMPARE(invocationCount(count), 5);
+
+    const QString integration =
+        temporary.filePath(QStringLiteral("resources/shell-integration"));
+    QVERIFY(QDir().mkpath(QDir(integration).filePath(QStringLiteral("bash"))));
+    QVERIFY(QDir().mkpath(QDir(integration).filePath(QStringLiteral("zsh"))));
+    const QString bashScript =
+        QDir(integration).filePath(QStringLiteral("bash/ghostty.bash"));
+    QVERIFY(writeBytes(bashScript, QByteArrayLiteral("first")));
+    request.mode = GhosttyShellIntegrationMode::Zsh;
+    request.resourceDirectory =
+        QFile::encodeName(temporary.filePath(QStringLiteral("resources")));
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, request).has_value());
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, request).has_value());
+    QCOMPARE(invocationCount(count), 6);
+
+    QVERIFY(QDir(integration).rmdir(QStringLiteral("zsh")));
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, request).has_value());
+    QCOMPARE(invocationCount(count), 7);
+    QVERIFY(QDir().mkpath(QDir(integration).filePath(QStringLiteral("zsh"))));
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, request).has_value());
+    QCOMPARE(invocationCount(count), 8);
+}
+
+void GhosttyShellIntegrationTest::coalescesConcurrentEquivalentPreparations()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QString helper;
+    QString response;
+    QString count;
+    QVERIFY(prepareCacheFixture(temporary, &helper, &response, &count));
+    const QString started = temporary.filePath(QStringLiteral("started"));
+    const QString release = temporary.filePath(QStringLiteral("release"));
+
+    constexpr qsizetype ThreadCount = 8;
+    const GhosttyShellIntegrationRequest request = cacheFixtureRequest();
+    const GhosttyShellIntegrationProcessOptions options = cacheFixtureOptions(
+        helper, response, count, started, release, {}, 5'000);
+    std::barrier<> start(static_cast<std::ptrdiff_t>(ThreadCount));
+    std::vector<std::optional<ShellIntegrationPreparation>> outcomes(
+        static_cast<size_t>(ThreadCount));
+    std::vector<std::jthread> threads;
+    threads.reserve(static_cast<size_t>(ThreadCount));
+    ScopedGateRelease gate(release);
+    for (qsizetype index = 0; index < ThreadCount; ++index) {
+        threads.emplace_back([&, index] {
+            start.arrive_and_wait();
+            outcomes.at(static_cast<size_t>(index)) =
+                prepareCachedGhosttyShellIntegration(options, request);
+        });
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(
+        ghosttyShellIntegrationCacheSnapshotForTest().coalesced
+                == ThreadCount - 1
+            && ghosttyShellIntegrationCacheSnapshotForTest().inFlight == 1,
+        3'000);
+    QVERIFY(gate.release());
+    threads.clear();
+
+    QCOMPARE(invocationCount(count), 1);
+    for (const auto &outcome : outcomes) {
+        QVERIFY(outcome.has_value());
+        QVERIFY2(outcome->has_value(),
+                 outcome->has_value() ? "" : qPrintable(outcome->error()));
+    }
+    const auto snapshot = ghosttyShellIntegrationCacheSnapshotForTest();
+    QCOMPARE(snapshot.misses, 1);
+    QCOMPARE(snapshot.coalesced, 7);
+    QCOMPARE(snapshot.launches, 1);
+    QCOMPARE(snapshot.insertions, 1);
+    QCOMPARE(snapshot.inFlight, 0);
+}
+
+void GhosttyShellIntegrationTest::launchesConcurrentDistinctPreparations()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QString helper;
+    QString response;
+    QString count;
+    QVERIFY(prepareCacheFixture(temporary, &helper, &response, &count));
+    const QString started = temporary.filePath(QStringLiteral("started"));
+    const QString release = temporary.filePath(QStringLiteral("release"));
+
+    constexpr qsizetype ThreadCount = 8;
+    QVector<GhosttyShellIntegrationRequest> requests;
+    requests.reserve(ThreadCount);
+    for (qsizetype index = 0; index < ThreadCount; ++index) {
+        GhosttyShellIntegrationRequest request = cacheFixtureRequest();
+        request.environment.append({
+            .key = QByteArrayLiteral("DISTINCT"),
+            .value = QByteArray::number(index),
+        });
+        requests.append(std::move(request));
+    }
+    const GhosttyShellIntegrationProcessOptions options = cacheFixtureOptions(
+        helper, response, count, started, release, {}, 5'000);
+    std::barrier<> start(static_cast<std::ptrdiff_t>(ThreadCount));
+    std::vector<std::optional<ShellIntegrationPreparation>> outcomes(
+        static_cast<size_t>(ThreadCount));
+    std::vector<std::jthread> threads;
+    threads.reserve(static_cast<size_t>(ThreadCount));
+    ScopedGateRelease gate(release);
+    for (qsizetype index = 0; index < ThreadCount; ++index) {
+        threads.emplace_back([&, index] {
+            start.arrive_and_wait();
+            outcomes.at(static_cast<size_t>(index)) =
+                prepareCachedGhosttyShellIntegration(options,
+                                                     requests.at(index));
+        });
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(
+        invocationCount(started) == ThreadCount
+            && ghosttyShellIntegrationCacheSnapshotForTest().inFlight
+                == ThreadCount,
+        3'000);
+    QVERIFY(gate.release());
+    threads.clear();
+
+    QCOMPARE(invocationCount(count), ThreadCount);
+    for (const auto &outcome : outcomes) {
+        QVERIFY(outcome.has_value());
+        QVERIFY(outcome->has_value());
+    }
+    const auto snapshot = ghosttyShellIntegrationCacheSnapshotForTest();
+    QCOMPARE(snapshot.misses, 8);
+    QCOMPARE(snapshot.coalesced, 0);
+    QCOMPARE(snapshot.launches, 8);
+    QCOMPARE(snapshot.entries, 8);
+}
+
+void GhosttyShellIntegrationTest::fansOutFailureWithoutRetainingIt()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QString helper;
+    QString response;
+    QString count;
+    QVERIFY(prepareCacheFixture(temporary, &helper, &response, &count));
+    const QString started = temporary.filePath(QStringLiteral("started"));
+    const QString release = temporary.filePath(QStringLiteral("release"));
+
+    constexpr qsizetype ThreadCount = 8;
+    const GhosttyShellIntegrationRequest request = cacheFixtureRequest();
+    const GhosttyShellIntegrationProcessOptions options = cacheFixtureOptions(
+        helper, response, count, started, release, QStringLiteral("7"), 5'000);
+    std::barrier<> start(static_cast<std::ptrdiff_t>(ThreadCount));
+    std::vector<std::optional<ShellIntegrationPreparation>> outcomes(
+        static_cast<size_t>(ThreadCount));
+    std::vector<std::jthread> threads;
+    threads.reserve(static_cast<size_t>(ThreadCount));
+    ScopedGateRelease gate(release);
+    for (qsizetype index = 0; index < ThreadCount; ++index) {
+        threads.emplace_back([&, index] {
+            start.arrive_and_wait();
+            outcomes.at(static_cast<size_t>(index)) =
+                prepareCachedGhosttyShellIntegration(options, request);
+        });
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(
+        ghosttyShellIntegrationCacheSnapshotForTest().coalesced
+                == ThreadCount - 1
+            && ghosttyShellIntegrationCacheSnapshotForTest().inFlight == 1,
+        3'000);
+    QVERIFY(gate.release());
+    threads.clear();
+
+    QCOMPARE(invocationCount(count), 1);
+    for (const auto &outcome : outcomes) {
+        QVERIFY(outcome.has_value());
+        QVERIFY(!outcome->has_value());
+        QVERIFY(outcome->error().contains(QStringLiteral("exit code 7")));
+    }
+    const auto retry = prepareCachedGhosttyShellIntegration(options, request);
+    QVERIFY(!retry.has_value());
+    QCOMPARE(invocationCount(count), 2);
+
+    const auto snapshot = ghosttyShellIntegrationCacheSnapshotForTest();
+    QCOMPARE(snapshot.misses, 2);
+    QCOMPARE(snapshot.coalesced, 7);
+    QCOMPARE(snapshot.launches, 2);
+    QCOMPARE(snapshot.entries, 0);
+}
+
+void GhosttyShellIntegrationTest::
+    rejectsPreparationWhenIdentityChangesInFlight()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QString helper;
+    QString response;
+    QString count;
+    QVERIFY(prepareCacheFixture(temporary, &helper, &response, &count));
+    const QString started = temporary.filePath(QStringLiteral("started"));
+    const QString release = temporary.filePath(QStringLiteral("release"));
+
+    const QString integration =
+        temporary.filePath(QStringLiteral("resources/shell-integration"));
+    QVERIFY(QDir().mkpath(QDir(integration).filePath(QStringLiteral("bash"))));
+    QVERIFY(QDir().mkpath(QDir(integration).filePath(QStringLiteral("zsh"))));
+    QVERIFY(writeBytes(
+        QDir(integration).filePath(QStringLiteral("bash/ghostty.bash")),
+        QByteArrayLiteral("fixture")));
+
+    GhosttyShellIntegrationRequest request = cacheFixtureRequest();
+    request.mode = GhosttyShellIntegrationMode::Zsh;
+    request.resourceDirectory =
+        QFile::encodeName(temporary.filePath(QStringLiteral("resources")));
+    const GhosttyShellIntegrationProcessOptions options = cacheFixtureOptions(
+        helper, response, count, started, release, {}, 5'000);
+
+    std::optional<ShellIntegrationPreparation> outcome;
+    std::jthread worker;
+    ScopedGateRelease gate(release);
+    worker = std::jthread([&] {
+        outcome = prepareCachedGhosttyShellIntegration(options, request);
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(invocationCount(started) == 1, 3'000);
+    QVERIFY(QDir(integration).rmdir(QStringLiteral("zsh")));
+    QVERIFY(gate.release());
+    worker.join();
+
+    QVERIFY(outcome.has_value());
+    QVERIFY2(outcome->has_value(),
+             outcome->has_value() ? "" : qPrintable(outcome->error()));
+    auto snapshot = ghosttyShellIntegrationCacheSnapshotForTest();
+    QCOMPARE(snapshot.unstableIdentities, 1);
+    QCOMPARE(snapshot.insertions, 0);
+    QCOMPARE(snapshot.entries, 0);
+
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, request).has_value());
+    QCOMPARE(invocationCount(count), 2);
+    snapshot = ghosttyShellIntegrationCacheSnapshotForTest();
+    QCOMPARE(snapshot.insertions, 1);
+    QCOMPARE(snapshot.entries, 1);
+}
+
+void GhosttyShellIntegrationTest::boundsSuccessfulEntriesAndPayloads()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QString helper;
+    QString response;
+    QString count;
+    QVERIFY(prepareCacheFixture(temporary, &helper, &response, &count));
+
+    const GhosttyShellIntegrationProcessOptions options =
+        cacheFixtureOptions(helper, response, count);
+    QVector<GhosttyShellIntegrationRequest> requests;
+    requests.reserve(33);
+    for (int index = 0; index < 33; ++index) {
+        GhosttyShellIntegrationRequest request = cacheFixtureRequest();
+        request.environment.append({
+            .key = QByteArrayLiteral("CACHE_VARIANT"),
+            .value = QByteArray::number(index),
+        });
+        requests.append(request);
+    }
+    for (int index = 0; index < 32; ++index) {
+        QVERIFY(
+            prepareCachedGhosttyShellIntegration(options, requests.at(index))
+                .has_value());
+    }
+    QCOMPARE(invocationCount(count), 32);
+    auto snapshot = ghosttyShellIntegrationCacheSnapshotForTest();
+    QCOMPARE(snapshot.entries, 32);
+    QCOMPARE(snapshot.evictions, 0);
+
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, requests.constFirst())
+                .has_value());
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, requests.constLast())
+                .has_value());
+    QCOMPARE(invocationCount(count), 33);
+    snapshot = ghosttyShellIntegrationCacheSnapshotForTest();
+    QCOMPARE(snapshot.entries, 32);
+    QCOMPARE(snapshot.evictions, 1);
+
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, requests.constFirst())
+                .has_value());
+    QCOMPARE(invocationCount(count), 33);
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, requests.at(1))
+                .has_value());
+    QCOMPARE(invocationCount(count), 34);
+    snapshot = ghosttyShellIntegrationCacheSnapshotForTest();
+    QCOMPARE(snapshot.evictions, 2);
+
+    QVERIFY(resetGhosttyShellIntegrationCacheForTest());
+    QVERIFY(setGhosttyShellIntegrationTrustedHelperForTest(helper));
+    QVERIFY(writeBytes(count, QByteArrayView{}));
+    const QByteArray budgetValue(900 * 1024, 'b');
+    QVERIFY(writeBytes(
+        response,
+        responseJson(
+            shellCommand(QByteArrayLiteral("sh"), true),
+            {environmentEntry(QByteArrayLiteral("BUDGET"), budgetValue)})));
+    for (int index = 0; index < 10; ++index) {
+        QVERIFY(
+            prepareCachedGhosttyShellIntegration(options, requests.at(index))
+                .has_value());
+    }
+    QCOMPARE(invocationCount(count), 10);
+    snapshot = ghosttyShellIntegrationCacheSnapshotForTest();
+    QVERIFY(snapshot.entries < 10);
+    QVERIFY(snapshot.evictions > 0);
+    QVERIFY(snapshot.retainedBytes <= 8 * 1024 * 1024);
+
+    QVERIFY(resetGhosttyShellIntegrationCacheForTest());
+    QVERIFY(setGhosttyShellIntegrationTrustedHelperForTest(helper));
+    QVERIFY(writeBytes(count, QByteArrayView{}));
+    const QByteArray largeValue(1024 * 1024 + 4'096, 'x');
+    QVERIFY(writeBytes(
+        response,
+        responseJson(
+            shellCommand(QByteArrayLiteral("sh"), true),
+            {environmentEntry(QByteArrayLiteral("LARGE"), largeValue)})));
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, requests.constFirst())
+                .has_value());
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, requests.constFirst())
+                .has_value());
+    QCOMPARE(invocationCount(count), 2);
+    snapshot = ghosttyShellIntegrationCacheSnapshotForTest();
+    QCOMPARE(snapshot.entries, 0);
+    QCOMPARE(snapshot.oversizedResults, 2);
+    QCOMPARE(snapshot.launches, 2);
+}
+
+void GhosttyShellIntegrationTest::bypassesUntrustedProcessIdentity()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QString helper;
+    QString response;
+    QString count;
+    QVERIFY(prepareCacheFixture(temporary, &helper, &response, &count));
+
+    GhosttyShellIntegrationProcessOptions options =
+        cacheFixtureOptions(helper, response, count);
+    options.environment.insert(QStringLiteral("LD_PRELOAD"), QString{});
+    const GhosttyShellIntegrationRequest request = cacheFixtureRequest();
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, request).has_value());
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, request).has_value());
+    QCOMPARE(invocationCount(count), 2);
+    const auto snapshot = ghosttyShellIntegrationCacheSnapshotForTest();
+    QCOMPARE(snapshot.bypasses, 2);
+    QCOMPARE(snapshot.launches, 2);
+    QCOMPARE(snapshot.entries, 0);
+
+    QVERIFY(resetGhosttyShellIntegrationCacheForTest());
+    QVERIFY(writeBytes(count, QByteArrayView{}));
+    options.environment.remove(QStringLiteral("LD_PRELOAD"));
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, request).has_value());
+    QVERIFY(prepareCachedGhosttyShellIntegration(options, request).has_value());
+    QCOMPARE(invocationCount(count), 2);
+    const auto unrecognized = ghosttyShellIntegrationCacheSnapshotForTest();
+    QCOMPARE(unrecognized.bypasses, 2);
+    QCOMPARE(unrecognized.entries, 0);
+}
+
 #ifdef GHOSTTY_QT_TEST_REAL_HELPER
+void GhosttyShellIntegrationTest::realHelperCachesThroughCanonicalSymlink()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString helper =
+        temporary.filePath(QStringLiteral("ghostty-qt-config-helper"));
+    QVERIFY(QFile::link(QStringLiteral(GHOSTTY_QT_TEST_REAL_HELPER), helper));
+
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.remove(QStringLiteral("LD_PRELOAD"));
+    environment.remove(QStringLiteral("LD_LIBRARY_PATH"));
+    environment.remove(QStringLiteral("LD_AUDIT"));
+    const GhosttyShellIntegrationProcessOptions options{
+        .helperPath = helper,
+        .environment = environment,
+    };
+    const GhosttyShellIntegrationRequest request = cacheFixtureRequest();
+    const auto first = prepareCachedGhosttyShellIntegration(options, request);
+    QVERIFY2(first.has_value(), first ? "" : qPrintable(first.error()));
+    const auto second = prepareCachedGhosttyShellIntegration(options, request);
+    QVERIFY2(second.has_value(), second ? "" : qPrintable(second.error()));
+    QCOMPARE(*second, *first);
+
+    const auto snapshot = ghosttyShellIntegrationCacheSnapshotForTest();
+    QCOMPARE(snapshot.misses, 1);
+    QCOMPARE(snapshot.hits, 1);
+    QCOMPARE(snapshot.launches, 1);
+    QCOMPARE(snapshot.bypasses, 0);
+    QCOMPARE(snapshot.entries, 1);
+}
+
 void GhosttyShellIntegrationTest::realHelperSetsFeaturesWhenInjectionDisabled()
 {
     GhosttyShellIntegrationRequest request{

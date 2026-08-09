@@ -1,6 +1,6 @@
 foreach(required_variable
         BUILD_DIR STAGE_DIR REPOSITORY_TMP_DIR INSTALL_BINDIR INSTALL_DATADIR
-        APPLICATION_ID EXPECT_CONFIG_HELPER CONFIG)
+        APPLICATION_ID EXPECT_CONFIG_HELPER SHELL_CACHE_PROBE CONFIG)
     if(NOT DEFINED ${required_variable})
         message(FATAL_ERROR "Missing required variable ${required_variable}")
     endif()
@@ -357,4 +357,24 @@ if(EXPECT_CONFIG_HELPER AND NOT EXISTS "${config_helper}")
     message(FATAL_ERROR "Config-enabled install omitted ${config_helper}")
 elseif(NOT EXPECT_CONFIG_HELPER AND EXISTS "${config_helper}")
     message(FATAL_ERROR "Config-disabled install unexpectedly contains ${config_helper}")
+endif()
+
+if(EXPECT_CONFIG_HELPER)
+    if(NOT EXISTS "${SHELL_CACHE_PROBE}")
+        message(FATAL_ERROR
+            "Shell-integration cache probe is missing: ${SHELL_CACHE_PROBE}")
+    endif()
+    execute_process(
+        COMMAND "${SHELL_CACHE_PROBE}" "${config_helper}"
+        RESULT_VARIABLE cache_probe_result
+        OUTPUT_VARIABLE cache_probe_output
+        ERROR_VARIABLE cache_probe_error
+        TIMEOUT 10)
+    if(NOT cache_probe_result EQUAL 0)
+        message(FATAL_ERROR
+            "Installed shell-integration cache probe failed (${cache_probe_result})\n${cache_probe_output}\n${cache_probe_error}")
+    endif()
+elseif(NOT SHELL_CACHE_PROBE STREQUAL "")
+    message(FATAL_ERROR
+        "Config-disabled build unexpectedly supplied a shell cache probe")
 endif()

@@ -3,6 +3,7 @@
 #include "ghostty_key_identity.h"
 #include "ghostty_link_matcher.h"
 #include "ghostty_shell_integration.h"
+#include "ghostty_shell_integration_p.h"
 #include "ghostty_vt_adapter.h"
 #include "linux_cgroup.h"
 #include "posix_regular_file.h"
@@ -1253,7 +1254,7 @@ bool SessionWorker::spawnChild()
                     .filePath(QStringLiteral("../ghostty-qt-config-helper"));
         }
         const std::expected<GhosttyShellIntegrationResult, QString> prepared =
-            prepareGhosttyShellIntegration(
+            prepareCachedGhosttyShellIntegration(
                 {
                     .helperPath = helperPath,
                     .environment = QProcessEnvironment::systemEnvironment(),
