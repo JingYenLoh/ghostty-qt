@@ -102,6 +102,7 @@ cmake --build "$ecm_build" --target install -j"$(nproc)"
 cmake -S "$layershellqt_source" -B "$layershellqt_build" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$install_prefix" \
+    -DKDE_INSTALL_LIBDIR=lib \
     -DBUILD_SHARED_LIBS=ON \
     -DECM_DIR="$install_prefix/share/ECM/cmake"
 cmake --build "$layershellqt_build" --target install -j"$(nproc)"
