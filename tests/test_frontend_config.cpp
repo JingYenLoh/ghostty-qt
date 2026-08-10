@@ -70,6 +70,7 @@ private Q_SLOTS:
     void synchronousReloadSupersedesOlderAsyncResult();
     void publishesUnchangedSuccessfulReloads();
     void retainsLastGoodSnapshotAfterFailure();
+    void backsOffRepeatedFailuresAndResetsOnReloadEvents();
     void changedSubscriberMayDeleteService();
     void failedSubscriberMayDeleteService();
 };
@@ -650,6 +651,59 @@ void FrontendConfigTest::retainsLastGoodSnapshotAfterFailure()
     QCOMPARE(changed.count(), 0);
     QCOMPARE(service.snapshot(), lastGood);
     QCOMPARE(service.lastError(), QStringLiteral("invalid frontend config"));
+}
+
+void FrontendConfigTest::backsOffRepeatedFailuresAndResetsOnReloadEvents()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString path =
+        QDir(temporary.path()).filePath(QStringLiteral("config"));
+    QVERIFY(replaceFile(path, QByteArrayLiteral("initial")));
+
+    std::atomic<int> loads = 0;
+    std::atomic<bool> fail = false;
+    constexpr int initialRetryMilliseconds = 150;
+    constexpr int maximumRetryMilliseconds = 300;
+    FrontendConfigService service(
+        path,
+        [&loads, &fail](const QString &) -> FrontendConfigLoadResult {
+            const int load = ++loads;
+            if (fail.load()) {
+                return std::unexpected(
+                    QStringLiteral("invalid frontend config"));
+            }
+            return snapshotWithMarker(load);
+        },
+        0, initialRetryMilliseconds, maximumRetryMilliseconds);
+    QCOMPARE(loads.load(), 1);
+
+    QSignalSpy failed(&service, &FrontendConfigService::reloadFailed);
+    fail = true;
+    service.reloadNow();
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(service.scheduledFailureRetryMilliseconds(),
+             initialRetryMilliseconds);
+
+    QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 2, 1'000);
+    QCOMPARE(service.scheduledFailureRetryMilliseconds(),
+             maximumRetryMilliseconds);
+    QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 3, 1'000);
+    QCOMPARE(service.scheduledFailureRetryMilliseconds(),
+             maximumRetryMilliseconds);
+
+    service.requestReload();
+    QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 4, 1'000);
+    QCOMPARE(service.scheduledFailureRetryMilliseconds(),
+             initialRetryMilliseconds);
+
+    QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 5, 1'000);
+    QCOMPARE(service.scheduledFailureRetryMilliseconds(),
+             maximumRetryMilliseconds);
+    QVERIFY(replaceFile(path, QByteArrayLiteral("still-invalid")));
+    QTRY_VERIFY_WITH_TIMEOUT(failed.count() >= 6, 1'000);
+    QCOMPARE(service.scheduledFailureRetryMilliseconds(),
+             initialRetryMilliseconds);
 }
 
 void FrontendConfigTest::changedSubscriberMayDeleteService()

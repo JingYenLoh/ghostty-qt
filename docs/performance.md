@@ -345,6 +345,20 @@ with unrelated non-global keybindings retain the session with zero additional
 still replaces the session atomically, and inactive or disconnected states
 still retry registration.
 
+## Configuration reloads
+
+Invalid configuration no longer starts a helper or frontend filesystem load
+every five seconds indefinitely. Each configuration service exponentially
+backs automatic retries from 5 seconds through a bounded 5 minute maximum
+while no external reload event occurs. A file-watcher event, manual request,
+color-scheme change, or successful load resets the delay so repairs remain
+responsive. For a continuously broken configuration, this reduces automatic
+retry transactions during the first hour from 720 to 16.
+
+The service regression probes use reduced deterministic bounds to verify the
+initial delay, exponential step, maximum cap, and independent manual/watcher
+reset paths in both the shared Ghostty and frontend configuration domains.
+
 ## Remaining I/O optimization roadmap
 
 The end-to-end PTY benchmark and bounded read gathering now cover the primary
@@ -353,14 +367,7 @@ and `strace` only for syscall topology because tracing perturbs latency. Do not
 port Ghostty's additional gather/parser thread or buffer ring unless these
 measurements identify remaining kernel backpressure.
 
-### 1. Back off repeated invalid configuration loads
-
-Use exponential retry backoff for unchanged invalid configuration, reset by
-watcher or manual reload events. This is lower-frequency work, but avoids
-repeated helper processes and filesystem traversal while a broken file remains
-unchanged.
-
-### 2. Isolate cold filesystem work
+### 1. Isolate cold filesystem work
 
 Terminal file actions currently format and write the artifact synchronously on
 the session worker. Very large history or a stalled temporary filesystem can

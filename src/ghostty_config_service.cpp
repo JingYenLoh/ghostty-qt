@@ -61,7 +61,8 @@ GhosttyConfigService::GhosttyConfigService(
     QObject *parent)
     : GhosttyConfigService(standardConfigPaths(), std::move(loader),
                            DefaultDebounceMilliseconds, initialColorScheme,
-                           true, true, parent)
+                           true, true, InitialFailureRetryMilliseconds,
+                           MaximumFailureRetryMilliseconds, parent)
 {}
 
 GhosttyConfigService::GhosttyConfigService(
@@ -69,7 +70,9 @@ GhosttyConfigService::GhosttyConfigService(
     bool watchDefaultConfigCandidates, QObject *parent)
     : GhosttyConfigService(standardConfigPaths(), std::move(loader),
                            DefaultDebounceMilliseconds, initialColorScheme,
-                           true, watchDefaultConfigCandidates, parent)
+                           true, watchDefaultConfigCandidates,
+                           InitialFailureRetryMilliseconds,
+                           MaximumFailureRetryMilliseconds, parent)
 {}
 
 GhosttyConfigService::GhosttyConfigService(QStringList candidatePaths,
@@ -78,7 +81,8 @@ GhosttyConfigService::GhosttyConfigService(QStringList candidatePaths,
                                            QObject *parent)
     : GhosttyConfigService(std::move(candidatePaths), std::move(loader),
                            debounceMilliseconds, TerminalColorScheme::Light,
-                           false, true, parent)
+                           false, true, InitialFailureRetryMilliseconds,
+                           MaximumFailureRetryMilliseconds, parent)
 {}
 
 GhosttyConfigService::GhosttyConfigService(
@@ -87,7 +91,8 @@ GhosttyConfigService::GhosttyConfigService(
     QObject *parent)
     : GhosttyConfigService(std::move(candidatePaths), std::move(loader),
                            debounceMilliseconds, initialColorScheme, false,
-                           true, parent)
+                           true, InitialFailureRetryMilliseconds,
+                           MaximumFailureRetryMilliseconds, parent)
 {}
 
 GhosttyConfigService::GhosttyConfigService(
@@ -96,19 +101,39 @@ GhosttyConfigService::GhosttyConfigService(
     bool watchDefaultConfigCandidates, QObject *parent)
     : GhosttyConfigService(std::move(candidatePaths), std::move(loader),
                            debounceMilliseconds, initialColorScheme, false,
-                           watchDefaultConfigCandidates, parent)
+                           watchDefaultConfigCandidates,
+                           InitialFailureRetryMilliseconds,
+                           MaximumFailureRetryMilliseconds, parent)
+{}
+
+GhosttyConfigService::GhosttyConfigService(QStringList candidatePaths,
+                                           GhosttyConfigLoader loader,
+                                           int debounceMilliseconds,
+                                           int initialFailureRetryMilliseconds,
+                                           int maximumFailureRetryMilliseconds,
+                                           QObject *parent)
+    : GhosttyConfigService(std::move(candidatePaths), std::move(loader),
+                           debounceMilliseconds, TerminalColorScheme::Light,
+                           false, true, initialFailureRetryMilliseconds,
+                           maximumFailureRetryMilliseconds, parent)
 {}
 
 GhosttyConfigService::GhosttyConfigService(
     QStringList candidatePaths, GhosttyConfigLoader loader,
     int debounceMilliseconds, TerminalColorScheme initialColorScheme,
     bool asynchronousReloads, bool watchDefaultConfigCandidates,
+    int initialFailureRetryMilliseconds, int maximumFailureRetryMilliseconds,
     QObject *parent)
     : QObject(parent)
     , colorScheme_(initialColorScheme)
     , loader_(std::move(loader))
     , watchDefaultConfigCandidates_(watchDefaultConfigCandidates)
     , asynchronousReloads_(asynchronousReloads)
+    , initialFailureRetryMilliseconds_(
+          std::max(1, initialFailureRetryMilliseconds))
+    , maximumFailureRetryMilliseconds_(std::max(
+          initialFailureRetryMilliseconds_, maximumFailureRetryMilliseconds))
+    , nextFailureRetryMilliseconds_(initialFailureRetryMilliseconds_)
 {
     candidatePaths_.reserve(candidatePaths.size());
     for (const QString &path : std::as_const(candidatePaths)) {
@@ -127,13 +152,12 @@ GhosttyConfigService::GhosttyConfigService(
         if (asynchronousReloads_) {
             beginAsyncReload();
         } else {
-            reloadNow();
+            reloadSynchronously();
         }
     });
     failureRetryTimer_.setSingleShot(true);
-    failureRetryTimer_.setInterval(5'000);
     connect(&failureRetryTimer_, &QTimer::timeout, this,
-            &GhosttyConfigService::requestReload);
+            &GhosttyConfigService::scheduleReload);
     connect(&watcher_, &QFileSystemWatcher::fileChanged, this,
             &GhosttyConfigService::watchedPathChanged);
     connect(&watcher_, &QFileSystemWatcher::directoryChanged, this,
@@ -211,6 +235,11 @@ QStringList GhosttyConfigService::watchedDirectories() const
     return paths;
 }
 
+int GhosttyConfigService::scheduledFailureRetryMilliseconds() const
+{
+    return failureRetryTimer_.isActive() ? failureRetryTimer_.interval() : 0;
+}
+
 void GhosttyConfigService::setColorScheme(TerminalColorScheme colorScheme)
 {
     if (colorScheme_ == colorScheme) {
@@ -227,12 +256,24 @@ void GhosttyConfigService::setColorScheme(TerminalColorScheme colorScheme)
 
 void GhosttyConfigService::requestReload()
 {
+    resetFailureRetryBackoff();
+    scheduleReload();
+}
+
+void GhosttyConfigService::scheduleReload()
+{
     const quint64 requestEpoch = requestEpoch_.advance();
     Q_EMIT reloadScheduled(requestEpoch);
     debounceTimer_.start();
 }
 
 void GhosttyConfigService::reloadNow()
+{
+    resetFailureRetryBackoff();
+    reloadSynchronously();
+}
+
+void GhosttyConfigService::reloadSynchronously()
 {
     debounceTimer_.stop();
     // This synchronous generation also supersedes a request that was queued
@@ -273,8 +314,10 @@ void GhosttyConfigService::applyLoadResult(GhosttyConfigLoadResult result,
             : error;
         lastError_ = message;
         refreshWatchPaths();
-        if (!failureRetryTimer_.isActive()) {
-            failureRetryTimer_.start();
+        // A newer watcher/manual request already reset the backoff and owns
+        // the next load. Do not let this older result arm a competing retry.
+        if (requestEpoch == requestEpoch_.current()) {
+            scheduleFailureRetry();
         }
         const QPointer<GhosttyConfigService> guard(this);
         Q_EMIT reloadSettled(requestEpoch);
@@ -285,7 +328,7 @@ void GhosttyConfigService::applyLoadResult(GhosttyConfigLoadResult result,
         return;
     }
 
-    failureRetryTimer_.stop();
+    resetFailureRetryBackoff();
     lastError_.clear();
     snapshot_ = std::move(*result);
     refreshWatchPaths();
@@ -297,6 +340,20 @@ void GhosttyConfigService::applyLoadResult(GhosttyConfigLoadResult result,
     Q_EMIT reloadSettled(requestEpoch);
     if (!guard) return;
     Q_EMIT changed(published);
+}
+
+void GhosttyConfigService::resetFailureRetryBackoff()
+{
+    failureRetryTimer_.stop();
+    nextFailureRetryMilliseconds_ = initialFailureRetryMilliseconds_;
+}
+
+void GhosttyConfigService::scheduleFailureRetry()
+{
+    failureRetryTimer_.start(nextFailureRetryMilliseconds_);
+    const qint64 doubled = qint64{nextFailureRetryMilliseconds_} * 2;
+    nextFailureRetryMilliseconds_ = static_cast<int>(
+        std::min<qint64>(maximumFailureRetryMilliseconds_, doubled));
 }
 
 void GhosttyConfigService::beginAsyncReload()

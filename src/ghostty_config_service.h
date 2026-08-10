@@ -18,6 +18,8 @@ class GhosttyConfigService : public QObject {
 
 public:
     static constexpr int DefaultDebounceMilliseconds = 75;
+    static constexpr int InitialFailureRetryMilliseconds = 5'000;
+    static constexpr int MaximumFailureRetryMilliseconds = 5 * 60 * 1'000;
 
     explicit GhosttyConfigService(GhosttyConfigLoader loader,
                                   QObject *parent = nullptr);
@@ -41,6 +43,13 @@ public:
                          int debounceMilliseconds,
                          TerminalColorScheme initialColorScheme,
                          bool watchDefaultConfigCandidates,
+                         QObject *parent = nullptr);
+    // Custom retry bounds keep backoff behavior deterministic in contract
+    // tests without weakening production retry intervals.
+    GhosttyConfigService(QStringList candidatePaths, GhosttyConfigLoader loader,
+                         int debounceMilliseconds,
+                         int initialFailureRetryMilliseconds,
+                         int maximumFailureRetryMilliseconds,
                          QObject *parent = nullptr);
     ~GhosttyConfigService() override;
 
@@ -66,6 +75,8 @@ public:
     // reflect paths QFileSystemWatcher currently accepted.
     QStringList watchedFiles() const;
     QStringList watchedDirectories() const;
+    // Zero means no automatic failure retry is currently armed.
+    int scheduledFailureRetryMilliseconds() const;
 
 public Q_SLOTS:
     void requestReload();
@@ -86,10 +97,16 @@ private:
                          int debounceMilliseconds,
                          TerminalColorScheme initialColorScheme,
                          bool asynchronousReloads,
-                         bool watchDefaultConfigCandidates, QObject *parent);
+                         bool watchDefaultConfigCandidates,
+                         int initialFailureRetryMilliseconds,
+                         int maximumFailureRetryMilliseconds, QObject *parent);
     GhosttyConfigLoadRequest loadRequest() const;
     static QString normalizedAbsolutePath(const QString &path);
     static QString closestExistingDirectory(const QString &path);
+    void scheduleReload();
+    void resetFailureRetryBackoff();
+    void scheduleFailureRetry();
+    void reloadSynchronously();
     void refreshWatchPaths();
     void watchedPathChanged(const QString &path);
     void beginAsyncReload();
@@ -114,4 +131,7 @@ private:
     bool reloadPending_ = false;
     RevisionCounter requestEpoch_;
     quint64 loadGeneration_ = 0;
+    const int initialFailureRetryMilliseconds_;
+    const int maximumFailureRetryMilliseconds_;
+    int nextFailureRetryMilliseconds_;
 };

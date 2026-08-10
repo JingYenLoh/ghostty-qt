@@ -39,9 +39,24 @@ FrontendConfigService::FrontendConfigService(QString path,
                                              FrontendConfigLoader loader,
                                              int debounceMilliseconds,
                                              QObject *parent)
+    : FrontendConfigService(std::move(path), std::move(loader),
+                            debounceMilliseconds,
+                            InitialFailureRetryMilliseconds,
+                            MaximumFailureRetryMilliseconds, parent)
+{}
+
+FrontendConfigService::FrontendConfigService(
+    QString path, FrontendConfigLoader loader, int debounceMilliseconds,
+    int initialFailureRetryMilliseconds, int maximumFailureRetryMilliseconds,
+    QObject *parent)
     : QObject(parent)
     , configPath_(normalizedAbsolutePath(path))
     , loader_(std::move(loader))
+    , initialFailureRetryMilliseconds_(
+          std::max(1, initialFailureRetryMilliseconds))
+    , maximumFailureRetryMilliseconds_(std::max(
+          initialFailureRetryMilliseconds_, maximumFailureRetryMilliseconds))
+    , nextFailureRetryMilliseconds_(initialFailureRetryMilliseconds_)
 {
     qRegisterMetaType<FrontendConfigSnapshot>();
 
@@ -53,9 +68,8 @@ FrontendConfigService::FrontendConfigService(QString path,
     connect(&debounceTimer_, &QTimer::timeout, this,
             &FrontendConfigService::beginAsyncReload);
     failureRetryTimer_.setSingleShot(true);
-    failureRetryTimer_.setInterval(5'000);
     connect(&failureRetryTimer_, &QTimer::timeout, this,
-            &FrontendConfigService::requestReload);
+            &FrontendConfigService::scheduleReload);
     connect(&watcher_, &QFileSystemWatcher::fileChanged, this,
             &FrontendConfigService::watchedPathChanged);
     connect(&watcher_, &QFileSystemWatcher::directoryChanged, this,
@@ -104,7 +118,18 @@ QStringList FrontendConfigService::watchedDirectories() const
     return paths;
 }
 
+int FrontendConfigService::scheduledFailureRetryMilliseconds() const
+{
+    return failureRetryTimer_.isActive() ? failureRetryTimer_.interval() : 0;
+}
+
 void FrontendConfigService::requestReload()
+{
+    resetFailureRetryBackoff();
+    scheduleReload();
+}
+
+void FrontendConfigService::scheduleReload()
 {
     const quint64 requestEpoch = requestEpoch_.advance();
     Q_EMIT reloadScheduled(requestEpoch);
@@ -113,6 +138,7 @@ void FrontendConfigService::requestReload()
 
 void FrontendConfigService::reloadNow()
 {
+    resetFailureRetryBackoff();
     debounceTimer_.stop();
     // This synchronous generation also supersedes a request that was queued
     // behind an in-flight worker. Its stale callback must not start another
@@ -146,7 +172,11 @@ void FrontendConfigService::applyLoadResult(FrontendConfigLoadResult result,
             : result.error();
         lastError_ = message;
         refreshWatchPaths();
-        if (!failureRetryTimer_.isActive()) failureRetryTimer_.start();
+        // A newer watcher/manual request already reset the backoff and owns
+        // the next load. Do not let this older result arm a competing retry.
+        if (requestEpoch == requestEpoch_.current()) {
+            scheduleFailureRetry();
+        }
         const QPointer<FrontendConfigService> guard(this);
         Q_EMIT reloadSettled(requestEpoch);
         if (!guard) return;
@@ -154,7 +184,7 @@ void FrontendConfigService::applyLoadResult(FrontendConfigLoadResult result,
         return;
     }
 
-    failureRetryTimer_.stop();
+    resetFailureRetryBackoff();
     lastError_.clear();
     snapshot_ = std::move(*result);
     refreshWatchPaths();
@@ -163,6 +193,20 @@ void FrontendConfigService::applyLoadResult(FrontendConfigLoadResult result,
     Q_EMIT reloadSettled(requestEpoch);
     if (!guard) return;
     Q_EMIT changed(published);
+}
+
+void FrontendConfigService::resetFailureRetryBackoff()
+{
+    failureRetryTimer_.stop();
+    nextFailureRetryMilliseconds_ = initialFailureRetryMilliseconds_;
+}
+
+void FrontendConfigService::scheduleFailureRetry()
+{
+    failureRetryTimer_.start(nextFailureRetryMilliseconds_);
+    const qint64 doubled = qint64{nextFailureRetryMilliseconds_} * 2;
+    nextFailureRetryMilliseconds_ = static_cast<int>(
+        std::min<qint64>(maximumFailureRetryMilliseconds_, doubled));
 }
 
 void FrontendConfigService::beginAsyncReload()

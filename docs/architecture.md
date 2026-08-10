@@ -450,7 +450,11 @@ presentation. `GhosttyConfigService` then runs watched and requested helper
 transactions outside the GUI thread; `FrontendConfigService` does the same for
 the Qt-owned subset of the mixed file. Each domain publishes immutable
 generations, retains its last good snapshot after failure, and reports
-source-labelled diagnostics.
+source-labelled diagnostics. A failed generation arms a bounded exponential
+retry, starting at five seconds and reaching at most five minutes while no
+reload event arrives. File-watcher changes and explicit reloads reset that
+backoff so a repaired configuration is attempted at normal debounce latency;
+success also restores the initial retry interval.
 
 The application rebuilds effective options from defaults, the shared Ghostty
 base, the mixed override, and explicit CLI overrides. Live fields update

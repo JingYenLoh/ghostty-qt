@@ -63,6 +63,7 @@ private Q_SLOTS:
     void colorSchemeChangeSupersedesBlockedAsyncResult();
     void publishesUnchangedSuccessfulReloads();
     void retainsLastGoodSnapshotAfterFailure();
+    void backsOffRepeatedFailuresAndResetsOnReloadEvents();
     void retainsRequestedColorSchemeAfterFailure();
     void changedSubscriberMayDeleteAsyncService();
     void failedSubscriberMayDeleteAsyncService();
@@ -622,6 +623,59 @@ void GhosttyConfigServiceTest::retainsLastGoodSnapshotAfterFailure()
     QCOMPARE(changed.count(), 0);
     QCOMPARE(service.snapshot(), lastGood);
     QCOMPARE(service.lastError(), QStringLiteral("invalid config"));
+}
+
+void GhosttyConfigServiceTest::backsOffRepeatedFailuresAndResetsOnReloadEvents()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString path =
+        QDir(temporary.path()).filePath(QStringLiteral("config"));
+    QVERIFY(replaceFile(path, QByteArrayLiteral("initial")));
+
+    int loads = 0;
+    bool fail = false;
+    constexpr int initialRetryMilliseconds = 150;
+    constexpr int maximumRetryMilliseconds = 300;
+    GhosttyConfigService service(
+        {path},
+        [&loads,
+         &fail](const GhosttyConfigLoadRequest &) -> GhosttyConfigLoadResult {
+            ++loads;
+            if (fail) {
+                return std::unexpected(QStringLiteral("invalid config"));
+            }
+            return snapshotWithMarker(loads);
+        },
+        0, initialRetryMilliseconds, maximumRetryMilliseconds);
+    QCOMPARE(loads, 1);
+
+    QSignalSpy failed(&service, &GhosttyConfigService::reloadFailed);
+    fail = true;
+    service.reloadNow();
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(service.scheduledFailureRetryMilliseconds(),
+             initialRetryMilliseconds);
+
+    QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 2, 1'000);
+    QCOMPARE(service.scheduledFailureRetryMilliseconds(),
+             maximumRetryMilliseconds);
+    QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 3, 1'000);
+    QCOMPARE(service.scheduledFailureRetryMilliseconds(),
+             maximumRetryMilliseconds);
+
+    service.requestReload();
+    QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 4, 1'000);
+    QCOMPARE(service.scheduledFailureRetryMilliseconds(),
+             initialRetryMilliseconds);
+
+    QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 5, 1'000);
+    QCOMPARE(service.scheduledFailureRetryMilliseconds(),
+             maximumRetryMilliseconds);
+    QVERIFY(replaceFile(path, QByteArrayLiteral("still-invalid")));
+    QTRY_VERIFY_WITH_TIMEOUT(failed.count() >= 6, 1'000);
+    QCOMPARE(service.scheduledFailureRetryMilliseconds(),
+             initialRetryMilliseconds);
 }
 
 void GhosttyConfigServiceTest::retainsRequestedColorSchemeAfterFailure()
