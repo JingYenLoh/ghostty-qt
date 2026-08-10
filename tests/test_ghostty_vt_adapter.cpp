@@ -341,6 +341,7 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     GhosttyVtAdapter::RenderSnapshot snapshot;
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(snapshot.update.fullFrame);
+    QCOMPARE(snapshot.colorStateQueries, quint64{1});
     QVERIFY(snapshot.update.colorsChanged);
     QCOMPARE(snapshot.update.palette.size(), 256);
     QCOMPARE(snapshot.update.dirtyRows.size(), 3);
@@ -359,6 +360,7 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     QVERIFY(redCell.red() > redCell.blue());
 
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
+    QCOMPARE(snapshot.colorStateQueries, quint64{0});
     QVERIFY(!snapshot.update.hasChanges());
     QVERIFY(!snapshot.update.colorsChanged);
     QVERIFY(snapshot.update.palette.isEmpty());
@@ -374,6 +376,7 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     const QColor *const paletteBeforeReload = frame.palette.constData();
     QVERIFY(adapter->setAppearance(reloadedAppearance));
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
+    QCOMPARE(snapshot.colorStateQueries, quint64{1});
     QVERIFY(snapshot.update.colorsChanged);
     QCOMPARE(snapshot.update.palette.size(), 256);
     QCOMPARE(snapshot.update.palette.constData(), paletteBeforeReload);
@@ -387,12 +390,14 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     adapter->writeVt(QByteArrayLiteral("\rZ"));
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(!snapshot.update.fullFrame);
+    QCOMPARE(snapshot.colorStateQueries, quint64{0});
     QCOMPARE(snapshot.update.dirtyRows.size(), 1);
     QVERIFY(!snapshot.update.colorsChanged);
     QVERIFY(snapshot.update.palette.isEmpty());
     QVERIFY(snapshot.update.cursorChanged);
     QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QVERIFY(frameText(frame).startsWith(QStringLiteral("ZB")));
+    QCOMPARE(frame.cells.at(0).foreground, redCell);
 
     GhosttyVtAdapter::Geometry resized = options.geometry;
     resized.columns = 10;
@@ -400,6 +405,7 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     QVERIFY(adapter->resize(resized));
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(snapshot.update.fullFrame);
+    QCOMPARE(snapshot.colorStateQueries, quint64{1});
     QVERIFY(snapshot.update.colorsChanged);
     QCOMPARE(snapshot.update.palette.size(), 256);
     QCOMPARE(snapshot.update.dirtyRows.size(), 4);
@@ -2398,6 +2404,7 @@ void GhosttyVtAdapterTest::translatesCellStylesAndAppearanceMetadata()
     QCOMPARE(snapshot.cellMaterialization.graphemeDataQueries, quint64{0});
     QCOMPARE(snapshot.cellMaterialization.contentBackgroundDataQueries,
              quint64{19});
+    QCOMPARE(snapshot.colorStateQueries, quint64{1});
 }
 
 void GhosttyVtAdapterTest::preservesAuthoritativeCellCodepointsForShaping()

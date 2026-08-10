@@ -106,6 +106,17 @@ corpus uses 2.5, and the background-only corpus uses three. Representative
 240x80 Release medians fell from 12.98 to 12.08 us for one dirty row, 41.73 to
 39.33 us for four dirty rows, and 1,059.03 to 1,023.11 us for a full frame.
 
+The next partial-frame profile exposed a fixed global-color cost: every render
+copied libghostty's 256-entry RGB palette and compared it against 256 `QColor`
+values. Libghostty's partial-dirty contract guarantees that only rows changed
+and no global state, including colors, changed. The adapter now retains the raw
+color snapshot from the last successfully published full frame and skips both
+the color-state query and palette comparison on partial frames. Benchmark
+contract 4 asserts zero color-state queries for partial updates and one for a
+full frame. On the same 240x80 Release workload, the one-dirty-row median fell
+from 12.03 to 11.31 us and the four-dirty-row median from 39.33 to 38.55 us;
+full frames still refresh the complete color snapshot.
+
 ### Renderer
 
 The retained renderer already avoids the largest terminal-frontend costs:

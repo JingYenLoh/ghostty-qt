@@ -200,6 +200,10 @@ public:
         // extended graphemes and compact background-only cells need the
         // separately counted conditional queries.
         CellMaterializationMetrics cellMaterialization;
+        // Full frames refresh libghostty's global color snapshot. Partial
+        // frames reuse the last published snapshot because their dirty-state
+        // contract guarantees that global state did not change.
+        quint64 colorStateQueries = 0;
     };
 
     enum class RenderResult {

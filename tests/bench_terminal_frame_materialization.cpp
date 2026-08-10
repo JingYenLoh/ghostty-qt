@@ -70,6 +70,7 @@ struct Measurement {
     TerminalFrameApplyMetrics applyMetrics;
     GhosttyVtAdapter::RenderSnapshot::CellMaterializationMetrics
         cellMaterialization;
+    quint64 colorStateQueries = 0;
     quint64 retainedSnapshots = 0;
 };
 
@@ -447,7 +448,8 @@ bool validateAndChecksum(const TerminalUpdate &update,
 
 bool validateCellMaterializationTopology(
     const GhosttyVtAdapter::RenderSnapshot::CellMaterializationMetrics &metrics,
-    const BenchmarkOptions &options, Workload workload, QString *error)
+    quint64 colorStateQueries, const BenchmarkOptions &options,
+    Workload workload, QString *error)
 {
     const quint64 rowCount = workload == Workload::FullFrame
         ? static_cast<quint64>(options.rows)
@@ -459,11 +461,14 @@ bool validateCellMaterializationTopology(
         : 0;
     const quint64 expectedContentBackgroundQueries =
         options.corpus == Corpus::Blank ? expectedCells : 0;
+    const quint64 expectedColorStateQueries =
+        workload == Workload::FullFrame ? 1 : 0;
     if (metrics.cells != expectedCells
         || metrics.primaryDataQueries != expectedCells * 2
         || metrics.graphemeDataQueries != expectedGraphemeQueries
         || metrics.contentBackgroundDataQueries
-            != expectedContentBackgroundQueries) {
+            != expectedContentBackgroundQueries
+        || colorStateQueries != expectedColorStateQueries) {
         *error = QStringLiteral(
             "cell materialization query topology was unexpected");
         return false;
@@ -693,8 +698,9 @@ std::optional<Measurement> runBenchmark(const BenchmarkOptions &options,
                                  &measurement.applyChecksum, error)) {
             return std::nullopt;
         }
-        if (!validateCellMaterializationTopology(snapshot.cellMaterialization,
-                                                 options, workload, error)) {
+        if (!validateCellMaterializationTopology(
+                snapshot.cellMaterialization, snapshot.colorStateQueries,
+                options, workload, error)) {
             return std::nullopt;
         }
         if (!validateRetainedFrameSharing(
@@ -711,6 +717,7 @@ std::optional<Measurement> runBenchmark(const BenchmarkOptions &options,
             accumulateCellMaterializationMetrics(
                 &measurement.cellMaterialization,
                 snapshot.cellMaterialization);
+            measurement.colorStateQueries += snapshot.colorStateQueries;
             ++measurement.retainedSnapshots;
         }
     }
@@ -749,7 +756,7 @@ void printMeasurement(const BenchmarkOptions &options, Workload workload,
     QTextStream output(stdout);
     output.setRealNumberNotation(QTextStream::FixedNotation);
     output.setRealNumberPrecision(2);
-    output << "benchmark=terminal-frame-materialization benchmark_contract=3"
+    output << "benchmark=terminal-frame-materialization benchmark_contract=4"
            << " workload="
            << (workload == Workload::FullFrame ? "full-frame" : "dirty-row")
            << " corpus=" << corpusName(options.corpus)
@@ -810,6 +817,7 @@ void printMeasurement(const BenchmarkOptions &options, Workload workload,
            << measurement.cellMaterialization.graphemeDataQueries
            << " content_background_data_queries="
            << measurement.cellMaterialization.contentBackgroundDataQueries
+           << " color_state_queries=" << measurement.colorStateQueries
            << " cell_data_queries_per_cell="
            << static_cast<double>(
                   measurement.cellMaterialization.primaryDataQueries

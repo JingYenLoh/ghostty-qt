@@ -4246,31 +4246,52 @@ public:
             || publishedMetadata_.columns != metadata.columns
             || publishedMetadata_.rows != metadata.rows;
 
-        GhosttyRenderStateColors colors{};
-        colors.size = sizeof(colors);
-        if (ghostty_render_state_colors_get(renderState_, &colors)
-            != GHOSTTY_SUCCESS) {
-            return RenderResult::Retry;
-        }
-        metadata.foreground = toQColor(colors.foreground);
-        metadata.background = toQColor(colors.background);
-        const bool paletteChanged = !std::ranges::equal(
-            colors.palette, std::as_const(publishedMetadata_.palette),
-            [](const GhosttyColorRgb &current, const QColor &published) {
-                return published.rgb() == qRgb(current.r, current.g, current.b);
-            });
-        if (paletteChanged) {
-            metadata.palette.reserve(
-                static_cast<qsizetype>(std::size(colors.palette)));
-            for (const GhosttyColorRgb &color : colors.palette) {
-                metadata.palette.append(toQColor(color));
+        GhosttyRenderStateColors refreshedColors{};
+        refreshedColors.size = sizeof(refreshedColors);
+        quint64 colorStateQueries = 0;
+        // libghostty defines partial dirty state as rows-only: none of the
+        // global state, including colors, changed. Keep the raw colors needed
+        // for partial cell materialization with the last published full frame.
+        if (fullFrame) {
+            if (ghostty_render_state_colors_get(renderState_, &refreshedColors)
+                != GHOSTTY_SUCCESS) {
+                return RenderResult::Retry;
             }
-        } else {
-            metadata.palette = publishedMetadata_.palette;
+            ++colorStateQueries;
         }
-        metadata.cursorColorExplicit = colors.cursor_has_value;
-        metadata.cursorColor = colors.cursor_has_value ? toQColor(colors.cursor)
-                                                       : metadata.foreground;
+        const GhosttyRenderStateColors &colors =
+            fullFrame ? refreshedColors : publishedColors_;
+        bool paletteChanged = false;
+        if (fullFrame) {
+            metadata.foreground = toQColor(colors.foreground);
+            metadata.background = toQColor(colors.background);
+            paletteChanged = !std::ranges::equal(
+                colors.palette, std::as_const(publishedMetadata_.palette),
+                [](const GhosttyColorRgb &current, const QColor &published) {
+                    return published.rgb()
+                        == qRgb(current.r, current.g, current.b);
+                });
+            if (paletteChanged) {
+                metadata.palette.reserve(
+                    static_cast<qsizetype>(std::size(colors.palette)));
+                for (const GhosttyColorRgb &color : colors.palette) {
+                    metadata.palette.append(toQColor(color));
+                }
+            } else {
+                metadata.palette = publishedMetadata_.palette;
+            }
+            metadata.cursorColorExplicit = colors.cursor_has_value;
+            metadata.cursorColor = colors.cursor_has_value
+                ? toQColor(colors.cursor)
+                : metadata.foreground;
+        } else {
+            metadata.foreground = publishedMetadata_.foreground;
+            metadata.background = publishedMetadata_.background;
+            metadata.palette = publishedMetadata_.palette;
+            metadata.cursorColorExplicit =
+                publishedMetadata_.cursorColorExplicit;
+            metadata.cursorColor = publishedMetadata_.cursorColor;
+        }
 
         if (ghostty_render_state_get(renderState_,
                                      GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE,
@@ -4772,6 +4793,9 @@ public:
         bool tracking = false;
         ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING,
                              &tracking);
+        if (fullFrame) {
+            publishedColors_ = refreshedColors;
+        }
         publishedMetadata_ = std::move(metadata);
         publishedKittyGraphics_ = *kittySnapshot;
         hasPublishedFrame_ = true;
@@ -4786,6 +4810,7 @@ public:
             .graphemeDataQueries = graphemeDataQueries,
             .contentBackgroundDataQueries = contentBackgroundDataQueries,
         };
+        snapshot->colorStateQueries = colorStateQueries;
         return RenderResult::Ready;
     }
 
@@ -5329,6 +5354,7 @@ private:
     quint32 clickRepeatIntervalMilliseconds_ = 500;
     std::optional<quint64> lastSelectionPressTimestampNanoseconds_;
     TerminalFrame publishedMetadata_;
+    GhosttyRenderStateColors publishedColors_{};
     std::shared_ptr<const TerminalKittyGraphicsSnapshot>
         publishedKittyGraphics_;
     QHash<quint64, std::weak_ptr<const TerminalKittyGraphicsImage>>
