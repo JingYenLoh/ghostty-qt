@@ -98,6 +98,18 @@ background-opacity = 0.95
 | `pane-enter-transition-duration` | `0ms` through `10000ms` | `0ms` | Runs the enter shader for a finite pane-creation transition. For compatibility, when no dedicated enter shader is set, the persistent `custom-shader` chain can still consume `iPaneTransition`. Zero keeps immediate presentation. |
 | `pane-exit-transition-duration` | `0ms` through `10000ms` | `0ms` | Defers pane, tab, or window destruction while visible terminal panes run the exit shader. For compatibility, an unset dedicated shader falls back to the persistent chain. Zero keeps immediate destruction. Unsupported backends, missing shaders, hidden panes, and shader failures fail open without delaying close. |
 
+## Persistent shader example
+
+`examples/shaders/bouncing-dvd.glsl` draws a physical-pixel-sized DVD mark
+that reflects at pane edges and changes color on each collision. The terminal
+remains dimly visible underneath. Installations place it under
+`share/ghostty-qt/shaders/`; copy it to a stable configuration path and use:
+
+```text
+custom-shader = ~/.config/ghostty-qt/bouncing-dvd.glsl
+custom-shader-animation = always
+```
+
 ## Pane lifecycle shaders
 
 Every custom shader receives `vec4 iPaneTransition`:
@@ -116,9 +128,10 @@ so a persistent BetterCRT-style effect feeds the lifecycle effect. Lifecycle
 frames run even when Ghostty's `custom-shader-animation` is `false`; after the
 finite transition the ordinary animation policy applies again.
 
-The source tree includes `examples/shaders/crt-pane-transition.glsl`, and an
-installation places it under `share/ghostty-qt/shaders/`. It is a
-lifecycle-only CRT collapse. Copy it to a stable config path and use:
+The source tree includes `examples/shaders/crt-pane-transition.glsl` and
+`examples/shaders/flame-pane-transition.glsl`; installations place both under
+`share/ghostty-qt/shaders/`. They provide a CRT collapse and a dramatic upward
+burn respectively. Copy one to a stable config path and use:
 
 ```text
 custom-shader = ~/.config/ghostty/better-crt.glsl

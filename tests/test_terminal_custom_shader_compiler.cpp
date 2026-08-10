@@ -98,6 +98,8 @@ private Q_SLOTS:
     void rejectsOversizedSourceBeforeBake();
     void rejectsInvalidShader();
     void supportsGhosttyCompatibilityPreambleAndRuntimeTargets();
+    void compilesBouncingDvdExample();
+    void compilesFlameLifecycleExample();
     void compilesLifecycleExample();
     void exportsStableGhosttyUniformLayout();
     void coalescesConcurrentRequests();
@@ -566,6 +568,46 @@ void TerminalCustomShaderCompilerTest::compilesLifecycleExample()
             != enter.stages.constFirst().cacheKey);
     QVERIFY(enter.stages.constFirst().cacheKey
             != exit.stages.constFirst().cacheKey);
+}
+
+void TerminalCustomShaderCompilerTest::compilesBouncingDvdExample()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString shaderPath =
+        QString::fromUtf8(GHOSTTY_QT_DVD_SHADER_PATH);
+    QVERIFY2(QFileInfo(shaderPath).isFile(), qPrintable(shaderPath));
+
+    const TerminalCustomShaderCompileResult result =
+        compileTerminalCustomShaders(
+            optionsFor({{.path = shaderPath, .optional = false}}),
+            QDir(temporary.path()).filePath(QStringLiteral("cache")));
+    QVERIFY2(result.succeeded(), qPrintable(result.diagnostic));
+    QCOMPARE(result.stages.size(), 1);
+}
+
+void TerminalCustomShaderCompilerTest::compilesFlameLifecycleExample()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString shaderPath =
+        QString::fromUtf8(GHOSTTY_QT_FLAME_SHADER_PATH);
+    QVERIFY2(QFileInfo(shaderPath).isFile(), qPrintable(shaderPath));
+
+    const TerminalCustomShaderOptions options =
+        optionsFor({{.path = shaderPath, .optional = false}});
+    const QString cache =
+        QDir(temporary.path()).filePath(QStringLiteral("cache"));
+    const TerminalCustomShaderCompileResult enter =
+        compileTerminalCustomShaders(
+            options, cache, TerminalCustomShaderCompileMode::PaneEnter);
+    const TerminalCustomShaderCompileResult exit =
+        compileTerminalCustomShaders(
+            options, cache, TerminalCustomShaderCompileMode::PaneExit);
+    QVERIFY2(enter.succeeded(), qPrintable(enter.diagnostic));
+    QVERIFY2(exit.succeeded(), qPrintable(exit.diagnostic));
+    QCOMPARE(enter.stages.size(), 1);
+    QCOMPARE(exit.stages.size(), 1);
 }
 
 void TerminalCustomShaderCompilerTest::coalescesConcurrentRequests()

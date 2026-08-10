@@ -141,7 +141,9 @@ target_include_directories(test-terminal-custom-shader-compiler PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
 )
 target_compile_definitions(test-terminal-custom-shader-compiler PRIVATE
+    "GHOSTTY_QT_DVD_SHADER_PATH=\"${CMAKE_SOURCE_DIR}/examples/shaders/bouncing-dvd.glsl\""
     "GHOSTTY_QT_EXAMPLE_SHADER_PATH=\"${CMAKE_SOURCE_DIR}/examples/shaders/crt-pane-transition.glsl\""
+    "GHOSTTY_QT_FLAME_SHADER_PATH=\"${CMAKE_SOURCE_DIR}/examples/shaders/flame-pane-transition.glsl\""
 )
 target_link_libraries(test-terminal-custom-shader-compiler PRIVATE
     Qt6::Core
