@@ -13,6 +13,11 @@ ToolButton {
     property string toolTipText: accessibleName
 
     display: AbstractButton.IconOnly
+    // Keep action labels out of style-owned mnemonic generation. Some desktop
+    // styles derive an implicit Alt+letter shortcut from ToolButton.text even
+    // when the button is icon-only. The accessible name and tooltip retain the
+    // human-readable label.
+    text: ""
     focusPolicy: Qt.NoFocus
     hoverEnabled: true
 

@@ -10,6 +10,7 @@
 
 #include <LayerShellQt/Window>
 
+#include <QAccessible>
 #include <QClipboard>
 #include <QDir>
 #include <QEvent>
@@ -362,6 +363,7 @@ private Q_SLOTS:
     void configurationDiagnosticsDialogIsScrollableAndExplicit();
     void toastPresentationExpiresQueuedItems();
     void chromeToolButtonUsesWindowTextForFlatIcon();
+    void chromeToolButtonSuppressesActionTextMnemonic();
     void remoteNewWindowOverridesOnlyItsFirstSurface();
     void paletteTargetsEveryLiveSurfaceByCompositeIdentity();
     void paletteTargetFocusMayDestroyApplicationController();
@@ -1134,6 +1136,61 @@ void ApplicationControllerTest::chromeToolButtonUsesWindowTextForFlatIcon()
     const QColor iconColor =
         QQmlProperty(button, QStringLiteral("icon.color")).read().value<QColor>();
     QCOMPARE(iconColor, QColor(QStringLiteral("#102030")));
+}
+
+void ApplicationControllerTest::chromeToolButtonSuppressesActionTextMnemonic()
+{
+    const QString buttonPath =
+        QFINDTESTDATA("../qml/ChromeToolButton.qml");
+    QVERIFY(!buttonPath.isEmpty());
+    const QFileInfo buttonInfo(buttonPath);
+
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(
+        QByteArrayLiteral("import QtQuick\n"
+                          "import QtQuick.Controls\n"
+                          "import \".\" as Local\n"
+                          "ApplicationWindow {\n"
+                          "    property bool actionEnabled: true\n"
+                          "    Action {\n"
+                          "        id: testAction\n"
+                          "        objectName: \"testAction\"\n"
+                          "        text: \"Split Down\"\n"
+                          "        enabled: actionEnabled\n"
+                          "        icon.source: Qt.resolvedUrl(\n"
+                          "            \"icons/split-down.svg\")\n"
+                          "    }\n"
+                          "    Local.ChromeToolButton {\n"
+                          "        objectName: \"chromeToolButton\"\n"
+                          "        action: testAction\n"
+                          "        accessibleName: testAction.text\n"
+                          "    }\n"
+                          "}\n"),
+        QUrl::fromLocalFile(
+            QDir(buttonInfo.absolutePath())
+                .filePath(QStringLiteral("ChromeToolButtonActionHarness.qml"))));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.create());
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+
+    QObject *const action =
+        root->findChild<QObject *>(QStringLiteral("testAction"));
+    QObject *const button = root->findChild<QObject *>(
+        QStringLiteral("chromeToolButton"));
+    QVERIFY(action != nullptr);
+    QVERIFY(button != nullptr);
+    QCOMPARE(button->property("action").value<QObject *>(), action);
+    QCOMPARE(button->property("text").toString(), QString{});
+    QCOMPARE(button->property("accessibleName").toString(),
+             QStringLiteral("Split Down"));
+    QAccessibleInterface *const accessible =
+        QAccessible::queryAccessibleInterface(button);
+    QVERIFY(accessible != nullptr);
+    QCOMPARE(accessible->text(QAccessible::Name), QStringLiteral("Split Down"));
+
+    QVERIFY(root->setProperty("actionEnabled", false));
+    QVERIFY(!button->property("enabled").toBool());
 }
 
 void ApplicationControllerTest::remoteNewWindowOverridesOnlyItsFirstSurface()
