@@ -529,6 +529,13 @@ void GhosttyGlobalShortcutPortalTest::disconnectedPortalRetainsPureRegistryState
     QVERIFY(warningSpy.front().front().toString().contains(
         QStringLiteral("not connected")));
 
+    // Only an active session can reuse an equivalent registry. Disconnected
+    // state retries registration so a newly available bus is not missed.
+    portal.setKeybindConfig(config);
+    QCOMPARE(portal.generation(), quint64(2));
+    QCOMPARE(registrySpy.size(), 2);
+    QCOMPARE(warningSpy.size(), 2);
+
     // Replacing the config still advances the stale-callback generation and
     // preserves builder diagnostics without requiring a live transport.
     GhosttyKeybindConfig invalid;
@@ -537,17 +544,17 @@ void GhosttyGlobalShortcutPortalTest::disconnectedPortalRetainsPureRegistryState
                    {QStringLiteral("new_tab")}),
     };
     portal.setKeybindConfig(invalid);
-    QCOMPARE(portal.generation(), quint64(2));
-    QVERIFY(portal.registry().registrations.isEmpty());
-    QCOMPARE(portal.registry().diagnostics.size(), 1);
-    QCOMPARE(registrySpy.size(), 2);
-    QCOMPARE(warningSpy.size(), 2);
-
-    portal.clear();
     QCOMPARE(portal.generation(), quint64(3));
     QVERIFY(portal.registry().registrations.isEmpty());
-    QVERIFY(portal.registry().diagnostics.isEmpty());
+    QCOMPARE(portal.registry().diagnostics.size(), 1);
     QCOMPARE(registrySpy.size(), 3);
+    QCOMPARE(warningSpy.size(), 3);
+
+    portal.clear();
+    QCOMPARE(portal.generation(), quint64(4));
+    QVERIFY(portal.registry().registrations.isEmpty());
+    QVERIFY(portal.registry().diagnostics.isEmpty());
+    QCOMPARE(registrySpy.size(), 4);
     QCOMPARE(activeSpy.size(), 0);
 }
 
@@ -618,6 +625,10 @@ portalRoundTripIsRaceSafeAndRejectsStaleResponses()
         GhosttyGlobalShortcutPortal portal(bus.client());
         QSignalSpy activationSpy(
             &portal, &GhosttyGlobalShortcutPortal::shortcutActivated);
+        QSignalSpy registrySpy(
+            &portal, &GhosttyGlobalShortcutPortal::registryChanged);
+        QSignalSpy activeSpy(&portal,
+                             &GhosttyGlobalShortcutPortal::activeChanged);
         QSignalSpy warningSpy(
             &portal, &GhosttyGlobalShortcutPortal::warningOccurred);
 
@@ -644,6 +655,29 @@ portalRoundTripIsRaceSafeAndRejectsStaleResponses()
         QVERIFY(warningSpy.isEmpty());
 
         const QString firstSession = portal.sessionHandle();
+        const quint64 firstGeneration = portal.generation();
+        QCOMPARE(registrySpy.size(), 1);
+        QCOMPARE(activeSpy.size(), 1);
+
+        // Reapplying the same config, or a config whose non-global bindings
+        // differ, produces the same portal registry. Neither case should
+        // close the active session or issue another pair of portal requests.
+        portal.setKeybindConfig(first);
+        GhosttyKeybindConfig equivalent = first;
+        equivalent.root.append(
+            definition(unicode('z'), QStringLiteral("ignore"), false));
+        portal.setKeybindConfig(equivalent);
+        QTest::qWait(20);
+        QCOMPARE(portal.generation(), firstGeneration);
+        QCOMPARE(portal.sessionHandle(), firstSession);
+        QVERIFY(portal.isActive());
+        QCOMPARE(fake.createCount, 1);
+        QCOMPARE(fake.bindCount, 1);
+        QCOMPARE(fake.requestCloseCount, 0);
+        QCOMPARE(fake.sessionCloseCount, 0);
+        QCOMPARE(registrySpy.size(), 1);
+        QCOMPARE(activeSpy.size(), 1);
+
         fake.activate(firstSession, QStringLiteral("CTRL+a"));
         QTRY_COMPARE_WITH_TIMEOUT(activationSpy.size(), 1, 3000);
         QCOMPARE(activationSpy.front().front().toString(),

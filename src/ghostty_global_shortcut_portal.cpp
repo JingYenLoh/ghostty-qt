@@ -456,11 +456,20 @@ QString GhosttyGlobalShortcutPortal::sessionHandle() const
 void GhosttyGlobalShortcutPortal::setKeybindConfig(
     const GhosttyKeybindConfig &config)
 {
+    GhosttyGlobalShortcutRegistry registry =
+        buildGhosttyGlobalShortcutRegistry(config);
+    if (m_active && m_connection.isConnected() && registry == m_registry) {
+        // A config reload commonly changes values unrelated to global
+        // shortcuts. Keep the bound portal session and its activation
+        // subscriptions when the complete derived registry is unchanged.
+        return;
+    }
+
     const PortalOperation operation{this, ++m_generation};
     closePortalState(true);
     if (!operation.isCurrent()) return;
 
-    m_registry = buildGhosttyGlobalShortcutRegistry(config);
+    m_registry = std::move(registry);
     for (const GhosttyGlobalShortcutRegistration &registration :
          std::as_const(m_registry.registrations)) {
         m_actionsById.insert(registration.id, registration.action);

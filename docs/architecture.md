@@ -407,8 +407,10 @@ and replayed input cannot overtake search, clipboard, file, or confirmation
 effects.
 
 Eligible direct global bindings are registered through the XDG Global
-Shortcuts portal. Portal failure is nonfatal and does not create a separate
-focus-only binding.
+Shortcuts portal. Reload derives the complete portal registry first; an
+unchanged registry retains its active session, while a changed registry closes
+and replaces the session before publishing its new state. Portal failure is
+nonfatal and does not create a separate focus-only binding.
 
 ## Configuration
 

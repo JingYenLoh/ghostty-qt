@@ -82,7 +82,8 @@ public:
     [[nodiscard]] bool isActive() const noexcept;
     [[nodiscard]] QString sessionHandle() const;
 
-    // Re-registration is atomic from the application's point of view: the old
+    // An unchanged derived registry retains an active portal session. Changed
+    // re-registration is atomic from the application's point of view: the old
     // session is closed before the new pure registry is installed and sent.
     void setKeybindConfig(const GhosttyKeybindConfig &config);
     void clear();

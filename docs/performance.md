@@ -334,6 +334,17 @@ suite additionally covers delayed integrated-shell startup, silent foreground
 jobs, same-process shell builtins, semantic prompt transitions, rejected input,
 direct commands, and child-exit policy.
 
+## Auxiliary IPC
+
+The global-shortcut portal derives its complete registry before mutating the
+active session. When a reload produces an identical registry, the existing
+session, signal subscriptions, generation, and action map remain installed.
+The private-D-Bus regression probe verifies that both an exact reload and one
+with unrelated non-global keybindings retain the session with zero additional
+`CreateSession`, `BindShortcuts`, or session `Close` calls. A changed registry
+still replaces the session atomically, and inactive or disconnected states
+still retry registration.
+
 ## Remaining I/O optimization roadmap
 
 The end-to-end PTY benchmark and bounded read gathering now cover the primary
@@ -342,14 +353,12 @@ and `strace` only for syscall topology because tracing perturbs latency. Do not
 port Ghostty's additional gather/parser thread or buffer ring unless these
 measurements identify remaining kernel backpressure.
 
-### 1. Reduce remaining auxiliary process and IPC I/O
+### 1. Back off repeated invalid configuration loads
 
-These are lower-frequency but concrete costs:
-
-- compare the derived global-shortcut registry and avoid closing/recreating an
-  unchanged active portal session;
-- use exponential retry backoff for unchanged invalid configuration, reset by
-  watcher or manual reload events.
+Use exponential retry backoff for unchanged invalid configuration, reset by
+watcher or manual reload events. This is lower-frequency work, but avoids
+repeated helper processes and filesystem traversal while a broken file remains
+unchanged.
 
 ### 2. Isolate cold filesystem work
 
