@@ -6,6 +6,7 @@
 //! adds the structured configuration boundary needed by the Qt frontend.
 
 const std = @import("std");
+const cli = @import("../cli.zig");
 const font_feature = @import("../font/shaper/feature.zig");
 const inputpkg = @import("../input.zig");
 const Metrics = @import("../font/Metrics.zig");
@@ -18,6 +19,19 @@ const String = @import("../main_c.zig").String;
 
 const Config = @import("Config.zig");
 const Binding = inputpkg.Binding;
+
+const maximum_frontend_config_size = 1024 * 1024;
+const frontend_config_keys = std.StaticStringMap(void).initComptime(.{
+    .{"single-instance"},
+    .{"tabs-location"},
+    .{"wide-tabs"},
+    .{"horizontal-tab-scroll"},
+    .{"quick-terminal-layer"},
+    .{"quick-terminal-namespace"},
+    // Ghostty documents this as CLI-only. Loading the mixed override after
+    // the CLI must not accidentally make its file spelling effective.
+    .{"config-default-files"},
+});
 
 const MetricConfigDescriptor = struct {
     name: []const u8,
@@ -55,6 +69,10 @@ comptime {
 export fn ghostty_qt_config_json(
     color_scheme: u8,
     probable_cli: u8,
+    frontend_config_path_ptr: ?[*]const u8,
+    frontend_config_path_len: usize,
+    configuration_arguments: ?[*]const [*:0]const u8,
+    configuration_argument_count: usize,
     error_message: *String,
 ) String {
     error_message.* = .empty;
@@ -70,7 +88,26 @@ export fn ghostty_qt_config_json(
         error_message.* = errorMessage("invalid probable CLI state") catch .empty;
         return .empty;
     }
-    return configJson(theme, probable_cli == 1, error_message) catch |err| {
+    if (frontend_config_path_len > 0 and frontend_config_path_ptr == null) {
+        error_message.* = errorMessage("invalid frontend config path") catch .empty;
+        return .empty;
+    }
+    if (configuration_argument_count > 0 and configuration_arguments == null) {
+        error_message.* = errorMessage("invalid configuration arguments") catch .empty;
+        return .empty;
+    }
+    const frontend_config_path: ?[]const u8 = if (frontend_config_path_len == 0)
+        null
+    else
+        frontend_config_path_ptr.?[0..frontend_config_path_len];
+    return configJson(
+        theme,
+        probable_cli == 1,
+        frontend_config_path,
+        configuration_arguments,
+        configuration_argument_count,
+        error_message,
+    ) catch |err| {
         if (error_message.ptr == null)
             error_message.* = errorMessage(@errorName(err)) catch .empty;
         return .empty;
@@ -372,6 +409,9 @@ fn configDiagnostics(config: *const Config) !String {
 fn configJson(
     color_scheme: ConfigConditionalTheme,
     probable_cli: bool,
+    frontend_config_path: ?[]const u8,
+    configuration_arguments: ?[*]const [*:0]const u8,
+    configuration_argument_count: usize,
     error_message: *String,
 ) !String {
     var output: std.Io.Writer.Allocating = .init(global.alloc());
@@ -383,7 +423,13 @@ fn configJson(
     try json.write(@as(u8, 4));
 
     {
-        var config = try loadSelectedConfig(color_scheme, probable_cli);
+        var config = try loadSelectedConfig(
+            color_scheme,
+            probable_cli,
+            frontend_config_path,
+            configuration_arguments,
+            configuration_argument_count,
+        );
         defer config.deinit();
         if (!config._diagnostics.empty()) {
             error_message.* = try configDiagnostics(&config);
@@ -414,7 +460,103 @@ fn configJson(
     return .fromSlice(try output.toOwnedSlice());
 }
 
-fn loadSelectedConfig(color_scheme: ConfigConditionalTheme, probable_cli: bool) !Config {
+const MixedConfigIterator = struct {
+    line: cli.args.LineIterator,
+
+    pub fn next(self: *@This()) ?[]const u8 {
+        while (self.line.next()) |argument| {
+            const body = std.mem.trimStart(u8, argument, "-");
+            const separator = std.mem.indexOfScalar(u8, body, '=') orelse body.len;
+            if (frontend_config_keys.has(body[0..separator])) continue;
+            return argument;
+        }
+        return null;
+    }
+
+    pub fn location(
+        self: *const @This(),
+        alloc: std.mem.Allocator,
+    ) std.mem.Allocator.Error!?cli.Location {
+        return self.line.location(alloc);
+    }
+};
+
+fn loadFrontendOverrides(config: *Config, path: []const u8) !bool {
+    if (!std.fs.path.isAbsolute(path)) return error.InvalidFrontendConfigPath;
+
+    var file = std.Io.Dir.openFileAbsolute(global.io(), path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    defer file.close(global.io());
+
+    const stat = try file.stat(global.io());
+    if (stat.kind != .file) return error.FrontendConfigNotRegular;
+    if (stat.size > maximum_frontend_config_size) return error.FrontendConfigTooLarge;
+
+    var buffer: [2048]u8 = undefined;
+    var file_reader = file.reader(global.io(), &buffer);
+    const reader = &file_reader.interface;
+    const bom: []const u8 = &.{ 0xef, 0xbb, 0xbf };
+    if (reader.peek(bom.len)) |prefix| {
+        if (std.mem.eql(u8, prefix, bom)) reader.toss(bom.len);
+    } else |_| {}
+
+    const recursive_start = config.@"config-file".value.items.len;
+    var iter: MixedConfigIterator = .{
+        .line = .{ .r = reader, .filepath = path },
+    };
+    try config.loadIter(global.alloc(), &iter);
+    try config.expandPaths(std.fs.path.dirname(path) orelse
+        return error.InvalidFrontendConfigPath);
+    try config.loadRecursiveFilesFrom(
+        global.alloc(),
+        recursive_start,
+        path,
+    );
+    return true;
+}
+
+fn reapplyConfigurationArguments(
+    config: *Config,
+    raw_arguments: [*]const [*:0]const u8,
+    count: usize,
+) !void {
+    if (count == 0) return;
+
+    const alloc = config.arenaAlloc();
+    const arguments = try alloc.alloc([]const u8, count);
+    for (arguments, 0..) |*destination, index| {
+        destination.* = std.mem.span(raw_arguments[index]);
+    }
+
+    const family_fields = .{
+        "font-family",
+        "font-family-bold",
+        "font-family-italic",
+        "font-family-bold-italic",
+    };
+    inline for (family_fields) |field| @field(config, field).overwrite_next = true;
+    defer {
+        inline for (family_fields) |field|
+            @field(config, field).overwrite_next = false;
+    }
+
+    var iter = cli.args.sliceIterator(arguments);
+    try config.loadIter(global.alloc(), &iter);
+
+    var buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd = try std.Io.Dir.cwd().realPathFile(global.io(), ".", &buffer);
+    try config.expandPaths(buffer[0..cwd]);
+}
+
+fn loadSelectedConfig(
+    color_scheme: ConfigConditionalTheme,
+    probable_cli: bool,
+    frontend_config_path: ?[]const u8,
+    configuration_arguments: ?[*]const [*:0]const u8,
+    configuration_argument_count: usize,
+) !Config {
     // This is Config.load with the requested conditional state installed
     // before any file is parsed. Selecting afterward is insufficient when
     // the inactive theme contains diagnostics because pinned Ghostty
@@ -425,6 +567,17 @@ fn loadSelectedConfig(color_scheme: ConfigConditionalTheme, probable_cli: bool) 
     try config.loadDefaultFiles(global.alloc());
     try config.loadCliArgs(global.alloc());
     try config.loadRecursiveFiles(global.alloc());
+    const frontend_loaded = if (frontend_config_path) |path|
+        try loadFrontendOverrides(&config, path)
+    else
+        false;
+    if (frontend_loaded and configuration_argument_count > 0) {
+        try reapplyConfigurationArguments(
+            &config,
+            configuration_arguments.?,
+            configuration_argument_count,
+        );
+    }
 
     // The helper initializes Ghostty with argc=1 for a known desktop launch,
     // so the upstream finalizer observes the original launch classification.

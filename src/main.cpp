@@ -2539,6 +2539,9 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    const QString frontendConfigPath =
+        FrontendConfigService::standardConfigPath();
+
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
         qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("wayland"));
     }
@@ -2570,6 +2573,7 @@ int main(int argc, char *argv[])
                 .probableCli = probableCli,
                 .configurationArguments =
                     ghosttyConfigurationArguments(options),
+                .frontendConfigPath = frontendConfigPath,
             });
         GhosttyConfigLoadResult loadedIdentityConfig = identityLoader({
             .candidatePaths = GhosttyConfigService::standardConfigPaths(),
@@ -2704,6 +2708,7 @@ int main(int argc, char *argv[])
             .helperPath = configHelperPath,
             .probableCli = probableCli,
             .configurationArguments = ghosttyConfigurationArguments(options),
+            .frontendConfigPath = frontendConfigPath,
         }),
         appearance.colorScheme(), options.configDefaultFiles);
     if (!configService.hasSnapshot()) {
@@ -2872,9 +2877,9 @@ int main(int argc, char *argv[])
                      });
     QObject::connect(&applicationController,
                      &ApplicationController::configOpenRequested, &application,
-                     [] {
-                         const auto opened = openGhosttyConfigForEditing(
-                             GhosttyConfigService::standardConfigEditPaths());
+                     [frontendConfigPath] {
+                         const auto opened =
+                             openGhosttyConfigForEditing({frontendConfigPath});
                          if (!opened.has_value()) {
                              qWarning().noquote()
                                  << "Could not open the Ghostty configuration:"

@@ -18,6 +18,9 @@ namespace {
 
 constexpr auto LegacyConfigName = "config";
 constexpr auto PreferredConfigName = "config.ghostty";
+constexpr auto FrontendConfigOption = "--ghostty-qt-frontend-config=";
+
+QString normalizedAbsolutePath(const QString &path);
 
 QString colorSchemeArgument(TerminalColorScheme colorScheme)
 {
@@ -34,6 +37,12 @@ QString probableCliArgument(bool probableCli)
 {
     return probableCli ? QStringLiteral("--ghostty-qt-probable-cli=true")
                        : QStringLiteral("--ghostty-qt-probable-cli=false");
+}
+
+QString frontendConfigArgument(const QString &path)
+{
+    return QString::fromLatin1(FrontendConfigOption)
+        + normalizedAbsolutePath(path);
 }
 
 struct ProcessResult {
@@ -372,6 +381,10 @@ makeGhosttyConfigProcessLoader(GhosttyConfigProcessLoaderOptions options)
             schemeArgument,
             probableCliArgument(options.probableCli),
         };
+        if (!options.frontendConfigPath.isEmpty()) {
+            queryArguments.append(
+                frontendConfigArgument(options.frontendConfigPath));
+        }
         queryArguments.append(options.configurationArguments);
         auto config =
             requireSuccess(QStringLiteral("config query"), run(queryArguments));
@@ -401,6 +414,15 @@ makeGhosttyConfigProcessLoader(GhosttyConfigProcessLoaderOptions options)
         appendConfiguredActionDiagnostics(snapshot, snapshot.keybindings,
                                           defaultKeybindings);
         populateSourcePaths(snapshot, request.candidatePaths);
+        if (!options.frontendConfigPath.isEmpty()) {
+            const QString frontendPath =
+                normalizedAbsolutePath(options.frontendConfigPath);
+            if (!snapshot.sourcePaths.contains(frontendPath)) {
+                // Retain the missing path too so the service watches its
+                // nearest existing directory and notices later creation.
+                snapshot.sourcePaths.append(frontendPath);
+            }
+        }
 
         // The first exporter stderr may carry warnings from Ghostty. The
         // consistency query is intentionally silent so re-sampling cannot

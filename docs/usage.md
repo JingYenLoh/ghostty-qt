@@ -23,13 +23,14 @@ not implement.
 
 ## Configuration
 
-Portable terminal settings and keybindings remain in the standard Ghostty
-files. Qt application policy uses the separate
-`$XDG_CONFIG_HOME/ghostty-qt/config` file. Ghostty's `gtk-*` settings do not
-configure Qt equivalents.
+Standard Ghostty files provide the reusable base. The
+`$XDG_CONFIG_HOME/ghostty-qt/config` file accepts both ordinary Ghostty keys as
+final overrides and Qt-owned application policy. Ghostty's `gtk-*` settings do
+not configure Qt equivalents.
 
-`open_config` and `+edit-config` open the standard Ghostty configuration, not
-the Qt-owned file. See [Configuration](configuration.md) and
+`open_config` opens the mixed ghostty-qt file. The delegated `+edit-config`
+action retains Ghostty's standard-file behavior. See
+[Configuration](configuration.md) and
 [Frontend configuration](frontend-configuration.md).
 
 `--gtk-single-instance` remains a hidden deprecated command-line alias for

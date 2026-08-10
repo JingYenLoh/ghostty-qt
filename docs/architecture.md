@@ -407,10 +407,10 @@ $XDG_CONFIG_HOME/ghostty/config.ghostty
 $XDG_CONFIG_HOME/ghostty-qt/config
 ```
 
-The first two files are finalized by the pinned Ghostty parser and own portable
-terminal behavior. The last file is parsed by ghostty-qt and owns the small Qt
-application policy surface. GTK-prefixed settings are not aliases for Qt
-settings.
+The first two files provide the shared Ghostty base. The last is a mixed final
+override: its Qt-owned keys are parsed by ghostty-qt while every other line is
+applied by the pinned Ghostty parser after the shared recursive configuration.
+GTK-prefixed settings are not aliases for Qt settings.
 
 ### Shared Ghostty parser
 
@@ -433,12 +433,14 @@ requests, and failures retain the same direct helper fallback semantics.
 Both services perform their initial load synchronously before application
 presentation. `GhosttyConfigService` then runs watched and requested helper
 transactions outside the GUI thread; `FrontendConfigService` does the same for
-the strict Qt-owned file. Each domain publishes immutable generations, retains
-its last good snapshot after failure, and reports source-labelled diagnostics.
+the Qt-owned subset of the mixed file. Each domain publishes immutable
+generations, retains its last good snapshot after failure, and reports
+source-labelled diagnostics.
 
-The application rebuilds effective options from defaults, both disjoint
-configuration domains, and explicit CLI overrides. Live fields update existing
-objects; construction and process fields become defaults for later objects.
+The application rebuilds effective options from defaults, the shared Ghostty
+base, the mixed override, and explicit CLI overrides. Live fields update
+existing objects; construction and process fields become defaults for later
+objects.
 Reloading cannot change the running process's application identity or
 single-instance role.
 

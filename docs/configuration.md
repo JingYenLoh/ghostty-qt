@@ -1,8 +1,8 @@
 # Configuration
 
-ghostty-qt separates portable terminal configuration from behavior owned by
-the Qt frontend. This keeps ordinary Ghostty files reusable while avoiding
-GTK-prefixed compatibility aliases for Qt-specific policy.
+ghostty-qt keeps ordinary Ghostty files reusable and provides one final mixed
+override file for both portable terminal settings and behavior owned by the Qt
+frontend. GTK-prefixed settings are not aliases for Qt-specific policy.
 
 ## Files and ownership
 
@@ -13,33 +13,39 @@ $XDG_CONFIG_HOME/ghostty/config
 $XDG_CONFIG_HOME/ghostty/config.ghostty
 ```
 
-They own terminal behavior, commands, environment, appearance, keybindings,
-shell integration, quick-terminal policy, and Linux settings shared with
-Ghostty.
+They provide the shared base configuration for terminal behavior, commands,
+environment, appearance, keybindings, shell integration, quick-terminal
+policy, and Linux settings.
 
-Qt-owned settings live in:
+The final application override is:
 
 ```text
 $XDG_CONFIG_HOME/ghostty-qt/config
 ```
 
-Its closed key set, strict grammar, and reload semantics are documented in
+It accepts ordinary Ghostty keys as well as the small Qt-owned key set. Ghostty
+assignments in this file are parsed by the pinned parser after the standard
+files and their recursive includes, so they override the shared configuration.
+Qt-owned keys, mixed-file grammar, and reload semantics are documented in
 [Frontend configuration](frontend-configuration.md).
 
 If `XDG_CONFIG_HOME` is unset or not absolute, both domains fall back to
 `$HOME/.config`.
 
-Do not put ghostty-qt keys in the standard Ghostty files. Conversely,
-`gtk-*` settings do not configure Qt-owned equivalents.
+Do not put ghostty-qt-only keys in the standard Ghostty files. Conversely,
+`gtk-*` settings in either location do not configure Qt-owned equivalents.
 
 ## Precedence
 
-Effective options are resolved in this order:
+Ghostty-owned options are resolved in this order:
 
 1. built-in defaults;
-2. the finalized shared Ghostty configuration;
-3. the disjoint ghostty-qt frontend configuration;
+2. the standard Ghostty files and their recursive includes;
+3. Ghostty assignments in `ghostty-qt/config` and their recursive includes;
 4. explicit ghostty-qt command-line overrides.
+
+Qt-owned options use built-in defaults, then `ghostty-qt/config`, then their
+explicit command-line overrides.
 
 Ghostty's own file precedence, `config-file` includes, value parsing, and
 finalization come from the pinned Ghostty implementation. The Qt process
@@ -80,6 +86,8 @@ scrollback-limit-lines = unlimited
 clipboard-write = ask
 link-previews = true
 
+maximize = true
+
 quick-terminal-position = top
 quick-terminal-size = 40%,100%
 quick-terminal-autohide = true
@@ -99,8 +107,9 @@ ghostty-qt +explain-config
 ghostty-qt +edit-config
 ```
 
-These actions run before Qt starts and describe the pinned Ghostty
-configuration. Catalog presence alone does not imply frontend support.
+These delegated actions run before the mixed application override is attached
+and therefore describe the standard pinned Ghostty configuration plus explicit
+CLI arguments. Catalog presence alone does not imply frontend support.
 
 ## Keybindings
 

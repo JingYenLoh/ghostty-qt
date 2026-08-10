@@ -43,9 +43,10 @@ using FrontendConfigLoader =
 // is replaced by an unexpectedly large file.
 inline constexpr qsizetype MaximumFrontendConfigFileSize = 1024 * 1024;
 
-// Parse one strict UTF-8 frontend configuration document. The grammar is one
-// scalar `key = value` assignment per non-empty line. Comments must occupy a
-// complete line, and duplicate or unknown keys are errors.
+// Parse the Qt-owned subset of one mixed ghostty-qt configuration document.
+// Recognized frontend keys use one strict UTF-8 scalar `key = value`
+// assignment per non-empty line. Every other line is left for the pinned
+// Ghostty parser, which owns its grammar, validation, and duplicate semantics.
 [[nodiscard]] std::expected<FrontendConfigValues, QString>
 parseFrontendConfig(QByteArrayView contents, QStringView sourceName = {});
 

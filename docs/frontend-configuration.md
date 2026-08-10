@@ -1,56 +1,66 @@
 # Frontend configuration
 
-Qt-owned application policy has a small independent configuration file:
+The application-specific configuration file is:
 
 ```text
 $XDG_CONFIG_HOME/ghostty-qt/config
 ```
 
 If `XDG_CONFIG_HOME` is unset or relative, the path is
-`$HOME/.config/ghostty-qt/config`. Portable terminal settings remain in the
-standard Ghostty files; see [Configuration](configuration.md). The two domains
-have disjoint keys, and GTK-prefixed settings are not Qt aliases.
+`$HOME/.config/ghostty-qt/config`. This is a mixed final override: ordinary
+Ghostty keys are accepted alongside the Qt-owned keys documented below. The
+standard Ghostty files remain the reusable base; see
+[Configuration](configuration.md). GTK-prefixed settings are not Qt aliases.
 
 ## Precedence
 
-Effective options use this precedence:
+Ghostty-owned options use this precedence:
 
 1. built-in defaults;
-2. the finalized shared Ghostty configuration;
-3. the ghostty-qt frontend configuration for its disjoint, Qt-owned keys;
+2. the standard Ghostty configuration and recursive includes;
+3. Ghostty assignments in this file and their recursive includes;
 4. explicit ghostty-qt command-line overrides.
+
+Qt-owned options use built-in defaults, this file, then explicit frontend
+command-line overrides.
 
 Frontend `single-instance` owns Qt process arbitration; Ghostty's
 `gtk-single-instance` does not participate. Reload cannot reclassify a running
 process, while a fresh launch samples the newest value. An explicit
 `--single-instance=false|true|detect` value has highest precedence.
 
-## Grammar
+## Mixed grammar
 
-The frontend file is a strict UTF-8 scalar format. A UTF-8 byte-order mark is
-accepted at the beginning. Each non-empty line must contain exactly one
-assignment:
+Each non-comment line is routed by key ownership. The six Qt-owned keys below
+use a strict UTF-8 scalar assignment:
 
 ```text
 key = value
 ```
 
-Leading and trailing whitespace around the line, key, and value is ignored.
-Unix and CRLF line endings are accepted. A comment begins with `#` only when
-`#` is the first non-whitespace character on its line.
+Leading and trailing whitespace around a Qt line, key, and value is ignored.
+Unix and CRLF line endings and a UTF-8 byte-order mark are accepted. A comment
+begins with `#` only when `#` is the first non-whitespace character on its
+line.
 
-The following are errors:
+For Qt-owned keys, the following are errors:
 
 - invalid UTF-8 or control characters other than a tab;
 - an assignment with zero or more than one `=`;
-- an empty key or value;
-- an unknown or duplicate key;
+- an empty value;
+- a duplicate key;
 - an unsupported value.
 
-Keys and values are case-sensitive. Quoting and inline comments are not part of
-the grammar. A malformed document is rejected as a whole; successfully parsed
-keys are never applied partially. Assignment diagnostics identify the file and
-line; encoding and I/O diagnostics identify the file.
+Every other line is passed unchanged to the pinned Ghostty parser. This keeps
+Ghostty's quoting, byte encoding, repeated keys, resets, embedded `=` values,
+conditionals, and `config-file` behavior. A key unknown to both domains is
+therefore reported as a Ghostty configuration diagnostic rather than a
+frontend "unknown key" error.
+
+The two domains retain independent last-known-good generations. A bad Qt value
+does not discard the last valid Ghostty generation, and a bad Ghostty value
+does not discard the last valid Qt generation. Assignment diagnostics identify
+the original mixed file and line.
 
 For example:
 
@@ -62,6 +72,11 @@ wide-tabs = false
 horizontal-tab-scroll = true
 quick-terminal-layer = overlay
 quick-terminal-namespace = ghostty-quick-terminal
+
+# Final Ghostty overrides
+font-size = 13
+maximize = true
+background-opacity = 0.95
 ```
 
 ## Keys
@@ -88,8 +103,8 @@ snapshot and opens source-labelled Retry/Ignore diagnostics; no partial
 document is published.
 
 `reload_config` requests both configuration domains, which publish
-independently. `open_config` still opens the shared Ghostty file, so edit this
-frontend file directly.
+independently. `open_config` opens this mixed application file; the delegated
+`+edit-config` action continues to open the standard Ghostty configuration.
 
 The pre-GUI `+new-window` and `+toggle-quick-terminal` clients contact the
 application service directly and do not load the launcher's frontend file.

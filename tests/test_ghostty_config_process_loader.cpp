@@ -224,6 +224,7 @@ private Q_SLOTS:
     void invokesStableTwoQueryTransaction();
     void forwardsSelectedColorSchemeToEveryConfigQuery();
     void forwardsConfigurationArgumentsToEveryConfigQuery();
+    void forwardsFrontendConfigPathAndPublishesWatchSource();
     void publishesTypedSnapshotAndSourcePaths();
     void diagnosesOnlyNonDefaultUnsupportedActions();
     void rejectsQueryFailuresAndMalformedData();
@@ -231,6 +232,7 @@ private Q_SLOTS:
     void preservesSuccessfulHelperWarnings();
     void reportsTimeoutCrashAndStartFailureDeterministically();
     void realHelperAppliesConfigurationArgumentPrecedence();
+    void realHelperAppliesMixedFrontendOverrides();
     void realHelperDisablesDefaultConfigFiles();
     void realHelperExportsTypographyShaping();
     void realHelperRejectsInvalidConfigurationArgumentsDeterministically();
@@ -375,6 +377,32 @@ void GhosttyConfigProcessLoaderTest::
             + QByteArrayLiteral(
                 "+show-config-json --ghostty-qt-color-scheme=light --ghostty-qt-probable-cli=true")
             + suffix);
+}
+
+void GhosttyConfigProcessLoaderTest::
+    forwardsFrontendConfigPathAndPublishesWatchSource()
+{
+    ConfigFixture fixture;
+    const QString logPath =
+        QDir(fixture.temporary.path()).filePath(QStringLiteral("invocations"));
+    const QString frontendPath =
+        QDir(fixture.xdgHome).filePath(QStringLiteral("ghostty-qt/config"));
+    auto options = fakeOptions(fixture);
+    options.environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_INVOCATION_LOG"),
+                               logPath);
+    options.frontendConfigPath = frontendPath;
+
+    const GhosttyConfigLoadResult result =
+        makeGhosttyConfigProcessLoader(options)(fixture.request());
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+
+    const QByteArray invocation =
+        QByteArrayLiteral(
+            "+show-config-json --ghostty-qt-color-scheme=light --ghostty-qt-probable-cli=true --ghostty-qt-frontend-config=")
+        + QFile::encodeName(QFileInfo(frontendPath).absoluteFilePath()) + '\n';
+    QCOMPARE(invocationLog(logPath), invocation + invocation);
+    QVERIFY(result->sourcePaths.contains(
+        QFileInfo(frontendPath).absoluteFilePath()));
 }
 
 void GhosttyConfigProcessLoaderTest::publishesTypedSnapshotAndSourcePaths()
@@ -805,6 +833,69 @@ void GhosttyConfigProcessLoaderTest::
     QCOMPARE(validation->exitStatus, QProcess::NormalExit);
     QCOMPARE(validation->exitCode, 0);
     QVERIFY(validation->standardError.isEmpty());
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperAppliesMixedFrontendOverrides()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    const QString sharedInclude =
+        fixture.filePath(QStringLiteral("shared-include.ghostty"));
+    ConfigFixture::writeFile(
+        sharedInclude, QByteArrayLiteral("font-size = 18\nmaximize = false\n"));
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QStringLiteral("font-size = 16\nconfig-file = %1\n")
+            .arg(sharedInclude)
+            .toUtf8());
+
+    const QString frontendDirectory =
+        QDir(fixture.xdgHome).filePath(QStringLiteral("ghostty-qt"));
+    QVERIFY(QDir().mkpath(frontendDirectory));
+    const QString frontendPath =
+        QDir(frontendDirectory).filePath(QStringLiteral("config"));
+    const QString frontendInclude =
+        QDir(frontendDirectory).filePath(QStringLiteral("included.ghostty"));
+    ConfigFixture::writeFile(frontendInclude,
+                             QByteArrayLiteral("font-size = 21\n"));
+    ConfigFixture::writeFile(
+        frontendPath,
+        QByteArrayLiteral("tabs-location = bottom\n"
+                          "quick-terminal-layer = overlay\n"
+                          "font-size = 20\n"
+                          "maximize = true\n"
+                          "config-file = included.ghostty\n"));
+
+    auto options = realOptions(helperPath);
+    options.frontendConfigPath = frontendPath;
+    const auto load = makeGhosttyConfigProcessLoader(options);
+    GhosttyConfigLoadResult result = load(fixture.request());
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.typography.pointSize, 21.0);
+    QVERIFY(result->values.maximize);
+    QVERIFY(result->sourcePaths.contains(frontendPath));
+    QVERIFY(result->sourcePaths.contains(frontendInclude));
+
+    options.configurationArguments = {QStringLiteral("--font-size=22")};
+    result = makeGhosttyConfigProcessLoader(options)(fixture.request());
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.typography.pointSize, 22.0);
+    QVERIFY(result->values.maximize);
+
+    ConfigFixture::writeFile(
+        frontendPath,
+        QByteArrayLiteral("tabs-location = bottom\n"
+                          "not-a-ghostty-option = true\n"));
+    result = load(fixture.request());
+    QVERIFY(!result.has_value());
+    QVERIFY2(result.error().contains(frontendPath), qPrintable(result.error()));
+    QVERIFY2(result.error().contains(QStringLiteral("not-a-ghostty-option")),
+             qPrintable(result.error()));
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperDisablesDefaultConfigFiles()

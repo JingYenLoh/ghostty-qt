@@ -54,6 +54,7 @@ private Q_SLOTS:
     void parsesEveryValue_data();
     void parsesEveryValue();
     void acceptsWhitespaceCrLfAndBom();
+    void delegatesGhosttyLinesWithoutInterpretingTheirGrammar();
     void rejectsInvalidDocuments_data();
     void rejectsInvalidDocuments();
     void rejectsInvalidUtf8AndControlCharacters();
@@ -193,15 +194,11 @@ void FrontendConfigTest::rejectsInvalidDocuments_data()
     QTest::addColumn<QByteArray>("contents");
     QTest::addColumn<QString>("diagnostic");
 
-    QTest::newRow("unknown") << QByteArray("other = true\n")
-                             << QStringLiteral("unknown key 'other'");
     QTest::newRow("missing-equals") << QByteArray("single-instance true\n")
                                     << QStringLiteral("exactly one");
     QTest::newRow("multiple-equals")
         << QByteArray("single-instance = true = false\n")
         << QStringLiteral("exactly one");
-    QTest::newRow("empty-key")
-        << QByteArray(" = true\n") << QStringLiteral("key must not be empty");
     QTest::newRow("empty-value") << QByteArray("tabs-location = \n")
                                  << QStringLiteral("must not be empty");
     QTest::newRow("single-instance-case")
@@ -220,18 +217,6 @@ void FrontendConfigTest::rejectsInvalidDocuments_data()
     QTest::newRow("quick-terminal-namespace-empty")
         << QByteArray("quick-terminal-namespace = \n")
         << QStringLiteral("must not be empty");
-    QTest::newRow("gtk-quick-terminal-layer")
-        << QByteArray("gtk-quick-terminal-layer = overlay\n")
-        << QStringLiteral("unknown key 'gtk-quick-terminal-layer'");
-    QTest::newRow("gtk-quick-terminal-namespace")
-        << QByteArray("gtk-quick-terminal-namespace = custom\n")
-        << QStringLiteral("unknown key 'gtk-quick-terminal-namespace'");
-    QTest::newRow("gtk-wide-tabs")
-        << QByteArray("gtk-wide-tabs = false\n")
-        << QStringLiteral("unknown key 'gtk-wide-tabs'");
-    QTest::newRow("gtk-horizontal-tab-scroll")
-        << QByteArray("gtk-horizontal-tab-scroll = false\n")
-        << QStringLiteral("unknown key 'gtk-horizontal-tab-scroll'");
     QTest::newRow("inline-comment")
         << QByteArray("tabs-location = top # not a full-line comment\n")
         << QStringLiteral("expected top or bottom");
@@ -251,7 +236,7 @@ void FrontendConfigTest::rejectsInvalidDocuments()
 
 void FrontendConfigTest::rejectsInvalidUtf8AndControlCharacters()
 {
-    QByteArray invalidUtf8;
+    QByteArray invalidUtf8("tabs-location = ");
     invalidUtf8.append(char(0xC3));
     invalidUtf8.append(char(0x28));
     auto parsed =
@@ -266,6 +251,25 @@ void FrontendConfigTest::rejectsInvalidUtf8AndControlCharacters()
     QVERIFY(!parsed.has_value());
     QVERIFY(parsed.error().contains(
         QStringLiteral("settings.conf:1: invalid control character")));
+}
+
+void FrontendConfigTest::delegatesGhosttyLinesWithoutInterpretingTheirGrammar()
+{
+    QByteArray contents("maximize = true\n"
+                        "maximize = false\n"
+                        "env = VALUE=contains=equals\n"
+                        "gtk-wide-tabs = false\n"
+                        "unknown-to-both-parsers = value\n");
+    contents.append("env = RAW=");
+    contents.append(char(0xFF));
+    contents.append('\n');
+    contents.append("tabs-location = bottom\n");
+
+    const auto parsed =
+        parseFrontendConfig(contents, QStringLiteral("mixed.conf"));
+    QVERIFY2(parsed.has_value(),
+             qPrintable(parsed ? QString{} : parsed.error()));
+    QCOMPARE(parsed->tabsLocation, TabsLocation::Bottom);
 }
 
 void FrontendConfigTest::reportsDuplicatePathAndLine()

@@ -350,7 +350,7 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
     file(LOCK "${GHOSTTY_QT_CONFIG_REVISION_DIR}/source.lock"
         GUARD FILE TIMEOUT 120)
     set(GHOSTTY_QT_CONFIG_SHADOW_STAMP
-        "${GHOSTTY_QT_CONFIG_SHADOW_DIR}/.ghostty-qt-shadow-v2")
+        "${GHOSTTY_QT_CONFIG_SHADOW_DIR}/.ghostty-qt-shadow-v3")
     if(NOT EXISTS "${GHOSTTY_QT_CONFIG_SHADOW_STAMP}")
         file(REMOVE_RECURSE "${GHOSTTY_QT_CONFIG_SHADOW_DIR}")
         file(MAKE_DIRECTORY "${GHOSTTY_QT_CONFIG_SHADOW_DIR}")
@@ -387,6 +387,8 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
     endif()
     configure_file("${GHOSTTY_SOURCE_DIR}/build.zig"
         "${GHOSTTY_QT_CONFIG_SHADOW_DIR}/build.zig" COPYONLY)
+    configure_file("${GHOSTTY_SOURCE_DIR}/src/config/Config.zig"
+        "${GHOSTTY_QT_CONFIG_SHADOW_DIR}/src/config/Config.zig" COPYONLY)
     execute_process(
         COMMAND "${GHOSTTY_QT_PATCH_EXECUTABLE}"
             --batch --forward --fuzz=0 -p1

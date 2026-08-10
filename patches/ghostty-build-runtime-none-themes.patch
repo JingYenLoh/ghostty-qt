@@ -24,3 +24,63 @@ diff --git a/build.zig b/build.zig
          // The macOS Ghostty Library
          //
          // This is NOT libghostty (even though its named that for historical
+diff --git a/src/config/Config.zig b/src/config/Config.zig
+--- a/src/config/Config.zig
++++ b/src/config/Config.zig
+@@ -4278,12 +4278,32 @@ pub fn loadCliArgs(self: *Config, alloc_gpa: Allocator) !void {
+-
++
+ /// Load and parse the config files that were added in the "config-file" key.
+ pub fn loadRecursiveFiles(self: *Config, alloc_gpa: Allocator) !void {
+-    if (self.@"config-file".value.items.len == 0) return;
++    try self.loadRecursiveFilesFrom(alloc_gpa, 0, null);
++}
++
++/// Load recursive config-file entries beginning at `start_index`. Entries
++/// before that index and the optional root are treated as already loaded.
++/// This is used by embedders that apply a final config-file overlay after the
++/// ordinary Ghostty configuration has been fully resolved.
++pub fn loadRecursiveFilesFrom(
++    self: *Config,
++    alloc_gpa: Allocator,
++    start_index: usize,
++    root_path: ?[]const u8,
++) !void {
++    if (self.@"config-file".value.items.len <= start_index) return;
+     const arena_alloc = self._arena.?.allocator();
+-
++
+     // Keeps track of loaded files to prevent cycles.
+     var loaded = std.StringHashMap(void).init(alloc_gpa);
+     defer loaded.deinit();
++    if (root_path) |path| try loaded.put(path, {});
++    for (self.@"config-file".value.items[0..start_index]) |entry| {
++        const path = switch (entry) {
++            .optional, .required => |path| path,
++        };
++        if (path.len > 0) try loaded.put(path, {});
++    }
+-
++
+     // We need to insert all of our loaded config-file values
+     // PRIOR to the "-e" in our replay steps, since everything
+@@ -4306,7 +4326,7 @@ pub fn loadRecursiveFiles(self: *Config, alloc_gpa: Allocator) !void {
+     // We must use a while below and not a for(items) because we
+     // may add items to the list while iterating for recursive
+     // config-file entries.
+-    var i: usize = 0;
++    var i: usize = start_index;
+     while (i < self.@"config-file".value.items.len) : (i += 1) {
+         const path, const optional = switch (self.@"config-file".value.items[i]) {
+             .optional => |path| .{ path, true },
+@@ -4449,7 +4469,7 @@ pub fn changeConditionalState(
+-
++
+ /// Expand the relative paths in config-files to be absolute paths
+ /// relative to the base directory.
+-fn expandPaths(self: *Config, base: []const u8) !void {
++pub fn expandPaths(self: *Config, base: []const u8) !void {
+     const arena_alloc = self._arena.?.allocator();
+-
++
+     // Keep track of this step for replays

@@ -4,10 +4,12 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QList>
 #include <QSet>
 #include <QStringDecoder>
 #include <QStringList>
 
+#include <algorithm>
 #include <cstring>
 #include <optional>
 #include <utility>
@@ -26,6 +28,31 @@ QString normalizedAbsolutePath(const QString &path)
 {
     if (path.isEmpty()) return {};
     return QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+}
+
+QByteArrayView trimFrontendWhitespace(QByteArrayView value)
+{
+    qsizetype begin = 0;
+    while (begin < value.size()
+           && (value.at(begin) == ' ' || value.at(begin) == '\t')) {
+        ++begin;
+    }
+    qsizetype end = value.size();
+    while (end > begin
+           && (value.at(end - 1) == ' ' || value.at(end - 1) == '\t')) {
+        --end;
+    }
+    return value.sliced(begin, end - begin);
+}
+
+bool isFrontendKey(QByteArrayView key)
+{
+    return key == QByteArrayView("single-instance")
+        || key == QByteArrayView("tabs-location")
+        || key == QByteArrayView("wide-tabs")
+        || key == QByteArrayView("horizontal-tab-scroll")
+        || key == QByteArrayView("quick-terminal-layer")
+        || key == QByteArrayView("quick-terminal-namespace");
 }
 
 std::optional<SingleInstanceMode> parseSingleInstance(QStringView value)
@@ -76,27 +103,58 @@ std::optional<QuickTerminalLayer> parseQuickTerminalLayer(QStringView value)
 std::expected<FrontendConfigValues, QString>
 parseFrontendConfig(QByteArrayView contents, QStringView sourceName)
 {
-    QStringDecoder decoder(QStringDecoder::Utf8);
-    QString text = decoder.decode(contents);
-    if (decoder.hasError()) {
-        const QString source = sourceName.isEmpty()
-            ? QStringLiteral("<frontend-config>")
-            : sourceName.toString();
-        return std::unexpected(
-            QStringLiteral("%1: configuration is not valid UTF-8").arg(source));
-    }
-    if (!text.isEmpty() && text.front() == u'\uFEFF') {
-        text.remove(0, 1);
+    constexpr QByteArrayView Utf8Bom("\xEF\xBB\xBF", 3);
+    if (contents.startsWith(Utf8Bom)) {
+        contents = contents.sliced(Utf8Bom.size());
     }
 
     FrontendConfigValues values;
     QSet<QString> assignedKeys;
-    const QStringList lines = text.split(u'\n');
+    QList<QByteArrayView> lines;
+    qsizetype lineStart = 0;
+    while (lineStart <= contents.size()) {
+        const qsizetype separator = contents.indexOf('\n', lineStart);
+        const qsizetype lineEnd = separator < 0 ? contents.size() : separator;
+        lines.append(contents.sliced(lineStart, lineEnd - lineStart));
+        if (separator < 0) break;
+        lineStart = separator + 1;
+    }
     for (qsizetype index = 0; index < lines.size(); ++index) {
-        QString line = lines.at(index);
-        if (line.endsWith(u'\r')) line.chop(1);
+        QByteArrayView encodedLine = lines.at(index);
+        if (encodedLine.endsWith('\r')) encodedLine.chop(1);
+
+        const QByteArrayView trimmedEncoded =
+            trimFrontendWhitespace(encodedLine);
+        if (trimmedEncoded.isEmpty() || trimmedEncoded.startsWith('#')) {
+            continue;
+        }
+
+        const qsizetype firstSeparator = encodedLine.indexOf('=');
+        QByteArrayView encodedKey = trimFrontendWhitespace(
+            firstSeparator < 0 ? encodedLine
+                               : encodedLine.first(firstSeparator));
+        if (firstSeparator < 0) {
+            const qsizetype whitespace = encodedKey.indexOf(' ');
+            const qsizetype tab = encodedKey.indexOf('\t');
+            const qsizetype end = whitespace < 0 ? tab
+                : tab < 0                        ? whitespace
+                                                 : std::min(whitespace, tab);
+            if (end >= 0) encodedKey = encodedKey.first(end);
+        }
+        if (!isFrontendKey(encodedKey)) {
+            // Ghostty owns every non-frontend line, including its byte
+            // encoding, repeat/reset behavior, quoting, and diagnostics.
+            continue;
+        }
 
         const qsizetype lineNumber = index + 1;
+        QStringDecoder decoder(QStringDecoder::Utf8);
+        const QString line = decoder.decode(encodedLine);
+        if (decoder.hasError()) {
+            return std::unexpected(diagnostic(
+                sourceName, lineNumber,
+                QStringLiteral("frontend assignment is not valid UTF-8")));
+        }
         for (const QChar character : std::as_const(line)) {
             if (character.unicode() < 0x20 && character != u'\t') {
                 return std::unexpected(
@@ -104,10 +162,6 @@ parseFrontendConfig(QByteArrayView contents, QStringView sourceName)
                                QStringLiteral("invalid control character")));
             }
         }
-
-        const QString trimmed = line.trimmed();
-        if (trimmed.isEmpty() || trimmed.startsWith(u'#')) continue;
-
         if (line.count(u'=') != 1) {
             return std::unexpected(diagnostic(
                 sourceName, lineNumber,
@@ -182,10 +236,6 @@ parseFrontendConfig(QByteArrayView contents, QStringView sourceName)
             values.quickTerminalLayerShell.layer = *parsed;
         } else if (key == QLatin1StringView("quick-terminal-namespace")) {
             values.quickTerminalLayerShell.layerNamespace = value;
-        } else {
-            return std::unexpected(
-                diagnostic(sourceName, lineNumber,
-                           QStringLiteral("unknown key '%1'").arg(key)));
         }
         assignedKeys.insert(key);
     }

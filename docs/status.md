@@ -11,7 +11,8 @@ desktop feature set, but does not yet claim complete Ghostty frontend parity.
 - Public `libghostty-vt` for terminal behavior, plus a private helper around
   the pinned Ghostty application parser.
 - Portable and Linux Ghostty configuration settings where behavior maps to Qt.
-- Qt-specific policy in `ghostty-qt/config`, without GTK-prefixed aliases.
+- Final Ghostty overrides and Qt-specific policy in `ghostty-qt/config`,
+  without GTK-prefixed aliases.
 
 Implemented areas include PTYs and process lifecycle, retained rendering, tabs
 and recursive splits, multiple windows, quick terminal, configuration and

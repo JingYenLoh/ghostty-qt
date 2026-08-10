@@ -14,9 +14,11 @@
 #include <string_view>
 #include <vector>
 
-extern "C" ghostty_string_s
-ghostty_qt_config_json(std::uint8_t colorScheme, std::uint8_t probableCli,
-                       ghostty_string_s *errorMessage);
+extern "C" ghostty_string_s ghostty_qt_config_json(
+    std::uint8_t colorScheme, std::uint8_t probableCli,
+    const std::uint8_t *frontendConfigPath,
+    std::size_t frontendConfigPathLength, char *const *configurationArguments,
+    std::size_t configurationArgumentCount, ghostty_string_s *errorMessage);
 extern "C" ghostty_string_s
 ghostty_qt_shell_integration_json(const std::uint8_t *request,
                                   std::size_t requestLength);
@@ -27,6 +29,8 @@ constexpr auto kShowConfigJsonAction = "+show-config-json";
 constexpr auto kShellIntegrationJsonAction = "+shell-integration-json";
 constexpr std::string_view kColorSchemeOption = "--ghostty-qt-color-scheme=";
 constexpr std::string_view kProbableCliOption = "--ghostty-qt-probable-cli=";
+constexpr std::string_view kFrontendConfigOption =
+    "--ghostty-qt-frontend-config=";
 constexpr std::size_t kMaximumShellIntegrationRequestBytes = 4U * 1024U * 1024U;
 constexpr auto kResourcesEnvironment = "GHOSTTY_RESOURCES_DIR";
 
@@ -85,6 +89,7 @@ int showConfigJson(std::span<char *const> arguments)
 {
     std::optional<ConfigColorScheme> colorScheme;
     std::optional<bool> probableCli;
+    std::optional<std::string_view> frontendConfigPath;
     std::vector<char *> configurationArguments;
     configurationArguments.reserve(arguments.size());
     configurationArguments.push_back(arguments.front());
@@ -137,6 +142,23 @@ int showConfigJson(std::span<char *const> arguments)
                 stderr);
             return 64;
         }
+        if (value.starts_with(kFrontendConfigOption)) {
+            if (frontendConfigPath.has_value()
+                || value.size() == kFrontendConfigOption.size()) {
+                std::fputs(
+                    "ghostty-qt-config-helper: +show-config-json requires at most one non-empty --ghostty-qt-frontend-config path\n",
+                    stderr);
+                return 64;
+            }
+            frontendConfigPath = value.substr(kFrontendConfigOption.size());
+            continue;
+        }
+        if (value.starts_with("--ghostty-qt-frontend-config")) {
+            std::fputs(
+                "ghostty-qt-config-helper: +show-config-json requires --ghostty-qt-frontend-config=<path>\n",
+                stderr);
+            return 64;
+        }
         if (isPublicShowConfigOption(value)) {
             std::fputs(
                 "ghostty-qt-config-helper: +show-config-json takes no options "
@@ -169,9 +191,18 @@ int showConfigJson(std::span<char *const> arguments)
     }
 
     ghostty_string_s errorMessage{};
+    const auto *const frontendPath = frontendConfigPath.has_value()
+        ? reinterpret_cast<const std::uint8_t *>(frontendConfigPath->data())
+        : nullptr;
+    const std::size_t frontendPathLength =
+        frontendConfigPath.has_value() ? frontendConfigPath->size() : 0U;
+    const std::span<char *const> explicitConfigurationArguments =
+        std::span<char *const>(configurationArguments).subspan(2);
     const ghostty_string_s json = ghostty_qt_config_json(
         static_cast<std::uint8_t>(*colorScheme),
-        static_cast<std::uint8_t>(launchIsProbableCli), &errorMessage);
+        static_cast<std::uint8_t>(launchIsProbableCli), frontendPath,
+        frontendPathLength, explicitConfigurationArguments.data(),
+        explicitConfigurationArguments.size(), &errorMessage);
     if (json.ptr == nullptr) {
         if (errorMessage.ptr != nullptr) {
             std::fwrite(errorMessage.ptr, 1, errorMessage.len, stderr);

@@ -20,6 +20,10 @@ struct GhosttyConfigProcessLoaderOptions {
     // followed by these values in their original order. Each private query is
     // strict and validates the complete, effective, CLI-aware generation.
     QStringList configurationArguments;
+    // Optional mixed ghostty-qt configuration. The helper filters Qt-owned
+    // keys and applies every remaining line through the pinned Ghostty parser
+    // after the shared configuration, then reapplies explicit CLI values.
+    QString frontendConfigPath;
     int timeoutMilliseconds = 5'000;
     // One load runs two identical complete JSON queries and compares their
     // bytes. Each operation receives only the remaining transaction budget,
