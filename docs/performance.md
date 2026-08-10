@@ -359,25 +359,36 @@ The service regression probes use reduced deterministic bounds to verify the
 initial delay, exponential step, maximum cap, and independent manual/watcher
 reset paths in both the shared Ghostty and frontend configuration domains.
 
-## Remaining I/O optimization roadmap
+## Terminal artifact persistence
+
+Terminal file actions snapshot and format libghostty-owned state on the
+session worker, then move every filesystem operation to a dedicated pool with
+at most two concurrent jobs process-wide. Directory creation and hardening,
+file creation, permission validation, write/flush/close, and canonicalization
+therefore cannot block PTY reads or pane teardown.
+
+Each worker installs an ordered placeholder before dispatch. Later
+user-originated PTY writes and terminal-file completions remain behind that
+placeholder, so a raw path paste and a following keybinding cannot overtake
+the artifact. Terminal protocol replies bypass this user-action barrier and
+remain live. Shutdown invalidates the completion target immediately; the
+background job observes cancellation between filesystem stages, and the
+owned temporary directory removes an artifact unless the worker commits its
+successful result.
+
+The session-worker regression probe verifies asynchronous completion, exact
+`BEFORE -> path -> AFTER` PTY ordering, persistent 0600 artifacts under 0700
+directories, and cancellation without artifact leakage or a teardown join.
+Formatting itself stays on the worker because libghostty's public formatter
+requires terminal ownership; streaming it would require an upstream API.
+
+## Further profiling
 
 The end-to-end PTY benchmark and bounded read gathering now cover the primary
 Linux read path. Use `perf stat` or `perf record -g` for further CPU attribution
 and `strace` only for syscall topology because tracing perturbs latency. Do not
 port Ghostty's additional gather/parser thread or buffer ring unless these
 measurements identify remaining kernel backpressure.
-
-### 1. Isolate cold filesystem work
-
-Terminal file actions currently format and write the artifact synchronously on
-the session worker. Very large history or a stalled temporary filesystem can
-delay PTY reads and pane teardown.
-
-A future implementation can snapshot/format terminal-owned data on the worker
-and perform the filesystem write in a bounded cancellable job. Completion must
-rejoin the worker's ordered action barrier so a later paste or keybinding action
-cannot overtake the file effect. Streaming formatting additionally requires an
-upstream API.
 
 ## Deferred ideas
 

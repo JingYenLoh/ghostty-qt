@@ -337,10 +337,13 @@ encoded. Terminal-originated clipboard writes cross back to the GUI as bounded
 owning MIME payloads and obey the configured allow/deny/ask policy. Only the
 GUI thread accesses `QClipboard` and `QMimeData`.
 
-Terminal file actions format terminal-owned data on the worker, then publish a
-path effect for copy, paste, or desktop opening. Their current synchronous
-filesystem boundary and possible future optimization are documented in
-[Performance](performance.md).
+Terminal file actions snapshot and format terminal-owned data on the worker,
+then send the owning bytes to a bounded two-job persistence pool. A
+worker-local ordered effect queue rejoins completion before publishing the
+copy, paste, or desktop-open path and before releasing later user input or
+file completions. PTY reads and protocol replies remain live while the
+filesystem job runs. Teardown cancels publication without joining the job;
+its still-owned temporary directory removes any unclaimed artifact.
 
 ## Search, links, and inspector
 

@@ -240,6 +240,7 @@ private Q_SLOTS:
     void waitsForEncodedKeyUsingLiveExitPolicy();
     void preservesStagedSequenceWhileWaitingAfterCommand();
     void writesPersistentTerminalFiles();
+    void ordersTerminalFileEffectsAcrossAsyncCompletion();
     void skipsUnavailableTerminalFiles();
     void reportsTerminalInitializationSeparatelyFromChildExec();
     void reportsTerminalInitializationFailure();
@@ -280,6 +281,7 @@ private Q_SLOTS:
     void protectsPasteWithCorrelatedWorkerConfirmation();
     void sendsTerminalControlActionsThroughPty();
     void pastesTerminalFilePathAsRawOrderedInput();
+    void cancelsPendingTerminalFileWritesOnShutdown();
     void readOnlyBlocksSurfaceInputButPreservesProtocolReplies();
     void releasesHeldModifiersBeforeFocusOut();
     void appliesLiveEnquiryResponse();
@@ -1541,7 +1543,8 @@ void SessionWorkerTest::writesPersistentTerminalFiles()
             .location = TerminalFileLocation::Screen,
             .disposition = TerminalFileDisposition::Copy,
         });
-        QCOMPARE(actionSpy.count(), 1);
+        QCOMPARE(actionSpy.count(), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(actionSpy.count(), 1, 5000);
         const TerminalActionResult screenResult =
             terminalActionResultAt(actionSpy, 0);
         QCOMPARE(screenResult.requestId, quint64{101});
@@ -1552,11 +1555,14 @@ void SessionWorkerTest::writesPersistentTerminalFiles()
                  TerminalClipboardDestination::Standard);
         screenPath = screenResult.payload;
 
-        worker.writeTerminalFile(202, {
-            .location = TerminalFileLocation::Scrollback,
-            .disposition = TerminalFileDisposition::Open,
-        });
-        QCOMPARE(actionSpy.count(), 2);
+        worker.writeTerminalFile(
+            202,
+            {
+                .location = TerminalFileLocation::Scrollback,
+                .disposition = TerminalFileDisposition::Open,
+            });
+        QCOMPARE(actionSpy.count(), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(actionSpy.count(), 2, 5000);
         const TerminalActionResult historyResult =
             terminalActionResultAt(actionSpy, 1);
         QCOMPARE(historyResult.requestId, quint64{202});
@@ -1570,11 +1576,14 @@ void SessionWorkerTest::writesPersistentTerminalFiles()
         worker.beginSelection(selectionPress(0, 0));
         worker.updateSelection(selectionDrag(8, 1, true));
         worker.endSelection(8, 1);
-        worker.writeTerminalFile(303, {
-            .location = TerminalFileLocation::Selection,
-            .disposition = TerminalFileDisposition::Copy,
-        });
-        QCOMPARE(actionSpy.count(), 3);
+        worker.writeTerminalFile(
+            303,
+            {
+                .location = TerminalFileLocation::Selection,
+                .disposition = TerminalFileDisposition::Copy,
+            });
+        QCOMPARE(actionSpy.count(), 2);
+        QTRY_COMPARE_WITH_TIMEOUT(actionSpy.count(), 3, 5000);
         const TerminalActionResult selectionResult =
             terminalActionResultAt(actionSpy, 2);
         QCOMPARE(selectionResult.requestId, quint64{303});
@@ -1677,11 +1686,68 @@ void SessionWorkerTest::writesPersistentTerminalFiles()
     QVERIFY(QDir().rmdir(selectionDirectory));
 }
 
+void SessionWorkerTest::ordersTerminalFileEffectsAcrossAsyncCompletion()
+{
+    qRegisterMetaType<TerminalActionResult>();
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir controlDirectory(QDir::current().filePath(
+        QStringLiteral("tmp/write-file-order-XXXXXX")));
+    QVERIFY(controlDirectory.isValid());
+    const QString artifactRoot =
+        QDir(controlDirectory.path()).filePath(QStringLiteral("artifacts"));
+    QVERIFY(QDir().mkpath(artifactRoot));
+    const ScopedEnvironmentVariable temporaryDirectory(
+        QByteArrayLiteral("TMPDIR"), QFile::encodeName(artifactRoot));
+
+    SessionWorker worker;
+    QSignalSpy actionSpy(&worker, &SessionWorker::terminalActionFinished);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = controlDirectory.path();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf 'ordered-artifact'"),
+    };
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+
+    worker.writeTerminalFile(401,
+                             {
+                                 .location = TerminalFileLocation::Screen,
+                                 .disposition = TerminalFileDisposition::Copy,
+                             });
+    worker.writeTerminalFile(402,
+                             {
+                                 .location = TerminalFileLocation::Selection,
+                                 .disposition = TerminalFileDisposition::Open,
+                             });
+    // The unavailable selection resolves synchronously, but its completion
+    // cannot overtake the earlier off-thread screen persistence.
+    QCOMPARE(actionSpy.count(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(actionSpy.count(), 2, 5000);
+    const TerminalActionResult screenResult =
+        terminalActionResultAt(actionSpy, 0);
+    const TerminalActionResult selectionResult =
+        terminalActionResultAt(actionSpy, 1);
+    QCOMPARE(screenResult.requestId, quint64{401});
+    QCOMPARE(screenResult.outcome, TerminalActionOutcome::Success);
+    QCOMPARE(selectionResult.requestId, quint64{402});
+    QCOMPARE(selectionResult.outcome, TerminalActionOutcome::Unavailable);
+    QVERIFY(errorSpy.isEmpty());
+    worker.shutdown();
+
+    const QString directory = QFileInfo(screenResult.payload).absolutePath();
+    QVERIFY(QFile::remove(screenResult.payload));
+    QVERIFY(QDir().rmdir(directory));
+}
+
 void SessionWorkerTest::skipsUnavailableTerminalFiles()
 {
     qRegisterMetaType<TerminalActionResult>();
-    QVERIFY(QDir().mkpath(
-        QDir::current().filePath(QStringLiteral("tmp"))));
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
     QTemporaryDir controlDirectory(
         QDir::current().filePath(
             QStringLiteral("tmp/write-file-missing-XXXXXX")));
@@ -4391,7 +4457,11 @@ void SessionWorkerTest::pastesTerminalFilePathAsRawOrderedInput()
         .location = TerminalFileLocation::Screen,
         .disposition = TerminalFileDisposition::Paste,
     });
-    QCOMPARE(actionSpy.count(), 1);
+    // Persistence is dispatched away from this worker. Input submitted after
+    // the snapshot is retained behind its ordered completion placeholder.
+    QCOMPARE(actionSpy.count(), 0);
+    worker.sendRawText(QByteArrayLiteral("AFTER"));
+    QTRY_COMPARE_WITH_TIMEOUT(actionSpy.count(), 1, 5000);
     const TerminalActionResult pasteResult =
         terminalActionResultAt(actionSpy, 0);
     QCOMPARE(pasteResult.requestId, quint64{707});
@@ -4401,8 +4471,7 @@ void SessionWorkerTest::pastesTerminalFilePathAsRawOrderedInput()
     QCOMPARE(pasteResult.clipboardDestination,
              TerminalClipboardDestination::Standard);
     QStringList artifactDirectories =
-        QDir(artifactRoot).entryList(
-            QDir::Dirs | QDir::NoDotAndDotDot);
+        QDir(artifactRoot).entryList(QDir::Dirs | QDir::NoDotAndDotDot);
     QCOMPARE(artifactDirectories.size(), 1);
     const QString firstPath =
         QDir(QDir(canonicalArtifactRoot)
@@ -4411,27 +4480,25 @@ void SessionWorkerTest::pastesTerminalFilePathAsRawOrderedInput()
     QVERIFY(QFileInfo::exists(firstPath));
     QCOMPARE(QFile::encodeName(firstPath).size(), pathSize);
     QCOMPARE(pasteResult.payload, firstPath);
-    worker.sendRawText(QByteArrayLiteral("AFTER"));
 
-    const QByteArray expectedOrderedBytes =
-        QByteArrayLiteral("BEFORE") + QFile::encodeName(firstPath)
-        + QByteArrayLiteral("AFTER");
+    const QByteArray expectedOrderedBytes = QByteArrayLiteral("BEFORE")
+        + QFile::encodeName(firstPath) + QByteArrayLiteral("AFTER");
     QTRY_VERIFY_WITH_TIMEOUT(
-        updatesContain(
-            updateSpy,
-            QStringLiteral("write-file-bytes:")
-                + QString::fromLatin1(expectedOrderedBytes.toHex())),
+        updatesContain(updateSpy,
+                       QStringLiteral("write-file-bytes:")
+                           + QString::fromLatin1(expectedOrderedBytes.toHex())),
         5000);
     QTRY_VERIFY_WITH_TIMEOUT(
-        updatesContain(updateSpy, QStringLiteral("readonly-ready")),
-        1000);
+        updatesContain(updateSpy, QStringLiteral("readonly-ready")), 1000);
 
     worker.setReadOnly(true);
-    worker.writeTerminalFile(808, {
-        .location = TerminalFileLocation::Screen,
-        .disposition = TerminalFileDisposition::Paste,
-    });
-    QCOMPARE(actionSpy.count(), 2);
+    worker.writeTerminalFile(808,
+                             {
+                                 .location = TerminalFileLocation::Screen,
+                                 .disposition = TerminalFileDisposition::Paste,
+                             });
+    QCOMPARE(actionSpy.count(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(actionSpy.count(), 2, 5000);
     const TerminalActionResult readOnlyResult =
         terminalActionResultAt(actionSpy, 1);
     QCOMPARE(readOnlyResult.requestId, quint64{808});
@@ -4477,6 +4544,54 @@ void SessionWorkerTest::pastesTerminalFilePathAsRawOrderedInput()
     QVERIFY(QDir(artifactRoot)
                 .entryList(QDir::Dirs | QDir::NoDotAndDotDot)
                 .isEmpty());
+}
+
+void SessionWorkerTest::cancelsPendingTerminalFileWritesOnShutdown()
+{
+    qRegisterMetaType<TerminalActionResult>();
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir controlDirectory(QDir::current().filePath(
+        QStringLiteral("tmp/write-file-cancel-XXXXXX")));
+    QVERIFY(controlDirectory.isValid());
+    const QString artifactRoot =
+        QDir(controlDirectory.path()).filePath(QStringLiteral("artifacts"));
+    QVERIFY(QDir().mkpath(artifactRoot));
+    const ScopedEnvironmentVariable temporaryDirectory(
+        QByteArrayLiteral("TMPDIR"), QFile::encodeName(artifactRoot));
+
+    SessionWorker worker;
+    QSignalSpy actionSpy(&worker, &SessionWorker::terminalActionFinished);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = controlDirectory.path();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf 'cancelled-artifact'"),
+    };
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+
+    worker.writeTerminalFile(909,
+                             {
+                                 .location = TerminalFileLocation::Screen,
+                                 .disposition = TerminalFileDisposition::Copy,
+                             });
+    QCOMPARE(actionSpy.count(), 0);
+
+    QElapsedTimer shutdownTimer;
+    shutdownTimer.start();
+    worker.shutdown();
+    QVERIFY(shutdownTimer.elapsed() < 500);
+    QCoreApplication::processEvents();
+    QCOMPARE(actionSpy.count(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(QDir(artifactRoot)
+                                 .entryList(QDir::Dirs | QDir::NoDotAndDotDot)
+                                 .isEmpty(),
+                             5000);
+    QVERIFY(errorSpy.isEmpty());
 }
 
 void SessionWorkerTest::readOnlyBlocksSurfaceInputButPreservesProtocolReplies()

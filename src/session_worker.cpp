@@ -18,11 +18,14 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QMutex>
+#include <QPointer>
 #include <QProcessEnvironment>
 #include <QSocketNotifier>
 #include <QStringTokenizer>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QThreadPool>
 #include <QTimer>
 
 #include <algorithm>
@@ -68,6 +71,7 @@ constexpr int kForegroundActivityProbeMilliseconds = 250;
 constexpr int kSearchRowsPerChunk = 8;
 constexpr int kSearchChunkBudgetMilliseconds = 2;
 constexpr int kSearchPublishIntervalMilliseconds = 33;
+constexpr int kTerminalFileWriterThreads = 2;
 constexpr quint64 kSearchRowsPerCompressionPass = 64;
 constexpr qsizetype kMaximumInitialInputFileSize = 10 * 1024 * 1024;
 constexpr Qt::KeyboardModifiers kTrackedTerminalModifiers = Qt::ShiftModifier
@@ -333,6 +337,109 @@ bool terminalFileHasPrivateMode(const QFile &file)
     return file.isOpen() && file.handle() >= 0
         && ::fstat(file.handle(), &status) == 0 && S_ISREG(status.st_mode)
         && (status.st_mode & 0777) == 0600;
+}
+
+struct TerminalFileWriteLifetime {
+    QMutex mutex;
+    SessionWorker *receiver = nullptr;
+};
+
+struct TerminalFilePersistenceResult {
+    QString path;
+    QString error;
+    std::shared_ptr<QTemporaryDir> directory;
+};
+
+QThreadPool &terminalFileThreadPool()
+{
+    static const auto pool = [] {
+        auto result = std::make_unique<QThreadPool>();
+        result->setMaxThreadCount(kTerminalFileWriterThreads);
+        result->setExpiryTimeout(30'000);
+        return result;
+    }();
+    return *pool;
+}
+
+bool terminalFileWriteCancelled(
+    const std::shared_ptr<TerminalFileWriteLifetime> &lifetime)
+{
+    QMutexLocker locker(&lifetime->mutex);
+    return lifetime->receiver == nullptr;
+}
+
+TerminalFilePersistenceResult
+persistTerminalFile(QByteArray bytes, const QString &directoryTemplate,
+                    const QString &fileName,
+                    const std::shared_ptr<TerminalFileWriteLifetime> &lifetime)
+{
+    TerminalFilePersistenceResult result;
+    if (terminalFileWriteCancelled(lifetime)) return result;
+
+    result.directory = std::make_shared<QTemporaryDir>(directoryTemplate);
+    if (!result.directory->isValid()) {
+        result.error =
+            QStringLiteral("Failed to create terminal file directory: %1")
+                .arg(result.directory->errorString());
+        return result;
+    }
+    if (terminalFileWriteCancelled(lifetime)) return {};
+
+    if (!QFile::setPermissions(result.directory->path(),
+                               QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                   | QFileDevice::ExeOwner)) {
+        result.error =
+            QStringLiteral("Failed to secure terminal file directory '%1'")
+                .arg(result.directory->path());
+        return result;
+    }
+    if (!terminalDirectoryHasPrivateMode(result.directory->path())) {
+        result.error =
+            QStringLiteral("Terminal file directory '%1' is not private")
+                .arg(result.directory->path());
+        return result;
+    }
+    if (terminalFileWriteCancelled(lifetime)) return {};
+
+    const QString path = QDir(result.directory->path()).filePath(fileName);
+    QFile file(path);
+    const QFileDevice::Permissions filePermissions =
+        QFileDevice::ReadOwner | QFileDevice::WriteOwner;
+    if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly,
+                   filePermissions)) {
+        result.error = QStringLiteral("Failed to create terminal file '%1': %2")
+                           .arg(path, file.errorString());
+        return result;
+    }
+    if (!file.setPermissions(filePermissions)) {
+        result.error = QStringLiteral("Failed to secure terminal file '%1': %2")
+                           .arg(path, file.errorString());
+        return result;
+    }
+    if (!terminalFileHasPrivateMode(file)) {
+        result.error =
+            QStringLiteral("Terminal file '%1' is not private").arg(path);
+        return result;
+    }
+    if (file.write(bytes) != bytes.size() || !file.flush()) {
+        result.error = QStringLiteral("Failed to write terminal file '%1': %2")
+                           .arg(path, file.errorString());
+        return result;
+    }
+    file.close();
+    if (file.error() != QFileDevice::NoError) {
+        result.error = QStringLiteral("Failed to close terminal file '%1': %2")
+                           .arg(path, file.errorString());
+        return result;
+    }
+    if (terminalFileWriteCancelled(lifetime)) return {};
+
+    result.path = QFileInfo(path).canonicalFilePath();
+    if (result.path.isEmpty()) {
+        result.error =
+            QStringLiteral("Failed to resolve terminal file '%1'").arg(path);
+    }
+    return result;
 }
 
 QByteArray appendPath(QByteArray directory, QByteArrayView path)
@@ -761,6 +868,30 @@ struct SessionWorker::SearchState {
     QElapsedTimer lastPublication;
 };
 
+struct SessionWorker::TerminalFileState {
+    struct OrderedEffect {
+        enum class Kind : quint8 {
+            Input,
+            File,
+        };
+
+        Kind kind = Kind::Input;
+        QByteArray input;
+        quint64 sequence = 0;
+        TerminalFileDisposition disposition = TerminalFileDisposition::Copy;
+        bool pasteAllowed = false;
+        bool ready = false;
+        TerminalActionResult result;
+        QString error;
+        std::shared_ptr<QTemporaryDir> artifactDirectory;
+    };
+
+    std::shared_ptr<TerminalFileWriteLifetime> lifetime =
+        std::make_shared<TerminalFileWriteLifetime>();
+    std::deque<OrderedEffect> orderedEffects;
+    quint64 nextSequence = 1;
+};
+
 SessionWorker::SessionWorker(QObject *parent)
     : SessionWorker(
           [](qint64 pid, const LinuxCgroupConfig &config,
@@ -782,8 +913,10 @@ SessionWorker::SessionWorker(LinuxCgroupMover cgroupMover, QObject *parent)
     , cgroupMover_(std::move(cgroupMover))
     , hyperlinkState_(std::make_unique<HyperlinkState>())
     , searchState_(std::make_unique<SearchState>())
+    , terminalFileState_(std::make_unique<TerminalFileState>())
 {
     Q_ASSERT(cgroupMover_);
+    terminalFileState_->lifetime->receiver = this;
 }
 
 SessionWorker::~SessionWorker()
@@ -1837,9 +1970,15 @@ void SessionWorker::queuePtyWrite(QByteArrayView data)
 
 void SessionWorker::queueInputWrite(const QByteArray &data)
 {
-    if (!readOnly_) {
-        queuePtyWrite(QByteArrayView(data));
+    if (readOnly_ || data.isEmpty()) return;
+    if (!terminalFileState_->orderedEffects.empty()) {
+        TerminalFileState::OrderedEffect effect;
+        effect.kind = TerminalFileState::OrderedEffect::Kind::Input;
+        effect.input = data;
+        terminalFileState_->orderedEffects.push_back(std::move(effect));
+        return;
     }
+    queuePtyWrite(QByteArrayView(data));
 }
 
 std::optional<TerminalKeyboardTraceResult>
@@ -2772,14 +2911,27 @@ void SessionWorker::writeTerminalFile(quint64 requestId,
         .payload = {},
         .clipboardDestination = TerminalClipboardDestination::Standard,
     };
-    const auto completion =
-        qScopeGuard([this, &result] { Q_EMIT terminalActionFinished(result); });
+    quint64 sequence = terminalFileState_->nextSequence++;
+    if (sequence == 0) sequence = terminalFileState_->nextSequence++;
+    TerminalFileState::OrderedEffect effect;
+    effect.kind = TerminalFileState::OrderedEffect::Kind::File;
+    effect.sequence = sequence;
+    effect.disposition = action.disposition;
+    effect.pasteAllowed = !readOnly_;
+    effect.result = result;
+    terminalFileState_->orderedEffects.push_back(std::move(effect));
+    const auto finish = [this, sequence](TerminalActionResult completed,
+                                         QString error = {}) {
+        completeTerminalFileEffect(sequence, std::move(completed),
+                                   std::move(error));
+    };
     if (vt_ == nullptr) {
+        finish(std::move(result));
         return;
     }
     if (action.format != TerminalFileFormat::Plain) {
-        Q_EMIT errorOccurred(
-            QStringLiteral("Unsupported terminal file format"));
+        finish(std::move(result),
+               QStringLiteral("Unsupported terminal file format"));
         return;
     }
     switch (action.location) {
@@ -2787,7 +2939,8 @@ void SessionWorker::writeTerminalFile(quint64 requestId,
     case TerminalFileLocation::Scrollback:
     case TerminalFileLocation::Selection: break;
     default:
-        Q_EMIT errorOccurred(QStringLiteral("Invalid terminal file location"));
+        finish(std::move(result),
+               QStringLiteral("Invalid terminal file location"));
         return;
     }
     switch (action.disposition) {
@@ -2795,12 +2948,12 @@ void SessionWorker::writeTerminalFile(quint64 requestId,
     case TerminalFileDisposition::Paste:
     case TerminalFileDisposition::Open: break;
     default:
-        Q_EMIT errorOccurred(
-            QStringLiteral("Invalid terminal file disposition"));
+        finish(std::move(result),
+               QStringLiteral("Invalid terminal file disposition"));
         return;
     }
 
-    const GhosttyVtAdapter::PlainFileSnapshot snapshot =
+    GhosttyVtAdapter::PlainFileSnapshot snapshot =
         vt_->snapshotPlainFile(action.location);
     // Formatting restores compressed pages without changing Ghostty's
     // activity token. Schedule a bounded follow-up pass directly so the live
@@ -2810,102 +2963,136 @@ void SessionWorker::writeTerminalFile(quint64 requestId,
     case GhosttyVtAdapter::PlainFileSnapshotStatus::Unavailable:
         result.outcome = TerminalActionOutcome::Unavailable;
         result.performed = true;
+        finish(std::move(result));
         return;
     case GhosttyVtAdapter::PlainFileSnapshotStatus::Failed:
-        Q_EMIT errorOccurred(
-            QStringLiteral("Failed to format terminal contents"));
+        finish(std::move(result),
+               QStringLiteral("Failed to format terminal contents"));
         return;
     case GhosttyVtAdapter::PlainFileSnapshotStatus::Ready: break;
     }
 
-    QTemporaryDir directory(
-        QDir::temp().filePath(QStringLiteral("ghostty-qt-XXXXXX")));
-    if (!directory.isValid()) {
-        Q_EMIT errorOccurred(
-            QStringLiteral("Failed to create terminal file directory: %1")
-                .arg(directory.errorString()));
-        return;
-    }
-    if (!QFile::setPermissions(directory.path(),
-                               QFileDevice::ReadOwner | QFileDevice::WriteOwner
-                                   | QFileDevice::ExeOwner)) {
-        Q_EMIT errorOccurred(
-            QStringLiteral("Failed to secure terminal file directory '%1'")
-                .arg(directory.path()));
-        return;
-    }
-    if (!terminalDirectoryHasPrivateMode(directory.path())) {
-        Q_EMIT errorOccurred(
-            QStringLiteral("Terminal file directory '%1' is not private")
-                .arg(directory.path()));
-        return;
-    }
-
-    const QString path =
-        QDir(directory.path()).filePath(terminalFileBaseName(action.location));
-    QFile file(path);
-    const QFileDevice::Permissions filePermissions =
-        QFileDevice::ReadOwner | QFileDevice::WriteOwner;
-    if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly,
-                   filePermissions)) {
-        Q_EMIT errorOccurred(
-            QStringLiteral("Failed to create terminal file '%1': %2")
-                .arg(path, file.errorString()));
-        return;
-    }
-    if (!file.setPermissions(filePermissions)) {
-        Q_EMIT errorOccurred(
-            QStringLiteral("Failed to secure terminal file '%1': %2")
-                .arg(path, file.errorString()));
-        return;
-    }
-    if (!terminalFileHasPrivateMode(file)) {
-        Q_EMIT errorOccurred(
-            QStringLiteral("Terminal file '%1' is not private").arg(path));
-        return;
-    }
-    if (file.write(snapshot.bytes) != snapshot.bytes.size() || !file.flush()) {
-        Q_EMIT errorOccurred(
-            QStringLiteral("Failed to write terminal file '%1': %2")
-                .arg(path, file.errorString()));
-        return;
-    }
-    file.close();
-    if (file.error() != QFileDevice::NoError) {
-        Q_EMIT errorOccurred(
-            QStringLiteral("Failed to close terminal file '%1': %2")
-                .arg(path, file.errorString()));
-        return;
-    }
-
-    const QString canonicalPath = QFileInfo(path).canonicalFilePath();
-    if (canonicalPath.isEmpty()) {
-        Q_EMIT errorOccurred(
-            QStringLiteral("Failed to resolve terminal file '%1'").arg(path));
-        return;
-    }
-
-    // Upstream intentionally keeps successful artifacts available after the
-    // action completes. Failures above retain QTemporaryDir's cleanup.
-    directory.setAutoRemove(false);
     result.outcome = TerminalActionOutcome::Success;
     result.performed = true;
-    result.payload = canonicalPath;
     switch (action.disposition) {
     case TerminalFileDisposition::Copy:
         result.effect = TerminalActionEffect::Clipboard;
         result.clipboardDestination = TerminalClipboardDestination::Standard;
-        return;
+        break;
     case TerminalFileDisposition::Paste:
-        // This is deliberately raw path input: no bracketed-paste framing,
-        // newline, quoting, viewport change, or selection side effect.
-        queueInputWrite(QFile::encodeName(canonicalPath));
         result.effect = TerminalActionEffect::None;
-        return;
+        break;
     case TerminalFileDisposition::Open:
         result.effect = TerminalActionEffect::OpenFile;
-        return;
+        break;
     }
+
+    const QString directoryTemplate =
+        QDir::temp().filePath(QStringLiteral("ghostty-qt-XXXXXX"));
+    const QString fileName = terminalFileBaseName(action.location);
+    const std::shared_ptr<TerminalFileWriteLifetime> lifetime =
+        terminalFileState_->lifetime;
+    terminalFileThreadPool().start(
+        [lifetime, sequence, bytes = std::move(snapshot.bytes),
+         directoryTemplate, fileName, result = std::move(result)]() mutable {
+            TerminalFilePersistenceResult persistence = persistTerminalFile(
+                std::move(bytes), directoryTemplate, fileName, lifetime);
+
+            QMutexLocker locker(&lifetime->mutex);
+            SessionWorker *const receiver = lifetime->receiver;
+            if (receiver == nullptr) return;
+            QMetaObject::invokeMethod(
+                receiver,
+                [lifetime, receiver, sequence, result = std::move(result),
+                 persistence = std::move(persistence)]() mutable {
+                    {
+                        QMutexLocker completionLocker(&lifetime->mutex);
+                        if (lifetime->receiver != receiver) return;
+                    }
+                    if (persistence.path.isEmpty()) {
+                        result.outcome = TerminalActionOutcome::Failed;
+                        result.effect = TerminalActionEffect::None;
+                        result.performed = false;
+                        result.payload.clear();
+                    } else {
+                        result.payload = persistence.path;
+                    }
+                    receiver->completeTerminalFileEffect(
+                        sequence, std::move(result),
+                        std::move(persistence.error),
+                        std::move(persistence.directory));
+                },
+                Qt::QueuedConnection);
+        });
+}
+
+void SessionWorker::completeTerminalFileEffect(
+    quint64 sequence, TerminalActionResult result, QString error,
+    std::shared_ptr<QTemporaryDir> artifactDirectory)
+{
+    const auto effect = std::ranges::find_if(
+        terminalFileState_->orderedEffects,
+        [sequence](const TerminalFileState::OrderedEffect &candidate) {
+            return candidate.kind
+                == TerminalFileState::OrderedEffect::Kind::File
+                && candidate.sequence == sequence;
+        });
+    if (effect == terminalFileState_->orderedEffects.end()) return;
+
+    effect->result = std::move(result);
+    effect->error = std::move(error);
+    effect->artifactDirectory = std::move(artifactDirectory);
+    effect->ready = true;
+    drainTerminalFileEffects();
+}
+
+void SessionWorker::drainTerminalFileEffects()
+{
+    while (!terminalFileState_->orderedEffects.empty()) {
+        TerminalFileState::OrderedEffect &front =
+            terminalFileState_->orderedEffects.front();
+        if (front.kind == TerminalFileState::OrderedEffect::Kind::Input) {
+            QByteArray input = std::move(front.input);
+            terminalFileState_->orderedEffects.pop_front();
+            queuePtyWrite(QByteArrayView(input));
+            continue;
+        }
+        if (!front.ready) return;
+
+        TerminalFileState::OrderedEffect completed = std::move(front);
+        terminalFileState_->orderedEffects.pop_front();
+        if (completed.result.outcome == TerminalActionOutcome::Success) {
+            Q_ASSERT(completed.artifactDirectory != nullptr);
+            // Upstream intentionally keeps successful artifacts available
+            // after the action completes. A dropped/cancelled completion
+            // leaves auto-removal enabled instead.
+            completed.artifactDirectory->setAutoRemove(false);
+            if (completed.disposition == TerminalFileDisposition::Paste
+                && completed.pasteAllowed) {
+                // Deliberately raw path input: no bracketed-paste framing,
+                // newline, quoting, viewport change, or selection effect.
+                queuePtyWrite(QFile::encodeName(completed.result.payload));
+            }
+        }
+
+        QPointer<SessionWorker> guard(this);
+        if (!completed.error.isEmpty()) {
+            Q_EMIT errorOccurred(completed.error);
+            if (guard == nullptr) return;
+        }
+        Q_EMIT terminalActionFinished(completed.result);
+        if (guard == nullptr) return;
+    }
+}
+
+void SessionWorker::cancelTerminalFileEffects()
+{
+    if (terminalFileState_ == nullptr) return;
+    {
+        QMutexLocker locker(&terminalFileState_->lifetime->mutex);
+        terminalFileState_->lifetime->receiver = nullptr;
+    }
+    terminalFileState_->orderedEffects.clear();
 }
 
 void SessionWorker::copySelectionTo(TerminalClipboardDestination destination,
@@ -4626,6 +4813,7 @@ void SessionWorker::shutdown()
         return;
     }
     shuttingDown_ = true;
+    cancelTerminalFileEffects();
     waitingForExitKey_ = false;
     childRuntimeTimer_.invalidate();
     if (frameTimer_ != nullptr) {

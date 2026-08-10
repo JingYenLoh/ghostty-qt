@@ -23,6 +23,7 @@
 #include <optional>
 
 class QSocketNotifier;
+class QTemporaryDir;
 class QTimer;
 class GhosttyLinkMatcher;
 class GhosttyVtAdapter;
@@ -237,6 +238,11 @@ private:
     void queuePtyWrite(QByteArrayView data);
     void bufferPtyWrite(QByteArrayView data);
     void queueInputWrite(const QByteArray &data);
+    void completeTerminalFileEffect(
+        quint64 sequence, TerminalActionResult result, QString error,
+        std::shared_ptr<QTemporaryDir> artifactDirectory = {});
+    void drainTerminalFileEffects();
+    void cancelTerminalFileEffects();
     void sendRawAction(const QByteArray &data);
     void scheduleFrame();
     void scheduleCompression(int delayMilliseconds);
@@ -300,6 +306,8 @@ private:
     std::unique_ptr<HyperlinkState> hyperlinkState_;
     struct SearchState;
     std::unique_ptr<SearchState> searchState_;
+    struct TerminalFileState;
+    std::unique_ptr<TerminalFileState> terminalFileState_;
 
     int masterFd_ = -1;
     qint64 childPid_ = -1;
