@@ -851,6 +851,11 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
                          .compare(QStringLiteral("legacy"),
                                   Qt::CaseInsensitive)
         != 0;
+    directPtyWrites_ = qEnvironmentVariable("GHOSTTY_QT_PTY_WRITE_DIRECT")
+                           .trimmed()
+                           .compare(QStringLiteral("legacy"),
+                                    Qt::CaseInsensitive)
+        != 0;
     ioMetrics_ = {};
     cursorBlinkResetTimer_.invalidate();
     cursorBlinkResetPending_ = false;
@@ -952,9 +957,8 @@ bool SessionWorker::createTerminal()
         .enquiryResponse = options_.runtime.enquiryResponse,
     };
     GhosttyVtAdapter::Callbacks callbacks;
-    callbacks.writePty = [this](const QByteArray &data) {
-        queuePtyWrite(data);
-    };
+    callbacks.writePty =
+        [this](QByteArrayView data) { queuePtyWrite(data); };
     vt_ = GhosttyVtAdapter::create(options, std::move(callbacks));
     if (vt_ != nullptr) {
         if (!vt_->setSelectionWordChars(options_.runtime.selectionWordChars)
@@ -1763,19 +1767,78 @@ void SessionWorker::drainPty(bool finalDrain)
     }
 }
 
-void SessionWorker::queuePtyWrite(const QByteArray &data)
+void SessionWorker::bufferPtyWrite(QByteArrayView data)
+{
+    if (data.isEmpty()) return;
+    ++ioMetrics_.writeSubmissions;
+    ioMetrics_.writeSubmissionBytes += static_cast<quint64>(data.size());
+    ioMetrics_.writeBufferedCopyBytes += static_cast<quint64>(data.size());
+    if (pendingWrites_.append(data)) {
+        ++ioMetrics_.writeBufferAllocations;
+    }
+}
+
+void SessionWorker::queuePtyWrite(QByteArrayView data)
 {
     if (data.isEmpty() || masterFd_ < 0) {
         return;
     }
-    pendingWrites_.append(QByteArrayView(data));
-    flushPtyWrites();
+
+    if (!directPtyWrites_) {
+        bufferPtyWrite(data);
+        flushPtyWrites();
+        return;
+    }
+    if (!pendingWrites_.isEmpty()) {
+        // The preceding direct write reached EAGAIN. Preserve FIFO ordering
+        // and let socket readiness retry the whole accumulated suffix instead
+        // of issuing another known-to-fail write for every parser callback.
+        bufferPtyWrite(data);
+        return;
+    }
+
+    ++ioMetrics_.writeSubmissions;
+    ioMetrics_.writeSubmissionBytes += static_cast<quint64>(data.size());
+    while (!data.isEmpty()) {
+        ++ioMetrics_.writeCalls;
+        const ssize_t count = ::write(masterFd_, data.data(),
+                                      static_cast<size_t>(data.size()));
+        if (count > 0) {
+            const auto written = static_cast<qsizetype>(count);
+            ioMetrics_.writeBytes += static_cast<quint64>(written);
+            ioMetrics_.directWriteBytes += static_cast<quint64>(written);
+            data = data.sliced(written);
+            continue;
+        }
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            ++ioMetrics_.writeWouldBlock;
+            ioMetrics_.writeBufferedCopyBytes +=
+                static_cast<quint64>(data.size());
+            if (pendingWrites_.append(data)) {
+                ++ioMetrics_.writeBufferAllocations;
+            }
+            break;
+        }
+        if (count < 0) {
+            Q_EMIT errorOccurred(
+                QStringLiteral("PTY write failed: %1")
+                    .arg(QString::fromLocal8Bit(std::strerror(errno))));
+        }
+        break;
+    }
+
+    if (writeNotifier_ != nullptr) {
+        writeNotifier_->setEnabled(!pendingWrites_.isEmpty());
+    }
 }
 
 void SessionWorker::queueInputWrite(const QByteArray &data)
 {
     if (!readOnly_) {
-        queuePtyWrite(data);
+        queuePtyWrite(QByteArrayView(data));
     }
 }
 
@@ -1847,16 +1910,20 @@ void SessionWorker::flushPtyWrites()
 {
     while (masterFd_ >= 0 && !pendingWrites_.isEmpty()) {
         const QByteArrayView pending = pendingWrites_.bytes();
+        ++ioMetrics_.writeCalls;
         const ssize_t count = ::write(masterFd_, pending.data(),
                                       static_cast<size_t>(pending.size()));
         if (count > 0) {
-            pendingWrites_.consume(static_cast<qsizetype>(count));
+            const auto written = static_cast<qsizetype>(count);
+            ioMetrics_.writeBytes += static_cast<quint64>(written);
+            pendingWrites_.consume(written);
             continue;
         }
         if (count < 0 && errno == EINTR) {
             continue;
         }
         if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            ++ioMetrics_.writeWouldBlock;
             break;
         }
         if (count < 0) {

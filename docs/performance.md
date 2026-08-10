@@ -36,9 +36,14 @@ once, allowing the producer to refill without turning an activation into a
 poll. The byte cap protects same-pane control requests from an unbounded output
 loop.
 
-Writes use an offset FIFO. Successful prefixes advance an index rather than
-moving the remaining bytes after every short write; compaction is amortized.
-The write notifier is enabled only while the PTY is backpressured.
+Writes use a borrowed synchronous view from the libghostty callback through
+the session worker. When the FIFO is empty, the worker writes that view
+directly to the PTY; only an unwritten suffix after a short write or `EAGAIN`
+crosses into owning FIFO storage. Successful queued prefixes advance an index
+rather than moving the remaining bytes after every short write, and
+compaction is amortized. Once the PTY reports backpressure, later replies are
+appended in order without repeating a known-to-fail syscall; the write
+notifier retries the accumulated suffix when the descriptor becomes writable.
 
 This is a competent baseline. There is no evidence yet for replacing it with
 `io_uring` or an additional I/O thread on Linux.
@@ -50,6 +55,16 @@ retained about 60.6 MiB/s while reducing parser submissions from roughly 710k
 to 43k and p99 event-loop gaps from 74.9 ms to 13.3 ms. Set
 `GHOSTTY_QT_PTY_READ_BATCHING=legacy` for benchmark A/B diagnosis; it is not a
 supported user setting.
+
+The benchmark's `replies` workload sends ordered ENQ bursts, verifies every
+reply byte in the child, and reports write calls, backpressure, direct bytes,
+FIFO-copy bytes, and backing-allocation counts. In a representative Release
+run of fifteen 4,096-query bursts with 256-byte replies, the direct path cut
+write calls from 63,870 to 38,801, `EAGAIN` results from 25,697 to 1,734,
+FIFO-copied bytes from 15.0 MiB to 6.4 MiB, and FIFO backing allocations from
+36,589 to 95. Sequential replies which do not backpressure report zero FIFO
+copies and allocations. `GHOSTTY_QT_PTY_WRITE_DIRECT=legacy` restores the
+always-buffered path for benchmark A/B diagnosis only.
 
 ### Frame transport
 
@@ -166,7 +181,7 @@ measure the eligible production path.
 | `bench-terminal-kitty-graphics` | Kitty protocol replacement and isolated RGB/RGBA/grayscale materialization |
 | `bench-terminal-frame-materialization` | Ghostty VT snapshots plus retained-frame application while a render snapshot holds row payloads shared |
 | `bench-terminal-search` | Visible-result latency, canonical history scan, cancellation, and recompression |
-| `bench-terminal-session-io` | End-to-end PTY reads, parser submissions, frame latency, and event-loop fairness |
+| `bench-terminal-session-io` | End-to-end PTY reads/replies, parser submissions, write copies, query latency, ordering, backpressure, and event-loop fairness |
 | `bench-terminal-backdrop` | Background asset preparation and software composition |
 
 Representative invocations:
@@ -206,6 +221,10 @@ QT_QPA_PLATFORM=wayland \
 ./build/release/tests/bench-terminal-session-io \
     --bytes 16777216 --chunk-bytes 64 --corpus ansi \
     --warmup 2 --iterations 7 --mode both
+
+./build/release/tests/bench-terminal-session-io \
+    --workload replies --queries 4096 --response-bytes 256 \
+    --query-burst 4096 --warmup 2 --iterations 9 --write-mode both
 ```
 
 Use each executable's `--help` and, where available, `--list-scenarios` for the
@@ -323,22 +342,7 @@ and `strace` only for syscall topology because tracing perturbs latency. Do not
 port Ghostty's additional gather/parser thread or buffer ring unless these
 measurements identify remaining kernel backpressure.
 
-### 1. Remove avoidable write copies
-
-Terminal-generated replies currently cross a borrowed libghostty callback into
-an owning `QByteArray`, then copy again into `PtyWriteBuffer`.
-
-Candidate changes:
-
-- make the callback accept `QByteArrayView` for synchronous queuing;
-- when the FIFO is empty, write directly from the caller's view;
-- append only the unwritten suffix after `EAGAIN`;
-- batch multiple replies only to the end of the current bounded parse call.
-
-The benchmark must cover allocation/copy counts, query latency, ordering, and
-backpressure before and after the change.
-
-### 2. Reduce remaining auxiliary process and IPC I/O
+### 1. Reduce remaining auxiliary process and IPC I/O
 
 These are lower-frequency but concrete costs:
 
@@ -347,7 +351,7 @@ These are lower-frequency but concrete costs:
 - use exponential retry backoff for unchanged invalid configuration, reset by
   watcher or manual reload events.
 
-### 3. Isolate cold filesystem work
+### 2. Isolate cold filesystem work
 
 Terminal file actions currently format and write the artifact synchronously on
 the session worker. Very large history or a stalled temporary filesystem can

@@ -3946,31 +3946,58 @@ void SessionWorkerTest::drainsLargeQueuedInputAfterPtyBackpressure()
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
     constexpr qsizetype payloadSize = 512 * 1024;
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir controlDirectory(
+        QDir::current().filePath(QStringLiteral("tmp/write-order-XXXXXX")));
+    QVERIFY(controlDirectory.isValid());
+    const QString releaseMarker =
+        QDir(controlDirectory.path()).filePath(QStringLiteral("release"));
+
     TerminalSessionLaunchOptions options;
-    options.workingDirectory = QDir::currentPath();
+    options.workingDirectory = controlDirectory.path();
     options.program = {
         QStringLiteral("/bin/sh"), QStringLiteral("-c"),
         QStringLiteral("stty raw -echo; "
                        "printf 'large-input-ready\\r\\n'; "
+                       "while [ ! -e \"$1\" ]; do sleep 0.01; done; "
+                       "printf '\\005'; "
                        "sleep 0.2; "
-                       "count=$(head -c 524288 | wc -c); "
+                       "count=$(dd bs=4096 count=128 iflag=fullblock "
+                       "2>/dev/null | wc -c); "
+                       "reply=$(dd bs=1 count=8 2>/dev/null); "
                        "stty sane; "
-                       "printf '\\r\\nlarge-input-bytes:%s\\r\\n' \"$count\"")};
+                       "printf '\\r\\nlarge-input-bytes:%s reply:%s\\r\\n' "
+                       "\"$count\" \"$reply\""),
+        QStringLiteral("write-order-test"), releaseMarker};
     options.hold = true;
+    options.runtime.enquiryResponse = QByteArrayLiteral("reply-ok");
     QVERIFY(worker.initialize(options));
 
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updateSpy, QStringLiteral("large-input-ready")), 5000);
     worker.paste(QString(payloadSize, u'x'));
+    QFile marker(releaseMarker);
+    QVERIFY(marker.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    marker.close();
 
     QTRY_VERIFY_WITH_TIMEOUT(exitSpy.count() > 0, 8000);
     const QString finalContents = frameText(accumulatedFrame(updateSpy));
-    QVERIFY2(finalContents.contains(QStringLiteral("large-input-bytes:524288")),
+    QVERIFY2(finalContents.contains(
+                 QStringLiteral("large-input-bytes:524288 reply:reply-ok")),
              qPrintable(finalContents));
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty()
                  ? ""
                  : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    const TerminalSessionIoMetrics metrics = worker.sessionIoMetrics();
+    QCOMPARE(metrics.writeSubmissions, quint64{2});
+    QCOMPARE(metrics.writeSubmissionBytes,
+             static_cast<quint64>(payloadSize + 8));
+    QCOMPARE(metrics.writeBytes, metrics.writeSubmissionBytes);
+    QVERIFY(metrics.writeWouldBlock > 0);
+    QVERIFY(metrics.directWriteBytes < metrics.writeSubmissionBytes);
+    QVERIFY(metrics.writeBufferedCopyBytes > 0);
+    QVERIFY(metrics.writeBufferAllocations > 0);
     worker.shutdown();
 }
 
@@ -4879,6 +4906,13 @@ void SessionWorkerTest::appliesLiveEnquiryResponse()
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updateSpy, QStringLiteral("readonly-complete")), 1000);
 
+    const TerminalSessionIoMetrics metrics = worker.sessionIoMetrics();
+    QCOMPARE(metrics.writeSubmissions, quint64{3});
+    QCOMPARE(metrics.writeSubmissionBytes, quint64{1024 + 4 + 3});
+    QCOMPARE(metrics.writeBytes, metrics.writeSubmissionBytes);
+    QCOMPARE(metrics.directWriteBytes, metrics.writeSubmissionBytes);
+    QCOMPARE(metrics.writeBufferedCopyBytes, quint64{0});
+    QCOMPARE(metrics.writeBufferAllocations, quint64{0});
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty()
                  ? ""

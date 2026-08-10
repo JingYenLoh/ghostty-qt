@@ -216,7 +216,9 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     options.appearance.foregroundColor = QColor(QStringLiteral("#cad3f5"));
     options.appearance.backgroundColor = QColor(QStringLiteral("#24273a"));
     auto adapter = GhosttyVtAdapter::create(
-        options, {.writePty = [&ptyWrites](const QByteArray &data) { ptyWrites += data; }});
+        options, {.writePty = [&ptyWrites](QByteArrayView data) {
+            ptyWrites += data;
+        }});
     QVERIFY(adapter != nullptr);
 
     adapter->writeVt(
@@ -796,7 +798,7 @@ void GhosttyVtAdapterTest::publishesMpvShapedKittyFrames()
         .cellHeightPixels = 20,
     };
     auto adapter = GhosttyVtAdapter::create(
-        options, {.writePty = [&ptyWrites](const QByteArray &data) {
+        options, {.writePty = [&ptyWrites](QByteArrayView data) {
             ptyWrites += data;
         }});
     QVERIFY(adapter != nullptr);
@@ -1039,8 +1041,8 @@ void GhosttyVtAdapterTest::respondsToEnquiryWithConfiguredBytes()
 {
     QVector<QByteArray> defaultWrites;
     auto defaultAdapter = GhosttyVtAdapter::create(
-        {}, {.writePty = [&defaultWrites](const QByteArray &data) {
-            defaultWrites.append(data);
+        {}, {.writePty = [&defaultWrites](QByteArrayView data) {
+            defaultWrites.append(data.toByteArray());
         }});
     QVERIFY(defaultAdapter != nullptr);
     defaultAdapter->writeVt(QByteArray(1, '\x05'));
@@ -1058,8 +1060,8 @@ void GhosttyVtAdapterTest::respondsToEnquiryWithConfiguredBytes()
     options.geometry.rows = 2;
     options.enquiryResponse = response;
     auto adapter = GhosttyVtAdapter::create(
-        options, {.writePty = [&writes](const QByteArray &data) {
-            writes.append(data);
+        options, {.writePty = [&writes](QByteArrayView data) {
+            writes.append(data.toByteArray());
         }});
     QVERIFY(adapter != nullptr);
 
@@ -1130,8 +1132,8 @@ void GhosttyVtAdapterTest::reportsConfiguredColorSchemeAndLiveChanges()
     GhosttyVtAdapter::Options options;
     options.colorScheme = TerminalColorScheme::Dark;
     auto adapter = GhosttyVtAdapter::create(
-        options, {.writePty = [&writes](const QByteArray &data) {
-            writes.append(data);
+        options, {.writePty = [&writes](QByteArrayView data) {
+            writes.append(data.toByteArray());
         }});
     QVERIFY(adapter != nullptr);
 
@@ -1285,7 +1287,7 @@ void GhosttyVtAdapterTest::normalizesTerminalClipboardWritesAndPolicies()
     QByteArray ptyWrites;
     GhosttyVtAdapter::Options options;
     auto adapter = GhosttyVtAdapter::create(
-        options, {.writePty = [&ptyWrites](const QByteArray &data) {
+        options, {.writePty = [&ptyWrites](QByteArrayView data) {
             ptyWrites.append(data);
         }});
     QVERIFY(adapter != nullptr);
@@ -3323,7 +3325,7 @@ void GhosttyVtAdapterTest::resetsAllTerminalStateAndPublishesFullFrame()
     options.geometry.columns = 12;
     options.geometry.rows = 3;
     auto adapter = GhosttyVtAdapter::create(
-        options, {.writePty = [&ptyWrites](const QByteArray &data) {
+        options, {.writePty = [&ptyWrites](QByteArrayView data) {
             ptyWrites.append(data);
         }});
     QVERIFY(adapter != nullptr);

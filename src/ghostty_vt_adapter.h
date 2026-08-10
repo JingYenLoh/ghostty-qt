@@ -175,7 +175,9 @@ public:
     };
 
     struct Callbacks {
-        std::function<void(const QByteArray &)> writePty;
+        // Callback byte views remain valid only for the duration of the call.
+        // The sink must synchronously consume or retain them.
+        std::function<void(QByteArrayView)> writePty;
         std::function<QByteArray()> queryMachineHostName;
     };
 

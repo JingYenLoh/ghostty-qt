@@ -10,7 +10,10 @@
 // bound while writes continue.
 class PtyWriteBuffer final {
 public:
-    void append(QByteArrayView bytes);
+    // Returns true when appending grew the backing allocation. The payload is
+    // always copied; callers use the result only for deterministic transport
+    // instrumentation.
+    bool append(QByteArrayView bytes);
     void consume(qsizetype count) noexcept;
     void clear() noexcept;
 

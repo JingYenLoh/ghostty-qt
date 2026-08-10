@@ -1154,8 +1154,8 @@ public:
                                                report.data(), report.size(),
                                                &written)
             == GHOSTTY_SUCCESS) {
-            callbacks_.writePty(
-                QByteArray(report.data(), static_cast<qsizetype>(written)));
+            callbacks_.writePty(QByteArrayView(
+                report.data(), static_cast<qsizetype>(written)));
         }
     }
 
@@ -4830,9 +4830,9 @@ private:
         auto *impl = static_cast<Impl *>(userdata);
         if (impl != nullptr && impl->callbacks_.writePty && data != nullptr
             && length > 0) {
-            impl->callbacks_.writePty(
-                QByteArray(reinterpret_cast<const char *>(data),
-                           static_cast<qsizetype>(length)));
+            impl->callbacks_.writePty(QByteArrayView(
+                reinterpret_cast<const char *>(data),
+                static_cast<qsizetype>(length)));
         }
     }
 
@@ -4849,7 +4849,7 @@ private:
         // so publish through the same ordered public PTY sink and return an
         // empty slice to prevent a duplicate bridge write.
         if (impl->callbacks_.writePty) {
-            impl->callbacks_.writePty(impl->enquiryResponse_);
+            impl->callbacks_.writePty(QByteArrayView(impl->enquiryResponse_));
         }
         return {};
     }

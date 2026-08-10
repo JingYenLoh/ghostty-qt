@@ -36,6 +36,14 @@ struct TerminalSessionIoMetrics {
     quint64 parserSubmissions = 0;
     quint64 parserBytes = 0;
     quint64 maximumParserBatchBytes = 0;
+    quint64 writeSubmissions = 0;
+    quint64 writeSubmissionBytes = 0;
+    quint64 writeCalls = 0;
+    quint64 writeBytes = 0;
+    quint64 writeWouldBlock = 0;
+    quint64 directWriteBytes = 0;
+    quint64 writeBufferedCopyBytes = 0;
+    quint64 writeBufferAllocations = 0;
 };
 
 class SessionWorker final : public QObject {
@@ -226,7 +234,8 @@ private:
     void destroyTerminal();
     void closeChildExitWatcher();
     void closePty();
-    void queuePtyWrite(const QByteArray &data);
+    void queuePtyWrite(QByteArrayView data);
+    void bufferPtyWrite(QByteArrayView data);
     void queueInputWrite(const QByteArray &data);
     void sendRawAction(const QByteArray &data);
     void scheduleFrame();
@@ -344,6 +353,7 @@ private:
     QElapsedTimer cursorBlinkResetTimer_;
     bool cursorBlinkResetPending_ = false;
     bool batchPtyReads_ = true;
+    bool directPtyWrites_ = true;
     TerminalSessionIoMetrics ioMetrics_;
     bool shuttingDown_ = false;
     bool mouseTracking_ = false;

@@ -149,10 +149,13 @@ written immediately before child exit. The frame timer coalesces bursts over
 ### PTY writes
 
 Keyboard, mouse, focus, paste, and terminal-generated replies are encoded by
-libghostty on the worker thread. A `PtyWriteBuffer` retains unwritten bytes when
-the nonblocking master returns `EAGAIN`; its consumed offset avoids moving the
-remaining suffix after every short write. A write notifier exists only while
-backpressured.
+libghostty on the worker thread. Terminal reply callbacks pass a synchronous
+borrowed byte view; with no queued data, the worker writes that view directly
+to the nonblocking master. A `PtyWriteBuffer` retains only an unwritten suffix
+after a short write or `EAGAIN`; its consumed offset avoids moving that suffix
+after every later write. While backpressured, new writes append in FIFO order
+and wait for the write notifier instead of retrying the full descriptor from
+each callback.
 
 User input and protocol replies are distinct. Read-only mode suppresses
 user-originated writes but not replies required by the active terminal

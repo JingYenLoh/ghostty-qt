@@ -2,9 +2,11 @@
 
 #include <QtAssert>
 
-void PtyWriteBuffer::append(QByteArrayView bytes)
+bool PtyWriteBuffer::append(QByteArrayView bytes)
 {
-    if (bytes.isEmpty()) return;
+    if (bytes.isEmpty()) return false;
+
+    const qsizetype previousCapacity = storage_.capacity();
 
     const quintptr storageBegin =
         reinterpret_cast<quintptr>(storage_.constData());
@@ -17,11 +19,12 @@ void PtyWriteBuffer::append(QByteArrayView bytes)
         const QByteArray stable(bytes.data(), bytes.size());
         compactBeforeAppend();
         storage_.append(stable);
-        return;
+        return storage_.capacity() > previousCapacity;
     }
 
     compactBeforeAppend();
     storage_.append(bytes);
+    return storage_.capacity() > previousCapacity;
 }
 
 void PtyWriteBuffer::consume(qsizetype count) noexcept
