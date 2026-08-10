@@ -1058,7 +1058,7 @@ void ApplicationControllerTest::toastPresentationExpiresQueuedItems()
         QByteArrayLiteral("import QtQuick\n"
                           "import \".\" as Local\n"
                           "Item {\n"
-                          "    required property var uiController\n"
+                          "    property var uiController: null\n"
                           "    width: 400\n"
                           "    height: 200\n"
                           "    Local.AppToast {\n"
@@ -1069,16 +1069,15 @@ void ApplicationControllerTest::toastPresentationExpiresQueuedItems()
             QDir(toastInfo.absolutePath())
                 .filePath(QStringLiteral("AppToastHarness.qml"))));
     QVERIFY2(component.isReady(), qPrintable(component.errorString()));
-    std::unique_ptr<QObject> root(component.createWithInitialProperties({
-        {QStringLiteral("uiController"),
-         QVariant::fromValue(static_cast<QObject *>(&ui))},
-    }));
+    std::unique_ptr<QObject> root(component.create());
     QVERIFY2(root != nullptr, qPrintable(component.errorString()));
 
     auto *const toast = root->findChild<QQuickItem *>(
         QStringLiteral("applicationToast"));
     QVERIFY(toast != nullptr);
     QVERIFY(!toast->isVisible());
+    QVERIFY(root->setProperty(
+        "uiController", QVariant::fromValue(static_cast<QObject *>(&ui))));
 
     QSignalSpy toastChanged(&ui, &WindowUiController::toastChanged);
     ui.enqueueToast(QStringLiteral("first"),

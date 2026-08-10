@@ -56,13 +56,18 @@ Rectangle {
 
         function onToastChanged() {
             expiryTimer.stop()
-            if (root.visible)
+            // Read the controller directly: when it is attached after QML
+            // construction, this handler can run before root.visible's
+            // binding has reevaluated for the same notification signal.
+            if (root.uiController !== null
+                    && root.uiController.toastVisible)
                 expiryTimer.restart()
         }
     }
 
     Component.onCompleted: {
-        if (visible)
+        if (root.uiController !== null
+                && root.uiController.toastVisible)
             expiryTimer.start()
     }
 
