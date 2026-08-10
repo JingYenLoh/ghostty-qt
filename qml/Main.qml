@@ -538,21 +538,24 @@ ApplicationWindow {
             }
         }
 
+        function select(action) {
+            terminalContextMenu.pendingAction = action
+            terminalContextMenu.close()
+        }
+
         Action {
             objectName: "terminalContextMenuCopy"
             text: qsTr("Copy")
             icon.name: "edit-copy"
             enabled: terminalContextMenu.selectionAvailable
-            onTriggered: terminalContextMenu.pendingAction =
-                         "copy_to_clipboard:mixed"
+            onTriggered: terminalContextMenu.select("copy_to_clipboard:mixed")
         }
 
         Action {
             objectName: "terminalContextMenuPaste"
             text: qsTr("Paste")
             icon.name: "edit-paste"
-            onTriggered: terminalContextMenu.pendingAction =
-                         "paste_from_clipboard"
+            onTriggered: terminalContextMenu.select("paste_from_clipboard")
         }
 
         MenuSeparator {
@@ -562,7 +565,7 @@ ApplicationWindow {
             objectName: "terminalContextMenuReset"
             text: qsTr("Reset Terminal")
             icon.name: "view-refresh"
-            onTriggered: terminalContextMenu.pendingAction = "reset"
+            onTriggered: terminalContextMenu.select("reset")
         }
 
         MenuSeparator {
@@ -577,40 +580,35 @@ ApplicationWindow {
                 objectName: "terminalContextMenuChangeTitle"
                 text: qsTr("Change Title…")
                 icon.name: "edit-rename"
-                onTriggered: terminalContextMenu.pendingAction =
-                             "prompt_surface_title"
+                onTriggered: terminalContextMenu.select("prompt_surface_title")
             }
 
             Action {
                 objectName: "terminalContextMenuSplitUp"
                 text: qsTr("Split Up")
                 icon.name: "view-split-top-bottom"
-                onTriggered: terminalContextMenu.pendingAction =
-                             "new_split:up"
+                onTriggered: terminalContextMenu.select("new_split:up")
             }
 
             Action {
                 objectName: "terminalContextMenuSplitDown"
                 text: qsTr("Split Down")
                 icon.name: "view-split-top-bottom"
-                onTriggered: terminalContextMenu.pendingAction =
-                             "new_split:down"
+                onTriggered: terminalContextMenu.select("new_split:down")
             }
 
             Action {
                 objectName: "terminalContextMenuSplitLeft"
                 text: qsTr("Split Left")
                 icon.name: "view-split-left-right"
-                onTriggered: terminalContextMenu.pendingAction =
-                             "new_split:left"
+                onTriggered: terminalContextMenu.select("new_split:left")
             }
 
             Action {
                 objectName: "terminalContextMenuSplitRight"
                 text: qsTr("Split Right")
                 icon.name: "view-split-left-right"
-                onTriggered: terminalContextMenu.pendingAction =
-                             "new_split:right"
+                onTriggered: terminalContextMenu.select("new_split:right")
             }
 
             MenuSeparator {
@@ -620,8 +618,7 @@ ApplicationWindow {
                 objectName: "terminalContextMenuCloseSplit"
                 text: qsTr("Close Pane")
                 icon.name: "window-close"
-                onTriggered: terminalContextMenu.pendingAction =
-                             "close_surface"
+                onTriggered: terminalContextMenu.select("close_surface")
             }
         }
 
@@ -634,15 +631,14 @@ ApplicationWindow {
                 objectName: "terminalContextMenuNewTab"
                 text: qsTr("New Tab")
                 icon.name: "tab-new"
-                onTriggered: terminalContextMenu.pendingAction = "new_tab"
+                onTriggered: terminalContextMenu.select("new_tab")
             }
 
             Action {
                 objectName: "terminalContextMenuChangeTabTitle"
                 text: qsTr("Change Tab Title…")
                 icon.name: "edit-rename"
-                onTriggered: terminalContextMenu.pendingAction =
-                             "prompt_tab_title"
+                onTriggered: terminalContextMenu.select("prompt_tab_title")
             }
 
             MenuSeparator {
@@ -652,8 +648,7 @@ ApplicationWindow {
                 objectName: "terminalContextMenuCloseTab"
                 text: qsTr("Close Tab")
                 icon.name: "window-close"
-                onTriggered: terminalContextMenu.pendingAction =
-                             "close_tab:this"
+                onTriggered: terminalContextMenu.select("close_tab:this")
             }
         }
 
@@ -666,15 +661,14 @@ ApplicationWindow {
                 objectName: "terminalContextMenuNewWindow"
                 text: qsTr("New Window")
                 icon.name: "window-new"
-                onTriggered: terminalContextMenu.pendingAction = "new_window"
+                onTriggered: terminalContextMenu.select("new_window")
             }
 
             Action {
                 objectName: "terminalContextMenuCloseWindow"
                 text: qsTr("Close Window")
                 icon.name: "window-close"
-                onTriggered: terminalContextMenu.pendingAction =
-                             "close_window"
+                onTriggered: terminalContextMenu.select("close_window")
             }
         }
 
@@ -690,16 +684,14 @@ ApplicationWindow {
                 objectName: "terminalContextMenuOpenConfig"
                 text: qsTr("Open Configuration")
                 icon.name: "document-open"
-                onTriggered: terminalContextMenu.pendingAction =
-                             "open_config"
+                onTriggered: terminalContextMenu.select("open_config")
             }
 
             Action {
                 objectName: "terminalContextMenuReloadConfig"
                 text: qsTr("Reload Configuration")
                 icon.name: "view-refresh"
-                onTriggered: terminalContextMenu.pendingAction =
-                             "reload_config"
+                onTriggered: terminalContextMenu.select("reload_config")
             }
         }
 
@@ -906,6 +898,7 @@ ApplicationWindow {
                 id: titleField
                 objectName: "titleField"
                 Layout.fillWidth: true
+                focus: true
                 selectByMouse: true
                 onAccepted: titleDialog.accept()
             }

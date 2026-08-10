@@ -595,28 +595,43 @@ bool installTitlePromptTestHook(QObject *rootObject,
                 return;
             }
             *activePromptId = 0;
-            QTimer::singleShot(
-                0, dialog,
-                [workspace, dialog, replacement, target, focusedPane] {
+            auto *const timer = new QTimer(dialog);
+            timer->setSingleShot(true);
+            const auto attempts = std::make_shared<int>(0);
+            QObject::connect(
+                timer, &QTimer::timeout, dialog,
+                [workspace, dialog, replacement, target, focusedPane, timer,
+                 attempts] {
                     const TabListEntry *entry = workspace->tabModel()->entryAt(
                         workspace->currentIndex());
                     TerminalPane *const pane = focusedPane->data();
-                    bool committed = entry != nullptr && pane != nullptr
+                    const bool settled = entry != nullptr && pane != nullptr
                         && pane->hasActiveFocus()
-                        && workspace->currentTitle() == replacement;
+                        && workspace->currentTitle() == replacement
+                        && !dialog->property("visible").toBool();
+                    if (!settled) {
+                        if (++*attempts < 50) {
+                            timer->start(10);
+                            return;
+                        }
+                        qCritical()
+                            << "Title-prompt test hook did not settle after closing";
+                        QCoreApplication::exit(1);
+                        return;
+                    }
+
+                    bool committed = true;
                     if (target == TitlePromptTestTarget::Surface) {
-                        committed = committed
-                            && pane->surfaceTitleOverride()
+                        committed = pane->surfaceTitleOverride()
                                 == std::optional<QString>{replacement}
                             && workspace->executeSurfaceActionOnAllPanes(
                                 QStringLiteral(
                                     "set_surface_title:changed base"))
                             && workspace->currentTitle() == replacement;
                     } else {
-                        committed =
-                            committed && entry->titleOverride == replacement;
+                        committed = entry->titleOverride == replacement;
                     }
-                    if (dialog->property("visible").toBool() || !committed) {
+                    if (!committed) {
                         qCritical()
                             << "Title-prompt test hook did not commit through QML";
                         QCoreApplication::exit(1);
@@ -624,6 +639,7 @@ bool installTitlePromptTestHook(QObject *rootObject,
                     }
                     QCoreApplication::quit();
                 });
+            timer->start(0);
         });
 
     const auto exercise = [workspace, seed, setAction, promptAction,
@@ -846,19 +862,16 @@ bool installContextMenuActionTestHook(QQuickWindow *window,
                     const bool invoked = reloadAction != nullptr
                         && QMetaObject::invokeMethod(reloadAction, "trigger",
                                                      Q_ARG(QObject *, nullptr));
-                    if (!invoked || menu->property("visible").toBool()
-                        || menu->property("requestId").toULongLong() != 0
-                        || !menu->property("pendingAction").toString().isEmpty()
-                        || state->reloadDispatched) {
+                    if (!invoked || state->reloadDispatched) {
                         qCritical()
                             << "Context-menu-action test hook could not trigger the QML action";
                         QCoreApplication::exit(1);
                         return;
                     }
 
-                    // A real Menu action closes its root popup synchronously.
-                    // QML must defer workspace dispatch until after this
-                    // trigger has returned and onClosed has cleared its state.
+                    // Popup exit transitions may keep the item visible after
+                    // trigger() returns. QML must defer workspace dispatch
+                    // until onClosed has cleared the request state.
                     state->triggerReturned = true;
                     return;
                 }

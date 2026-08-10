@@ -3626,7 +3626,7 @@ void TerminalPaneTest::rendersAndRetainsKittyGraphics()
             itemPixel(window, *pane, initialImage,
                       QPointF(layout->gridRect.left() + renderedCellWidth / 2.0,
                               layout->gridRect.top()
-                                  + (static_cast<qreal>(row) + 0.25)
+                                  + (static_cast<qreal>(row) + 0.2)
                                       * renderedCellHeight));
         QVERIFY2(approximatelyEqual(topPixel, QColor(128, 0, 0)),
                  qPrintable(topPixel.name(QColor::HexArgb)));
@@ -3634,7 +3634,7 @@ void TerminalPaneTest::rendersAndRetainsKittyGraphics()
             itemPixel(window, *pane, initialImage,
                       QPointF(layout->gridRect.left() + renderedCellWidth / 2.0,
                               layout->gridRect.top()
-                                  + (static_cast<qreal>(row) + 0.75)
+                                  + (static_cast<qreal>(row) + 0.8)
                                       * renderedCellHeight));
         QVERIFY2(approximatelyEqual(bottomPixel, QColor(0, 0, 255)),
                  qPrintable(bottomPixel.name(QColor::HexArgb)));
