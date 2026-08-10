@@ -789,7 +789,10 @@ void TerminalPane::terminalCustomShaderPipelineDetached(
 
 bool TerminalPane::shouldAnimateCustomShaders() const
 {
-    if (userCustomShaderStages_.isEmpty() || customShaderStageItems_.isEmpty()
+    const bool hasUserShader = !userCustomShaderStages_.isEmpty()
+        || !paneEnterCustomShaderStages_.isEmpty()
+        || !paneExitCustomShaderStages_.isEmpty();
+    if (!hasUserShader || customShaderStageItems_.isEmpty()
         || (customShaderEffects_.isEmpty()
             && customShaderPipelineEffect_ == nullptr)
         || !isVisible() || width() <= 0.0 || height() <= 0.0

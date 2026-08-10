@@ -719,7 +719,6 @@ Item {
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
     options.confirmCloseMode = ConfirmCloseMode::Never;
-    options.customShaders.sources = {{.path = shaderPath}};
     options.customShaders.paneEnterTransitionSources = {
         {.path = shaderPath},
     };
@@ -728,7 +727,7 @@ Item {
     };
     options.customShaders.animation = TerminalCustomShaderAnimation::Never;
     options.customShaders.paneEnterTransitionDuration =
-        std::chrono::milliseconds(400);
+        std::chrono::milliseconds(800);
     options.customShaders.paneExitTransitionDuration =
         std::chrono::milliseconds(180);
     useSystemFixedFont(options);
@@ -759,7 +758,12 @@ Item {
     const auto entering = pane->terminalCustomShaderUniformSnapshot(0);
     QVERIFY(entering->paneTransition.x >= 0.0F);
     QVERIFY(entering->paneTransition.x < 1.0F);
-    QCOMPARE(entering->paneTransition.w, 0.4F);
+    QCOMPARE(entering->paneTransition.w, 0.8F);
+    QTest::qWait(100);
+    const auto progressed = pane->terminalCustomShaderUniformSnapshot(0);
+    QCOMPARE(progressed->paneTransition.y, 1.0F);
+    QVERIFY(progressed->paneTransition.x > entering->paneTransition.x);
+    QVERIFY(progressed->paneTransition.x < 1.0F);
     QTRY_COMPARE_WITH_TIMEOUT(
         pane->terminalCustomShaderUniformSnapshot(0)->paneTransition.y, 0.0F,
         2000);

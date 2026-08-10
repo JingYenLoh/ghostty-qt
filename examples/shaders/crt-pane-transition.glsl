@@ -9,17 +9,33 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
         return;
     }
 
-    float progress = smoothstep(0.0, 1.0, iPaneTransition.x);
+    float progress = clamp(iPaneTransition.x, 0.0, 1.0);
+    // Quintic easing has zero velocity and acceleration at both ends. This
+    // avoids a visible kick when the pane is attached or finally removed.
+    progress = progress * progress * progress
+        * (progress * (progress * 6.0 - 15.0) + 10.0);
     float reveal = phase == float(PANETRANSITION_ENTER)
         ? progress
         : 1.0 - progress;
 
     // Turning off collapses height first, then pulls the remaining raster line
     // into the center. Turning on naturally performs the inverse sequence.
-    float halfWidth = 0.5 * smoothstep(0.0, 0.28, reveal);
-    float halfHeight = 0.5 * smoothstep(0.18, 1.0, reveal);
+    float halfWidth = 0.5 * smoothstep(0.0, 0.42, reveal);
+    float halfHeight = 0.5 * smoothstep(0.08, 1.0, reveal);
     vec2 centered = uv - vec2(0.5);
-    if (abs(centered.x) > halfWidth || abs(centered.y) > halfHeight) {
+
+    // Feather the moving boundary by roughly 1.5 physical pixels. A hard
+    // branch makes the band advance one whole row at a time, which looks
+    // jerky even when the transition clock itself is updating every frame.
+    vec2 feather = 1.5 / max(iResolution.xy, vec2(1.0));
+    float horizontalMask = 1.0 - smoothstep(
+        max(0.0, halfWidth - feather.x), halfWidth + feather.x,
+        abs(centered.x));
+    float verticalMask = 1.0 - smoothstep(
+        max(0.0, halfHeight - feather.y), halfHeight + feather.y,
+        abs(centered.y));
+    float rasterMask = horizontalMask * verticalMask;
+    if (rasterMask <= 0.0) {
         fragColor = vec4(0.0, 0.0, 0.0, 1.0);
         return;
     }
@@ -34,5 +50,5 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
         * (1.0 - smoothstep(0.18, 0.65, reveal));
     source.rgb = source.rgb * raster
         + vec3(0.32, 0.70, 0.48) * lineGlow;
-    fragColor = source;
+    fragColor = mix(vec4(0.0, 0.0, 0.0, 1.0), source, rasterMask);
 }
