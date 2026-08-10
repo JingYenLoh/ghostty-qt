@@ -68,6 +68,8 @@ struct Measurement {
     quint64 applyChecksum = 1'469'598'103'934'665'603ULL;
     quint64 retainedSnapshotChecksum = 1'469'598'103'934'665'603ULL;
     TerminalFrameApplyMetrics applyMetrics;
+    GhosttyVtAdapter::RenderSnapshot::CellMaterializationMetrics
+        cellMaterialization;
     quint64 retainedSnapshots = 0;
 };
 
@@ -81,6 +83,17 @@ void accumulateApplyMetrics(TerminalFrameApplyMetrics *total,
     total->rowPayloadsReused += sample.rowPayloadsReused;
     total->cellPayloadAllocations += sample.cellPayloadAllocations;
     total->terminalCellsCopied += sample.terminalCellsCopied;
+}
+
+void accumulateCellMaterializationMetrics(
+    GhosttyVtAdapter::RenderSnapshot::CellMaterializationMetrics *total,
+    const GhosttyVtAdapter::RenderSnapshot::CellMaterializationMetrics &sample)
+{
+    total->cells += sample.cells;
+    total->primaryDataQueries += sample.primaryDataQueries;
+    total->graphemeDataQueries += sample.graphemeDataQueries;
+    total->contentBackgroundDataQueries +=
+        sample.contentBackgroundDataQueries;
 }
 
 std::optional<int> integerOption(const QString &value, bool allowZero = false)
@@ -432,6 +445,32 @@ bool validateAndChecksum(const TerminalUpdate &update,
     return true;
 }
 
+bool validateCellMaterializationTopology(
+    const GhosttyVtAdapter::RenderSnapshot::CellMaterializationMetrics &metrics,
+    const BenchmarkOptions &options, Workload workload, QString *error)
+{
+    const quint64 rowCount = workload == Workload::FullFrame
+        ? static_cast<quint64>(options.rows)
+        : static_cast<quint64>(options.dirtyRows);
+    const quint64 expectedCells =
+        static_cast<quint64>(options.columns) * rowCount;
+    const quint64 expectedGraphemeQueries = options.corpus == Corpus::Unicode
+        ? static_cast<quint64>(options.columns / 2) * rowCount
+        : 0;
+    const quint64 expectedContentBackgroundQueries =
+        options.corpus == Corpus::Blank ? expectedCells : 0;
+    if (metrics.cells != expectedCells
+        || metrics.primaryDataQueries != expectedCells * 2
+        || metrics.graphemeDataQueries != expectedGraphemeQueries
+        || metrics.contentBackgroundDataQueries
+            != expectedContentBackgroundQueries) {
+        *error = QStringLiteral(
+            "cell materialization query topology was unexpected");
+        return false;
+    }
+    return true;
+}
+
 struct RetainedFrameIdentity {
     const TerminalFrameCellStorage::Row *rowTable = nullptr;
     QVector<const TerminalCell *> rowPayloads;
@@ -654,6 +693,10 @@ std::optional<Measurement> runBenchmark(const BenchmarkOptions &options,
                                  &measurement.applyChecksum, error)) {
             return std::nullopt;
         }
+        if (!validateCellMaterializationTopology(snapshot.cellMaterialization,
+                                                 options, workload, error)) {
+            return std::nullopt;
+        }
         if (!validateRetainedFrameSharing(
                 retainedFrame, retainedIdentity, snapshot.update, frame,
                 applyMetrics, &measurement.retainedSnapshotChecksum, error)) {
@@ -665,6 +708,9 @@ std::optional<Measurement> runBenchmark(const BenchmarkOptions &options,
             measurement.applyNanoseconds.append(applyNanoseconds);
             measurement.endToEndNanoseconds.append(endToEndNanoseconds);
             accumulateApplyMetrics(&measurement.applyMetrics, applyMetrics);
+            accumulateCellMaterializationMetrics(
+                &measurement.cellMaterialization,
+                snapshot.cellMaterialization);
             ++measurement.retainedSnapshots;
         }
     }
@@ -703,7 +749,7 @@ void printMeasurement(const BenchmarkOptions &options, Workload workload,
     QTextStream output(stdout);
     output.setRealNumberNotation(QTextStream::FixedNotation);
     output.setRealNumberPrecision(2);
-    output << "benchmark=terminal-frame-materialization benchmark_contract=2"
+    output << "benchmark=terminal-frame-materialization benchmark_contract=3"
            << " workload="
            << (workload == Workload::FullFrame ? "full-frame" : "dirty-row")
            << " corpus=" << corpusName(options.corpus)
@@ -756,6 +802,22 @@ void printMeasurement(const BenchmarkOptions &options, Workload workload,
            << " terminal_cells_copied="
            << measurement.applyMetrics.terminalCellsCopied
            << " terminal_cell_bytes_copied=" << terminalCellBytesCopied << '\n';
+    output << "queries materialized_cells="
+           << measurement.cellMaterialization.cells
+           << " primary_cell_data_queries="
+           << measurement.cellMaterialization.primaryDataQueries
+           << " grapheme_data_queries="
+           << measurement.cellMaterialization.graphemeDataQueries
+           << " content_background_data_queries="
+           << measurement.cellMaterialization.contentBackgroundDataQueries
+           << " cell_data_queries_per_cell="
+           << static_cast<double>(
+                  measurement.cellMaterialization.primaryDataQueries
+                  + measurement.cellMaterialization.graphemeDataQueries
+                  + measurement.cellMaterialization
+                        .contentBackgroundDataQueries)
+                / static_cast<double>(measurement.cellMaterialization.cells)
+           << '\n';
     output << "validation snapshot_checksum=" << measurement.snapshotChecksum
            << " apply_checksum=" << measurement.applyChecksum
            << " retained_snapshot_checksum="

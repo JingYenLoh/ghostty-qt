@@ -182,8 +182,24 @@ public:
     };
 
     struct RenderSnapshot {
+        struct CellMaterializationMetrics {
+            quint64 cells = 0;
+            quint64 primaryDataQueries = 0;
+            quint64 graphemeDataQueries = 0;
+            quint64 contentBackgroundDataQueries = 0;
+
+            friend bool operator==(const CellMaterializationMetrics &,
+                                   const CellMaterializationMetrics &) =
+                default;
+        };
+
         TerminalUpdate update;
         bool mouseTracking = false;
+        // Deterministic C-boundary topology for profiles and microbenchmarks.
+        // The two primary queries fetch render-state and raw-cell fields;
+        // extended graphemes and compact background-only cells need the
+        // separately counted conditional queries.
+        CellMaterializationMetrics cellMaterialization;
     };
 
     enum class RenderResult {

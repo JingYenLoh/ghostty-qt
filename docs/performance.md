@@ -95,6 +95,17 @@ cell-payload allocations and zero copied terminal cells. A partial update
 still copies 80 small row headers (1,920 bytes) when a snapshot shares the
 outer table; this bounded cost is the remaining ownership tradeoff.
 
+A CPU profile of the materialization half found two redundant libghostty C
+calls per ordinary cell: the resolved foreground and background getters
+re-read style and palette data already fetched by the frontend. Ordinary text
+cells now resolve those colors from the existing snapshot values; only
+Ghostty's compact background-only cells need one conditional raw-cell query.
+The benchmark contract reports this topology alongside timing: ASCII uses two
+cell-data calls per materialized cell, the alternating extended-grapheme
+corpus uses 2.5, and the background-only corpus uses three. Representative
+240x80 Release medians fell from 12.98 to 12.08 us for one dirty row, 41.73 to
+39.33 us for four dirty rows, and 1,059.03 to 1,023.11 us for a full frame.
+
 ### Renderer
 
 The retained renderer already avoids the largest terminal-frontend costs:

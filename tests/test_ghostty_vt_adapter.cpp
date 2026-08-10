@@ -2309,6 +2309,7 @@ void GhosttyVtAdapterTest::translatesCellStylesAndAppearanceMetadata()
         "\033[0;48;2;30;34;42mB"
         "\033[0mD"
         "\033[48;2;1;2;3m\033[K"
+        "\033[2;1H\033[41m\033[K"
         "\033[0m"));
 
     GhosttyVtAdapter::RenderSnapshot snapshot;
@@ -2385,6 +2386,18 @@ void GhosttyVtAdapterTest::translatesCellStylesAndAppearanceMetadata()
     QVERIFY(contentBackground.text.isEmpty());
     QVERIFY(contentBackground.backgroundExplicit());
     QCOMPARE(contentBackground.background, QColor::fromRgb(1, 2, 3));
+
+    const TerminalCell &paletteContentBackground = frame.cells.at(16);
+    QVERIFY(paletteContentBackground.text.isEmpty());
+    QVERIFY(paletteContentBackground.backgroundExplicit());
+    QCOMPARE(paletteContentBackground.background,
+             QColor(QStringLiteral("#aa1122")));
+
+    QCOMPARE(snapshot.cellMaterialization.cells, quint64{32});
+    QCOMPARE(snapshot.cellMaterialization.primaryDataQueries, quint64{64});
+    QCOMPARE(snapshot.cellMaterialization.graphemeDataQueries, quint64{0});
+    QCOMPARE(snapshot.cellMaterialization.contentBackgroundDataQueries,
+             quint64{19});
 }
 
 void GhosttyVtAdapterTest::preservesAuthoritativeCellCodepointsForShaping()

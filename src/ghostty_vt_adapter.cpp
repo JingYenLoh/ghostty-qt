@@ -4346,6 +4346,8 @@ public:
         update.columns = metadata.columns;
         update.rows = metadata.rows;
         update.fullFrame = fullFrame;
+        quint64 graphemeDataQueries = 0;
+        quint64 contentBackgroundDataQueries = 0;
         if (fullFrame) {
             update.dirtyRows.reserve(metadata.rows);
         }
@@ -4465,15 +4467,19 @@ public:
                     }
 
                     GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
+                    GhosttyCellContentTag contentTag =
+                        GHOSTTY_CELL_CONTENT_CODEPOINT;
                     uint32_t codepoint = 0;
                     bool hasHyperlink = false;
                     constexpr std::array cellFields{
                         GHOSTTY_CELL_DATA_WIDE,
+                        GHOSTTY_CELL_DATA_CONTENT_TAG,
                         GHOSTTY_CELL_DATA_HAS_HYPERLINK,
                         GHOSTTY_CELL_DATA_CODEPOINT,
                     };
                     std::array<void *, cellFields.size()> cellValues{
                         &wide,
+                        &contentTag,
                         &hasHyperlink,
                         &codepoint,
                     };
@@ -4521,6 +4527,7 @@ public:
                                 rowCells_,
                                 GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8,
                                 &graphemeBuffer);
+                        ++graphemeDataQueries;
                         QByteArray dynamicGrapheme;
                         if (graphemeResult == GHOSTTY_OUT_OF_SPACE) {
                             dynamicGrapheme.resize(
@@ -4533,6 +4540,7 @@ public:
                                 rowCells_,
                                 GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8,
                                 &graphemeBuffer);
+                            ++graphemeDataQueries;
                         }
                         if (graphemeResult != GHOSTTY_SUCCESS) {
                             return RenderResult::Retry;
@@ -4548,29 +4556,46 @@ public:
                     cell.setPlainCodepoint(graphemeCount == 1);
                     cell.setExtendedGrapheme(graphemeCount > 1);
 
-                    GhosttyColorRgb foreground = colors.foreground;
+                    GhosttyColorRgb foreground = resolveStyleColor(
+                        style.fg_color, colors, colors.foreground);
                     GhosttyColorRgb background = colors.background;
-                    GhosttyColorRgb explicitColor{};
-                    if (ghostty_render_state_row_cells_get(
-                            rowCells_,
-                            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR,
-                            &explicitColor)
-                        == GHOSTTY_SUCCESS) {
-                        foreground = explicitColor;
+                    bool backgroundExplicit = true;
+                    switch (contentTag) {
+                    case GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE: {
+                        GhosttyColorPaletteIndex paletteIndex = 0;
+                        if (ghostty_cell_get(
+                                rawCell, GHOSTTY_CELL_DATA_COLOR_PALETTE,
+                                &paletteIndex)
+                            != GHOSTTY_SUCCESS) {
+                            return RenderResult::Retry;
+                        }
+                        ++contentBackgroundDataQueries;
+                        background = colors.palette[paletteIndex];
+                        break;
                     }
-                    const GhosttyResult backgroundResult =
-                        ghostty_render_state_row_cells_get(
-                            rowCells_,
-                            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR,
-                            &explicitColor);
-                    if (backgroundResult == GHOSTTY_SUCCESS) {
-                        background = explicitColor;
+                    case GHOSTTY_CELL_CONTENT_BG_COLOR_RGB:
+                        if (ghostty_cell_get(rawCell,
+                                            GHOSTTY_CELL_DATA_COLOR_RGB,
+                                            &background)
+                            != GHOSTTY_SUCCESS) {
+                            return RenderResult::Retry;
+                        }
+                        ++contentBackgroundDataQueries;
+                        break;
+                    case GHOSTTY_CELL_CONTENT_CODEPOINT:
+                    case GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME:
+                        backgroundExplicit = style.bg_color.tag
+                            != GHOSTTY_STYLE_COLOR_NONE;
+                        background = resolveStyleColor(
+                            style.bg_color, colors, colors.background);
+                        break;
+                    default: return RenderResult::Retry;
+                    }
+                    if (backgroundExplicit) {
                         cell.setBackgroundExplicit(true);
                         if (sameRgb(background, colors.background)) {
                             rowUpdate.presentation.paddingExtensionSafe = false;
                         }
-                    } else if (backgroundResult != GHOSTTY_INVALID_VALUE) {
-                        return RenderResult::Retry;
                     } else {
                         rowUpdate.presentation.paddingExtensionSafe = false;
                     }
@@ -4750,8 +4775,17 @@ public:
         publishedMetadata_ = std::move(metadata);
         publishedKittyGraphics_ = *kittySnapshot;
         hasPublishedFrame_ = true;
+        const quint64 materializedCells =
+            static_cast<quint64>(update.dirtyRows.size())
+            * static_cast<quint64>(update.columns);
         snapshot->update = std::move(update);
         snapshot->mouseTracking = tracking;
+        snapshot->cellMaterialization = {
+            .cells = materializedCells,
+            .primaryDataQueries = materializedCells * 2,
+            .graphemeDataQueries = graphemeDataQueries,
+            .contentBackgroundDataQueries = contentBackgroundDataQueries,
+        };
         return RenderResult::Ready;
     }
 
