@@ -58,6 +58,11 @@ for the intentional upgrade procedure.
 - **Links:** OSC 8 and the pinned default URL/path matcher work. User-defined
   link expressions remain blocked because the pinned upstream parser does not
   implement their CLI grammar.
+- **Internationalization:** QML source strings are largely marked, but the
+  application does not yet build or load Qt translation catalogs. Ghostty's
+  pinned gettext catalogs can supply its command-palette text and seed reviewed
+  exact frontend matches; the intended ownership and packaging are documented
+  in [Internationalization](internationalization.md).
 - **Qualification and distribution:** renderer correctness is covered across
   software, OpenGL, and Vulkan, but compositor-specific blending, blur, color
   management, and presentation timing still require representative hardware

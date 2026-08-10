@@ -111,6 +111,7 @@ Sanitizers, focused tests, formatting, and CI are documented in
 - [Installation and desktop integration](docs/installation.md)
 - [Project status](docs/status.md)
 - [Architecture](docs/architecture.md)
+- [Internationalization](docs/internationalization.md)
 - [Performance](docs/performance.md)
 - [Development and CI](docs/development.md)
 - [Stack decision](docs/feasibility.md)
