@@ -90,6 +90,12 @@ void FrontendConfigTest::parsesDefaultsAndFullLineComments()
     QCOMPARE(parsed->quickTerminalLayerShell.layer, QuickTerminalLayer::Top);
     QCOMPARE(parsed->quickTerminalLayerShell.layerNamespace,
              QStringLiteral("ghostty-quick-terminal"));
+    QVERIFY(parsed->paneEnterTransitionShaderPath.isEmpty());
+    QVERIFY(parsed->paneExitTransitionShaderPath.isEmpty());
+    QCOMPARE(parsed->paneEnterTransitionDuration,
+             std::chrono::milliseconds::zero());
+    QCOMPARE(parsed->paneExitTransitionDuration,
+             std::chrono::milliseconds::zero());
 }
 
 void FrontendConfigTest::parsesEveryValue_data()
@@ -101,6 +107,10 @@ void FrontendConfigTest::parsesEveryValue_data()
     QTest::addColumn<bool>("horizontalTabScroll");
     QTest::addColumn<int>("quickTerminalLayer");
     QTest::addColumn<QString>("quickTerminalNamespace");
+    QTest::addColumn<QString>("paneEnterShader");
+    QTest::addColumn<QString>("paneExitShader");
+    QTest::addColumn<qint64>("paneEnterMilliseconds");
+    QTest::addColumn<qint64>("paneExitMilliseconds");
 
     QTest::newRow("false-top-wide-scroll-background")
         << QByteArray("single-instance = false\n"
@@ -108,40 +118,61 @@ void FrontendConfigTest::parsesEveryValue_data()
                       "wide-tabs = true\n"
                       "horizontal-tab-scroll = true\n"
                       "quick-terminal-layer = background\n"
-                      "quick-terminal-namespace = background-terminal\n")
+                      "quick-terminal-namespace = background-terminal\n"
+                      "pane-enter-transition-shader = enter-a.glsl\n"
+                      "pane-exit-transition-shader = exit-a.glsl\n"
+                      "pane-enter-transition-duration = 0ms\n"
+                      "pane-exit-transition-duration = 10000ms\n")
         << SingleInstanceMode::Disabled << TabsLocation::Top << true << true
         << static_cast<int>(QuickTerminalLayer::Background)
-        << QStringLiteral("background-terminal");
+        << QStringLiteral("background-terminal")
+        << QStringLiteral("enter-a.glsl") << QStringLiteral("exit-a.glsl")
+        << qint64(0) << qint64(10000);
     QTest::newRow("true-bottom-compact-scroll-bottom")
         << QByteArray("single-instance = true\n"
                       "tabs-location = bottom\n"
                       "wide-tabs = false\n"
                       "horizontal-tab-scroll = true\n"
                       "quick-terminal-layer = bottom\n"
-                      "quick-terminal-namespace = bottom-terminal\n")
+                      "quick-terminal-namespace = bottom-terminal\n"
+                      "pane-enter-transition-shader = enter-b.glsl\n"
+                      "pane-exit-transition-shader = exit-b.glsl\n"
+                      "pane-enter-transition-duration = 180ms\n"
+                      "pane-exit-transition-duration = 220ms\n")
         << SingleInstanceMode::Enabled << TabsLocation::Bottom << false << true
         << static_cast<int>(QuickTerminalLayer::Bottom)
-        << QStringLiteral("bottom-terminal");
+        << QStringLiteral("bottom-terminal") << QStringLiteral("enter-b.glsl")
+        << QStringLiteral("exit-b.glsl") << qint64(180) << qint64(220);
     QTest::newRow("detect-bottom-wide-no-scroll-top")
         << QByteArray("single-instance = detect\n"
                       "tabs-location = bottom\n"
                       "wide-tabs = true\n"
                       "horizontal-tab-scroll = false\n"
                       "quick-terminal-layer = top\n"
-                      "quick-terminal-namespace = top-terminal\n")
+                      "quick-terminal-namespace = top-terminal\n"
+                      "pane-enter-transition-shader = enter-c.glsl\n"
+                      "pane-exit-transition-shader = exit-c.glsl\n"
+                      "pane-enter-transition-duration = 1ms\n"
+                      "pane-exit-transition-duration = 9999ms\n")
         << SingleInstanceMode::Detect << TabsLocation::Bottom << true << false
         << static_cast<int>(QuickTerminalLayer::Top)
-        << QStringLiteral("top-terminal");
+        << QStringLiteral("top-terminal") << QStringLiteral("enter-c.glsl")
+        << QStringLiteral("exit-c.glsl") << qint64(1) << qint64(9999);
     QTest::newRow("detect-top-compact-no-scroll-overlay")
         << QByteArray("single-instance = detect\n"
                       "tabs-location = top\n"
                       "wide-tabs = false\n"
                       "horizontal-tab-scroll = false\n"
                       "quick-terminal-layer = overlay\n"
-                      "quick-terminal-namespace = overlay-terminal\n")
+                      "quick-terminal-namespace = overlay-terminal\n"
+                      "pane-enter-transition-shader = enter-d.glsl\n"
+                      "pane-exit-transition-shader = exit-d.glsl\n"
+                      "pane-enter-transition-duration = 300ms\n"
+                      "pane-exit-transition-duration = 0ms\n")
         << SingleInstanceMode::Detect << TabsLocation::Top << false << false
         << static_cast<int>(QuickTerminalLayer::Overlay)
-        << QStringLiteral("overlay-terminal");
+        << QStringLiteral("overlay-terminal") << QStringLiteral("enter-d.glsl")
+        << QStringLiteral("exit-d.glsl") << qint64(300) << qint64(0);
 }
 
 void FrontendConfigTest::parsesEveryValue()
@@ -153,6 +184,10 @@ void FrontendConfigTest::parsesEveryValue()
     QFETCH(bool, horizontalTabScroll);
     QFETCH(int, quickTerminalLayer);
     QFETCH(QString, quickTerminalNamespace);
+    QFETCH(QString, paneEnterShader);
+    QFETCH(QString, paneExitShader);
+    QFETCH(qint64, paneEnterMilliseconds);
+    QFETCH(qint64, paneExitMilliseconds);
 
     const auto parsed = parseFrontendConfig(contents, QStringLiteral("memory"));
     QVERIFY2(parsed.has_value(),
@@ -165,6 +200,12 @@ void FrontendConfigTest::parsesEveryValue()
              quickTerminalLayer);
     QCOMPARE(parsed->quickTerminalLayerShell.layerNamespace,
              quickTerminalNamespace);
+    QCOMPARE(parsed->paneEnterTransitionShaderPath, paneEnterShader);
+    QCOMPARE(parsed->paneExitTransitionShaderPath, paneExitShader);
+    QCOMPARE(parsed->paneEnterTransitionDuration,
+             std::chrono::milliseconds(paneEnterMilliseconds));
+    QCOMPARE(parsed->paneExitTransitionDuration,
+             std::chrono::milliseconds(paneExitMilliseconds));
 }
 
 void FrontendConfigTest::acceptsWhitespaceCrLfAndBom()
@@ -175,7 +216,11 @@ void FrontendConfigTest::acceptsWhitespaceCrLfAndBom()
                      " wide-tabs = false \r\n"
                      " horizontal-tab-scroll = false \r\n"
                      " quick-terminal-layer = overlay \r\n"
-                     " quick-terminal-namespace = custom-scope \r\n");
+                     " quick-terminal-namespace = custom-scope \r\n"
+                     " pane-enter-transition-shader = enter.glsl \r\n"
+                     " pane-exit-transition-shader = exit.glsl \r\n"
+                     " pane-enter-transition-duration = 75ms \r\n"
+                     " pane-exit-transition-duration = 125ms \r\n");
     const auto parsed = parseFrontendConfig(contents, QStringLiteral("memory"));
     QVERIFY2(parsed.has_value(),
              qPrintable(parsed ? QString{} : parsed.error()));
@@ -187,6 +232,13 @@ void FrontendConfigTest::acceptsWhitespaceCrLfAndBom()
              QuickTerminalLayer::Overlay);
     QCOMPARE(parsed->quickTerminalLayerShell.layerNamespace,
              QStringLiteral("custom-scope"));
+    QCOMPARE(parsed->paneEnterTransitionShaderPath,
+             QStringLiteral("enter.glsl"));
+    QCOMPARE(parsed->paneExitTransitionShaderPath, QStringLiteral("exit.glsl"));
+    QCOMPARE(parsed->paneEnterTransitionDuration,
+             std::chrono::milliseconds(75));
+    QCOMPARE(parsed->paneExitTransitionDuration,
+             std::chrono::milliseconds(125));
 }
 
 void FrontendConfigTest::rejectsInvalidDocuments_data()
@@ -217,6 +269,15 @@ void FrontendConfigTest::rejectsInvalidDocuments_data()
     QTest::newRow("quick-terminal-namespace-empty")
         << QByteArray("quick-terminal-namespace = \n")
         << QStringLiteral("must not be empty");
+    QTest::newRow("pane-enter-duration-unit")
+        << QByteArray("pane-enter-transition-duration = 200\n")
+        << QStringLiteral("expected 0ms through 10000ms");
+    QTest::newRow("pane-exit-duration-negative")
+        << QByteArray("pane-exit-transition-duration = -1ms\n")
+        << QStringLiteral("expected 0ms through 10000ms");
+    QTest::newRow("pane-exit-duration-over-limit")
+        << QByteArray("pane-exit-transition-duration = 10001ms\n")
+        << QStringLiteral("expected 0ms through 10000ms");
     QTest::newRow("inline-comment")
         << QByteArray("tabs-location = top # not a full-line comment\n")
         << QStringLiteral("expected top or bottom");

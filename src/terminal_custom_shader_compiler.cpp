@@ -63,6 +63,7 @@ layout(std140, binding = 0) uniform GhosttyQtGlobals {
     vec3 iSelectionForegroundColor;
     vec3 iSelectionBackgroundColor;
     float _ghosttyQtPadding;
+    vec4 iPaneTransition;
 };
 
 layout(binding = 1) uniform sampler2D iChannel0;
@@ -71,6 +72,9 @@ layout(binding = 1) uniform sampler2D iChannel0;
 #define CURSORSTYLE_BAR 2
 #define CURSORSTYLE_UNDERLINE 3
 #define CURSORSTYLE_LOCK 4
+#define PANETRANSITION_EXIT -1
+#define PANETRANSITION_STABLE 0
+#define PANETRANSITION_ENTER 1
 #define texture2D texture
 
 )glsl";
@@ -99,7 +103,8 @@ QString pathForDiagnostic(const GhosttyConfigPath &source)
     return QDir::toNativeSeparators(source.path);
 }
 
-QByteArray requestKey(const TerminalCustomShaderOptions &options)
+QByteArray requestKey(const TerminalCustomShaderOptions &options,
+                      TerminalCustomShaderCompileMode mode)
 {
     QJsonArray sources;
     for (const GhosttyConfigPath &source : options.sources) {
@@ -108,10 +113,14 @@ QByteArray requestKey(const TerminalCustomShaderOptions &options)
             {QStringLiteral("optional"), source.optional},
         });
     }
-    return QJsonDocument(sources).toJson(QJsonDocument::Compact);
+    QByteArray key = QJsonDocument(sources).toJson(QJsonDocument::Compact);
+    key.append('\0');
+    key.append(QByteArray::number(static_cast<int>(mode)));
+    return key;
 }
 
-QByteArray cacheKeyForSource(const QByteArray &source)
+QByteArray cacheKeyForSource(const QByteArray &source,
+                             TerminalCustomShaderCompileMode mode)
 {
     QCryptographicHash hash(QCryptographicHash::Sha256);
     hash.addData(QByteArrayView(terminalCustomShaderCompilerCacheVersion));
@@ -119,6 +128,8 @@ QByteArray cacheKeyForSource(const QByteArray &source)
     hash.addData(QByteArrayView(qVersion()));
     hash.addData(QByteArrayView("\0", 1));
     hash.addData(QByteArrayView("spirv100;glsl330;glsl430;gles300"));
+    hash.addData(QByteArrayView("\0", 1));
+    hash.addData(QByteArray::number(static_cast<int>(mode)));
     hash.addData(QByteArrayView("\0", 1));
     hash.addData(source);
     return hash.result().toHex();
@@ -208,6 +219,7 @@ QString shaderContractDiagnostic(const QShader &shader)
         ExpectedMember{"iSelectionForegroundColor", 4'544},
         ExpectedMember{"iSelectionBackgroundColor", 4'560},
         ExpectedMember{"_ghosttyQtPadding", 4'572},
+        ExpectedMember{"iPaneTransition", 4'576},
     };
     const QList<QShaderDescription::BlockVariable> &members =
         blocks.constFirst().members;
@@ -274,14 +286,49 @@ bool writeCachedShader(const QString &path, const QShader &shader,
 }
 
 QShader bakeShader(const QByteArray &source, const QString &sourcePath,
-                   QString *diagnostic)
+                   TerminalCustomShaderCompileMode mode, QString *diagnostic)
 {
+    const QByteArrayView lifecyclePrefix =
+        mode == TerminalCustomShaderCompileMode::PaneEnter
+        ? QByteArrayView("\n#define mainImage ghosttyQtPaneEnterMainImage\n")
+        : mode == TerminalCustomShaderCompileMode::PaneExit
+        ? QByteArrayView("\n#define mainImage ghosttyQtPaneExitMainImage\n")
+        : QByteArrayView{};
+    const QByteArrayView lifecycleSuffix =
+        mode == TerminalCustomShaderCompileMode::PaneEnter
+        ? QByteArrayView(R"glsl(
+#undef mainImage
+void mainImage(out vec4 color, in vec2 fragCoord)
+{
+    if (iPaneTransition.y == float(PANETRANSITION_ENTER)) {
+        ghosttyQtPaneEnterMainImage(color, fragCoord);
+    } else {
+        color = texture(iChannel0, fragCoord / iResolution.xy);
+    }
+}
+)glsl")
+        : mode == TerminalCustomShaderCompileMode::PaneExit
+        ? QByteArrayView(R"glsl(
+#undef mainImage
+void mainImage(out vec4 color, in vec2 fragCoord)
+{
+    if (iPaneTransition.y == float(PANETRANSITION_EXIT)) {
+        ghosttyQtPaneExitMainImage(color, fragCoord);
+    } else {
+        color = texture(iChannel0, fragCoord / iResolution.xy);
+    }
+}
+)glsl")
+        : QByteArrayView{};
     QByteArray wrapped;
     wrapped.reserve(static_cast<qsizetype>(sizeof(kShaderPrefix))
-                    + source.size()
+                    + lifecyclePrefix.size() + source.size()
+                    + lifecycleSuffix.size()
                     + static_cast<qsizetype>(sizeof(kShaderSuffix)));
     wrapped.append(kShaderPrefix);
+    wrapped.append(lifecyclePrefix);
     wrapped.append(source);
+    wrapped.append(lifecycleSuffix);
     wrapped.append(kShaderSuffix);
 
     QShaderBaker baker;
@@ -312,7 +359,8 @@ QShader bakeShader(const QByteArray &source, const QString &sourcePath,
 
 TerminalCustomShaderCompileResult
 compileTerminalCustomShaders(const TerminalCustomShaderOptions &options,
-                             const QString &cacheDirectory)
+                             const QString &cacheDirectory,
+                             TerminalCustomShaderCompileMode mode)
 {
     const auto totalStarted = Clock::now();
     TerminalCustomShaderCompileResult result;
@@ -372,7 +420,7 @@ compileTerminalCustomShaders(const TerminalCustomShaderOptions &options,
             return result;
         }
 
-        const QByteArray key = cacheKeyForSource(source);
+        const QByteArray key = cacheKeyForSource(source, mode);
         const QString qsbPath = QDir(effectiveCacheDirectory)
                                     .filePath(QString::fromLatin1(key)
                                               + QStringLiteral(".frag.qsb"));
@@ -390,7 +438,7 @@ compileTerminalCustomShaders(const TerminalCustomShaderOptions &options,
 
         const auto bakeStarted = Clock::now();
         QShader shader =
-            bakeShader(source, sourceSpec.path, &result.diagnostic);
+            bakeShader(source, sourceSpec.path, mode, &result.diagnostic);
         result.metrics.bakeTime += Clock::now() - bakeStarted;
         if (!shader.isValid()
             || !writeCachedShader(qsbPath, shader, &result.diagnostic)) {
@@ -416,6 +464,8 @@ struct TerminalCustomShaderCompileBroker::State {
     struct Job {
         TerminalCustomShaderOptions options;
         QString cacheDirectory;
+        TerminalCustomShaderCompileMode mode =
+            TerminalCustomShaderCompileMode::Persistent;
         QVector<PendingCompletion> current;
         QVector<PendingCompletion> queued;
         bool launched = false;
@@ -433,13 +483,14 @@ TerminalCustomShaderCompileBroker::TerminalCustomShaderCompileBroker(
 
 void TerminalCustomShaderCompileBroker::request(
     const TerminalCustomShaderOptions &options, QObject *context,
-    Completion completion, const QString &cacheDirectory)
+    Completion completion, const QString &cacheDirectory,
+    TerminalCustomShaderCompileMode mode)
 {
     if (context == nullptr || !completion) {
         return;
     }
 
-    QByteArray key = requestKey(options);
+    QByteArray key = requestKey(options, mode);
     key.append('\0');
     key.append(cacheDirectory.toUtf8());
     {
@@ -455,6 +506,7 @@ void TerminalCustomShaderCompileBroker::request(
         State::Job job;
         job.options = options;
         job.cacheDirectory = cacheDirectory;
+        job.mode = mode;
         job.current.append({QPointer<QObject>(context), std::move(completion)});
         state_->jobs.insert(key, std::move(job));
     }
@@ -474,6 +526,8 @@ void TerminalCustomShaderCompileBroker::launch(const QByteArray &key)
 {
     TerminalCustomShaderOptions options;
     QString cacheDirectory;
+    TerminalCustomShaderCompileMode mode =
+        TerminalCustomShaderCompileMode::Persistent;
     {
         QMutexLocker locker(&state_->mutex);
         auto job = state_->jobs.find(key);
@@ -483,14 +537,15 @@ void TerminalCustomShaderCompileBroker::launch(const QByteArray &key)
         job->launched = true;
         options = job->options;
         cacheDirectory = job->cacheDirectory;
+        mode = job->mode;
     }
 
     const std::shared_ptr<State> state = state_;
     const QPointer<TerminalCustomShaderCompileBroker> broker(this);
     QThreadPool::globalInstance()->start([state, broker, key, options,
-                                          cacheDirectory] {
+                                          cacheDirectory, mode] {
         TerminalCustomShaderCompileResult result =
-            compileTerminalCustomShaders(options, cacheDirectory);
+            compileTerminalCustomShaders(options, cacheDirectory, mode);
         if (broker == nullptr) {
             QMutexLocker locker(&state->mutex);
             state->jobs.remove(key);

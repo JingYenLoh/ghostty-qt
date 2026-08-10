@@ -98,6 +98,7 @@ private Q_SLOTS:
     void rejectsOversizedSourceBeforeBake();
     void rejectsInvalidShader();
     void supportsGhosttyCompatibilityPreambleAndRuntimeTargets();
+    void compilesLifecycleExample();
     void exportsStableGhosttyUniformLayout();
     void coalescesConcurrentRequests();
     void rerunsRequestQueuedDuringLiveEdit();
@@ -466,8 +467,10 @@ void TerminalCustomShaderCompilerTest::exportsStableGhosttyUniformLayout()
 void mainImage(out vec4 color, in vec2 fragCoord)
 {
     color = vec4(iPalette[7] + iBackgroundColor * 0.0, 1.0)
-        + vec4(iCurrentCursor.xy / iResolution.xy, 0.0, 0.0);
+        + vec4(iCurrentCursor.xy / iResolution.xy, 0.0, 0.0)
+        + iPaneTransition * 0.0;
 }
+
 )glsl"));
     const TerminalCustomShaderCompileResult result =
         compileTerminalCustomShaders(
@@ -484,7 +487,7 @@ void mainImage(out vec4 color, in vec2 fragCoord)
     QCOMPARE(blocks.size(), 1);
     const auto &block = blocks.constFirst();
     QCOMPARE(block.binding, 0);
-    QCOMPARE(block.size, 4'576);
+    QCOMPARE(block.size, 4'592);
 
     struct ExpectedMember {
         QByteArrayView name;
@@ -521,6 +524,7 @@ void mainImage(out vec4 color, in vec2 fragCoord)
         ExpectedMember{"iSelectionForegroundColor", 4'544},
         ExpectedMember{"iSelectionBackgroundColor", 4'560},
         ExpectedMember{"_ghosttyQtPadding", 4'572},
+        ExpectedMember{"iPaneTransition", 4'576},
     };
     for (const ExpectedMember &expected : expectedMembers) {
         const auto *const member = memberNamed(block, expected.name);
@@ -531,6 +535,37 @@ void mainImage(out vec4 color, in vec2 fragCoord)
                                 .arg(member->offset)
                                 .arg(expected.offset)));
     }
+}
+
+void TerminalCustomShaderCompilerTest::compilesLifecycleExample()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString shaderPath =
+        QString::fromUtf8(GHOSTTY_QT_EXAMPLE_SHADER_PATH);
+    QVERIFY2(QFileInfo(shaderPath).isFile(), qPrintable(shaderPath));
+
+    const TerminalCustomShaderOptions options =
+        optionsFor({{.path = shaderPath, .optional = false}});
+    const QString cache =
+        QDir(temporary.path()).filePath(QStringLiteral("cache"));
+    const TerminalCustomShaderCompileResult persistent =
+        compileTerminalCustomShaders(options, cache);
+    const TerminalCustomShaderCompileResult enter =
+        compileTerminalCustomShaders(
+            options, cache, TerminalCustomShaderCompileMode::PaneEnter);
+    const TerminalCustomShaderCompileResult exit = compileTerminalCustomShaders(
+        options, cache, TerminalCustomShaderCompileMode::PaneExit);
+    QVERIFY2(persistent.succeeded(), qPrintable(persistent.diagnostic));
+    QVERIFY2(enter.succeeded(), qPrintable(enter.diagnostic));
+    QVERIFY2(exit.succeeded(), qPrintable(exit.diagnostic));
+    QCOMPARE(persistent.stages.size(), 1);
+    QCOMPARE(enter.stages.size(), 1);
+    QCOMPARE(exit.stages.size(), 1);
+    QVERIFY(persistent.stages.constFirst().cacheKey
+            != enter.stages.constFirst().cacheKey);
+    QVERIFY(enter.stages.constFirst().cacheKey
+            != exit.stages.constFirst().cacheKey);
 }
 
 void TerminalCustomShaderCompilerTest::coalescesConcurrentRequests()

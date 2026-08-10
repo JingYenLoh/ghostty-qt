@@ -432,6 +432,8 @@ class TerminalPaneTest : public QObject {
 private Q_SLOTS:
     void disabledCustomShadersAvoidOffscreenRenderLayers();
     void delegatedCustomShaderRenderingTearsDownDirectPaintNode();
+    void lifecycleExitClockDefersWorkspacePaneDestruction();
+    void lifecycleShaderDefersWorkspacePaneDestruction();
     void presentsScrollbarFromRetainedMetadata();
     void presentsProgressReportsAndAppliesLivePolicy();
     void routesWaitAfterCommandDismissalSeparatelyFromHold();
@@ -577,6 +579,209 @@ void TerminalPaneTest::delegatedCustomShaderRenderingTearsDownDirectPaintNode()
 
     QVERIFY(terminalPaneDelegatedPaintNodeTeardownForTest(&pane));
     QVERIFY(pane.flags().testFlag(QQuickItem::ItemHasContents));
+}
+
+void TerminalPaneTest::lifecycleExitClockDefersWorkspacePaneDestruction()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+
+    TerminalWorkspace workspace;
+    QVERIFY(workspace.initialize(options,
+                                 TerminalSessionStartMode::Deferred));
+    TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    const PaneId paneId = workspace.surfaceSnapshot().constFirst().paneId;
+    const TabId tabId = workspace.tabModel()->idAt(0);
+    terminalPaneForceExitTransitionForTest(pane,
+                                           std::chrono::milliseconds(60));
+
+    QSignalSpy removed(&workspace, &TerminalWorkspace::paneRemoved);
+    QElapsedTimer elapsed;
+    elapsed.start();
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ClosePane,
+        {tabId, paneId, 0},
+    }));
+    QCOMPARE(workspace.tabCount(), 1);
+    QVERIFY(!workspace.containsPane(paneId));
+    QVERIFY(workspace.surfaceSnapshot().isEmpty());
+    QCOMPARE(removed.count(), 0);
+    QCOMPARE(pane->terminalCustomShaderUniformSnapshot(0)->paneTransition.y,
+             -1.0F);
+
+    QTRY_COMPARE_WITH_TIMEOUT(removed.count(), 1, 1000);
+    QVERIFY(elapsed.elapsed() >= 60);
+    QCOMPARE(workspace.tabCount(), 0);
+
+    {
+        TerminalWorkspace tabWorkspace;
+        QVERIFY(tabWorkspace.initialize(
+            options, TerminalSessionStartMode::Deferred));
+        TerminalPane *const tabPane =
+            tabWorkspace.findChild<TerminalPane *>();
+        QVERIFY(tabPane != nullptr);
+        terminalPaneForceExitTransitionForTest(
+            tabPane, std::chrono::milliseconds(40));
+        QSignalSpy tabPaneRemoved(&tabWorkspace,
+                                  &TerminalWorkspace::paneRemoved);
+
+        tabWorkspace.closeCurrentTab();
+        QCOMPARE(tabWorkspace.tabCount(), 1);
+        QCOMPARE(tabPaneRemoved.count(), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(tabWorkspace.tabCount(), 0, 1000);
+        QCOMPARE(tabPaneRemoved.count(), 1);
+    }
+
+    {
+        TerminalWorkspace windowWorkspace;
+        QVERIFY(windowWorkspace.initialize(
+            options, TerminalSessionStartMode::Deferred));
+        TerminalPane *const windowPane =
+            windowWorkspace.findChild<TerminalPane *>();
+        QVERIFY(windowPane != nullptr);
+        terminalPaneForceExitTransitionForTest(
+            windowPane, std::chrono::milliseconds(40));
+        QSignalSpy approved(&windowWorkspace,
+                            &TerminalWorkspace::windowCloseApproved);
+
+        windowWorkspace.requestWindowClose();
+        QCOMPARE(approved.count(), 0);
+        QCOMPARE(windowWorkspace.tabCount(), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(approved.count(), 1, 1000);
+        QCOMPARE(windowWorkspace.tabCount(), 1);
+    }
+}
+
+void TerminalPaneTest::lifecycleShaderDefersWorkspacePaneDestruction()
+{
+    static const int shaderPipelineQmlType =
+        qmlRegisterType<TerminalCustomShaderPipelineEffect>(
+            "GhosttyQtLifecycleTest", 1, 0,
+            "TerminalCustomShaderPipelineEffect");
+    QVERIFY(shaderPipelineQmlType >= 0);
+
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString shaderPath =
+        QDir(temporary.path()).filePath(QStringLiteral("lifecycle.glsl"));
+    QFile shader(shaderPath);
+    QVERIFY(shader.open(QIODevice::WriteOnly));
+    constexpr QByteArrayView shaderSource(R"glsl(
+void mainImage(out vec4 color, in vec2 fragCoord)
+{
+    color = texture(iChannel0, fragCoord / iResolution.xy)
+        + iPaneTransition * 0.0;
+}
+)glsl");
+    QCOMPARE(shader.write(shaderSource.data(), shaderSource.size()),
+             shaderSource.size());
+    shader.close();
+
+    QQmlEngine engine;
+    QQmlComponent shaderStage(&engine);
+    shaderStage.setData(
+        R"qml(
+import QtQuick
+import GhosttyQtLifecycleTest 1.0
+
+Item {
+    id: root
+    required property bool retainedPipeline
+    required property var uniformProvider
+    required property real sourceDevicePixelRatio
+    required property bool linearBlending
+    property var shaderStages: []
+
+    layer.enabled: true
+    layer.live: true
+    layer.textureMirroring: ShaderEffectSource.NoMirroring
+    layer.textureSize: Qt.size(
+        Math.max(1, Math.round(width * sourceDevicePixelRatio)),
+        Math.max(1, Math.round(height * sourceDevicePixelRatio)))
+    layer.effect: Component {
+        TerminalCustomShaderPipelineEffect {
+            shaderStages: root.shaderStages
+            uniformProvider: root.uniformProvider
+            linearBlending: root.linearBlending
+        }
+    }
+}
+)qml",
+        QUrl(QStringLiteral("qrc:/test/lifecycle-shader-stage.qml")));
+    QVERIFY2(shaderStage.isReady(), qPrintable(shaderStage.errorString()));
+
+    LaunchOptions options;
+    options.workingDirectory = temporary.path();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.customShaders.sources = {{.path = shaderPath}};
+    options.customShaders.paneEnterTransitionSources = {
+        {.path = shaderPath},
+    };
+    options.customShaders.paneExitTransitionSources = {
+        {.path = shaderPath},
+    };
+    options.customShaders.animation = TerminalCustomShaderAnimation::Never;
+    options.customShaders.paneEnterTransitionDuration =
+        std::chrono::milliseconds(400);
+    options.customShaders.paneExitTransitionDuration =
+        std::chrono::milliseconds(180);
+    useSystemFixedFont(options);
+
+    QQuickWindow window;
+    window.resize(320, 160);
+    auto *workspace = new TerminalWorkspace(window.contentItem());
+    workspace->setSize(window.size());
+    workspace->setCustomShaderStageComponent(&shaderStage);
+    QVERIFY(workspace->initialize(options));
+    auto *pane = workspace->findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    const PaneId paneId = workspace->surfaceSnapshot().constFirst().paneId;
+    const TabId tabId = workspace->tabModel()->idAt(0);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    const QSGRendererInterface::GraphicsApi graphicsApi =
+        window.rendererInterface()->graphicsApi();
+    if (graphicsApi != QSGRendererInterface::OpenGL
+        && graphicsApi != QSGRendererInterface::Vulkan) {
+        QSKIP("Lifecycle custom shaders require an OpenGL or Vulkan RHI");
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(
+        pane->terminalCustomShaderUniformSnapshot(0)->paneTransition.y
+            == 1.0F,
+        3000);
+    const auto entering = pane->terminalCustomShaderUniformSnapshot(0);
+    QVERIFY(entering->paneTransition.x >= 0.0F);
+    QVERIFY(entering->paneTransition.x < 1.0F);
+    QCOMPARE(entering->paneTransition.w, 0.4F);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        pane->terminalCustomShaderUniformSnapshot(0)->paneTransition.y, 0.0F,
+        2000);
+
+    QSignalSpy removed(workspace, &TerminalWorkspace::paneRemoved);
+    QPointer<TerminalPane> paneGuard(pane);
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ClosePane,
+        {tabId, paneId, 0},
+    }));
+    QCOMPARE(workspace->tabCount(), 1);
+    QVERIFY(!workspace->containsPane(paneId));
+    QCOMPARE(removed.count(), 0);
+    QVERIFY(paneGuard != nullptr);
+    QCOMPARE(pane->terminalCustomShaderUniformSnapshot(0)->paneTransition.y,
+             -1.0F);
+
+    QTRY_COMPARE_WITH_TIMEOUT(removed.count(), 1, 2000);
+    QCOMPARE(workspace->tabCount(), 0);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(paneGuard.isNull());
+    window.close();
 }
 
 void TerminalPaneTest::routesWaitAfterCommandDismissalSeparatelyFromHold()

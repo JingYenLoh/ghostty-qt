@@ -8,6 +8,7 @@
 #include <QString>
 #include <QStringView>
 
+#include <chrono>
 #include <expected>
 #include <functional>
 
@@ -22,6 +23,10 @@ struct FrontendConfigValues {
     bool wideTabs = true;
     bool horizontalTabScroll = true;
     QuickTerminalLayerShellOptions quickTerminalLayerShell;
+    QString paneEnterTransitionShaderPath;
+    QString paneExitTransitionShaderPath;
+    std::chrono::milliseconds paneEnterTransitionDuration{};
+    std::chrono::milliseconds paneExitTransitionDuration{};
 
     bool operator==(const FrontendConfigValues &) const = default;
 };

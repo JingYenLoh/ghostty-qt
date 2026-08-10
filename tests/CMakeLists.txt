@@ -140,6 +140,9 @@ qt_add_executable(test-terminal-custom-shader-compiler
 target_include_directories(test-terminal-custom-shader-compiler PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
 )
+target_compile_definitions(test-terminal-custom-shader-compiler PRIVATE
+    "GHOSTTY_QT_EXAMPLE_SHADER_PATH=\"${CMAKE_SOURCE_DIR}/examples/shaders/crt-pane-transition.glsl\""
+)
 target_link_libraries(test-terminal-custom-shader-compiler PRIVATE
     Qt6::Core
     Qt6::GuiPrivate
@@ -946,6 +949,19 @@ set_tests_properties(terminal-pane-render PROPERTIES
     TIMEOUT 75
     ENVIRONMENT
         "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_SCALE_FACTOR=1"
+)
+add_test(
+    NAME terminal-pane-lifecycle-shader-wayland-rhi
+    COMMAND
+        "${CMAKE_CURRENT_SOURCE_DIR}/run_wayland_rhi_test.sh"
+        "$<TARGET_FILE:test-terminal-pane>"
+        lifecycleShaderDefersWorkspacePaneDestruction
+)
+set_tests_properties(terminal-pane-lifecycle-shader-wayland-rhi PROPERTIES
+    TIMEOUT 30
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT
+        "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};LIBGL_ALWAYS_SOFTWARE=1;QT_QPA_PLATFORM=wayland;QT_QUICK_BACKEND=rhi;QSG_RHI_BACKEND=opengl;QT_SCALE_FACTOR=1;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/lifecycle-shader-cache"
 )
 add_test(
     NAME terminal-custom-shader-linear-wayland-rhi

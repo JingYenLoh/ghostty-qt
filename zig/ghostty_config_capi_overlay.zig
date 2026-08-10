@@ -28,6 +28,10 @@ const frontend_config_keys = std.StaticStringMap(void).initComptime(.{
     .{"horizontal-tab-scroll"},
     .{"quick-terminal-layer"},
     .{"quick-terminal-namespace"},
+    .{"pane-enter-transition-shader"},
+    .{"pane-exit-transition-shader"},
+    .{"pane-enter-transition-duration"},
+    .{"pane-exit-transition-duration"},
     // Ghostty documents this as CLI-only. Loading the mixed override after
     // the CLI must not accidentally make its file spelling effective.
     .{"config-default-files"},

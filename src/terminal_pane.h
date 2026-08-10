@@ -70,6 +70,8 @@ class TerminalPaneRenderItem;
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
 [[nodiscard]] bool
 terminalPaneDelegatedPaintNodeTeardownForTest(TerminalPane *pane);
+void terminalPaneForceExitTransitionForTest(TerminalPane *pane,
+                                            std::chrono::milliseconds duration);
 #endif
 
 class TerminalPane final : public QQuickItem,
@@ -217,6 +219,10 @@ public:
     // search visibility, which complete Ghostty's dimming predicate.
     void setSplit(bool split);
     void beginShutdown();
+    // Returns true when destruction must be deferred until
+    // exitTransitionFinished. Unsupported/inactive shaders fail open so pane
+    // lifecycle can never be stranded behind a render backend.
+    [[nodiscard]] bool beginExitTransition();
     // ApplicationController arms only the first pane of a window that was
     // presented maximized/fullscreen. The actual start remains queued until
     // Qt reports a stable exposed viewport.
@@ -321,6 +327,7 @@ Q_SIGNALS:
                                      TerminalPane *pane);
     void standardClipboardCommitted(bool empty);
     void sessionEnded(TerminalPane *pane, int exitCode, int signalNumber);
+    void exitTransitionFinished();
 
 protected:
     QSGNode *updatePaintNode(QSGNode *oldNode,
@@ -355,6 +362,9 @@ private:
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
     friend bool
     terminalPaneDelegatedPaintNodeTeardownForTest(TerminalPane *pane);
+    friend void
+    terminalPaneForceExitTransitionForTest(TerminalPane *pane,
+                                           std::chrono::milliseconds duration);
 #endif
 
     enum class KeyHandling {
@@ -553,6 +563,8 @@ private:
     void setBellRinging(bool ringing);
     void setCustomShaderStageComponent(QQmlComponent *component);
     void reloadCustomShaders(const TerminalCustomShaderOptions &options);
+    void reloadPaneTransitionShaders(const TerminalCustomShaderOptions &options,
+                                     quint64 generation);
     [[nodiscard]] bool refreshEffectiveCustomShaderStages();
     void publishCustomShaderDiagnostic();
     void rebuildCustomShaderStages();
@@ -565,6 +577,15 @@ private:
     acquireCustomShaderUniformSnapshotLocked();
     void refreshCustomShaderUniformBase();
     void prepareCustomShaderFrame();
+    void maybeStartPaneEnterTransition();
+    void startPaneTransition(bool entering, std::chrono::milliseconds duration);
+    void
+    publishPaneTransitionUniform(std::chrono::steady_clock::time_point now);
+    [[nodiscard]] TerminalCustomShaderVec4
+    paneTransitionUniform(std::chrono::steady_clock::time_point now) const;
+    void finishPaneTransitionTimer();
+    [[nodiscard]] bool
+    customShaderTransitionRenderingReady(bool entering) const;
     [[nodiscard]] bool updateCustomShaderEffects();
     void syncCustomShaderPipelineDiagnostic();
     void scheduleCustomShaderAnimationFrame();
@@ -593,9 +614,13 @@ private:
     QPointer<QQmlComponent> customShaderStageComponent_;
     QVector<QPointer<QQuickItem>> customShaderStageItems_;
     QVector<TerminalCustomShaderStage> userCustomShaderStages_;
+    QVector<TerminalCustomShaderStage> paneEnterCustomShaderStages_;
+    QVector<TerminalCustomShaderStage> paneExitCustomShaderStages_;
     QVector<TerminalCustomShaderStage> customShaderStages_;
     quint64 customShaderCompileGeneration_ = 0;
     QString customShaderCompileDiagnostic_;
+    QString paneEnterCustomShaderDiagnostic_;
+    QString paneExitCustomShaderDiagnostic_;
     QString customShaderRenderDiagnostic_;
     QString customShaderDiagnostic_;
     mutable QMutex customShaderUniformMutex_;
@@ -615,6 +640,24 @@ private:
     quint64 customShaderRetainedFailureGeneration_ = 0;
     bool customShaderFramePending_ = false;
     bool customShaderRetainedFailed_ = false;
+    bool paneEnterCustomShaderConfigured_ = false;
+    bool paneExitCustomShaderConfigured_ = false;
+    enum class PaneTransitionPhase {
+        Stable,
+        Entering,
+        Exiting,
+    };
+    PaneTransitionPhase paneTransitionPhase_ = PaneTransitionPhase::Stable;
+    std::optional<std::chrono::steady_clock::time_point>
+        paneTransitionStartTime_;
+    std::chrono::milliseconds paneEnterTransitionDuration_{};
+    std::chrono::milliseconds paneExitTransitionDuration_{};
+    bool paneEnterTransitionPending_ = false;
+    bool paneExitFinalFramePending_ = false;
+    QChronoTimer *paneTransitionTimer_ = nullptr;
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+    bool forcePaneTransitionRenderingReadyForTest_ = false;
+#endif
     std::optional<QString> surfaceTitleOverride_;
     TerminalCellMetrics metrics_;
     double defaultFontPointSize_ = 12.0;
@@ -720,6 +763,7 @@ private:
     quint64 nextTerminalActionRequestId_ = 0;
     quint64 terminalActionEpoch_ = 1;
     bool terminalActionsAccepted_ = true;
+    bool shuttingDown_ = false;
     QHash<quint64, PendingTerminalActionCompletion>
         pendingTerminalActionCompletions_;
     quint64 pointerActivityEpoch_ = 0;

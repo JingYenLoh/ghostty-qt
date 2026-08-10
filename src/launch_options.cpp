@@ -3,6 +3,7 @@
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QFileInfo>
 #include <QLocale>
 #include <QProcess>
 
@@ -21,6 +22,20 @@
 namespace {
 
 constexpr int kMaximumScrollbackLines = 10'000'000;
+
+QString frontendShaderPath(QString path, const QString &configPath)
+{
+    if (path == QLatin1StringView("~")) {
+        path = QDir::homePath();
+    } else if (path.startsWith(QLatin1StringView("~/"))) {
+        path = QDir::home().filePath(path.sliced(2));
+    }
+    if (QDir::isAbsolutePath(path)) return QDir::cleanPath(path);
+    const QDir base = configPath.isEmpty()
+        ? QDir::current()
+        : QFileInfo(configPath).absoluteDir();
+    return QDir::cleanPath(base.absoluteFilePath(path));
+}
 
 QByteArrayView trimAsciiWhitespace(QByteArrayView value)
 {
@@ -302,7 +317,22 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     result.appearance = config.appearance;
     result.alphaBlending = config.alphaBlending;
     result.background = config.background;
+    const std::chrono::milliseconds paneEnterTransitionDuration =
+        result.customShaders.paneEnterTransitionDuration;
+    const std::chrono::milliseconds paneExitTransitionDuration =
+        result.customShaders.paneExitTransitionDuration;
+    const QVector<GhosttyConfigPath> paneEnterTransitionSources =
+        result.customShaders.paneEnterTransitionSources;
+    const QVector<GhosttyConfigPath> paneExitTransitionSources =
+        result.customShaders.paneExitTransitionSources;
     result.customShaders = config.customShaders;
+    result.customShaders.paneEnterTransitionDuration =
+        paneEnterTransitionDuration;
+    result.customShaders.paneExitTransitionDuration =
+        paneExitTransitionDuration;
+    result.customShaders.paneEnterTransitionSources =
+        paneEnterTransitionSources;
+    result.customShaders.paneExitTransitionSources = paneExitTransitionSources;
     result.backgroundBlur = config.backgroundBlur;
     result.padding = config.padding;
     result.splitAppearance = config.splitAppearance;
@@ -380,6 +410,26 @@ applyFrontendConfigSnapshot(LaunchOptions result,
     result.wideTabs = snapshot.values.wideTabs;
     result.horizontalTabScroll = snapshot.values.horizontalTabScroll;
     result.quickTerminalLayerShell = snapshot.values.quickTerminalLayerShell;
+    result.customShaders.paneEnterTransitionDuration =
+        snapshot.values.paneEnterTransitionDuration;
+    result.customShaders.paneExitTransitionDuration =
+        snapshot.values.paneExitTransitionDuration;
+    result.customShaders.paneEnterTransitionSources.clear();
+    if (!snapshot.values.paneEnterTransitionShaderPath.isEmpty()) {
+        result.customShaders.paneEnterTransitionSources.append({
+            .path = frontendShaderPath(
+                snapshot.values.paneEnterTransitionShaderPath,
+                snapshot.sourcePath),
+        });
+    }
+    result.customShaders.paneExitTransitionSources.clear();
+    if (!snapshot.values.paneExitTransitionShaderPath.isEmpty()) {
+        result.customShaders.paneExitTransitionSources.append({
+            .path =
+                frontendShaderPath(snapshot.values.paneExitTransitionShaderPath,
+                                   snapshot.sourcePath),
+        });
+    }
     if (!result.singleInstanceModeExplicit) {
         result.singleInstanceMode = snapshot.values.singleInstanceMode;
     }

@@ -13,7 +13,13 @@
 #include <memory>
 
 inline constexpr auto terminalCustomShaderCompilerCacheVersion =
-    "ghostty-qt-shadertoy-v5";
+    "ghostty-qt-shadertoy-v7";
+
+enum class TerminalCustomShaderCompileMode {
+    Persistent,
+    PaneEnter,
+    PaneExit,
+};
 
 struct TerminalCustomShaderStage {
     QString sourcePath;
@@ -48,7 +54,9 @@ struct TerminalCustomShaderCompileResult {
 // file I/O and QShaderBaker never run on either the GUI or render thread.
 [[nodiscard]] TerminalCustomShaderCompileResult
 compileTerminalCustomShaders(const TerminalCustomShaderOptions &options,
-                             const QString &cacheDirectory = {});
+                             const QString &cacheDirectory = {},
+                             TerminalCustomShaderCompileMode mode =
+                                 TerminalCustomShaderCompileMode::Persistent);
 
 class TerminalCustomShaderCompileBroker final : public QObject {
     Q_OBJECT
@@ -65,7 +73,9 @@ public:
     // The callback always runs on this object's thread and is dropped if
     // `context` dies.
     void request(const TerminalCustomShaderOptions &options, QObject *context,
-                 Completion completion, const QString &cacheDirectory = {});
+                 Completion completion, const QString &cacheDirectory = {},
+                 TerminalCustomShaderCompileMode mode =
+                     TerminalCustomShaderCompileMode::Persistent);
 
     [[nodiscard]] int inFlightCount() const;
 

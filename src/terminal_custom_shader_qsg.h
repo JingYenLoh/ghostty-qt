@@ -97,6 +97,9 @@ struct alignas(16) TerminalCustomShaderUniforms {
     TerminalCustomShaderVec4 cursorText{};
     TerminalCustomShaderVec4 selectionForegroundColor{};
     TerminalCustomShaderVec4 selectionBackgroundColor{};
+    // x: normalized progress, y: -1 exit / 0 stable / 1 enter,
+    // z: elapsed seconds, w: configured duration seconds.
+    TerminalCustomShaderVec4 paneTransition{1.0F, 0.0F, 0.0F, 0.0F};
 
     bool operator==(const TerminalCustomShaderUniforms &) const = default;
 };
@@ -134,7 +137,8 @@ inline constexpr std::size_t cursorText = 4528;
 inline constexpr std::size_t selectionForegroundColor = 4544;
 inline constexpr std::size_t selectionBackgroundColor = 4560;
 inline constexpr std::size_t trailingPadding = 4572;
-inline constexpr std::size_t size = 4576;
+inline constexpr std::size_t paneTransition = 4576;
+inline constexpr std::size_t size = 4592;
 
 } // namespace TerminalCustomShaderUniformLayout
 
@@ -160,6 +164,8 @@ static_assert(offsetof(TerminalCustomShaderUniforms, selectionBackgroundColor)
 static_assert(offsetof(TerminalCustomShaderUniforms, selectionBackgroundColor)
                   + offsetof(TerminalCustomShaderVec4, w)
               == TerminalCustomShaderUniformLayout::trailingPadding);
+static_assert(offsetof(TerminalCustomShaderUniforms, paneTransition)
+              == TerminalCustomShaderUniformLayout::paneTransition);
 
 using TerminalCustomShaderUniformSnapshot =
     std::shared_ptr<const TerminalCustomShaderUniforms>;

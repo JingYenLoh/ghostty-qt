@@ -1610,6 +1610,9 @@ install(FILES
 install(FILES
     "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}.svg"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps")
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/examples/shaders/crt-pane-transition.glsl"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/ghostty-qt/shaders")
 install(SCRIPT
     "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/PatchInstalledDesktopMetadata.cmake")
 install(DIRECTORY "${GHOSTTY_QT_TERMINFO_DIR}/"

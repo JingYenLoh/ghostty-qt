@@ -380,6 +380,14 @@ TerminalPane::TerminalPane(
               ? std::move(*keybindProgram)
               : GhosttyKeybindProgram::compile(options.keybindSource).program)
     , modifierRemaps_(options.modifierRemaps)
+    , paneEnterTransitionDuration_(
+          options.customShaders.paneEnterTransitionDuration)
+    , paneExitTransitionDuration_(
+          options.customShaders.paneExitTransitionDuration)
+    , paneEnterTransitionPending_(
+          (!options.customShaders.paneEnterTransitionSources.isEmpty()
+           || !options.customShaders.sources.isEmpty())
+          && options.customShaders.paneEnterTransitionDuration.count() > 0)
     , defaultFontPointSize_(options.typography.pointSize)
     , resizeOverlayStartupSuppressionEnds_(std::chrono::steady_clock::now()
                                            + kResizeOverlayStartupSuppression)
@@ -440,6 +448,12 @@ TerminalPane::TerminalPane(
     progressReportTimer_->setInterval(kProgressReportTimeout);
     connect(progressReportTimer_, &QChronoTimer::timeout, this,
             &TerminalPane::hideProgressPresentation);
+    paneTransitionTimer_ = new QChronoTimer(this);
+    paneTransitionTimer_->setObjectName(
+        QStringLiteral("paneShaderTransitionTimer"));
+    paneTransitionTimer_->setSingleShot(true);
+    connect(paneTransitionTimer_, &QChronoTimer::timeout, this,
+            &TerminalPane::finishPaneTransitionTimer);
 
     TerminalSessionLaunchOptions sessionOptions =
         toTerminalSessionLaunchOptions(options);
@@ -744,6 +758,7 @@ void TerminalPane::terminalCustomShaderEffectAttached(
     }
     customShaderEffects_.append(effect);
     requestRenderUpdate();
+    maybeStartPaneEnterTransition();
 }
 
 void TerminalPane::terminalCustomShaderEffectDetached(
@@ -761,6 +776,7 @@ void TerminalPane::terminalCustomShaderPipelineAttached(
     if (effect == nullptr || customShaderPipelineEffect_ == effect) return;
     customShaderPipelineEffect_ = effect;
     requestRenderUpdate();
+    maybeStartPaneEnterTransition();
 }
 
 void TerminalPane::terminalCustomShaderPipelineDetached(
@@ -781,6 +797,8 @@ bool TerminalPane::shouldAnimateCustomShaders() const
         || !window()->isExposed()) {
         return false;
     }
+    if (paneTransitionPhase_ != PaneTransitionPhase::Stable) return true;
+    if (userCustomShaderStages_.isEmpty()) return false;
     switch (options_.customShaders.animation) {
     case TerminalCustomShaderAnimation::Never: return false;
     case TerminalCustomShaderAnimation::Focused: return hasActiveFocus();
@@ -810,7 +828,160 @@ void TerminalPane::prepareCustomShaderFrame()
     next->frame = next->frame == std::numeric_limits<std::int32_t>::max()
         ? 1
         : next->frame + 1;
+    next->paneTransition = paneTransitionUniform(now);
     customShaderUniforms_ = std::move(next);
+}
+
+bool TerminalPane::customShaderTransitionRenderingReady(bool entering) const
+{
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+    if (forcePaneTransitionRenderingReadyForTest_) return true;
+#endif
+    const bool dedicatedConfigured = entering ? paneEnterCustomShaderConfigured_
+                                              : paneExitCustomShaderConfigured_;
+    const QVector<TerminalCustomShaderStage> &transitionStages =
+        entering ? paneEnterCustomShaderStages_ : paneExitCustomShaderStages_;
+    if ((dedicatedConfigured ? transitionStages.isEmpty()
+                             : userCustomShaderStages_.isEmpty())
+        || customShaderStageItems_.isEmpty() || !isVisible() || width() <= 0.0
+        || height() <= 0.0 || window() == nullptr || !window()->isVisible()
+        || !window()->isExposed()) {
+        return false;
+    }
+    if (useRetainedCustomShaderPipeline()) {
+        return customShaderPipelineEffect_ != nullptr
+            && customShaderPipelineEffect_->isActive();
+    }
+    const qsizetype activeEffects = std::ranges::count_if(
+        customShaderEffects_,
+        [](const QPointer<TerminalCustomShaderEffect> &effect) {
+            return effect != nullptr && effect->isActive();
+        });
+    return activeEffects == customShaderStageItems_.size();
+}
+
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+void terminalPaneForceExitTransitionForTest(TerminalPane *pane,
+                                            std::chrono::milliseconds duration)
+{
+    if (pane == nullptr) return;
+    pane->paneExitTransitionDuration_ = duration;
+    pane->forcePaneTransitionRenderingReadyForTest_ = true;
+}
+#endif
+
+void TerminalPane::publishPaneTransitionUniform(
+    std::chrono::steady_clock::time_point now)
+{
+    const TerminalCustomShaderVec4 transition = paneTransitionUniform(now);
+    QMutexLocker locker(&customShaderUniformMutex_);
+    auto next = acquireCustomShaderUniformSnapshotLocked();
+    next->paneTransition = transition;
+    customShaderUniforms_ = std::move(next);
+}
+
+TerminalCustomShaderVec4 TerminalPane::paneTransitionUniform(
+    std::chrono::steady_clock::time_point now) const
+{
+    TerminalCustomShaderVec4 transition{1.0F, 0.0F, 0.0F, 0.0F};
+    if (paneTransitionPhase_ != PaneTransitionPhase::Stable
+        && paneTransitionStartTime_.has_value()) {
+        const std::chrono::milliseconds duration =
+            paneTransitionPhase_ == PaneTransitionPhase::Entering
+            ? paneEnterTransitionDuration_
+            : paneExitTransitionDuration_;
+        const float durationSeconds =
+            std::chrono::duration<float>(duration).count();
+        const float elapsedSeconds = std::max(
+            0.0F,
+            std::chrono::duration<float>(now - *paneTransitionStartTime_)
+                .count());
+        transition = {
+            .x = durationSeconds > 0.0F
+                ? std::clamp(elapsedSeconds / durationSeconds, 0.0F, 1.0F)
+                : 1.0F,
+            .y = paneTransitionPhase_ == PaneTransitionPhase::Entering ? 1.0F
+                                                                       : -1.0F,
+            .z = std::min(elapsedSeconds, durationSeconds),
+            .w = durationSeconds,
+        };
+    }
+    return transition;
+}
+
+void TerminalPane::startPaneTransition(bool entering,
+                                       std::chrono::milliseconds duration)
+{
+    paneTransitionTimer_->stop();
+    paneTransitionPhase_ =
+        entering ? PaneTransitionPhase::Entering : PaneTransitionPhase::Exiting;
+    paneTransitionStartTime_ = std::chrono::steady_clock::now();
+    paneExitFinalFramePending_ = false;
+    publishPaneTransitionUniform(*paneTransitionStartTime_);
+    paneTransitionTimer_->setInterval(duration);
+    paneTransitionTimer_->start();
+    customShaderFramePending_ = false;
+    requestRenderUpdate();
+    scheduleCustomShaderAnimationFrame();
+}
+
+void TerminalPane::maybeStartPaneEnterTransition()
+{
+    if (!paneEnterTransitionPending_
+        || paneTransitionPhase_ != PaneTransitionPhase::Stable
+        || paneEnterTransitionDuration_.count() <= 0
+        || !customShaderTransitionRenderingReady(true)) {
+        return;
+    }
+    paneEnterTransitionPending_ = false;
+    startPaneTransition(true, paneEnterTransitionDuration_);
+}
+
+bool TerminalPane::beginExitTransition()
+{
+    paneEnterTransitionPending_ = false;
+    if (paneTransitionPhase_ == PaneTransitionPhase::Exiting) return true;
+    if (paneExitTransitionDuration_.count() <= 0
+        || !customShaderTransitionRenderingReady(false)) {
+        paneTransitionTimer_->stop();
+        paneTransitionPhase_ = PaneTransitionPhase::Stable;
+        paneTransitionStartTime_.reset();
+        publishPaneTransitionUniform(std::chrono::steady_clock::now());
+        return false;
+    }
+    startPaneTransition(false, paneExitTransitionDuration_);
+    return true;
+}
+
+void TerminalPane::finishPaneTransitionTimer()
+{
+    if (paneTransitionPhase_ == PaneTransitionPhase::Entering) {
+        paneTransitionPhase_ = PaneTransitionPhase::Stable;
+        paneTransitionStartTime_.reset();
+        publishPaneTransitionUniform(std::chrono::steady_clock::now());
+        requestRenderUpdate();
+        return;
+    }
+    if (paneTransitionPhase_ != PaneTransitionPhase::Exiting) return;
+
+    if (!paneExitFinalFramePending_) {
+        // Hold one fully-collapsed frame before the workspace removes the
+        // item. This is deliberately a bounded presentation grace, not a
+        // render-thread acknowledgement, so a stalled scene graph cannot
+        // strand pane destruction.
+        paneExitFinalFramePending_ = true;
+        publishPaneTransitionUniform(std::chrono::steady_clock::now());
+        customShaderFramePending_ = false;
+        requestRenderUpdate();
+        paneTransitionTimer_->setInterval(std::chrono::milliseconds(34));
+        paneTransitionTimer_->start();
+        return;
+    }
+
+    paneTransitionPhase_ = PaneTransitionPhase::Stable;
+    paneTransitionStartTime_.reset();
+    paneExitFinalFramePending_ = false;
+    Q_EMIT exitTransitionFinished();
 }
 
 std::shared_ptr<TerminalCustomShaderUniforms>
@@ -1107,6 +1278,7 @@ void TerminalPane::reloadCustomShaders(
     const TerminalCustomShaderOptions &options)
 {
     const quint64 generation = ++customShaderCompileGeneration_;
+    reloadPaneTransitionShaders(options, generation);
     if (options.sources.isEmpty()) {
         userCustomShaderStages_.clear();
         const bool stagesChanged = refreshEffectiveCustomShaderStages();
@@ -1182,9 +1354,76 @@ void TerminalPane::reloadCustomShaders(
         });
 }
 
+void TerminalPane::reloadPaneTransitionShaders(
+    const TerminalCustomShaderOptions &options, quint64 generation)
+{
+    paneEnterCustomShaderConfigured_ =
+        !options.paneEnterTransitionSources.isEmpty();
+    paneExitCustomShaderConfigured_ =
+        !options.paneExitTransitionSources.isEmpty();
+    paneEnterCustomShaderStages_.clear();
+    paneExitCustomShaderStages_.clear();
+    paneEnterCustomShaderDiagnostic_.clear();
+    paneExitCustomShaderDiagnostic_.clear();
+
+    const auto request = [this, generation](
+                             const QVector<GhosttyConfigPath> &sources,
+                             TerminalCustomShaderCompileMode mode,
+                             QVector<TerminalCustomShaderStage> *stages,
+                             QString *diagnostic) {
+        if (sources.isEmpty()) return;
+        TerminalCustomShaderOptions compileOptions;
+        compileOptions.sources = sources;
+        const QPointer<TerminalPane> guard(this);
+        customShaderCompileBroker()->request(
+            compileOptions, this,
+            [guard, generation, mode, stages,
+             diagnostic](TerminalCustomShaderCompileResult result) mutable {
+                if (guard == nullptr
+                    || guard->customShaderCompileGeneration_ != generation) {
+                    return;
+                }
+                if (result.succeeded()) {
+                    *stages = std::move(result.stages);
+                    diagnostic->clear();
+                } else {
+                    stages->clear();
+                    *diagnostic = std::move(result.diagnostic);
+                    const QString key =
+                        mode == TerminalCustomShaderCompileMode::PaneEnter
+                        ? QStringLiteral("pane-enter-transition-shader")
+                        : QStringLiteral("pane-exit-transition-shader");
+                    if (diagnostic->startsWith(
+                            QLatin1StringView("custom-shader:"))) {
+                        diagnostic->replace(0, 13, key);
+                    }
+                    qWarning().noquote() << *diagnostic;
+                }
+                const bool changed =
+                    guard->refreshEffectiveCustomShaderStages();
+                if (changed) {
+                    guard->customShaderStageGeneration_ = generation;
+                    guard->customShaderFramePending_ = false;
+                    guard->rebuildCustomShaderStages();
+                } else {
+                    guard->publishCustomShaderDiagnostic();
+                }
+            },
+            {}, mode);
+    };
+    request(options.paneEnterTransitionSources,
+            TerminalCustomShaderCompileMode::PaneEnter,
+            &paneEnterCustomShaderStages_, &paneEnterCustomShaderDiagnostic_);
+    request(options.paneExitTransitionSources,
+            TerminalCustomShaderCompileMode::PaneExit,
+            &paneExitCustomShaderStages_, &paneExitCustomShaderDiagnostic_);
+}
+
 bool TerminalPane::refreshEffectiveCustomShaderStages()
 {
     QVector<TerminalCustomShaderStage> effective = userCustomShaderStages_;
+    effective.append(paneEnterCustomShaderStages_);
+    effective.append(paneExitCustomShaderStages_);
     if (terminalUsesLinearBlending(alphaBlending_)) {
         const TerminalCustomShaderStage &encode =
             terminalAlphaEncodeShaderStage();
@@ -1200,11 +1439,15 @@ bool TerminalPane::refreshEffectiveCustomShaderStages()
 void TerminalPane::publishCustomShaderDiagnostic()
 {
     QString diagnostic = customShaderCompileDiagnostic_;
+    const auto append = [&diagnostic](const QString &message) {
+        if (message.isEmpty()) return;
+        if (!diagnostic.isEmpty()) diagnostic.append(QLatin1Char('\n'));
+        diagnostic.append(message);
+    };
+    append(paneEnterCustomShaderDiagnostic_);
+    append(paneExitCustomShaderDiagnostic_);
     if (!customShaderRenderDiagnostic_.isEmpty()) {
-        if (!diagnostic.isEmpty()) {
-            diagnostic.append(QLatin1Char('\n'));
-        }
-        diagnostic.append(customShaderRenderDiagnostic_);
+        append(customShaderRenderDiagnostic_);
     }
     if (customShaderDiagnostic_ == diagnostic) {
         return;
@@ -1412,6 +1655,7 @@ void TerminalPane::rebuildCustomShaderStages()
                 const QPointer<TerminalPane> guard(this);
                 syncCustomShaderPipelineDiagnostic();
                 if (guard == nullptr) return;
+                maybeStartPaneEnterTransition();
                 scheduleCustomShaderAnimationFrame();
             });
     }
@@ -1448,6 +1692,7 @@ bool TerminalPane::eventFilter(QObject *watched, QEvent *event)
         case QEvent::Show:
             customShaderFramePending_ = false;
             requestRenderUpdate();
+            maybeStartPaneEnterTransition();
             scheduleCustomShaderAnimationFrame();
             [[fallthrough]];
         case QEvent::Resize:
@@ -2193,6 +2438,19 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
         QMutexLocker locker(&renderMutex_);
         alphaBlending_ = updated.alphaBlending;
     }
+    if (paneTransitionPhase_ != PaneTransitionPhase::Exiting) {
+        paneExitTransitionDuration_ =
+            updated.customShaders.paneExitTransitionDuration;
+    }
+    if (paneEnterTransitionPending_) {
+        paneEnterTransitionDuration_ =
+            updated.customShaders.paneEnterTransitionDuration;
+        if (paneEnterTransitionDuration_.count() <= 0
+            || (updated.customShaders.paneEnterTransitionSources.isEmpty()
+                && updated.customShaders.sources.isEmpty())) {
+            paneEnterTransitionPending_ = false;
+        }
+    }
     // Re-read same-path shader edits on every successful configuration
     // application. Content-addressed compilation makes unchanged sources a
     // cheap cache hit while fixing Ghostty's pinned path-equality blind spot.
@@ -2453,6 +2711,8 @@ void TerminalPane::setBellPlaybackDevice(
 
 void TerminalPane::beginShutdown()
 {
+    if (shuttingDown_) return;
+    shuttingDown_ = true;
     const QPointer<TerminalPane> guard(this);
     if (terminalActionsAccepted_) {
         terminalActionsAccepted_ = false;

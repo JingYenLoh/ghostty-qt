@@ -1035,6 +1035,7 @@ bool TerminalWorkspace::executeSurfaceActionOnAllPanes(
     const GhosttyConfiguredAction &action)
 {
     if (topologyMutation_
+        || !std::holds_alternative<std::monostate>(deferredRemoval_)
         || std::holds_alternative<ApplicationAction>(action)) {
         return false;
     }
@@ -1108,8 +1109,10 @@ QVector<WorkspaceSurfaceSnapshot> TerminalWorkspace::surfaceSnapshot() const
     if (windowCloseState_ != WindowCloseState::Open) return {};
 
     QVector<WorkspaceSurfaceSnapshot> surfaces;
-    forEachPane([&surfaces](const PaneHandle &handle) {
-        if (handle.pane == nullptr) return;
+    forEachPane([this, &surfaces](const PaneHandle &handle) {
+        if (handle.pane == nullptr || retiringPaneIds_.contains(handle.id)) {
+            return;
+        }
         surfaces.append({
             .paneId = handle.id,
             .effectiveTitle = handle.pane->effectiveSurfaceTitle(),
@@ -1121,7 +1124,10 @@ QVector<WorkspaceSurfaceSnapshot> TerminalWorkspace::surfaceSnapshot() const
 
 bool TerminalWorkspace::focusPaneForFrontend(PaneId paneId)
 {
-    if (windowCloseState_ != WindowCloseState::Open) return false;
+    if (windowCloseState_ != WindowCloseState::Open
+        || !std::holds_alternative<std::monostate>(deferredRemoval_)) {
+        return false;
+    }
     const QPointer<TerminalWorkspace> guard(this);
     const QPointer<TerminalPane> pane(paneForId(paneId));
     if (pane == nullptr) return false;
@@ -1134,7 +1140,9 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
     // Model and workspace signals are synchronous. Reject nested actions while
     // a stable-ID batch is being committed so observers cannot invalidate the
     // topology between its pane shutdown and row-removal phases.
-    if (topologyMutation_ || windowCloseState_ != WindowCloseState::Open) {
+    if (topologyMutation_
+        || !std::holds_alternative<std::monostate>(deferredRemoval_)
+        || windowCloseState_ != WindowCloseState::Open) {
         return false;
     }
 
@@ -1772,7 +1780,10 @@ void TerminalWorkspace::setCurrentIndex(int index)
 bool TerminalWorkspace::activateTabByStableId(quint64 tabId)
 {
     const TabId id(tabId);
-    if (!id.isValid() || tabById(id) == nullptr) return false;
+    if (!id.isValid() || tabById(id) == nullptr
+        || !std::holds_alternative<std::monostate>(deferredRemoval_)) {
+        return false;
+    }
     activateTab(id);
     return true;
 }
@@ -2043,6 +2054,7 @@ void TerminalWorkspace::closeActivePane()
 
 void TerminalWorkspace::closePane(PaneId paneId, bool force)
 {
+    if (!std::holds_alternative<std::monostate>(deferredRemoval_)) return;
     TerminalPane *pane = paneForId(paneId);
     if (pane == nullptr) {
         return;
@@ -2063,28 +2075,61 @@ void TerminalWorkspace::closePane(PaneId paneId, bool force)
     }
 
     const QPointer<TerminalWorkspace> guard(this);
+    const QPointer<TerminalPane> panePointer(pane);
     {
-        // Pending-prompt resolution and model updates below emit synchronous
-        // signals. Keep the cached tab/tree valid until this mutation commits.
         const bool previousMutation = std::exchange(topologyMutation_, true);
         const auto restoreMutation = qScopeGuard([guard, previousMutation] {
             if (guard != nullptr) {
                 guard->topologyMutation_ = previousMutation;
             }
         });
-        Tab *tab = tabs_[static_cast<size_t>(tabIndex)].get();
+        retiringPaneIds_.insert(paneId);
+        resolvePendingPaneRemoval({paneId, panePointer});
+        if (guard == nullptr) return;
+        if (panePointer == nullptr) return;
+        panePointer->beginShutdown();
+        if (guard == nullptr || panePointer == nullptr) return;
+        if (panePointer->beginExitTransition()) {
+            deferredRemoval_ = DeferredPaneRemoval{paneId, panePointer};
+            connect(panePointer, &TerminalPane::exitTransitionFinished, this,
+                    [this, paneId] { finishDeferredPaneTransition(paneId); });
+            return;
+        }
+    }
+    if (guard == nullptr) return;
+    commitPaneRemoval(paneId, panePointer);
+}
+
+void TerminalWorkspace::commitPaneRemoval(PaneId paneId,
+                                          QPointer<TerminalPane> pane)
+{
+    const int tabIndex = tabIndexForPane(paneId);
+    if (tabIndex < 0 || pane == nullptr) {
+        retiringPaneIds_.remove(paneId);
+        return;
+    }
+    Tab *tab = tabs_[static_cast<size_t>(tabIndex)].get();
+    Node *const leaf = findNode(tab->root.get(), paneId);
+    if (leaf == nullptr || leaf->pane != pane) {
+        retiringPaneIds_.remove(paneId);
+        return;
+    }
+
+    const QPointer<TerminalWorkspace> guard(this);
+    {
+        const bool previousMutation = std::exchange(topologyMutation_, true);
+        const auto restoreMutation = qScopeGuard([guard, previousMutation] {
+            if (guard != nullptr) guard->topologyMutation_ = previousMutation;
+        });
+        const auto finishRetirement = qScopeGuard([guard, paneId] {
+            if (guard != nullptr) guard->retiringPaneIds_.remove(paneId);
+        });
         const TabId tabId = tab->id;
         const bool removedActivePane = tab->activePaneId == paneId;
         const PaneId nextActivePaneId = removedActivePane
             ? focusTargetAfterClosing(*tab, paneId)
             : tab->activePaneId;
-        if (tab->zoomedPaneId == paneId) {
-            tab->zoomedPaneId = {};
-        }
-        retiringPaneIds_.insert(paneId);
-        const auto finishRetirement = qScopeGuard([guard, paneId] {
-            if (guard != nullptr) guard->retiringPaneIds_.remove(paneId);
-        });
+        if (tab->zoomedPaneId == paneId) tab->zoomedPaneId = {};
         resolvePendingPaneRemoval({paneId, pane});
         if (guard == nullptr) return;
         removePaneFromNode(tab->root, paneId);
@@ -2093,9 +2138,7 @@ void TerminalWorkspace::closePane(PaneId paneId, bool force)
         if (tab->root == nullptr) {
             removeTab(tabId);
         } else {
-            if (removedActivePane) {
-                tab->activePaneId = nextActivePaneId;
-            }
+            if (removedActivePane) tab->activePaneId = nextActivePaneId;
             if (findNode(tab->root.get(), tab->activePaneId) == nullptr) {
                 tab->activePaneId = firstPaneId(tab->root.get());
             }
@@ -2110,8 +2153,7 @@ void TerminalWorkspace::closePane(PaneId paneId, bool force)
             refreshTab(tabId);
         }
     }
-    if (guard == nullptr) return;
-    reevaluatePendingClose();
+    if (guard != nullptr) reevaluatePendingClose();
 }
 
 bool TerminalWorkspace::removePaneFromNode(std::unique_ptr<Node> &node,
@@ -2184,6 +2226,7 @@ std::vector<TabId> TerminalWorkspace::closeTabTargets(TabId tabId,
 
 void TerminalWorkspace::closeTabs(PendingTabClose close, bool force)
 {
+    if (!std::holds_alternative<std::monostate>(deferredRemoval_)) return;
     QSet<TabId> liveTabIds;
     liveTabIds.reserve(static_cast<qsizetype>(tabs_.size()));
     for (const std::unique_ptr<Tab> &tab : tabs_) liveTabIds.insert(tab->id);
@@ -2234,6 +2277,52 @@ void TerminalWorkspace::removeTab(TabId tabId)
 }
 
 void TerminalWorkspace::removeTabs(PendingTabClose close)
+{
+    if (!std::holds_alternative<std::monostate>(deferredRemoval_)) return;
+
+    std::vector<PaneHandle> panes;
+    for (const TabId tabId : close.targets) {
+        const Tab *const tab = tabById(tabId);
+        if (tab != nullptr && tab->root != nullptr) {
+            tab->root->collectPanes(panes);
+        }
+    }
+    QSet<PaneId> waiting;
+    const QPointer<TerminalWorkspace> guard(this);
+    {
+        const bool previousMutation = std::exchange(topologyMutation_, true);
+        const auto restoreMutation = qScopeGuard([guard, previousMutation] {
+            if (guard != nullptr) guard->topologyMutation_ = previousMutation;
+        });
+        for (const PaneHandle &handle : panes) {
+            retiringPaneIds_.insert(handle.id);
+            resolvePendingPaneRemoval(handle);
+            if (guard == nullptr) return;
+            if (handle.pane == nullptr) continue;
+            handle.pane->beginShutdown();
+            if (guard == nullptr || handle.pane == nullptr) continue;
+            if (handle.pane->beginExitTransition()) {
+                waiting.insert(handle.id);
+                connect(handle.pane, &TerminalPane::exitTransitionFinished,
+                        this, [this, paneId = handle.id] {
+                            finishDeferredPaneTransition(paneId);
+                        });
+                connect(handle.pane, &QObject::destroyed, this,
+                        [this, paneId = handle.id] {
+                            finishDeferredPaneTransition(paneId);
+                        });
+            }
+        }
+        if (!waiting.isEmpty()) {
+            deferredRemoval_ =
+                DeferredTabRemoval{std::move(close), std::move(waiting)};
+            return;
+        }
+    }
+    if (guard != nullptr) commitTabRemoval(std::move(close));
+}
+
+void TerminalWorkspace::commitTabRemoval(PendingTabClose close)
 {
     struct IndexedTarget {
         int index = -1;
@@ -2316,9 +2405,10 @@ void TerminalWorkspace::removeTabs(PendingTabClose close)
         for (const PaneHandle &handle : panes) {
             resolvePendingPaneRemoval(handle);
             if (guard == nullptr) return;
-            handle.pane->beginShutdown();
+            if (handle.pane != nullptr) handle.pane->beginShutdown();
         }
         for (const PaneHandle &handle : panes) {
+            if (handle.pane == nullptr) continue;
             handle.pane->setVisible(false);
             if (guard == nullptr) return;
             handle.pane->deleteLater();
@@ -2390,6 +2480,52 @@ void TerminalWorkspace::removeTabs(PendingTabClose close)
     } else {
         reevaluatePendingClose();
     }
+}
+
+void TerminalWorkspace::finishDeferredPaneTransition(PaneId paneId)
+{
+    if (auto *pane = std::get_if<DeferredPaneRemoval>(&deferredRemoval_)) {
+        if (pane->paneId != paneId) return;
+        const QPointer<TerminalPane> panePointer = pane->pane;
+        deferredRemoval_ = std::monostate{};
+        commitPaneRemoval(paneId, panePointer);
+        return;
+    }
+
+    auto *tabs = std::get_if<DeferredTabRemoval>(&deferredRemoval_);
+    if (tabs == nullptr || !tabs->waitingPaneIds.remove(paneId)
+        || !tabs->waitingPaneIds.isEmpty()) {
+        return;
+    }
+    PendingTabClose close = std::move(tabs->close);
+    deferredRemoval_ = std::monostate{};
+    commitTabRemoval(std::move(close));
+}
+
+void TerminalWorkspace::finishDeferredRemovalNow()
+{
+    if (auto *pane = std::get_if<DeferredPaneRemoval>(&deferredRemoval_)) {
+        const PaneId paneId = pane->paneId;
+        const QPointer<TerminalPane> panePointer = pane->pane;
+        deferredRemoval_ = std::monostate{};
+        commitPaneRemoval(paneId, panePointer);
+        return;
+    }
+    if (auto *tabs = std::get_if<DeferredTabRemoval>(&deferredRemoval_)) {
+        PendingTabClose close = std::move(tabs->close);
+        deferredRemoval_ = std::monostate{};
+        commitTabRemoval(std::move(close));
+    }
+}
+
+void TerminalWorkspace::finishWindowPaneTransition(PaneId paneId)
+{
+    if (!pendingWindowExitPaneIds_.remove(paneId)
+        || !pendingWindowExitPaneIds_.isEmpty()
+        || windowCloseState_ != WindowCloseState::Committed) {
+        return;
+    }
+    QTimer::singleShot(0, this, &TerminalWorkspace::publishWindowCloseApproval);
 }
 
 void TerminalWorkspace::resolvePendingPaneRemoval(PaneHandle handle)
@@ -2630,6 +2766,13 @@ void TerminalWorkspace::requestApplicationQuitConfirmation(
 void TerminalWorkspace::forceShutdownForApplicationQuit()
 {
     if (windowCloseState_ != WindowCloseState::Open) return;
+    if (!std::holds_alternative<std::monostate>(deferredRemoval_)) {
+        const QPointer<TerminalWorkspace> guard(this);
+        finishDeferredRemovalNow();
+        if (guard == nullptr || windowCloseState_ != WindowCloseState::Open) {
+            return;
+        }
+    }
     if (topologyMutation_) {
         if (forceApplicationQuitShutdownScheduled_) return;
         forceApplicationQuitShutdownScheduled_ = true;
@@ -2666,6 +2809,13 @@ void TerminalWorkspace::requestWindowCloseImpl(WindowCloseIntent intent)
             approveApplicationQuit();
         }
         return;
+    }
+    if (!std::holds_alternative<std::monostate>(deferredRemoval_)) {
+        const QPointer<TerminalWorkspace> guard(this);
+        finishDeferredRemovalNow();
+        if (guard == nullptr || windowCloseState_ != WindowCloseState::Open) {
+            return;
+        }
     }
     if (topologyMutation_) {
         if (intent == WindowCloseIntent::QuitApplication) {
@@ -2732,17 +2882,33 @@ void TerminalWorkspace::approveWindowClose()
     // Start every worker shutdown before QObject hierarchy teardown. The
     // per-process grace periods then overlap on their independent threads
     // instead of accumulating serially on the GUI thread.
+    pendingWindowExitPaneIds_.clear();
     for (const std::unique_ptr<Tab> &tab : tabs_) {
         std::vector<PaneHandle> panes;
         tab->root->collectPanes(panes);
         for (const PaneHandle &handle : panes) {
+            if (handle.pane == nullptr) continue;
             handle.pane->beginShutdown();
+            if (handle.pane == nullptr) continue;
+            if (!handle.pane->beginExitTransition()) continue;
+            pendingWindowExitPaneIds_.insert(handle.id);
+            connect(handle.pane, &TerminalPane::exitTransitionFinished, this,
+                    [this, paneId = handle.id] {
+                        finishWindowPaneTransition(paneId);
+                    });
+            connect(handle.pane, &QObject::destroyed, this,
+                    [this, paneId = handle.id] {
+                        finishWindowPaneTransition(paneId);
+                    });
         }
     }
     // Publishing is the externally destructive boundary: a host observer may
     // synchronously destroy the workspace. Leave the current key event and
     // complete configured action chain before crossing it.
-    QTimer::singleShot(0, this, &TerminalWorkspace::publishWindowCloseApproval);
+    if (pendingWindowExitPaneIds_.isEmpty()) {
+        QTimer::singleShot(0, this,
+                           &TerminalWorkspace::publishWindowCloseApproval);
+    }
 }
 
 void TerminalWorkspace::publishWindowCloseApproval()

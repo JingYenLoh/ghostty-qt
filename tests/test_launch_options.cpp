@@ -438,6 +438,12 @@ void LaunchOptionsTest::defaults()
     QVERIFY(options.customShaders.sources.isEmpty());
     QCOMPARE(options.customShaders.animation,
              TerminalCustomShaderAnimation::Focused);
+    QVERIFY(options.customShaders.paneEnterTransitionSources.isEmpty());
+    QVERIFY(options.customShaders.paneExitTransitionSources.isEmpty());
+    QCOMPARE(options.customShaders.paneEnterTransitionDuration,
+             std::chrono::milliseconds::zero());
+    QCOMPARE(options.customShaders.paneExitTransitionDuration,
+             std::chrono::milliseconds::zero());
     QCOMPARE(options.backgroundBlur, qint16{0});
     QCOMPARE(options.padding.horizontal.leadingPoints, quint32(0));
     QCOMPARE(options.padding.horizontal.trailingPoints, quint32(0));
@@ -2024,6 +2030,14 @@ void LaunchOptionsTest::mapsFrontendConfigurationPrecedence()
         .layer = QuickTerminalLayer::Overlay,
         .layerNamespace = QStringLiteral("configured-quick-terminal"),
     };
+    frontend.values.paneEnterTransitionDuration =
+        std::chrono::milliseconds(180);
+    frontend.values.paneExitTransitionDuration = std::chrono::milliseconds(240);
+    frontend.values.paneEnterTransitionShaderPath =
+        QStringLiteral("shaders/enter.glsl");
+    frontend.values.paneExitTransitionShaderPath =
+        QStringLiteral("shaders/exit.glsl");
+    frontend.sourcePath = QStringLiteral("/tmp/ghostty-qt/config");
     frontend.values.singleInstanceMode = SingleInstanceMode::Disabled;
     const LaunchOptions configured =
         resolveLaunchOptions(*parsed, &shared, &frontend);
@@ -2033,6 +2047,20 @@ void LaunchOptionsTest::mapsFrontendConfigurationPrecedence()
     QVERIFY(!configured.horizontalTabScroll);
     QCOMPARE(configured.quickTerminalLayerShell,
              frontend.values.quickTerminalLayerShell);
+    QCOMPARE(configured.customShaders.paneEnterTransitionDuration,
+             std::chrono::milliseconds(180));
+    QCOMPARE(configured.customShaders.paneExitTransitionDuration,
+             std::chrono::milliseconds(240));
+    const QVector<GhosttyConfigPath> expectedEnterShaders{{
+        .path = QStringLiteral("/tmp/ghostty-qt/shaders/enter.glsl"),
+    }};
+    const QVector<GhosttyConfigPath> expectedExitShaders{{
+        .path = QStringLiteral("/tmp/ghostty-qt/shaders/exit.glsl"),
+    }};
+    QCOMPARE(configured.customShaders.paneEnterTransitionSources,
+             expectedEnterShaders);
+    QCOMPARE(configured.customShaders.paneExitTransitionSources,
+             expectedExitShaders);
     QCOMPARE(configured.singleInstanceMode, SingleInstanceMode::Disabled);
 
     const auto explicitCli = parseLaunchOptions({

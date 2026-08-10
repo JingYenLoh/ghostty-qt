@@ -50,6 +50,10 @@ action retains Ghostty's standard-file behavior. See
   WindowSystem. Other compositors ignore it.
 - `custom-shader` requires Qt Quick's OpenGL or Vulkan RHI backend. Unsupported
   backends render the terminal without the effect and publish a diagnostic.
+- Qt-owned pane lifecycle shaders compose after the persistent custom-shader
+  chain and drive pane, tab, and window creation/destruction through
+  `iPaneTransition`; see
+  [Frontend configuration](frontend-configuration.md#pane-lifecycle-shaders).
 - Restoring decorations on an existing Wayland window may use Qt client-side
   framing even if the initial surface had compositor-side decorations.
 

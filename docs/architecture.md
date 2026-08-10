@@ -283,6 +283,16 @@ content and Qt version. Only OpenGL and Vulkan RHI backends are supported.
 Compilation or runtime failures publish configuration diagnostics and restore
 unfiltered rendering.
 
+Qt adds a stable `iPaneTransition` uniform to the generated ShaderToy contract.
+Dedicated enter and exit sources compile as phase-gated stages after Ghostty's
+persistent custom-shader chain: each stage copies its input exactly outside its
+assigned lifecycle phase. Opt-in frontend durations drive finite clocks
+independently of Ghostty's continuous animation policy. Close commits retire
+pane IDs and begin worker shutdown immediately, while visible pane scene roots
+remain attached through the exit clock and one bounded final-frame grace. Pane,
+tab, and whole-window close all use the same path; unsupported or inactive
+rendering fails open to immediate structural removal.
+
 Renderer measurement and qualification are documented in
 [Performance](performance.md).
 

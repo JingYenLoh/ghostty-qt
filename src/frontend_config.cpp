@@ -52,7 +52,11 @@ bool isFrontendKey(QByteArrayView key)
         || key == QByteArrayView("wide-tabs")
         || key == QByteArrayView("horizontal-tab-scroll")
         || key == QByteArrayView("quick-terminal-layer")
-        || key == QByteArrayView("quick-terminal-namespace");
+        || key == QByteArrayView("quick-terminal-namespace")
+        || key == QByteArrayView("pane-enter-transition-shader")
+        || key == QByteArrayView("pane-exit-transition-shader")
+        || key == QByteArrayView("pane-enter-transition-duration")
+        || key == QByteArrayView("pane-exit-transition-duration");
 }
 
 std::optional<SingleInstanceMode> parseSingleInstance(QStringView value)
@@ -96,6 +100,23 @@ std::optional<QuickTerminalLayer> parseQuickTerminalLayer(QStringView value)
         return QuickTerminalLayer::Overlay;
     }
     return std::nullopt;
+}
+
+std::optional<std::chrono::milliseconds>
+parseTransitionDuration(QStringView value)
+{
+    constexpr quint64 maximumMilliseconds = 10'000;
+    if (!value.endsWith(QLatin1StringView("ms"))) return std::nullopt;
+    const QStringView number = value.first(value.size() - 2);
+    if (number.isEmpty() || !std::ranges::all_of(number, [](QChar character) {
+            return character >= u'0' && character <= u'9';
+        })) {
+        return std::nullopt;
+    }
+    bool converted = false;
+    const quint64 milliseconds = number.toULongLong(&converted);
+    if (!converted || milliseconds > maximumMilliseconds) return std::nullopt;
+    return std::chrono::milliseconds(milliseconds);
 }
 
 } // namespace
@@ -236,6 +257,27 @@ parseFrontendConfig(QByteArrayView contents, QStringView sourceName)
             values.quickTerminalLayerShell.layer = *parsed;
         } else if (key == QLatin1StringView("quick-terminal-namespace")) {
             values.quickTerminalLayerShell.layerNamespace = value;
+        } else if (key == QLatin1StringView("pane-enter-transition-shader")) {
+            values.paneEnterTransitionShaderPath = value;
+        } else if (key == QLatin1StringView("pane-exit-transition-shader")) {
+            values.paneExitTransitionShaderPath = value;
+        } else if (key == QLatin1StringView("pane-enter-transition-duration")
+                   || key
+                       == QLatin1StringView("pane-exit-transition-duration")) {
+            const std::optional<std::chrono::milliseconds> parsed =
+                parseTransitionDuration(value);
+            if (!parsed) {
+                return std::unexpected(diagnostic(
+                    sourceName, lineNumber,
+                    QStringLiteral(
+                        "invalid %1 value '%2'; expected 0ms through 10000ms")
+                        .arg(key, value)));
+            }
+            if (key == QLatin1StringView("pane-enter-transition-duration")) {
+                values.paneEnterTransitionDuration = *parsed;
+            } else {
+                values.paneExitTransitionDuration = *parsed;
+            }
         }
         assignedKeys.insert(key);
     }

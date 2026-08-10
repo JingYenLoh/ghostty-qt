@@ -31,7 +31,7 @@ process, while a fresh launch samples the newest value. An explicit
 
 ## Mixed grammar
 
-Each non-comment line is routed by key ownership. The six Qt-owned keys below
+Each non-comment line is routed by key ownership. The ten Qt-owned keys below
 use a strict UTF-8 scalar assignment:
 
 ```text
@@ -72,6 +72,10 @@ wide-tabs = false
 horizontal-tab-scroll = true
 quick-terminal-layer = overlay
 quick-terminal-namespace = ghostty-quick-terminal
+pane-enter-transition-shader = shaders/crt-pane-transition.glsl
+pane-exit-transition-shader = shaders/crt-pane-transition.glsl
+pane-enter-transition-duration = 180ms
+pane-exit-transition-duration = 240ms
 
 # Final Ghostty overrides
 font-size = 13
@@ -89,6 +93,47 @@ background-opacity = 0.95
 | `horizontal-tab-scroll` | `false`, `true` | `true` | When true, precision horizontal scrolling over a terminal surface accumulates toward a 120-pixel gesture and changes one tab per threshold (`left` selects the next tab and `right` the previous); incomplete gestures reset after 500 milliseconds. When false, precision horizontal input is forwarded to the terminal. Discrete horizontal wheel input is always forwarded as buttons 6/7. |
 | `quick-terminal-layer` | `background`, `bottom`, `top`, `overlay` | `top` | Selects the Wayland layer for the LayerShellQt quick terminal. A successful reload changes the retained native layer surface when the compositor supports layer-shell protocol version 2 or newer. |
 | `quick-terminal-namespace` | any non-empty scalar | `ghostty-quick-terminal` | Sets the layer-shell namespace, called `scope` by LayerShellQt. Wayland fixes it when a native layer surface is created, so reload stages the value for a subsequently created or recreated native surface and cannot rename the currently mapped one. |
+| `pane-enter-transition-shader` | shader path | unset | Adds a pane-creation shader after the persistent `custom-shader` chain. Relative paths resolve against the containing configuration file; `~/` expands to the home directory. Outside an enter transition the generated stage is an exact pass-through. |
+| `pane-exit-transition-shader` | shader path | unset | Adds a pane-destruction shader after the persistent `custom-shader` chain. Outside an exit transition the generated stage is an exact pass-through. |
+| `pane-enter-transition-duration` | `0ms` through `10000ms` | `0ms` | Runs the enter shader for a finite pane-creation transition. For compatibility, when no dedicated enter shader is set, the persistent `custom-shader` chain can still consume `iPaneTransition`. Zero keeps immediate presentation. |
+| `pane-exit-transition-duration` | `0ms` through `10000ms` | `0ms` | Defers pane, tab, or window destruction while visible terminal panes run the exit shader. For compatibility, an unset dedicated shader falls back to the persistent chain. Zero keeps immediate destruction. Unsupported backends, missing shaders, hidden panes, and shader failures fail open without delaying close. |
+
+## Pane lifecycle shaders
+
+Every custom shader receives `vec4 iPaneTransition`:
+
+- `x` is normalized progress from 0 to 1;
+- `y` is `1` while entering, `-1` while exiting, and `0` while stable;
+- `z` is elapsed transition time in seconds; and
+- `w` is the configured duration in seconds.
+
+The generated shader preamble also defines `PANETRANSITION_ENTER`,
+`PANETRANSITION_EXIT`, and `PANETRANSITION_STABLE`. Dedicated lifecycle shaders
+are compiled with a phase gate: the enter shader is invoked only while entering
+and the exit shader only while exiting. At all other times each stage copies
+`iChannel0` unchanged. They are ordered after every persistent `custom-shader`,
+so a persistent BetterCRT-style effect feeds the lifecycle effect. Lifecycle
+frames run even when Ghostty's `custom-shader-animation` is `false`; after the
+finite transition the ordinary animation policy applies again.
+
+The source tree includes `examples/shaders/crt-pane-transition.glsl`, and an
+installation places it under `share/ghostty-qt/shaders/`. It is a
+lifecycle-only CRT collapse. Copy it to a stable config path and use:
+
+```text
+custom-shader = ~/.config/ghostty/better-crt.glsl
+custom-shader-animation = false
+pane-enter-transition-shader = ~/.config/ghostty-qt/crt-pane-transition.glsl
+pane-exit-transition-shader = ~/.config/ghostty-qt/crt-pane-transition.glsl
+pane-enter-transition-duration = 180ms
+pane-exit-transition-duration = 240ms
+```
+
+Creation begins once asynchronous shader compilation and the first usable Qt
+Quick render stage are ready. Closing retires the affected pane IDs and stops
+their terminal workers immediately, but keeps their last rendered pixels until
+the exit interval and one final-frame grace have completed. Tab and window
+chrome remain outside the pane shader.
 
 ## Reload and failure behavior
 

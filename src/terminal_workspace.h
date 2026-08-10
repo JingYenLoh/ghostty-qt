@@ -420,6 +420,16 @@ private:
     };
     using PendingClose = std::variant<std::monostate, PendingPaneClose,
                                       PendingTabClose, PendingWindowClose>;
+    struct DeferredPaneRemoval {
+        PaneId paneId;
+        QPointer<TerminalPane> pane;
+    };
+    struct DeferredTabRemoval {
+        PendingTabClose close;
+        QSet<PaneId> waitingPaneIds;
+    };
+    using DeferredRemoval =
+        std::variant<std::monostate, DeferredPaneRemoval, DeferredTabRemoval>;
     enum class PaneActivationReason {
         Direct,
         SplitNavigation,
@@ -489,6 +499,11 @@ private:
     std::vector<TabId> closeTabTargets(TabId tabId, CloseTabMode mode) const;
     void removeTab(TabId tabId);
     void removeTabs(PendingTabClose close);
+    void commitPaneRemoval(PaneId paneId, QPointer<TerminalPane> pane);
+    void commitTabRemoval(PendingTabClose close);
+    void finishDeferredPaneTransition(PaneId paneId);
+    void finishDeferredRemovalNow();
+    void finishWindowPaneTransition(PaneId paneId);
     void refreshTab(TabId tabId);
     void updateSplitMembership(Tab &tab);
     TabListEntry tabListEntry(const Tab &tab) const;
@@ -593,6 +608,8 @@ private:
     bool forceApplicationQuitShutdownScheduled_ = false;
     std::optional<WorkspaceCloseAssessment> applicationQuitAssessment_;
     PendingClose pendingClose_;
+    DeferredRemoval deferredRemoval_;
+    QSet<PaneId> pendingWindowExitPaneIds_;
     quint64 nextCloseConfirmationId_ = 0;
     QVector<PendingPaste> pendingPastes_;
     bool pendingPastePreviewScheduled_ = false;

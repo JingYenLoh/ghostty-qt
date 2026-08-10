@@ -35,6 +35,7 @@ layout(std140, binding = 0) uniform GhosttyQtGlobals {
     vec3 iSelectionForegroundColor;
     vec3 iSelectionBackgroundColor;
     float _ghosttyQtPadding;
+    vec4 iPaneTransition;
 };
 
 out gl_PerVertex {
