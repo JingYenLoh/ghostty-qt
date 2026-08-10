@@ -140,9 +140,10 @@ public:
     Q_ENUM(ToastKind)
 
     static constexpr int MaximumToastQueueDepth = 8;
-    // AdwToast's ordinary timeout is three seconds; keep the Qt presentation
-    // metadata identical instead of relying on a toolkit-specific default.
-    static constexpr std::chrono::milliseconds DefaultToastDuration{3000};
+    // Match Kirigami's short passive-notification timeout. These messages are
+    // brief confirmations without actions, so its ordinary seven-second
+    // timeout would keep them visible longer than necessary.
+    static constexpr std::chrono::milliseconds DefaultToastDuration{4000};
 
     explicit WindowUiController(QObject *parent = nullptr);
 

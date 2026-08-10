@@ -84,6 +84,7 @@ private Q_SLOTS:
     void modalsAreMutuallyExclusive();
     void configurationDiagnosticsDeduplicateAndRetryInPlace();
     void notificationsHaveExactTextAndDuration();
+    void consecutiveDuplicateToastsAreCoalesced();
     void toastExpiryIsExplicitFifo();
     void toastQueueIsBoundedWithoutInterruptingCurrentToast();
     void invalidAndClearedToastsHaveDeterministicState();
@@ -436,18 +437,43 @@ void WindowUiControllerTest::notificationsHaveExactTextAndDuration()
 
     controller.notifyClipboardCopied(false);
     QCOMPARE(controller.toastMessage(), QStringLiteral("Copied to clipboard"));
-    QCOMPARE(controller.toastDurationMilliseconds(), 3000);
+    QCOMPARE(controller.toastDurationMilliseconds(), 4000);
 
     QVERIFY(controller.expireToast());
     controller.notifyClipboardCopied(true);
     QCOMPARE(controller.toastMessage(), QStringLiteral("Cleared clipboard"));
-    QCOMPARE(controller.toastDurationMilliseconds(), 3000);
+    QCOMPARE(controller.toastDurationMilliseconds(), 4000);
 
     QVERIFY(controller.expireToast());
     controller.notifyConfigurationReloaded();
     QCOMPARE(controller.toastMessage(),
              QStringLiteral("Reloaded the configuration"));
-    QCOMPARE(controller.toastDurationMilliseconds(), 3000);
+    QCOMPARE(controller.toastDurationMilliseconds(), 4000);
+}
+
+void WindowUiControllerTest::consecutiveDuplicateToastsAreCoalesced()
+{
+    WindowUiController controller;
+    QSignalSpy toastChanged(&controller, &WindowUiController::toastChanged);
+    QSignalSpy depthChanged(&controller,
+                            &WindowUiController::toastQueueDepthChanged);
+
+    controller.notifyConfigurationReloaded();
+    controller.notifyConfigurationReloaded();
+    QCOMPARE(controller.toastQueueDepth(), 1);
+    QCOMPARE(controller.toastMessage(),
+             QStringLiteral("Reloaded the configuration"));
+    QCOMPARE(toastChanged.count(), 1);
+    QCOMPARE(depthChanged.count(), 1);
+
+    controller.notifyClipboardCopied(false);
+    controller.notifyClipboardCopied(false);
+    QCOMPARE(controller.toastQueueDepth(), 2);
+    QCOMPARE(toastChanged.count(), 1);
+    QCOMPARE(depthChanged.count(), 2);
+
+    QVERIFY(controller.expireToast());
+    QCOMPARE(controller.toastMessage(), QStringLiteral("Copied to clipboard"));
 }
 
 void WindowUiControllerTest::toastExpiryIsExplicitFifo()

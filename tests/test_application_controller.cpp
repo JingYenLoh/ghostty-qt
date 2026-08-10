@@ -360,6 +360,7 @@ private Q_SLOTS:
     void routesCrashActionsByStablePaneAndTypedTarget();
     void configurationFailuresReachExistingAndFutureWindows();
     void configurationDiagnosticsDialogIsScrollableAndExplicit();
+    void toastPresentationExpiresQueuedItems();
     void chromeToolButtonUsesWindowTextForFlatIcon();
     void remoteNewWindowOverridesOnlyItsFirstSurface();
     void paletteTargetsEveryLiveSurfaceByCompositeIdentity();
@@ -1042,6 +1043,58 @@ void ApplicationControllerTest::
     QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, ignorePosition);
     QTRY_VERIFY_WITH_TIMEOUT(!dialog->property("visible").toBool(), 1000);
     QVERIFY(!ui.configurationDiagnosticsVisible());
+}
+
+void ApplicationControllerTest::toastPresentationExpiresQueuedItems()
+{
+    WindowUiController ui;
+    const QString toastPath = QFINDTESTDATA("../qml/AppToast.qml");
+    QVERIFY(!toastPath.isEmpty());
+    const QFileInfo toastInfo(toastPath);
+
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(
+        QByteArrayLiteral("import QtQuick\n"
+                          "import \".\" as Local\n"
+                          "Item {\n"
+                          "    required property var uiController\n"
+                          "    width: 400\n"
+                          "    height: 200\n"
+                          "    Local.AppToast {\n"
+                          "        uiController: parent.uiController\n"
+                          "    }\n"
+                          "}\n"),
+        QUrl::fromLocalFile(
+            QDir(toastInfo.absolutePath())
+                .filePath(QStringLiteral("AppToastHarness.qml"))));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({
+        {QStringLiteral("uiController"),
+         QVariant::fromValue(static_cast<QObject *>(&ui))},
+    }));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+
+    auto *const toast = root->findChild<QQuickItem *>(
+        QStringLiteral("applicationToast"));
+    QVERIFY(toast != nullptr);
+    QVERIFY(!toast->isVisible());
+
+    QSignalSpy toastChanged(&ui, &WindowUiController::toastChanged);
+    ui.enqueueToast(QStringLiteral("first"),
+                    std::chrono::milliseconds{100});
+    ui.enqueueToast(QStringLiteral("second"),
+                    std::chrono::milliseconds{100});
+    QCOMPARE(ui.toastQueueDepth(), 2);
+    QVERIFY(toast->isVisible());
+
+    QTRY_COMPARE_WITH_TIMEOUT(toastChanged.count(), 2, 1000);
+    QCOMPARE(ui.toastMessage(), QStringLiteral("second"));
+    QVERIFY(toast->isVisible());
+
+    QTRY_COMPARE_WITH_TIMEOUT(toastChanged.count(), 3, 1000);
+    QCOMPARE(ui.toastQueueDepth(), 0);
+    QVERIFY(!toast->isVisible());
 }
 
 void ApplicationControllerTest::chromeToolButtonUsesWindowTextForFlatIcon()

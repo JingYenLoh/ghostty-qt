@@ -322,7 +322,7 @@
         "app-notifications": {
           "status": "supported",
           "scope": "qt_mapping",
-          "note": "The exact clipboard-copy and config-reload flags drive a bounded FIFO toast queue owned independently by every Qt window. Successful standard-clipboard text and MIME commits distinguish copied from cleared content, while primary-only writes remain silent; successful post-startup configuration generations notify every retained window. Both policies reload live without recreating windows or panes, and the input-transparent presentation restarts its three-second timer for each queued item. This remains separate from native desktop notifications."
+          "note": "The exact clipboard-copy and config-reload flags drive a bounded FIFO toast queue owned independently by every Qt window. Successful standard-clipboard text and MIME commits distinguish copied from cleared content, while primary-only writes remain silent; successful post-startup configuration generations notify every retained window. Both policies reload live without recreating windows or panes. Consecutive identical notifications coalesce so independently published configuration domains do not make one acknowledgement appear persistent, and the input-transparent presentation restarts its KDE-aligned four-second short timeout for each distinct queued item. This remains separate from native desktop notifications."
         },
         "async-backend": {
           "status": "not_applicable",

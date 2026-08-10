@@ -430,6 +430,16 @@ void WindowUiController::enqueueToast(QString message,
         return;
     }
 
+    // A single reload_config action publishes the shared and frontend
+    // configuration domains independently. Collapse consecutive identical
+    // publications so their indistinguishable presentations do not look like
+    // one toast whose timeout never expires. The same rule also bounds bursts
+    // of repeated clipboard confirmations without reordering distinct events.
+    if (!toasts_.empty() && toasts_.back().message == message
+        && toasts_.back().duration == duration) {
+        return;
+    }
+
     const bool wasEmpty = toasts_.empty();
     const std::size_t previousDepth = toasts_.size();
     if (toasts_.size() == static_cast<std::size_t>(MaximumToastQueueDepth)) {
