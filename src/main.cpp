@@ -1424,6 +1424,63 @@ bool verifyTabButtonWidths(QObject *tabBar, bool wide, const char *stage)
     return false;
 }
 
+bool verifyTabBarContentEdge(QObject *rootObject, QObject *tabBar,
+                             bool expectedBottom, const char *stage)
+{
+    auto *const tabBarItem = qobject_cast<QQuickItem *>(tabBar);
+    auto *const toolbar = rootObject->findChild<QQuickItem *>(
+        QStringLiteral("windowToolbar"));
+    QQuickItem *firstButton = nullptr;
+    const auto findFirstButton = [&firstButton](const auto &find,
+                                                QQuickItem *item) -> void {
+        if (item == nullptr || firstButton != nullptr) return;
+        if (item->objectName() == QLatin1StringView("windowTabButton")) {
+            firstButton = item;
+            return;
+        }
+        for (QQuickItem *const child : item->childItems()) find(find, child);
+    };
+    findFirstButton(findFirstButton, tabBarItem);
+    if (tabBarItem == nullptr || toolbar == nullptr || firstButton == nullptr) {
+        std::fprintf(stderr,
+                     "Tab-edge test hook could not find geometry at %s\n",
+                     stage);
+        QCoreApplication::exit(1);
+        return false;
+    }
+
+    const QPointF barOrigin = tabBarItem->mapToItem(toolbar, QPointF{});
+    const QPointF buttonOrigin = firstButton->mapToItem(toolbar, QPointF{});
+    const qreal barGap = expectedBottom
+        ? barOrigin.y()
+        : toolbar->height() - barOrigin.y() - tabBarItem->height();
+    const qreal buttonGap = expectedBottom
+        ? buttonOrigin.y()
+        : toolbar->height() - buttonOrigin.y() - firstButton->height();
+    const int expectedPosition = expectedBottom ? 1 : 0;
+    const bool valid = tabBarItem->isVisible()
+        && tabBar->property("position").toInt() == expectedPosition
+        && qAbs(toolbar->property("topPadding").toReal()) <= 0.01
+        && qAbs(toolbar->property("bottomPadding").toReal()) <= 0.01
+        && qAbs(tabBarItem->height() - firstButton->implicitHeight()) <= 1.0
+        && qAbs(barGap) <= 1.0 && qAbs(buttonGap) <= 1.0;
+    if (valid) return true;
+
+    std::fprintf(stderr,
+                 "Tab-edge test hook found padding at %s: bottom=%d "
+                 "toolbar=%g tab=%g,%g button=%g,%g implicit=%g "
+                 "bar-gap=%g button-gap=%g top-padding=%g "
+                 "bottom-padding=%g position=%d\n",
+                 stage, expectedBottom, toolbar->height(), barOrigin.y(),
+                 tabBarItem->height(), buttonOrigin.y(), firstButton->height(),
+                 firstButton->implicitHeight(), barGap, buttonGap,
+                 toolbar->property("topPadding").toReal(),
+                 toolbar->property("bottomPadding").toReal(),
+                 tabBar->property("position").toInt());
+    QCoreApplication::exit(1);
+    return false;
+}
+
 bool verifyToolbarActionGeometry(QObject *rootObject, QObject *toolbar,
                                  const char *stage)
 {
@@ -1576,6 +1633,8 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
                         return;
                     }
                     if (!workspace->wideTabs()
+                        || !verifyTabBarContentEdge(
+                            rootObject, tabBar, false, "wide top tabs")
                         || !verifyTabButtonWidths(tabBar, true, "wide tabs")
                         || !verifyToolbarActionGeometry(
                             rootObject, windowToolbar,
@@ -1691,13 +1750,21 @@ bool installTabsLocationTestHook(QQuickWindow *window,
         window->findChild<QQuickItem *>(QStringLiteral("topToolbarSlot"));
     auto *const bottomSlot =
         window->findChild<QQuickItem *>(QStringLiteral("bottomToolbarSlot"));
-    if (toolbar == nullptr || topSlot == nullptr || bottomSlot == nullptr) {
+    QObject *const tabBar =
+        window->findChild<QObject *>(QStringLiteral("windowTabBar"));
+    if (toolbar == nullptr || topSlot == nullptr || bottomSlot == nullptr
+        || tabBar == nullptr) {
         qCritical()
             << "Tabs-location test hook could not find the QML toolbar slots";
         return false;
     }
 
-    const auto exercise = [window, workspace, toolbar, topSlot, bottomSlot] {
+    LaunchOptions visibleTabs = workspace->effectiveLaunchOptions();
+    visibleTabs.windowShowTabBar = WindowShowTabBar::Always;
+    workspace->applyLaunchOptions(visibleTabs);
+
+    const auto exercise =
+        [window, workspace, toolbar, topSlot, bottomSlot, tabBar] {
         if (workspace->findChildren<TerminalPane *>().size() != 1) {
             qCritical()
                 << "Tabs-location test hook did not start with one terminal pane";
@@ -1723,11 +1790,14 @@ bool installTabsLocationTestHook(QQuickWindow *window,
                          workspace, [locationSignals] { ++*locationSignals; });
 
         const auto verify = [window, workspace, toolbar, topSlot, bottomSlot,
-                             panes, locationSignals, windowSize, nativeWindowId,
-                             contentItem, chromeHeight](bool expectedBottom,
-                                                        int expectedSignals,
-                                                        const char *stage) {
-            if (!verifyToolbarActionGeometry(window, toolbar, stage)) {
+                             tabBar, panes, locationSignals, windowSize,
+                             nativeWindowId, contentItem,
+                             chromeHeight](bool expectedBottom,
+                                           int expectedSignals,
+                                           const char *stage) {
+            if (!verifyToolbarActionGeometry(window, toolbar, stage)
+                || !verifyTabBarContentEdge(window, tabBar, expectedBottom,
+                                            stage)) {
                 return false;
             }
             QQuickItem *const expectedParent =

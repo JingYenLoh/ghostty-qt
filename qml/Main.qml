@@ -323,17 +323,19 @@ ApplicationWindow {
                   ? ToolBar.Footer
                   : ToolBar.Header
         font.family: workspace.titleFontFamily
+        // This is a mutable tab strip with adjacent actions, not a standalone
+        // padded toolbar. KDE places mutable tabs directly against their
+        // content view; the controls provide their own vertical hit targets.
+        topPadding: 0
+        bottomPadding: 0
         contentItem: RowLayout {
             id: toolbarLayout
             objectName: "windowToolbarLayout"
             spacing: 4
 
-            // KDE's TabBar dereferences contentModel.get(0) while Repeater
-            // delegates are replaced. Use Qt's safe container while retaining
-            // the active desktop style for the TabButton delegates.
-            Basic.TabBar {
-                id: tabs
-                objectName: "windowTabBar"
+            Item {
+                id: tabBarSlot
+                visible: workspace.tabBarVisible
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 // Keep layout negotiation independent from delegate widths.
@@ -342,14 +344,39 @@ ApplicationWindow {
                 Layout.minimumWidth: 0
                 Layout.preferredWidth: 0
                 implicitWidth: 0
-                visible: workspace.tabBarVisible
-                currentIndex: workspace.currentIndex
 
-                Repeater {
-                    model: workspace.tabModel
-                    delegate: workspace.wideTabs
-                              ? wideTabButtonFactory
-                              : compactTabButtonFactory
+                // KDE's TabBar dereferences contentModel.get(0) while Repeater
+                // delegates are replaced. Use Qt's safe container while
+                // retaining the desktop-styled TabButton delegates. Keep the
+                // natural tab height against the content-facing edge; putting
+                // the Basic container itself in RowLayout makes live top/bottom
+                // alignment depend on stale layout-cache state.
+                Basic.TabBar {
+                    id: tabs
+                    objectName: "windowTabBar"
+                    width: parent.width
+                    height: implicitHeight
+                    y: workspace.tabBarAtBottom
+                       ? 0
+                       : parent.height - height
+                    readonly property Item firstTabButton:
+                        count > 0 ? itemAt(0) : null
+                    implicitHeight: firstTabButton !== null
+                                    ? firstTabButton.implicitHeight
+                                      + topPadding + bottomPadding
+                                    : 0
+                    visible: workspace.tabBarVisible
+                    currentIndex: workspace.currentIndex
+                    position: workspace.tabBarAtBottom
+                              ? TabBar.Footer
+                              : TabBar.Header
+
+                    Repeater {
+                        model: workspace.tabModel
+                        delegate: workspace.wideTabs
+                                  ? wideTabButtonFactory
+                                  : compactTabButtonFactory
+                    }
                 }
             }
 
