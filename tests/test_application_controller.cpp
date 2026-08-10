@@ -20,6 +20,7 @@
 #include <QPointer>
 #include <QQmlComponent>
 #include <QQmlEngine>
+#include <QQmlProperty>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QScopeGuard>
@@ -359,6 +360,7 @@ private Q_SLOTS:
     void routesCrashActionsByStablePaneAndTypedTarget();
     void configurationFailuresReachExistingAndFutureWindows();
     void configurationDiagnosticsDialogIsScrollableAndExplicit();
+    void chromeToolButtonUsesWindowTextForFlatIcon();
     void remoteNewWindowOverridesOnlyItsFirstSurface();
     void paletteTargetsEveryLiveSurfaceByCompositeIdentity();
     void paletteTargetFocusMayDestroyApplicationController();
@@ -1040,6 +1042,46 @@ void ApplicationControllerTest::
     QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, ignorePosition);
     QTRY_VERIFY_WITH_TIMEOUT(!dialog->property("visible").toBool(), 1000);
     QVERIFY(!ui.configurationDiagnosticsVisible());
+}
+
+void ApplicationControllerTest::chromeToolButtonUsesWindowTextForFlatIcon()
+{
+    const QString buttonPath =
+        QFINDTESTDATA("../qml/ChromeToolButton.qml");
+    QVERIFY(!buttonPath.isEmpty());
+    const QFileInfo buttonInfo(buttonPath);
+
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(
+        QByteArrayLiteral("import QtQuick\n"
+                          "import QtQuick.Controls\n"
+                          "import \".\" as Local\n"
+                          "ApplicationWindow {\n"
+                          "    Local.ChromeToolButton {\n"
+                          "        objectName: \"chromeToolButton\"\n"
+                          "        accessibleName: \"Test action\"\n"
+                          "        flat: true\n"
+                          "        palette.windowText: \"#102030\"\n"
+                          "        palette.buttonText: \"#f0e0d0\"\n"
+                          "        icon.source: Qt.resolvedUrl(\n"
+                          "            \"icons/tab-new.svg\")\n"
+                          "    }\n"
+                          "}\n"),
+        QUrl::fromLocalFile(
+            QDir(buttonInfo.absolutePath())
+                .filePath(QStringLiteral("ChromeToolButtonHarness.qml"))));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.create());
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+
+    QObject *const button = root->findChild<QObject *>(
+        QStringLiteral("chromeToolButton"));
+    QVERIFY(button != nullptr);
+    QVERIFY(button->property("flat").toBool());
+    const QColor iconColor =
+        QQmlProperty(button, QStringLiteral("icon.color")).read().value<QColor>();
+    QCOMPARE(iconColor, QColor(QStringLiteral("#102030")));
 }
 
 void ApplicationControllerTest::remoteNewWindowOverridesOnlyItsFirstSurface()

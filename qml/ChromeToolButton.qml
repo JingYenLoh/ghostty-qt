@@ -18,7 +18,11 @@ ToolButton {
 
     icon.width: 16
     icon.height: 16
-    icon.color: palette.buttonText
+    // Flat tool buttons are painted directly over the surrounding Window
+    // surface. Keep monochrome theme icons and bundled fallbacks on that
+    // surface's foreground role; ButtonText may legitimately target a
+    // contrasting, non-flat Button background instead.
+    icon.color: root.flat ? palette.windowText : palette.buttonText
 
     Layout.fillWidth: false
     Layout.fillHeight: false
