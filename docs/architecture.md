@@ -141,6 +141,15 @@ A `QSocketNotifier` drives output reads. One activation:
 4. schedules a coalesced frame publication;
 5. yields after a bounded amount of work so control requests can run.
 
+An experimental Linux-only backend can replace PTY readability notifications
+with an io_uring multishot read while retaining this worker-thread and parser
+ownership. It exposes provided buffers to libghostty only for the duration of
+the completion callback, uses a registered `eventfd` to rejoin Qt's event
+dispatcher, and falls back to the notifier backend if setup or a live request
+is unsupported. The experiment is build-time and runtime opt-in; the notifier
+path remains the architectural default. See `docs/performance.md` for its
+buffer bounds, kernel requirements, benchmark contract, and measured tradeoffs.
+
 Ordinary activations process at most 1 MiB and continue on the event loop when
 more data remains. Final shutdown uses a larger bounded drain to retain output
 written immediately before child exit. The frame timer coalesces bursts over

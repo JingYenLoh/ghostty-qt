@@ -45,6 +45,7 @@
 #include <pthread.h>
 #include <pty.h>
 #include <signal.h>
+#include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -53,6 +54,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#if GHOSTTY_QT_HAS_IO_URING
+#include <liburing.h>
+#endif
+
 namespace {
 
 constexpr qsizetype kReadBufferSize = 64 * 1024;
@@ -60,6 +65,17 @@ constexpr qsizetype kPtyReadBatchSize = 4 * 1024;
 constexpr qsizetype kImmediatePtyParseReadSize = 1024;
 constexpr qsizetype kMaximumReadPerActivation = 1024 * 1024;
 constexpr qsizetype kMaximumFinalRead = 8 * 1024 * 1024;
+#if GHOSTTY_QT_HAS_IO_URING
+constexpr unsigned kIoUringQueueEntries = 8;
+// Buffer IDs, rather than their byte capacity, bound fragmented multishot
+// bursts. This tuned 512 KiB pool preserves producer coalescing and gives Qt a
+// fairness point after at most 32 completions without SQPOLL or another thread.
+constexpr unsigned kIoUringBufferEntries = 32;
+constexpr unsigned kIoUringBufferSize = 16 * 1024;
+constexpr int kIoUringBufferGroup = 1;
+constexpr quint64 kIoUringReadUserData = 1;
+constexpr quint64 kIoUringCancelUserData = 2;
+#endif
 constexpr int kFrameCoalesceMilliseconds = 8;
 constexpr int kCompressionIdleMilliseconds = 250;
 constexpr int kCompressionStepMilliseconds = 1;
@@ -892,6 +908,43 @@ struct SessionWorker::TerminalFileState {
     quint64 nextSequence = 1;
 };
 
+struct SessionWorker::PtyIoUringState {
+#if GHOSTTY_QT_HAS_IO_URING
+    io_uring ring{};
+    io_uring_buf_ring *bufferRing = nullptr;
+    QByteArray buffers;
+    QSocketNotifier *completionNotifier = nullptr;
+    int completionFd = -1;
+    bool ringInitialized = false;
+    bool eventFdRegistered = false;
+    bool requestActive = false;
+    bool stopping = false;
+    bool cancelSeen = false;
+    bool endOfFile = false;
+    bool fallbackNeeded = false;
+    QByteArray parserBatch;
+
+    ~PtyIoUringState()
+    {
+        delete completionNotifier;
+        if (ringInitialized && bufferRing != nullptr) {
+            (void)io_uring_free_buf_ring(&ring, bufferRing,
+                                         kIoUringBufferEntries,
+                                         kIoUringBufferGroup);
+        }
+        if (ringInitialized && eventFdRegistered) {
+            (void)io_uring_unregister_eventfd(&ring);
+        }
+        if (ringInitialized) {
+            io_uring_queue_exit(&ring);
+        }
+        if (completionFd >= 0) {
+            (void)::close(completionFd);
+        }
+    }
+#endif
+};
+
 SessionWorker::SessionWorker(QObject *parent)
     : SessionWorker(
           [](qint64 pid, const LinuxCgroupConfig &config,
@@ -989,6 +1042,11 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
                            .compare(QStringLiteral("legacy"),
                                     Qt::CaseInsensitive)
         != 0;
+    useIoUringReads_ = qEnvironmentVariable("GHOSTTY_QT_PTY_IO")
+                           .trimmed()
+                           .compare(QStringLiteral("io_uring"),
+                                    Qt::CaseInsensitive)
+        == 0;
     ioMetrics_ = {};
     cursorBlinkResetTimer_.invalidate();
     cursorBlinkResetPending_ = false;
@@ -1719,9 +1777,9 @@ bool SessionWorker::spawnChild()
         ::fcntl(masterFd_, F_SETFD, descriptorFlags | FD_CLOEXEC);
     }
 
-    readNotifier_ = new QSocketNotifier(masterFd_, QSocketNotifier::Read, this);
-    connect(readNotifier_, &QSocketNotifier::activated, this,
-            &SessionWorker::readFromPty);
+    if (!useIoUringReads_ || !startIoUringPtyReads()) {
+        installPtyReadNotifier();
+    }
     writeNotifier_ =
         new QSocketNotifier(masterFd_, QSocketNotifier::Write, this);
     writeNotifier_->setEnabled(false);
@@ -1781,6 +1839,286 @@ void SessionWorker::resizeTerminal(const TerminalSessionGeometry &geometry)
     }
 }
 
+void SessionWorker::installPtyReadNotifier()
+{
+    if (readNotifier_ != nullptr || masterFd_ < 0) return;
+    readNotifier_ = new QSocketNotifier(masterFd_, QSocketNotifier::Read, this);
+    readNotifier_->setObjectName(QStringLiteral("ptyReadNotifier"));
+    connect(readNotifier_, &QSocketNotifier::activated, this,
+            &SessionWorker::readFromPty);
+}
+
+bool SessionWorker::startIoUringPtyReads()
+{
+    ++ioMetrics_.ioUringSetupAttempts;
+#if GHOSTTY_QT_HAS_IO_URING
+    auto state = std::make_unique<PtyIoUringState>();
+    io_uring_params params{};
+    params.flags = IORING_SETUP_CQSIZE;
+    params.cq_entries = kIoUringBufferEntries * 2;
+    const int setup = io_uring_queue_init_params(
+        kIoUringQueueEntries, &state->ring, &params);
+    if (setup < 0) {
+        ++ioMetrics_.ioUringFallbacks;
+        return false;
+    }
+    state->ringInitialized = true;
+    if (!(params.features & IORING_FEAT_FAST_POLL)) {
+        ++ioMetrics_.ioUringFallbacks;
+        return false;
+    }
+
+    state->completionFd = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (state->completionFd < 0
+        || io_uring_register_eventfd(&state->ring, state->completionFd) < 0) {
+        ++ioMetrics_.ioUringFallbacks;
+        return false;
+    }
+    state->eventFdRegistered = true;
+
+    int bufferRingError = 0;
+    state->bufferRing = io_uring_setup_buf_ring(
+        &state->ring, kIoUringBufferEntries, kIoUringBufferGroup, 0,
+        &bufferRingError);
+    if (state->bufferRing == nullptr) {
+        ++ioMetrics_.ioUringFallbacks;
+        return false;
+    }
+    state->buffers = QByteArray(
+        static_cast<qsizetype>(kIoUringBufferEntries * kIoUringBufferSize),
+        Qt::Uninitialized);
+    const int mask = io_uring_buf_ring_mask(kIoUringBufferEntries);
+    for (unsigned index = 0; index < kIoUringBufferEntries; ++index) {
+        io_uring_buf_ring_add(
+            state->bufferRing,
+            state->buffers.data()
+                + static_cast<qsizetype>(index * kIoUringBufferSize),
+            kIoUringBufferSize, static_cast<unsigned short>(index), mask,
+            static_cast<int>(index));
+    }
+    io_uring_buf_ring_advance(state->bufferRing, kIoUringBufferEntries);
+    state->parserBatch.reserve(kPtyReadBatchSize);
+    ptyIoUringState_ = std::move(state);
+    if (!submitIoUringRead()) {
+        ptyIoUringState_.reset();
+        ++ioMetrics_.ioUringFallbacks;
+        return false;
+    }
+
+    PtyIoUringState *const activeState = ptyIoUringState_.get();
+    activeState->completionNotifier = new QSocketNotifier(
+        activeState->completionFd, QSocketNotifier::Read, this);
+    activeState->completionNotifier->setObjectName(
+        QStringLiteral("ptyIoUringCompletionNotifier"));
+    connect(activeState->completionNotifier, &QSocketNotifier::activated, this,
+            &SessionWorker::processIoUringCompletions);
+    ++ioMetrics_.ioUringSetups;
+    return true;
+#else
+    ++ioMetrics_.ioUringFallbacks;
+    return false;
+#endif
+}
+
+bool SessionWorker::submitIoUringRead()
+{
+#if GHOSTTY_QT_HAS_IO_URING
+    if (ptyIoUringState_ == nullptr || masterFd_ < 0) return false;
+    io_uring_sqe *const submission =
+        io_uring_get_sqe(&ptyIoUringState_->ring);
+    if (submission == nullptr) return false;
+    io_uring_prep_read_multishot(submission, masterFd_, 0, 0,
+                                 kIoUringBufferGroup);
+    io_uring_sqe_set_data64(submission, kIoUringReadUserData);
+    ++ioMetrics_.ioUringSubmitCalls;
+    const int submitted = io_uring_submit(&ptyIoUringState_->ring);
+    if (submitted != 1) return false;
+    ptyIoUringState_->requestActive = true;
+    return true;
+#else
+    return false;
+#endif
+}
+
+void SessionWorker::submitPtyBytes(QByteArrayView data)
+{
+    if (data.isEmpty() || vt_ == nullptr) return;
+    vt_->writeVt(data);
+    ++ioMetrics_.parserSubmissions;
+    ioMetrics_.parserBytes += static_cast<quint64>(data.size());
+    ioMetrics_.maximumParserBatchBytes = std::max(
+        ioMetrics_.maximumParserBatchBytes,
+        static_cast<quint64>(data.size()));
+}
+
+void SessionWorker::finishPtyReadActivation(bool receivedData)
+{
+    if (!receivedData) return;
+    markTerminalContentChanged();
+    markSearchContentChanged();
+    // VT input may change mouse tracking or encoding modes. Synchronize once
+    // per output batch without resetting motion deduplication for every event.
+    syncMouseEncoder();
+    syncKeyboardActionMode();
+    syncSelectionAvailability();
+    processDeferredEffects();
+    noteCompressionActivity();
+    updateProcessActivity();
+    if (!cursorBlinkResetTimer_.isValid()
+        || cursorBlinkResetTimer_.elapsed()
+            > kCursorBlinkResetThrottleMilliseconds) {
+        cursorBlinkResetTimer_.restart();
+        cursorBlinkResetPending_ = true;
+    }
+    scheduleFrame();
+}
+
+void SessionWorker::processIoUringCompletions()
+{
+#if GHOSTTY_QT_HAS_IO_URING
+    PtyIoUringState *const state = ptyIoUringState_.get();
+    if (state == nullptr) return;
+
+    uint64_t eventCount = 0;
+    while (::read(state->completionFd, &eventCount, sizeof(eventCount))
+           == static_cast<ssize_t>(sizeof(eventCount))) {}
+
+    bool receivedData = false;
+    bool sawCompletion = false;
+    const auto flushParserBatch = [this, state] {
+        if (state->parserBatch.isEmpty()) return;
+        submitPtyBytes(state->parserBatch);
+        state->parserBatch.clear();
+    };
+    while (true) {
+        io_uring_cqe *completion = nullptr;
+        if (io_uring_peek_cqe(&state->ring, &completion) != 0
+            || completion == nullptr) {
+            break;
+        }
+        sawCompletion = true;
+        const quint64 userData = io_uring_cqe_get_data64(completion);
+        if (userData == kIoUringCancelUserData) {
+            state->cancelSeen = true;
+        } else if (userData != kIoUringReadUserData) {
+            state->fallbackNeeded = true;
+        } else {
+            if (!(completion->flags & IORING_CQE_F_MORE)) {
+                state->requestActive = false;
+            }
+            if (completion->res > 0
+                && (completion->flags & IORING_CQE_F_BUFFER)) {
+                const unsigned bufferId = completion->flags
+                    >> IORING_CQE_BUFFER_SHIFT;
+                if (bufferId >= kIoUringBufferEntries) {
+                    state->fallbackNeeded = true;
+                } else {
+                    const qsizetype size =
+                        static_cast<qsizetype>(completion->res);
+                    const qsizetype offset = static_cast<qsizetype>(
+                        bufferId * kIoUringBufferSize);
+                    const char *const data =
+                        state->buffers.constData() + offset;
+                    ++ioMetrics_.ioUringReadCompletions;
+                    ioMetrics_.readBytes += static_cast<quint64>(size);
+                    receivedData = true;
+                    if (!batchPtyReads_
+                        || size >= kImmediatePtyParseReadSize) {
+                        flushParserBatch();
+                        submitPtyBytes(QByteArrayView(data, size));
+                    } else {
+                        if (state->parserBatch.size() + size
+                            > kPtyReadBatchSize) {
+                            flushParserBatch();
+                        }
+                        state->parserBatch.append(data, size);
+                        if (state->parserBatch.size()
+                            >= kPtyReadBatchSize) {
+                            flushParserBatch();
+                        }
+                    }
+                    io_uring_buf_ring_add(
+                        state->bufferRing, state->buffers.data() + offset,
+                        kIoUringBufferSize,
+                        static_cast<unsigned short>(bufferId),
+                        io_uring_buf_ring_mask(kIoUringBufferEntries), 0);
+                    io_uring_buf_ring_advance(state->bufferRing, 1);
+                }
+            } else if (completion->res == -ENOBUFS) {
+                ++ioMetrics_.ioUringBufferExhaustions;
+            } else if (completion->res == 0 || completion->res == -EIO) {
+                state->endOfFile = true;
+                state->requestActive = false;
+            } else if (completion->res != -ECANCELED || !state->stopping) {
+                state->fallbackNeeded = true;
+            }
+        }
+        io_uring_cqe_seen(&state->ring, completion);
+    }
+    flushParserBatch();
+    if (sawCompletion) {
+        ++ioMetrics_.readActivations;
+        ++ioMetrics_.ioUringCompletionActivations;
+    }
+    finishPtyReadActivation(receivedData);
+
+    if (state->stopping || state->endOfFile) return;
+    if (state->fallbackNeeded) {
+        ++ioMetrics_.ioUringFallbacks;
+        stopIoUringPtyReads();
+        installPtyReadNotifier();
+        return;
+    }
+    if (!state->requestActive && masterFd_ >= 0
+        && !submitIoUringRead()) {
+        ++ioMetrics_.ioUringFallbacks;
+        stopIoUringPtyReads();
+        installPtyReadNotifier();
+    }
+#endif
+}
+
+void SessionWorker::stopIoUringPtyReads()
+{
+#if GHOSTTY_QT_HAS_IO_URING
+    PtyIoUringState *const state = ptyIoUringState_.get();
+    if (state == nullptr) return;
+    state->stopping = true;
+    if (state->completionNotifier != nullptr) {
+        state->completionNotifier->setEnabled(false);
+    }
+    processIoUringCompletions();
+    if (state->requestActive) {
+        io_uring_sqe *const cancellation = io_uring_get_sqe(&state->ring);
+        if (cancellation != nullptr) {
+            io_uring_prep_cancel64(cancellation, kIoUringReadUserData, 0);
+            io_uring_sqe_set_data64(cancellation, kIoUringCancelUserData);
+            ++ioMetrics_.ioUringSubmitCalls;
+            if (io_uring_submit(&state->ring) >= 0) {
+                for (int wait = 0;
+                     wait < 8 && (!state->cancelSeen
+                                  || state->requestActive);
+                     ++wait) {
+                    io_uring_cqe *completion = nullptr;
+                    __kernel_timespec timeout{
+                        .tv_sec = 0,
+                        .tv_nsec = 100'000'000,
+                    };
+                    if (io_uring_wait_cqe_timeout(
+                            &state->ring, &completion, &timeout)
+                        < 0) {
+                        break;
+                    }
+                    processIoUringCompletions();
+                }
+            }
+        }
+    }
+    processIoUringCompletions();
+    ptyIoUringState_.reset();
+#endif
+}
+
 void SessionWorker::readFromPty()
 {
     drainPty(false);
@@ -1788,6 +2126,10 @@ void SessionWorker::readFromPty()
 
 void SessionWorker::drainPty(bool finalDrain)
 {
+    if (ptyIoUringState_ != nullptr) {
+        if (!finalDrain) return;
+        stopIoUringPtyReads();
+    }
     if (masterFd_ < 0 || vt_ == nullptr) {
         return;
     }
@@ -1803,13 +2145,8 @@ void SessionWorker::drainPty(bool finalDrain)
     ++ioMetrics_.readActivations;
     const auto submitBatch = [&] {
         if (batchSize <= 0) return;
-        vt_->writeVt(QByteArrayView(
+        submitPtyBytes(QByteArrayView(
             reinterpret_cast<const char *>(buffer.data()), batchSize));
-        ++ioMetrics_.parserSubmissions;
-        ioMetrics_.parserBytes += static_cast<quint64>(batchSize);
-        ioMetrics_.maximumParserBatchBytes = std::max(
-            ioMetrics_.maximumParserBatchBytes,
-            static_cast<quint64>(batchSize));
         batchSize = 0;
     };
 
@@ -1870,30 +2207,7 @@ void SessionWorker::drainPty(bool finalDrain)
     }
     submitBatch();
 
-    if (receivedData) {
-        markTerminalContentChanged();
-        markSearchContentChanged();
-        // VT input may change mouse tracking or encoding modes. Synchronize
-        // once per output batch without resetting motion deduplication for
-        // every individual pointer event.
-        syncMouseEncoder();
-        syncKeyboardActionMode();
-        syncSelectionAvailability();
-        processDeferredEffects();
-        noteCompressionActivity();
-        // OSC 133 prompt markers can classify shell builtins that never
-        // create a new foreground process group. Re-evaluate immediately
-        // after the complete output batch so a returned prompt clears the
-        // close-confirmation state without waiting for the polling timer.
-        updateProcessActivity();
-        if (!cursorBlinkResetTimer_.isValid()
-            || cursorBlinkResetTimer_.elapsed()
-                > kCursorBlinkResetThrottleMilliseconds) {
-            cursorBlinkResetTimer_.restart();
-            cursorBlinkResetPending_ = true;
-        }
-        scheduleFrame();
-    }
+    finishPtyReadActivation(receivedData);
     if (!finalDrain && totalRead >= kMaximumReadPerActivation) {
         ++ioMetrics_.continuationActivations;
         QTimer::singleShot(0, this, &SessionWorker::readFromPty);
@@ -4771,6 +5085,7 @@ void SessionWorker::closeChildExitWatcher()
 void SessionWorker::closePty()
 {
     closeChildExitWatcher();
+    stopIoUringPtyReads();
     if (readNotifier_ != nullptr) {
         delete readNotifier_;
         readNotifier_ = nullptr;

@@ -27,6 +27,8 @@ option(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS
 option(GHOSTTY_QT_ALLOW_UNPINNED_GHOSTTY "Allow a Ghostty checkout other than the pinned revision" OFF)
 option(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG
     "Build the pinned Ghostty application config parser" ON)
+option(GHOSTTY_QT_ENABLE_IO_URING_EXPERIMENT
+    "Build the opt-in io_uring PTY read experiment when liburing is available" OFF)
 
 set(GHOSTTY_QT_GHOSTTY_REVISION_FILE
     "${CMAKE_CURRENT_SOURCE_DIR}/GHOSTTY_REVISION")
@@ -140,6 +142,13 @@ find_package(KF6WindowSystem QUIET)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(XKBCommon REQUIRED IMPORTED_TARGET xkbcommon)
 pkg_check_modules(WaylandClient REQUIRED IMPORTED_TARGET wayland-client)
+set(GHOSTTY_QT_HAS_IO_URING OFF)
+if(GHOSTTY_QT_ENABLE_IO_URING_EXPERIMENT)
+    pkg_check_modules(Liburing QUIET IMPORTED_TARGET liburing)
+    if(Liburing_FOUND)
+        set(GHOSTTY_QT_HAS_IO_URING ON)
+    endif()
+endif()
 qt_standard_project_setup(REQUIRES 6.10)
 
 add_library(ghostty-qt-desktop-quick-controls-style STATIC
@@ -1197,6 +1206,7 @@ ghostty_qt_add_internal_library(ghostty-qt-session-worker
 )
 target_compile_definitions(ghostty-qt-session-worker PRIVATE
     GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
+    GHOSTTY_QT_HAS_IO_URING=$<BOOL:${GHOSTTY_QT_HAS_IO_URING}>
 )
 target_link_libraries(ghostty-qt-session-worker
     PUBLIC
@@ -1216,6 +1226,9 @@ target_link_libraries(ghostty-qt-session-worker
         ghostty-qt-vt-adapter
         util
 )
+if(GHOSTTY_QT_HAS_IO_URING)
+    target_link_libraries(ghostty-qt-session-worker PRIVATE PkgConfig::Liburing)
+endif()
 
 ghostty_qt_add_internal_library(ghostty-qt-terminal-controller
     src/terminal_controller.cpp

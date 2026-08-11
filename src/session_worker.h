@@ -37,6 +37,13 @@ struct TerminalSessionIoMetrics {
     quint64 parserSubmissions = 0;
     quint64 parserBytes = 0;
     quint64 maximumParserBatchBytes = 0;
+    quint64 ioUringSetupAttempts = 0;
+    quint64 ioUringSetups = 0;
+    quint64 ioUringSubmitCalls = 0;
+    quint64 ioUringCompletionActivations = 0;
+    quint64 ioUringReadCompletions = 0;
+    quint64 ioUringBufferExhaustions = 0;
+    quint64 ioUringFallbacks = 0;
     quint64 writeSubmissions = 0;
     quint64 writeSubmissionBytes = 0;
     quint64 writeCalls = 0;
@@ -262,6 +269,13 @@ private:
     void refreshTrackedHyperlink(bool force = false);
     void processDeferredEffects();
     void drainPty(bool finalDrain);
+    void submitPtyBytes(QByteArrayView data);
+    void finishPtyReadActivation(bool receivedData);
+    bool startIoUringPtyReads();
+    bool submitIoUringRead();
+    void processIoUringCompletions();
+    void stopIoUringPtyReads();
+    void installPtyReadNotifier();
     void notePotentialActivity();
     void scheduleActivityReconciliation(int delayMilliseconds);
     void updateProcessActivity();
@@ -308,6 +322,8 @@ private:
     std::unique_ptr<SearchState> searchState_;
     struct TerminalFileState;
     std::unique_ptr<TerminalFileState> terminalFileState_;
+    struct PtyIoUringState;
+    std::unique_ptr<PtyIoUringState> ptyIoUringState_;
 
     int masterFd_ = -1;
     qint64 childPid_ = -1;
@@ -362,6 +378,7 @@ private:
     bool cursorBlinkResetPending_ = false;
     bool batchPtyReads_ = true;
     bool directPtyWrites_ = true;
+    bool useIoUringReads_ = false;
     TerminalSessionIoMetrics ioMetrics_;
     bool shuttingDown_ = false;
     bool mouseTracking_ = false;

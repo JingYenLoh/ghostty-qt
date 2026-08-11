@@ -179,7 +179,8 @@ bool pumpUntil(Predicate &&predicate, int timeoutMilliseconds)
 }
 
 std::optional<Sample> runSample(const Options &options, bool legacyReads,
-                                bool legacyWrites, QString *error)
+                                bool legacyWrites, bool ioUringReads,
+                                QString *error)
 {
     if (legacyReads) {
         qputenv("GHOSTTY_QT_PTY_READ_BATCHING", QByteArrayLiteral("legacy"));
@@ -190,6 +191,11 @@ std::optional<Sample> runSample(const Options &options, bool legacyReads,
         qputenv("GHOSTTY_QT_PTY_WRITE_DIRECT", QByteArrayLiteral("legacy"));
     } else {
         qunsetenv("GHOSTTY_QT_PTY_WRITE_DIRECT");
+    }
+    if (ioUringReads) {
+        qputenv("GHOSTTY_QT_PTY_IO", QByteArrayLiteral("io_uring"));
+    } else {
+        qunsetenv("GHOSTTY_QT_PTY_IO");
     }
 
     SessionWorker worker;
@@ -300,6 +306,17 @@ std::optional<Sample> runSample(const Options &options, bool legacyReads,
                      .arg(expectedReadBytes);
         return std::nullopt;
     }
+    if (ioUringReads
+        && (sample.io.ioUringSetups != 1
+            || sample.io.ioUringFallbacks != 0)) {
+        *error = QStringLiteral(
+                     "io_uring backend unavailable: attempts=%1 setups=%2 "
+                     "fallbacks=%3")
+                     .arg(sample.io.ioUringSetupAttempts)
+                     .arg(sample.io.ioUringSetups)
+                     .arg(sample.io.ioUringFallbacks);
+        return std::nullopt;
+    }
     if (options.workload == Workload::Replies) {
         const quint64 expectedWriteBytes =
             options.queries * static_cast<quint64>(options.responseBytes);
@@ -331,14 +348,15 @@ double percentileMilliseconds(QVector<qint64> samples, double percentile)
 }
 
 bool runMode(const Options &options, bool legacyReads, bool legacyWrites,
-             QTextStream &output)
+             bool ioUringReads, QTextStream &output)
 {
     QVector<Sample> samples;
     for (int iteration = 0; iteration < options.warmup + options.iterations;
          ++iteration) {
         QString error;
         std::optional<Sample> sample =
-            runSample(options, legacyReads, legacyWrites, &error);
+            runSample(options, legacyReads, legacyWrites, ioUringReads,
+                      &error);
         if (!sample) {
             QTextStream(stderr) << error << '\n';
             return false;
@@ -369,6 +387,16 @@ bool runMode(const Options &options, bool legacyReads, bool legacyWrites,
         metrics.parserBytes += sample.io.parserBytes;
         metrics.maximumParserBatchBytes = std::max(
             metrics.maximumParserBatchBytes, sample.io.maximumParserBatchBytes);
+        metrics.ioUringSetupAttempts += sample.io.ioUringSetupAttempts;
+        metrics.ioUringSetups += sample.io.ioUringSetups;
+        metrics.ioUringSubmitCalls += sample.io.ioUringSubmitCalls;
+        metrics.ioUringCompletionActivations +=
+            sample.io.ioUringCompletionActivations;
+        metrics.ioUringReadCompletions +=
+            sample.io.ioUringReadCompletions;
+        metrics.ioUringBufferExhaustions +=
+            sample.io.ioUringBufferExhaustions;
+        metrics.ioUringFallbacks += sample.io.ioUringFallbacks;
         metrics.writeSubmissions += sample.io.writeSubmissions;
         metrics.writeSubmissionBytes += sample.io.writeSubmissionBytes;
         metrics.writeCalls += sample.io.writeCalls;
@@ -387,7 +415,8 @@ bool runMode(const Options &options, bool legacyReads, bool legacyWrites,
         * 1'000'000'000.0 / static_cast<double>(medianElapsed)
         / (1024.0 * 1024.0);
     output << "workload="
-           << (options.workload == Workload::Output ? "output" : "replies");
+           << (options.workload == Workload::Output ? "output" : "replies")
+           << " io_backend=" << (ioUringReads ? "io_uring" : "notifier");
     if (options.workload == Workload::Output) {
         output << " mode=" << (legacyReads ? "legacy" : "batched")
                << " corpus=" << (options.ansi ? "ansi" : "plain")
@@ -415,6 +444,16 @@ bool runMode(const Options &options, bool legacyReads, bool legacyWrites,
            << " parser_submissions=" << metrics.parserSubmissions
            << " parser_bytes=" << metrics.parserBytes
            << " maximum_parser_batch_bytes=" << metrics.maximumParserBatchBytes
+           << " io_uring_setup_attempts=" << metrics.ioUringSetupAttempts
+           << " io_uring_setups=" << metrics.ioUringSetups
+           << " io_uring_submit_calls=" << metrics.ioUringSubmitCalls
+           << " io_uring_completion_activations="
+           << metrics.ioUringCompletionActivations
+           << " io_uring_read_completions="
+           << metrics.ioUringReadCompletions
+           << " io_uring_buffer_exhaustions="
+           << metrics.ioUringBufferExhaustions
+           << " io_uring_fallbacks=" << metrics.ioUringFallbacks
            << " write_submissions=" << metrics.writeSubmissions
            << " write_submission_bytes=" << metrics.writeSubmissionBytes
            << " write_calls=" << metrics.writeCalls
@@ -468,6 +507,10 @@ int main(int argc, char **argv)
     const QCommandLineOption modeOption(
         QStringLiteral("mode"), QStringLiteral("legacy, batched, or both."),
         QStringLiteral("name"), QStringLiteral("both"));
+    const QCommandLineOption ioBackendOption(
+        QStringLiteral("io-backend"),
+        QStringLiteral("notifier, io_uring, or both."),
+        QStringLiteral("name"), QStringLiteral("notifier"));
     const QCommandLineOption queriesOption(
         QStringLiteral("queries"),
         QStringLiteral("ENQ round trips for the replies workload."),
@@ -488,7 +531,8 @@ int main(int argc, char **argv)
     parser.addOptions({workloadOption, bytesOption, chunkOption, queriesOption,
                        responseBytesOption, queryBurstOption, warmupOption,
                        iterationsOption, timeoutOption, corpusOption,
-                       modeOption, writeModeOption, childOption});
+                       modeOption, ioBackendOption, writeModeOption,
+                       childOption});
     parser.process(application);
 
     const auto bytes = positiveInteger(parser.value(bytesOption));
@@ -513,6 +557,8 @@ int main(int argc, char **argv)
     const QString workload = parser.value(workloadOption).trimmed().toLower();
     const QString corpus = parser.value(corpusOption).trimmed().toLower();
     const QString mode = parser.value(modeOption).trimmed().toLower();
+    const QString ioBackend =
+        parser.value(ioBackendOption).trimmed().toLower();
     const QString writeMode = parser.value(writeModeOption).trimmed().toLower();
     if ((workload != QStringLiteral("output")
          && workload != QStringLiteral("replies"))
@@ -523,8 +569,12 @@ int main(int argc, char **argv)
             && mode != QStringLiteral("both"))
         || (writeMode != QStringLiteral("legacy")
             && writeMode != QStringLiteral("direct")
-            && writeMode != QStringLiteral("both"))) {
-        QTextStream(stderr) << "invalid workload, corpus, or mode\n";
+            && writeMode != QStringLiteral("both"))
+        || (ioBackend != QStringLiteral("notifier")
+            && ioBackend != QStringLiteral("io_uring")
+            && ioBackend != QStringLiteral("both"))) {
+        QTextStream(stderr)
+            << "invalid workload, corpus, mode, or I/O backend\n";
         return 2;
     }
     if (parser.isSet(childOption)) {
@@ -548,27 +598,38 @@ int main(int argc, char **argv)
     options.timeoutMilliseconds = static_cast<int>(*timeout);
     options.ansi = corpus == QStringLiteral("ansi");
     QTextStream output(stdout);
-    output << "benchmark_contract=1 qt=" << qVersion() << '\n';
-    if (options.workload == Workload::Output) {
-        if ((mode == QStringLiteral("legacy") || mode == QStringLiteral("both"))
-            && !runMode(options, true, false, output)) {
-            return 1;
+    output << "benchmark_contract=2 qt=" << qVersion() << '\n';
+    const std::array ioBackends{
+        false,
+        true,
+    };
+    for (const bool ioUringReads : ioBackends) {
+        if ((ioUringReads && ioBackend == QStringLiteral("notifier"))
+            || (!ioUringReads && ioBackend == QStringLiteral("io_uring"))) {
+            continue;
         }
-        if ((mode == QStringLiteral("batched")
-             || mode == QStringLiteral("both"))
-            && !runMode(options, false, false, output)) {
-            return 1;
-        }
-    } else {
-        if ((writeMode == QStringLiteral("legacy")
-             || writeMode == QStringLiteral("both"))
-            && !runMode(options, false, true, output)) {
-            return 1;
-        }
-        if ((writeMode == QStringLiteral("direct")
-             || writeMode == QStringLiteral("both"))
-            && !runMode(options, false, false, output)) {
-            return 1;
+        if (options.workload == Workload::Output) {
+            if ((mode == QStringLiteral("legacy")
+                 || mode == QStringLiteral("both"))
+                && !runMode(options, true, false, ioUringReads, output)) {
+                return 1;
+            }
+            if ((mode == QStringLiteral("batched")
+                 || mode == QStringLiteral("both"))
+                && !runMode(options, false, false, ioUringReads, output)) {
+                return 1;
+            }
+        } else {
+            if ((writeMode == QStringLiteral("legacy")
+                 || writeMode == QStringLiteral("both"))
+                && !runMode(options, false, true, ioUringReads, output)) {
+                return 1;
+            }
+            if ((writeMode == QStringLiteral("direct")
+                 || writeMode == QStringLiteral("both"))
+                && !runMode(options, false, false, ioUringReads, output)) {
+                return 1;
+            }
         }
     }
     return 0;

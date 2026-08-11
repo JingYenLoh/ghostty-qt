@@ -45,8 +45,9 @@ compaction is amortized. Once the PTY reports backpressure, later replies are
 appended in order without repeating a known-to-fail syscall; the write
 notifier retries the accumulated suffix when the descriptor becomes writable.
 
-This is a competent baseline. There is no evidence yet for replacing it with
-`io_uring` or an additional I/O thread on Linux.
+This notifier path remains the default. An opt-in `io_uring` experiment now
+provides comparative evidence without adding an I/O thread or changing parser
+ownership; its latency/throughput tradeoff is documented below.
 
 `bench-terminal-session-io` re-executes itself as a raw deterministic PTY
 writer and reports transport topology, throughput, frame latency, and event-loop
@@ -65,6 +66,68 @@ FIFO-copied bytes from 15.0 MiB to 6.4 MiB, and FIFO backing allocations from
 36,589 to 95. Sequential replies which do not backpressure report zero FIFO
 copies and allocations. `GHOSTTY_QT_PTY_WRITE_DIRECT=legacy` restores the
 always-buffered path for benchmark A/B diagnosis only.
+
+#### Opt-in io_uring experiment
+
+Configure with `GHOSTTY_QT_ENABLE_IO_URING_EXPERIMENT=ON` on a system where
+pkg-config can find liburing, then select the backend with
+`GHOSTTY_QT_PTY_IO=io_uring`. The ordinary notifier backend remains the default.
+Initialization requires `IORING_FEAT_FAST_POLL` and a kernel supporting
+`IORING_OP_READ_MULTISHOT` (Linux 6.7 or newer). A missing library, an older
+kernel, or a sandbox denying `io_uring_setup` falls back to the notifier path.
+The benchmark's `--io-backend io_uring` mode rejects that fallback so it cannot
+silently report notifier measurements as io_uring results.
+
+The experiment keeps one small ring on the pane's existing session thread: 8
+submission entries, 64 completion entries, and 32 provided 16 KiB buffers (512
+KiB per active pane). It does not enable `IORING_SETUP_SQPOLL`, register the PTY
+as a fixed file, or create another thread. One multishot read borrows each
+selected buffer synchronously into libghostty, returns it immediately, and
+coalesces completions below 1 KiB into the existing 4 KiB parser batch. A
+registered `eventfd` connects completions to Qt's event dispatcher. Exhausting
+the 32 buffer IDs deliberately ends and resubmits the multishot request; this
+bounds one kernel burst and gives the event loop a fairness point. Shutdown
+cancels the outstanding request with a bounded wait, consumes completed
+buffers, and then performs the existing final synchronous PTY drain. Writes
+retain the borrowed direct-write/FIFO path because making them asynchronous
+would introduce ownership copies on the common case.
+
+Representative Release results on the development host use 16 MiB output,
+nine measured iterations, and the benchmark's transport byte-count and ordered
+reply validation:
+
+| Workload | Notifier throughput | io_uring throughput | Notifier p99 gap | io_uring p99 gap |
+| --- | ---: | ---: | ---: | ---: |
+| ANSI, 64-byte producer writes | 61.88 MiB/s | 63.51 MiB/s | 18.90 ms | 1.67 ms |
+| Plain, 64-byte producer writes | 59.72 MiB/s | 60.04 MiB/s | 10.67 ms | 1.43 ms |
+| ANSI, 64 KiB producer writes | 113.97 MiB/s | 100.49 MiB/s | 61.22 ms | 9.35 ms |
+
+The 64 KiB producer row models already-buffered bulk streams such as archive or
+database exports and saturated compiler/CI logs. It is a peak-output stress
+case, not a claim that the PTY master completes each read as one 64 KiB block;
+the kernel's PTY buffering still determines completion sizes.
+
+The fragmented ANSI case also reached its first frame in 15.69 ms instead of
+21.79 ms. Ordered 64-byte sequential query replies improved from 13.45 to 13.00
+us/query, while 4,096-query bursts with 256-byte replies improved from 1.177 to
+1.151 us/query and cut the p99 event-loop gap from 8.83 to 5.20 ms. Across nine
+fragmented ANSI samples, synchronous PTY `read()` calls fell from 376,336 to 9;
+the ring delivered 226,847 read completions and made 7,079 buffer-exhaustion
+resubmissions. Those counters explain both sides of the result: syscall removal
+helps fragmented traffic, but completion processing and the deliberate
+fairness boundary cost about 11.8% peak throughput for already-coalesced bulk
+output. The 512 KiB per-pane buffer pool is another material cost. The evidence
+supports continued opt-in experimentation, not changing the default backend.
+
+Reproduce the primary comparison with:
+
+```sh
+cmake --preset release -DGHOSTTY_QT_ENABLE_IO_URING_EXPERIMENT=ON
+cmake --build --preset release --target bench-terminal-session-io -j"$(nproc)"
+./build/release/tests/bench-terminal-session-io \
+    --workload output --corpus ansi --bytes 16777216 --chunk-bytes 64 \
+    --mode batched --io-backend both --warmup 2 --iterations 9
+```
 
 ### Frame transport
 
@@ -406,17 +469,18 @@ requires terminal ownership; streaming it would require an upstream API.
 
 ## Further profiling
 
-The end-to-end PTY benchmark and bounded read gathering now cover the primary
-Linux read path. Use `perf stat` or `perf record -g` for further CPU attribution
-and `strace` only for syscall topology because tracing perturbs latency. Do not
-port Ghostty's additional gather/parser thread or buffer ring unless these
-measurements identify remaining kernel backpressure.
+The end-to-end PTY benchmark and bounded read gathering cover both Linux read
+backends. Use `perf stat` or `perf record -g` for further CPU attribution and
+`strace` only for syscall topology because tracing perturbs latency. Do not port
+Ghostty's additional gather/parser thread; the experiment already isolates the
+provided-buffer-ring tradeoff without changing terminal ownership.
 
 ## Deferred ideas
 
 The following are not justified without new measurements:
 
-- `io_uring` for per-pane PTYs;
+- making per-pane `io_uring` the default before its bulk-throughput and memory
+  costs are resolved;
 - a second permanent I/O thread per pane;
 - delayed batching of ordinary keystrokes;
 - a broad renderer or PTY rewrite;

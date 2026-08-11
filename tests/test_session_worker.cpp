@@ -274,6 +274,7 @@ private Q_SLOTS:
     void continuesPathLookupAfterMissingInterpreter();
     void usesPinnedDefaultPathWhenUnset();
     void batchesPtyReadsBeforeParsing();
+    void readsPtyWithIoUringWhenAvailable();
     void drainsLargeFinalOutputBeforeClosingPty();
     void drainsLargeQueuedInputAfterPtyBackpressure();
     void routesTerminalClipboardWritesUsingLivePolicy();
@@ -3968,6 +3969,59 @@ void SessionWorkerTest::batchesPtyReadsBeforeParsing()
     // Instrumented readers can let the kernel coalesce many probe writes into
     // a few large read() calls. The parser batch size is the scheduler-neutral
     // contract this test needs to enforce.
+    QVERIFY(metrics.maximumParserBatchBytes >= 4ULL * 1024ULL);
+    worker.shutdown();
+}
+
+void SessionWorkerTest::readsPtyWithIoUringWhenAvailable()
+{
+    const bool backendWasSet = qEnvironmentVariableIsSet("GHOSTTY_QT_PTY_IO");
+    const QByteArray previousBackend = qgetenv("GHOSTTY_QT_PTY_IO");
+    const auto restoreBackend = qScopeGuard([backendWasSet, previousBackend] {
+        if (backendWasSet) {
+            qputenv("GHOSTTY_QT_PTY_IO", previousBackend);
+        } else {
+            qunsetenv("GHOSTTY_QT_PTY_IO");
+        }
+    });
+    qputenv("GHOSTTY_QT_PTY_IO", QByteArrayLiteral("io_uring"));
+
+    SessionWorker worker;
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral(GHOSTTY_QT_TEST_PTY_IO_PROBE),
+        QStringLiteral("1048576"),
+        QStringLiteral("64"),
+    };
+    options.hold = true;
+    options.scrollbackLimits.bytes = 1ULL * 1024ULL * 1024ULL;
+    options.scrollbackLimits.lines = 1'000;
+    options.runtime.scrollbackCompression = false;
+    QVERIFY(worker.initialize(options));
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 10'000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    const TerminalSessionIoMetrics metrics = worker.sessionIoMetrics();
+    QCOMPARE(metrics.readBytes, 1ULL * 1024ULL * 1024ULL);
+    QCOMPARE(metrics.parserBytes, metrics.readBytes);
+    QCOMPARE(metrics.ioUringSetupAttempts, quint64{1});
+    if (metrics.ioUringSetups == 0) {
+        QCOMPARE(metrics.ioUringFallbacks, quint64{1});
+        QSKIP("io_uring is unavailable in this build or execution sandbox");
+    }
+    QCOMPARE(metrics.ioUringSetups, quint64{1});
+    QCOMPARE(metrics.ioUringFallbacks, quint64{0});
+    QVERIFY(metrics.ioUringReadCompletions > 0);
+    QVERIFY(metrics.ioUringCompletionActivations > 0);
+    QVERIFY(metrics.ioUringSubmitCalls > 0);
     QVERIFY(metrics.maximumParserBatchBytes >= 4ULL * 1024ULL);
     worker.shutdown();
 }
