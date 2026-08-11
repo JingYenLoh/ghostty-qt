@@ -1,9 +1,9 @@
 # Performance
 
-This document is the single reference for performance measurement, current
-optimization boundaries, and proposed work. Architecture describes ownership;
-benchmark executables and their `--help` output remain authoritative for exact
-scenario and option catalogs.
+This document records current performance architecture, reproducible evidence,
+and the profiling gates for work that remains actionable. Architecture
+describes ownership; benchmark executables and their `--help` output remain
+authoritative for exact scenario and option catalogs.
 
 ## Principles
 
@@ -44,9 +44,6 @@ rather than moving the remaining bytes after every short write, and
 compaction is amortized. Once the PTY reports backpressure, later replies are
 appended in order without repeating a known-to-fail syscall; the write
 notifier retries the accumulated suffix when the descriptor becomes writable.
-
-This is a competent baseline. There is no evidence yet for replacing it with
-`io_uring` or an additional I/O thread on Linux.
 
 `bench-terminal-session-io` re-executes itself as a raw deterministic PTY
 writer and reports transport topology, throughput, frame latency, and event-loop
@@ -169,6 +166,17 @@ boundary reduces byte-to-cell mapping storage from 8 to 2 bytes per byte while
 preserving wide-character, combining-grapheme, wrap, newline, and viewport
 semantics.
 
+Both the canonical and provisional KMP passes keep their needle-sized cell
+history in fixed-capacity contiguous rings. The scanners append one cell for
+every byte and only need the oldest cell when a match completes; a segmented
+`std::deque` added allocation and pop-front machinery without providing useful
+growth or iterator stability.
+
+On a pinned 50,000-row resident-scrollback workload with 21 measured searches,
+the rings reduced whole-process retired instructions by 1.0–1.2%, branch misses
+by 11.2–11.4%, and task-clock by 0.8–1.2% across two final counter runs against
+the same deque baseline. Canonical completion medians were 1.0–1.3% lower.
+
 ### Shell startup
 
 Shell-integration finalization retains successful equivalent preparations in a
@@ -191,6 +199,45 @@ An eight-pane identical cold burst launched one helper and coalesced seven
 waiters, while eight distinct requests launched concurrently. Warm hits still
 serialize and hash the request, recheck filesystem identity, and return an
 isolated implicitly shared result.
+
+## Data-structure decisions
+
+The recurring hot paths were audited for container access pattern, cardinality,
+allocation behavior, and ownership. The following decisions prevent broad
+container substitutions from becoming unaudited performance work:
+
+| Area | Current decision | Evidence or next measurement gate |
+| --- | --- | --- |
+| Frame cell storage | Keep implicitly shared `QVector` rows behind a small outer row table. | The materialization benchmark reports zero cell copies and allocations during retained-frame apply. Revisit only if row-header detachment becomes visible in a profile. |
+| Renderer row caches | Keep separate, reusable contiguous vectors for rectangles, background layers, and glyph foregrounds. | Dirty-row rendering consumes these streams independently and retains their capacities. Trial a packed RGBA representation only if profiles identify retained color bandwidth or footprint; compare full-frame, dirty-row, cursor, selection, and search scenarios. |
+| Glyph atlas | Keep hashed glyph lookup and contiguous rasterization/packing inputs. | Lookup is keyed and occurs for every eligible glyph; deduplication and packing occur only during atlas rebuild. A `QSet` in the rebuild path would be a semantic cleanup, not a demonstrated hot-path improvement. |
+| Search | Keep contiguous match ranges, bit-packed viewport masks, 16-bit row-local byte columns, and the fixed-capacity cell-history rings described above. | These structures match append, indexed navigation, binary-search, mask-composition, and rolling-window access respectively. Do not reserve matches from total row count: short needles can make that estimate both inaccurate and needlessly large. |
+| Kitty placement reconciliation | Keep ordered signature maps, with only the exact-match map eager and four fallback maps lazy. | The `kitty-implicit-reorder` scenario measures the lazy construction win. A trial replacing the ordered maps with broad hashing increased retired instructions by about 7% without improving task time, so hashing is closed unless key shape or cardinality changes. |
+| PTY write queue | Keep one `QByteArray` plus a consumed-prefix cursor. | Direct writes and amortized compaction already avoid copies and allocations on the uncontended path; the replies benchmark exposes write calls, copied bytes, allocation count, and backpressure. |
+| Shell-startup cache | Keep hash lookup plus a linear least-recently-used victim scan. | The cache is capped at 32 entries and filesystem validation/helper execution dominate a miss. A linked LRU would add nodes and mutation to every hit to optimize a bounded eviction scan. |
+| Font-program cache | Keep the thread-local contiguous weak-entry vector. | Live cardinality is bounded by active typography programs and lookup is outside frame recording. Add indexing only if a font-reload/startup profile attributes material time to this scan. |
+
+The remaining data-structure experiments are deliberately workload-gated:
+
+1. Keybinding trie nodes store child entries contiguously and lookup performs
+   physical, Unicode, then catch-all passes. Before adding per-kind spans or a
+   hash index, add a benchmark covering the shipped bindings, large user root
+   tables, named tables, leaders, keypad aliases, and unmatched ordinary input.
+   Preserve physical-key priority and modifier-key self matching.
+2. Regex-link resolution uses hash sets to deduplicate byte-to-cell mappings,
+   while the OSC 8 viewport index uses sparse per-row column vectors. Benchmark
+   hover resolution and dirty-frame maintenance with both long/dense and normal
+   sparse links before trying order-preserving adjacent deduplication or dense
+   row bitsets.
+3. Kitty snapshot occlusion and scene texture retention use ordered sets/maps
+   keyed by cover geometry and image generation. Extend the Kitty benchmarks
+   with many distinct images, overlapping opaque placements, replacement, and
+   eviction before comparing flat or hashed indexes; the common one-image path
+   is too small to justify a substitution by inspection.
+4. Retained renderer colors remain `QColor` because presentation can introduce
+   alpha and the Qt scene graph consumes `QColor`. A packed RGBA cache is worth
+   testing only with conversion work included and unchanged color-space,
+   minimum-contrast, faint-text, and alpha-blending results.
 
 ## Building benchmarks
 
@@ -251,6 +298,10 @@ QT_QPA_PLATFORM=wayland \
 ./build/release/tests/bench-terminal-search \
     --rows 25000 --viewport-rows 32 --warmup 1 --iterations 5
 
+perf stat -e task-clock,instructions,cycles,branches,branch-misses \
+    taskset -c 0 ./build/release/tests/bench-terminal-search \
+    --rows 50000 --viewport-rows 32 --warmup 3 --iterations 21 --resident
+
 ./build/release/tests/bench-terminal-session-io \
     --bytes 16777216 --chunk-bytes 64 --corpus ansi \
     --warmup 2 --iterations 7 --mode both
@@ -267,6 +318,11 @@ behind an RHI backend; it is different from Qt Quick's software scene graph.
 Offscreen RHI benchmarks serialize frame completion and do not model
 swapchain-present pipelining. They are useful for controlled renderer work and
 GPU timestamps, not end-user frame pacing by themselves.
+
+Use `perf stat` or `perf record -g` for CPU attribution. Use `strace` only to
+verify syscall topology because tracing perturbs latency. If a profile shows
+libghostty dominates a workload, optimize or report that layer upstream rather
+than duplicating its parser in the Qt frontend.
 
 ## Wayland renderer qualification
 
@@ -414,25 +470,3 @@ The session-worker regression probe verifies asynchronous completion, exact
 directories, and cancellation without artifact leakage or a teardown join.
 Formatting itself stays on the worker because libghostty's public formatter
 requires terminal ownership; streaming it would require an upstream API.
-
-## Further profiling
-
-The end-to-end PTY benchmark and bounded read gathering now cover the primary
-Linux read path. Use `perf stat` or `perf record -g` for further CPU attribution
-and `strace` only for syscall topology because tracing perturbs latency. Do not
-port Ghostty's additional gather/parser thread or buffer ring unless these
-measurements identify remaining kernel backpressure.
-
-## Deferred ideas
-
-The following are not justified without new measurements:
-
-- `io_uring` for per-pane PTYs;
-- a second permanent I/O thread per pane;
-- delayed batching of ordinary keystrokes;
-- a broad renderer or PTY rewrite;
-- frontend SIMD for work dominated by Qt shaping or libghostty parsing.
-
-Prefer incremental changes that preserve the current ownership model. If
-profiling shows libghostty dominates a workload, optimize or report that layer
-upstream rather than duplicating its parser in the Qt frontend.

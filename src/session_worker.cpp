@@ -533,6 +533,42 @@ QVector<qsizetype> searchPrefixTable(QByteArrayView pattern)
     return prefix;
 }
 
+// Search consumes bytes newest-to-oldest and needs only the cell belonging to
+// the oldest byte in the current needle-sized window. Keep that bounded window
+// contiguous: std::deque's segmented storage and pop-front machinery are
+// unnecessary for this fixed-capacity access pattern.
+class SearchCellRing final {
+public:
+    void reset(qsizetype capacity)
+    {
+        cells_.resize(capacity);
+        clear();
+    }
+
+    void clear() noexcept
+    {
+        next_ = 0;
+    }
+
+    void append(const TerminalSearchCell &cell) noexcept
+    {
+        Q_ASSERT(!cells_.isEmpty());
+        cells_[next_] = cell;
+        if (++next_ == cells_.size()) next_ = 0;
+    }
+
+    [[nodiscard]] const TerminalSearchCell &front() const noexcept
+    {
+        // A KMP match cannot request the oldest cell until at least one whole
+        // needle has been appended, so next_ points at the full ring's front.
+        return cells_.at(next_);
+    }
+
+private:
+    QVector<TerminalSearchCell> cells_;
+    qsizetype next_ = 0;
+};
+
 std::optional<qsizetype> gridCellCount(int columns, int rows)
 {
     if (columns <= 0 || rows <= 0) return std::nullopt;
@@ -824,7 +860,7 @@ struct SessionWorker::SearchState {
     QByteArray reversedNeedle;
     QVector<qsizetype> prefix;
     qsizetype matched = 0;
-    std::deque<TerminalSearchCell> recentCells;
+    SearchCellRing recentCells;
     QVector<TerminalSearchRange> matches;
     QBitArray visibleCellMask;
     // Viewport candidates are deliberately independent of the canonical
@@ -838,7 +874,7 @@ struct SessionWorker::SearchState {
     std::optional<GhosttyVtAdapter::SearchRowSnapshot> viewportProbeRow;
     qsizetype viewportProbeByteIndex = 0;
     qsizetype viewportProbeMatched = 0;
-    std::deque<TerminalSearchCell> viewportProbeRecentCells;
+    SearchCellRing viewportProbeRecentCells;
     bool viewportProbeComplete = true;
     QBitArray selectedCellMask;
     qint64 selectedMatch = -1;
@@ -3533,6 +3569,9 @@ void SessionWorker::beginSearch(quint64 generation, const QByteArray &needle)
         : static_cast<qint64>(extent->totalRows - 1U);
     searchState_->reversedNeedle = reversedFoldedSearchNeedle(needle);
     searchState_->prefix = searchPrefixTable(searchState_->reversedNeedle);
+    searchState_->recentCells.reset(searchState_->reversedNeedle.size());
+    searchState_->viewportProbeRecentCells.reset(
+        searchState_->reversedNeedle.size());
     resetSearchViewportProbe(extent->viewportOffset, extent->viewportLength);
     publishSearchUpdate();
     scheduleSearchChunk();
@@ -3757,11 +3796,7 @@ void SessionWorker::processSearchChunk()
                 ++state.viewportProbeMatched;
             }
 
-            state.viewportProbeRecentCells.push_back(cell);
-            if (state.viewportProbeRecentCells.size()
-                > static_cast<size_t>(state.reversedNeedle.size())) {
-                state.viewportProbeRecentCells.pop_front();
-            }
+            state.viewportProbeRecentCells.append(cell);
             if (state.viewportProbeMatched != state.reversedNeedle.size()) {
                 return;
             }
@@ -3854,11 +3889,7 @@ void SessionWorker::processSearchChunk()
             ++state.matched;
         }
 
-        state.recentCells.push_back(cell);
-        if (state.recentCells.size()
-            > static_cast<size_t>(state.reversedNeedle.size())) {
-            state.recentCells.pop_front();
-        }
+        state.recentCells.append(cell);
         if (state.matched != state.reversedNeedle.size()) {
             return;
         }
