@@ -999,6 +999,38 @@ public:
             capture, error);
     }
 
+    ScenarioResult kittyImplicitReorder(int warmupIterations,
+                                        int measuredIterations,
+                                        RenderDocCapture *capture,
+                                        QString *error)
+    {
+        if (!prepareNativeControlFrame(error)) return {};
+        const auto asset =
+            makeKittyImage(++kittyGeneration_, QColor(64, 176, 112));
+        const auto ordered =
+            makeKittySnapshot(asset, 0, kittyPlacementCount, false);
+        auto reorderedMutable =
+            std::make_shared<TerminalKittyGraphicsSnapshot>(*ordered);
+        std::rotate(reorderedMutable->placements.begin(),
+                    reorderedMutable->placements.begin() + 1,
+                    reorderedMutable->placements.end());
+        const std::shared_ptr<const TerminalKittyGraphicsSnapshot> reordered =
+            std::move(reorderedMutable);
+        publishKitty(ordered);
+        if (!renderUntimed(error)) return {};
+        bool reorderedActive = false;
+        return measure(
+            QStringLiteral("kitty-implicit-reorder"), warmupIterations,
+            measuredIterations,
+            {.paintSerial = 1},
+            1, kittyTextureLogicalBytes, {},
+            [this, ordered, reordered, &reorderedActive] {
+                reorderedActive = !reorderedActive;
+                publishKitty(reorderedActive ? reordered : ordered);
+            },
+            capture, error);
+    }
+
     ScenarioResult kittyReplacement(int warmupIterations,
                                     int measuredIterations,
                                     RenderDocCapture *capture, QString *error)
@@ -1528,7 +1560,8 @@ private:
 
     std::shared_ptr<const TerminalKittyGraphicsSnapshot> makeKittySnapshot(
         const std::shared_ptr<const TerminalKittyGraphicsImage> &asset,
-        int columnOffset, int placementCount = kittyPlacementCount) const
+        int columnOffset, int placementCount = kittyPlacementCount,
+        bool explicitPlacementIds = true) const
     {
         auto snapshot = std::make_shared<TerminalKittyGraphicsSnapshot>();
         snapshot->storageGeneration = asset->generation;
@@ -1546,7 +1579,9 @@ private:
             const int row = (index / qMax(1, grid_.columns - 1)) % grid_.rows;
             snapshot->placements.append({
                 .image = asset,
-                .placementId = static_cast<quint32>(index + 1),
+                .placementId = explicitPlacementIds
+                    ? static_cast<quint32>(index + 1)
+                    : 0,
                 .z = 1,
                 .layer = TerminalKittyGraphicsLayer::AboveText,
                 .viewportColumn = column,
@@ -1922,6 +1957,8 @@ const QVector<std::pair<QString, ScenarioFunction>> &scenarioFunctions()
         {QStringLiteral("kitty-translucent-retained-redraw"),
          &RendererBenchmark::kittyTranslucentRetainedRedraw},
         {QStringLiteral("kitty-movement"), &RendererBenchmark::kittyMovement},
+        {QStringLiteral("kitty-implicit-reorder"),
+         &RendererBenchmark::kittyImplicitReorder},
         {QStringLiteral("kitty-replacement"),
          &RendererBenchmark::kittyReplacement},
         {QStringLiteral("kitty-translucent-replacement"),

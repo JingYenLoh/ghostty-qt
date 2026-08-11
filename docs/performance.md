@@ -139,6 +139,9 @@ The retained renderer already avoids the largest terminal-frontend costs:
   x86-64 layouts from 40 to 32 bytes and from 80 to 48 bytes respectively;
 - Kitty textures and placement nodes survive redraw, movement, and compatible
   replacement;
+- duplicate-aware Kitty placement reconciliation builds its exact-match index
+  eagerly but defers the four lower-priority fallback indexes until an exact
+  implicit-placement match actually fails;
 - image storage is packed straight-alpha RGBA rather than separate color and
   alpha planes;
 - the retained shader pipeline reuses pipelines, bindings, uniform storage,
@@ -148,6 +151,14 @@ Structural changes such as font, DPR, backend, render context, or incompatible
 grid geometry still require broader invalidation. Compositor output, blur,
 color management, and presentation timing remain host-level measurement
 boundaries.
+
+The `kitty-implicit-reorder` renderer scenario alternates the order of 512
+otherwise stable implicit placements. In five pinned 1,000-frame OpenGL
+Release runs on the development host, lazy fallback indexes reduced aggregate
+task-clock from 1,104.73 ms to 954.43 ms and retired instructions from 11.843
+billion to 10.236 billion. Median CPU recording fell from 337.0 us to 271.9 us
+at 120x40 and from 391.4 us to 324.6 us at 240x80, while texture, node,
+geometry, and material counters remained unchanged.
 
 ### Search
 

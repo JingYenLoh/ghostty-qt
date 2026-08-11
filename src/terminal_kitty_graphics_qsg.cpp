@@ -16,6 +16,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <tuple>
 #include <utility>
@@ -345,9 +346,7 @@ struct CandidateQueue {
     }
 };
 
-struct PlacementCandidateBucket {
-    CandidateQueue any;
-    std::map<ExactCandidateSignature, CandidateQueue> exact;
+struct PlacementCandidateFallbackIndexes {
     std::map<GenerationZSourceSignature, CandidateQueue> generationZSource;
     std::map<quint64, CandidateQueue> generation;
     std::map<ZGeometrySignature, CandidateQueue> zGeometry;
@@ -357,18 +356,31 @@ struct PlacementCandidateBucket {
     {
         const RectSignature destination = rectSignature(candidate.destination);
         const RectSignature source = rectSignature(candidate.source);
-        any.indices.append(index);
-        exact[{candidate.generation, candidate.z, destination, source}]
-            .indices.append(index);
         generationZSource[{candidate.generation, candidate.z, source}]
             .indices.append(index);
         generation[candidate.generation].indices.append(index);
         zGeometry[{candidate.z, destination, source}].indices.append(index);
         zSource[{candidate.z, source}].indices.append(index);
     }
+};
+
+struct PlacementCandidateBucket {
+    CandidateQueue any;
+    std::map<ExactCandidateSignature, CandidateQueue> exact;
+    std::optional<PlacementCandidateFallbackIndexes> fallback;
+
+    void append(qsizetype index, const PlacementNode &candidate)
+    {
+        const RectSignature destination = rectSignature(candidate.destination);
+        const RectSignature source = rectSignature(candidate.source);
+        any.indices.append(index);
+        exact[{candidate.generation, candidate.z, destination, source}]
+            .indices.append(index);
+    }
 
     qsizetype take(const TerminalKittyGraphicsRenderPlacement &desired,
-                   const QVector<char> &consumed)
+                   const QVector<char> &consumed,
+                   const QVector<PlacementNode> &candidates)
     {
         const RectSignature destination = rectSignature(desired.destination);
         const RectSignature source = rectSignature(desired.source);
@@ -382,16 +394,28 @@ struct PlacementCandidateBucket {
                      ExactCandidateSignature{desired.image->generation,
                                              desired.z, destination, source});
         if (selected >= 0) return selected;
-        selected = takeFrom(generationZSource,
+        // Stable implicit placements normally retain their complete visual
+        // identity, including across snapshot reordering. Avoid allocating
+        // and populating four lower-priority trees unless an exact match
+        // actually fails and their fallback policy is needed.
+        if (!fallback.has_value()) {
+            fallback.emplace();
+            for (const qsizetype index : any.indices) {
+                fallback->append(index, candidates.at(index));
+            }
+        }
+        selected = takeFrom(fallback->generationZSource,
                             GenerationZSourceSignature{
                                 desired.image->generation, desired.z, source});
         if (selected >= 0) return selected;
-        selected = takeFrom(generation, desired.image->generation);
+        selected =
+            takeFrom(fallback->generation, desired.image->generation);
         if (selected >= 0) return selected;
-        selected = takeFrom(zGeometry,
+        selected = takeFrom(fallback->zGeometry,
                             ZGeometrySignature{desired.z, destination, source});
         if (selected >= 0) return selected;
-        selected = takeFrom(zSource, ZSourceSignature{desired.z, source});
+        selected = takeFrom(fallback->zSource,
+                            ZSourceSignature{desired.z, source});
         return selected >= 0 ? selected : any.take(consumed);
     }
 };
@@ -672,7 +696,8 @@ public:
             qsizetype selected = -1;
             if (const auto found = candidates.find(key);
                 found != candidates.end()) {
-                selected = found->second.take(desired.placement, consumed);
+                selected = found->second.take(desired.placement, consumed,
+                                              placementNodes);
             }
             if (selected < 0) {
                 next.append(createPlacementNode(desired, useCustomMaterial,
