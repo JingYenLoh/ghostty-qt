@@ -759,7 +759,13 @@ Item {
     QVERIFY(entering->paneTransition.x >= 0.0F);
     QVERIFY(entering->paneTransition.x < 1.0F);
     QCOMPARE(entering->paneTransition.w, 0.8F);
-    QTest::qWait(100);
+    // A fixed sleep does not guarantee that the threaded scene graph has
+    // presented another frame, particularly with Qt 6.10's Wayland RHI.
+    // Wait for the render-driven uniform snapshot itself to advance.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        pane->terminalCustomShaderUniformSnapshot(0)->paneTransition.x
+            > entering->paneTransition.x,
+        1000);
     const auto progressed = pane->terminalCustomShaderUniformSnapshot(0);
     QCOMPARE(progressed->paneTransition.y, 1.0F);
     QVERIFY(progressed->paneTransition.x > entering->paneTransition.x);
