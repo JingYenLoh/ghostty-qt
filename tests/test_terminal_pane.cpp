@@ -2111,7 +2111,8 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     };
     QVERIFY(initial.renderLayerOrder == expectedLayerOrder);
 
-    // Metadata-only paints retain every main-text row.
+    // Metadata-only updates do not dirty the terminal scene. The QML
+    // scrollbar still observes the property change independently.
     TerminalUpdate scrollbar;
     scrollbar.columns = columns;
     scrollbar.rows = rows;
@@ -2123,6 +2124,7 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     QVERIFY(!window.grabWindow().isNull());
     const TerminalPaneRenderProbeSnapshot metadata =
         terminalPaneRenderProbe(pane);
+    QCOMPARE(metadata.paintSerial, initial.paintSerial);
     QCOMPARE(metadata.rootSerial, initial.rootSerial);
     QCOMPARE(metadata.rowNodeSerials, initial.rowNodeSerials);
     QCOMPARE(metadata.rowBuildCounts, initial.rowBuildCounts);
@@ -2409,17 +2411,54 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     QVERIFY(approximatelyEqual(centerColor(searchImage, 1),
                                QColor(QStringLiteral("#abcdef"))));
 
+    // Advancing only the terminal revision invalidates stale search masks and
+    // must still repaint the affected row even though the update has no
+    // intrinsic terminal visuals.
+    TerminalUpdate revisionOnly;
+    revisionOnly.columns = columns;
+    revisionOnly.rows = rows;
+    revisionOnly.contentRevision = ++revision;
+    controller->terminalUpdated(revisionOnly);
+    const QImage revisionClearedImage = window.grabWindow();
+    QVERIFY(!revisionClearedImage.isNull());
+    const TerminalPaneRenderProbeSnapshot revisionCleared =
+        terminalPaneRenderProbe(pane);
+    QVector<quint64> revisionClearedBuildCounts = searched.rowBuildCounts;
+    ++revisionClearedBuildCounts[1];
+    QCOMPARE(revisionCleared.rowBuildCounts, revisionClearedBuildCounts);
+    QVector<quint64> revisionClearedSolidBuildCounts =
+        searched.rowSolidBuildCounts;
+    ++revisionClearedSolidBuildCounts[1];
+    QCOMPARE(revisionCleared.rowSolidBuildCounts,
+             revisionClearedSolidBuildCounts);
+    QVERIFY(revisionCleared.paintSerial > searched.paintSerial);
+    QVERIFY(approximatelyEqual(centerColor(revisionClearedImage, 1),
+                               rowColors[1]));
+
+    search.contentRevision = revision;
+    controller->searchUpdated(search);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot searchRestored =
+        terminalPaneRenderProbe(pane);
+    QVector<quint64> restoredBuildCounts = revisionCleared.rowBuildCounts;
+    ++restoredBuildCounts[1];
+    QCOMPARE(searchRestored.rowBuildCounts, restoredBuildCounts);
+    QVector<quint64> restoredSolidBuildCounts =
+        revisionCleared.rowSolidBuildCounts;
+    ++restoredSolidBuildCounts[1];
+    QCOMPARE(searchRestored.rowSolidBuildCounts, restoredSolidBuildCounts);
+
     search.active = false;
     controller->searchUpdated(search);
     const QImage clearedSearchImage = window.grabWindow();
     QVERIFY(!clearedSearchImage.isNull());
     const TerminalPaneRenderProbeSnapshot clearedSearch =
         terminalPaneRenderProbe(pane);
-    QVector<quint64> clearedSearchBuildCounts = searched.rowBuildCounts;
+    QVector<quint64> clearedSearchBuildCounts = searchRestored.rowBuildCounts;
     ++clearedSearchBuildCounts[1];
     QCOMPARE(clearedSearch.rowBuildCounts, clearedSearchBuildCounts);
     QVector<quint64> clearedSearchSolidBuildCounts =
-        searched.rowSolidBuildCounts;
+        searchRestored.rowSolidBuildCounts;
     ++clearedSearchSolidBuildCounts[1];
     QCOMPARE(clearedSearch.rowSolidBuildCounts, clearedSearchSolidBuildCounts);
     QVERIFY(approximatelyEqual(centerColor(clearedSearchImage, 1),

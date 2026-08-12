@@ -440,7 +440,7 @@ private:
                                    int oldRows, const QBitArray &newMask,
                                    int newColumns, int newRows,
                                    MaskRowImpact impact);
-    void syncCursorBlink(bool resetPhase);
+    [[nodiscard]] bool syncCursorBlink(bool resetPhase);
     void refreshBackgroundImage();
     void setFontPointSize(qreal points);
     void beginKeyEventDeferral() noexcept;

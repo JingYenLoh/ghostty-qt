@@ -134,6 +134,9 @@ The retained renderer already avoids the largest terminal-frontend costs:
 
 - ordinary terminal updates transport and rebuild dirty rows rather than the
   full grid;
+- scrollbar/revision-only updates leave the terminal scene and any custom-
+  shader source layer clean; search-mask invalidation and cursor blink phase
+  changes still schedule the affected terminal rendering;
 - row dependency masks skip cell scans and shaping for unrelated global paint
   changes;
 - RHI solid geometry, printable-ASCII glyph batches, and atlas resources are
@@ -162,6 +165,16 @@ Structural changes such as font, DPR, backend, render context, or incompatible
 grid geometry still require broader invalidation. Compositor output, blur,
 color management, and presentation timing remain host-level measurement
 boundaries.
+
+The metadata renderer scenario alternates scrollbar state while explicitly
+recording an offscreen window frame. Before terminal-visual update gating, each
+metadata delta also synchronized the retained terminal scene: median OpenGL
+recording was 22.7 us at 120x40 and 63.4 us at 240x80. After gating, the same
+300-frame run reported zero terminal paints and a 2.1 us median at both sizes;
+total CPU fell from 34.1 to 10.6 us (-68.9%) and from 75.0 to 10.7 us (-85.7%)
+respectively. The explicit frame remains representative of a QML scrollbar
+change; the removed work is terminal node synchronization and, when configured,
+unnecessary custom-shader source invalidation.
 
 #### Copy and conversion audit
 

@@ -475,9 +475,12 @@ TerminalPane::TerminalPane(
             const QPointer<TerminalPane> guard(this);
             bool applied = false;
             bool backgroundChanged = false;
+            bool terminalRenderingChanged = false;
             {
                 QMutexLocker locker(&renderMutex_);
                 if (hasFrame_ || terminalUpdate.fullFrame) {
+                    const quint64 previousTextRowEpoch = textRowEpoch_;
+                    const quint64 previousSolidRowEpoch = solidRowEpoch_;
                     applied = applyTerminalUpdate(frame_, terminalUpdate);
                     hasFrame_ = hasFrame_ || applied;
                     if (applied) {
@@ -515,6 +518,13 @@ TerminalPane::TerminalPane(
                                 clearSearchDecorationsLocked();
                             }
                         }
+                        terminalRenderingChanged = terminalUpdate.fullFrame
+                            || !terminalUpdate.dirtyRows.isEmpty()
+                            || terminalUpdate.colorsChanged
+                            || terminalUpdate.cursorChanged
+                            || terminalUpdate.kittyGraphicsChanged
+                            || textRowEpoch_ != previousTextRowEpoch
+                            || solidRowEpoch_ != previousSolidRowEpoch;
                     }
                 }
             }
@@ -548,7 +558,11 @@ TerminalPane::TerminalPane(
                 // advancing the broad terminal revision must not flicker
                 // a stable hover or cancel a press gesture.
                 recomputeHyperlinkHover();
-                syncCursorBlink(terminalUpdate.resetCursorBlink);
+                const bool blinkPhaseChanged =
+                    syncCursorBlink(terminalUpdate.resetCursorBlink);
+                if (terminalRenderingChanged || blinkPhaseChanged) {
+                    requestRenderUpdate();
+                }
             }
         });
     connect(controller_, &TerminalController::searchUpdated, this,
@@ -3164,8 +3178,9 @@ void TerminalPane::refreshBackgroundImage()
         });
 }
 
-void TerminalPane::syncCursorBlink(bool resetPhase)
+bool TerminalPane::syncCursorBlink(bool resetPhase)
 {
+    const bool previousBlinkOn = cursorBlinkOn_;
     bool shouldBlink = false;
     {
         QMutexLocker locker(&renderMutex_);
@@ -3181,7 +3196,7 @@ void TerminalPane::syncCursorBlink(bool resetPhase)
         cursorBlinkOn_ = true;
         cursorTimer_->start();
     }
-    requestRenderUpdate();
+    return cursorBlinkOn_ != previousBlinkOn;
 }
 
 void TerminalPane::updateTerminalSize()
@@ -6052,7 +6067,8 @@ void TerminalPane::focusInEvent(QFocusEvent *event)
     if (guard == nullptr) return;
     setBellRinging(false);
     if (guard == nullptr) return;
-    syncCursorBlink(true);
+    (void)syncCursorBlink(true);
+    requestRenderUpdate();
     controller_->setFocused(true);
     if (guard == nullptr) return;
     if (!pointerFocusActivationDeferred_) {

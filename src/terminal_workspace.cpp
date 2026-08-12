@@ -360,8 +360,9 @@ protected:
         auto *node = oldNode != nullptr
             ? static_cast<QSGSimpleRectNode *>(oldNode)
             : new QSGSimpleRectNode;
-        node->setRect(boundingRect());
-        node->setColor(color_);
+        const QRectF rect = boundingRect();
+        if (node->rect() != rect) node->setRect(rect);
+        if (node->color() != color_) node->setColor(color_);
         return node;
     }
 

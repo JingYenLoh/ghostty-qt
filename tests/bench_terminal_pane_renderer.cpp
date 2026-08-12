@@ -547,7 +547,7 @@ public:
         bool odd = false;
         return measure(
             QStringLiteral("metadata"), warmupIterations, measuredIterations,
-            {.paintSerial = 1}, 0, 0, {},
+            {}, 0, 0, {},
             [this, &odd] {
                 odd = !odd;
                 TerminalUpdate update;
