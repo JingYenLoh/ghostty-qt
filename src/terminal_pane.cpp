@@ -729,11 +729,12 @@ TerminalPane::~TerminalPane()
 void TerminalPane::requestRenderUpdate()
 {
     if (!customShaderStageItems_.isEmpty()) {
+        std::optional<std::chrono::steady_clock::time_point> frameTime;
         if (!customShaderFramePending_) {
             customShaderFramePending_ = true;
-            prepareCustomShaderFrame();
+            frameTime = std::chrono::steady_clock::now();
         }
-        refreshCustomShaderUniformBase();
+        refreshCustomShaderUniformBase(frameTime);
         (void)updateCustomShaderEffects();
     }
     if (renderItem_ != nullptr) {
@@ -816,23 +817,33 @@ void TerminalPane::prepareCustomShaderFrame()
         return;
     }
     const auto now = std::chrono::steady_clock::now();
+
+    QMutexLocker locker(&customShaderUniformMutex_);
+    auto next = acquireCustomShaderUniformSnapshotLocked();
+    advanceCustomShaderFrame(next.get(), now);
+    customShaderUniforms_ = std::move(next);
+}
+
+void TerminalPane::advanceCustomShaderFrame(
+    TerminalCustomShaderUniforms *uniforms,
+    std::chrono::steady_clock::time_point now)
+{
+    Q_ASSERT(uniforms != nullptr);
+    if (uniforms == nullptr) return;
     if (!customShaderFirstFrameTime_.has_value()) {
         customShaderFirstFrameTime_ = now;
     }
     const auto previous = customShaderLastFrameTime_.value_or(now);
     customShaderLastFrameTime_ = now;
-
-    QMutexLocker locker(&customShaderUniformMutex_);
-    auto next = acquireCustomShaderUniformSnapshotLocked();
-    next->time =
+    uniforms->time =
         std::chrono::duration<float>(now - *customShaderFirstFrameTime_)
             .count();
-    next->timeDelta = std::chrono::duration<float>(now - previous).count();
-    next->frame = next->frame == std::numeric_limits<std::int32_t>::max()
+    uniforms->timeDelta = std::chrono::duration<float>(now - previous).count();
+    uniforms->frame =
+        uniforms->frame == std::numeric_limits<std::int32_t>::max()
         ? 1
-        : next->frame + 1;
-    next->paneTransition = paneTransitionUniform(now);
-    customShaderUniforms_ = std::move(next);
+        : uniforms->frame + 1;
+    uniforms->paneTransition = paneTransitionUniform(now);
 }
 
 bool TerminalPane::customShaderTransitionRenderingReady(bool entering) const
@@ -1092,7 +1103,8 @@ void TerminalPane::syncCustomShaderPipelineDiagnostic()
     publishCustomShaderDiagnostic();
 }
 
-void TerminalPane::refreshCustomShaderUniformBase()
+void TerminalPane::refreshCustomShaderUniformBase(
+    std::optional<std::chrono::steady_clock::time_point> frameTime)
 {
     if (customShaderStages_.isEmpty()) {
         return;
@@ -1183,6 +1195,9 @@ void TerminalPane::refreshCustomShaderUniformBase()
 
     QMutexLocker locker(&customShaderUniformMutex_);
     auto next = acquireCustomShaderUniformSnapshotLocked();
+    if (frameTime.has_value()) {
+        advanceCustomShaderFrame(next.get(), *frameTime);
+    }
     next->resolution = {
         static_cast<float>(physicalWidth),
         static_cast<float>(physicalHeight),
@@ -1193,10 +1208,14 @@ void TerminalPane::refreshCustomShaderUniformBase()
         .y = static_cast<float>(physicalHeight),
         .z = 1.0F,
     };
-    for (std::size_t index = 0; index < next->palette.size(); ++index) {
-        next->palette[index] = index < static_cast<std::size_t>(palette.size())
-            ? shaderColor(palette.at(static_cast<qsizetype>(index)))
-            : TerminalCustomShaderVec4{};
+    if (customShaderUniformPalette_ != palette) {
+        for (std::size_t index = 0; index < next->palette.size(); ++index) {
+            next->palette[index] =
+                index < static_cast<std::size_t>(palette.size())
+                ? shaderColor(palette.at(static_cast<qsizetype>(index)))
+                : TerminalCustomShaderVec4{};
+        }
+        customShaderUniformPalette_ = palette;
     }
     next->backgroundColor = shaderColor(background);
     next->foregroundColor = shaderColor(foreground);

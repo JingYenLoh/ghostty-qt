@@ -728,7 +728,6 @@ public:
     {
         clearPlacementNodes();
         clearTextures();
-        rendered.clear();
         snapshot.reset();
         window = nullptr;
         belowBackground = nullptr;
@@ -749,7 +748,6 @@ public:
     TerminalAlphaBlending alphaBlending = TerminalAlphaBlending::Native;
     std::map<quint64, std::unique_ptr<TextureSet>> textures;
     QVector<PlacementNode> placementNodes;
-    QVector<TerminalKittyGraphicsRenderPlacement> rendered;
     quint64 textureUploadCount = 0;
     quint64 nodeCreationCount = 0;
     quint64 nodeDeletionCount = 0;
@@ -786,7 +784,6 @@ void TerminalKittyGraphicsScene::update(
         || impl_->alphaBlending != alphaBlending;
     if (parentsChanged || windowChanged || materialPathChanged) {
         impl_->clearPlacementNodes();
-        impl_->rendered.clear();
         impl_->snapshot.reset();
         if (windowChanged || materialPathChanged) {
             impl_->clearTextures();
@@ -803,7 +800,9 @@ void TerminalKittyGraphicsScene::update(
 
     std::set<quint64> activeTextures;
     QVector<MaterializedPlacement> materialized;
-    QVector<TerminalKittyGraphicsRenderPlacement> rendered;
+    if (snapshot != nullptr) {
+        materialized.reserve(snapshot->placements.size());
+    }
     bool materializedAllPlacements = true;
     if (window != nullptr && belowBackground != nullptr && belowText != nullptr
         && aboveText != nullptr && snapshot != nullptr
@@ -828,7 +827,6 @@ void TerminalKittyGraphicsScene::update(
             }
 
             activeTextures.insert(renderPlacement->image->generation);
-            rendered.append(*renderPlacement);
             materialized.append({
                 .placement = std::move(*renderPlacement),
                 .textures = textures,
@@ -839,7 +837,6 @@ void TerminalKittyGraphicsScene::update(
     impl_->reconcilePlacementNodes(materialized, useCustomMaterial,
                                    alphaBlending);
     impl_->evictInactiveTextures(activeTextures);
-    impl_->rendered = std::move(rendered);
     impl_->snapshot = snapshot;
     if (!materializedAllPlacements) {
         // A transient graphics allocation failure must not permanently make
@@ -854,10 +851,24 @@ void TerminalKittyGraphicsScene::clear()
     impl_->clear();
 }
 
-const QVector<TerminalKittyGraphicsRenderPlacement> &
-TerminalKittyGraphicsScene::renderedPlacements() const noexcept
+void TerminalKittyGraphicsScene::appendRenderedPlacementGeometry(
+    QVector<QRectF> *destinations, QVector<QRectF> *sources,
+    QVector<TerminalKittyGraphicsLayer> *layers) const
 {
-    return impl_->rendered;
+    Q_ASSERT(destinations != nullptr);
+    Q_ASSERT(sources != nullptr);
+    Q_ASSERT(layers != nullptr);
+    if (destinations == nullptr || sources == nullptr || layers == nullptr) {
+        return;
+    }
+    destinations->reserve(destinations->size() + impl_->placementNodes.size());
+    sources->reserve(sources->size() + impl_->placementNodes.size());
+    layers->reserve(layers->size() + impl_->placementNodes.size());
+    for (const PlacementNode &placement : impl_->placementNodes) {
+        destinations->append(placement.destination);
+        sources->append(placement.source);
+        layers->append(placement.key.layer);
+    }
 }
 
 quint64 TerminalKittyGraphicsScene::textureUploadCount() const noexcept

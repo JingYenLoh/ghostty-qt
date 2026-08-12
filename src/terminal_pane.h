@@ -575,7 +575,12 @@ private:
     [[nodiscard]] bool customShaderRenderingSupported() const;
     [[nodiscard]] std::shared_ptr<TerminalCustomShaderUniforms>
     acquireCustomShaderUniformSnapshotLocked();
-    void refreshCustomShaderUniformBase();
+    void refreshCustomShaderUniformBase(
+        std::optional<std::chrono::steady_clock::time_point> frameTime =
+            std::nullopt);
+    void advanceCustomShaderFrame(
+        TerminalCustomShaderUniforms *uniforms,
+        std::chrono::steady_clock::time_point now);
     void prepareCustomShaderFrame();
     void maybeStartPaneEnterTransition();
     void startPaneTransition(bool entering, std::chrono::milliseconds duration);
@@ -628,6 +633,7 @@ private:
         std::make_shared<const TerminalCustomShaderUniforms>();
     QVector<std::shared_ptr<TerminalCustomShaderUniforms>>
         customShaderUniformPool_;
+    QVector<QColor> customShaderUniformPalette_;
     QVector<QPointer<TerminalCustomShaderEffect>> customShaderEffects_;
     QPointer<TerminalCustomShaderPipelineEffect> customShaderPipelineEffect_;
     QPointer<TerminalCustomShaderPipelineEffect>

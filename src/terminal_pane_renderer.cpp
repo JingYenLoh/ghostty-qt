@@ -98,6 +98,24 @@ namespace {
 using TerminalPaneRenderer::normalizedDevicePixelRatio;
 using TerminalPaneRenderer::physicalPixels;
 
+class ExpandedCellColorCache final {
+public:
+    [[nodiscard]] const QColor &get(TerminalCellColor packed) noexcept
+    {
+        if (!populated_ || packed_ != packed) {
+            packed_ = packed;
+            expanded_ = packed.toQColor();
+            populated_ = true;
+        }
+        return expanded_;
+    }
+
+private:
+    TerminalCellColor packed_;
+    QColor expanded_;
+    bool populated_ = false;
+};
+
 [[nodiscard]] bool terminalGlyphBatchDisabled()
 {
     bool parsed = false;
@@ -2003,16 +2021,9 @@ void publishRenderProbe(
     snapshot.kittyGraphicsDestinations.clear();
     snapshot.kittyGraphicsSources.clear();
     snapshot.kittyGraphicsLayers.clear();
-    const auto &kittyPlacements = root.kittyGraphics.renderedPlacements();
-    snapshot.kittyGraphicsDestinations.reserve(kittyPlacements.size());
-    snapshot.kittyGraphicsSources.reserve(kittyPlacements.size());
-    snapshot.kittyGraphicsLayers.reserve(kittyPlacements.size());
-    for (const TerminalKittyGraphicsRenderPlacement &placement :
-         kittyPlacements) {
-        snapshot.kittyGraphicsDestinations.append(placement.destination);
-        snapshot.kittyGraphicsSources.append(placement.source);
-        snapshot.kittyGraphicsLayers.append(placement.layer);
-    }
+    root.kittyGraphics.appendRenderedPlacementGeometry(
+        &snapshot.kittyGraphicsDestinations, &snapshot.kittyGraphicsSources,
+        &snapshot.kittyGraphicsLayers);
     snapshot.backdropBaseRects.clear();
     const auto baseRects = root.backdrop->baseRects();
     snapshot.backdropBaseRects.reserve(
@@ -2358,6 +2369,8 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
         const bool blockCursorActive = cursorActive && cursorStyle == 1;
         QColor cursorCellForeground = frame.foreground;
         QColor cursorCellBackground = frame.background;
+        ExpandedCellColorCache foregroundColorCache;
+        ExpandedCellColorCache backgroundColorCache;
         QColor cursorEffectiveBackground = withAlpha(frame.background, 0);
         const qsizetype cursorCellIndex = cursorActive
             ? static_cast<qsizetype>(frame.cursorRow) * frame.columns
@@ -2579,8 +2592,10 @@ QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
                         terminalFontRole(cell.bold(), cell.italic());
 
                     if (rebuildRowSolids) {
-                        QColor styledForeground = cell.foreground;
-                        QColor styledBackground = cell.background;
+                        QColor styledForeground =
+                            foregroundColorCache.get(cell.foreground);
+                        QColor styledBackground =
+                            backgroundColorCache.get(cell.background);
                         applyBoldColor(cell, frame, appearance,
                                        &styledForeground, &styledBackground);
 

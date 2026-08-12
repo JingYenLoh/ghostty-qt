@@ -47,8 +47,9 @@ public:
            TerminalAlphaBlending alphaBlending = TerminalAlphaBlending::Native);
     void clear();
 
-    [[nodiscard]] const QVector<TerminalKittyGraphicsRenderPlacement> &
-    renderedPlacements() const noexcept;
+    void appendRenderedPlacementGeometry(
+        QVector<QRectF> *destinations, QVector<QRectF> *sources,
+        QVector<TerminalKittyGraphicsLayer> *layers) const;
     [[nodiscard]] quint64 textureUploadCount() const noexcept;
     // The following five counts are cumulative scene-lifetime churn telemetry;
     // clear() intentionally leaves them intact.

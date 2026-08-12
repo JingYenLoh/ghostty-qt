@@ -391,20 +391,30 @@ void TerminalGlyphBatch::allocateFor(qsizetype glyphCount)
 void TerminalGlyphBatch::writeGeometry()
 {
     auto *vertices = static_cast<GlyphVertex *>(geometry_->vertexData());
+    QColor previousLogicalColor;
+    uchar red = 0;
+    uchar green = 0;
+    uchar blue = 0;
+    uchar opacity = 0;
+    bool hasPreviousColor = false;
     for (const TerminalGlyphQuad &glyph : pending_) {
         const TerminalGlyphRect &destination = glyph.destination;
         const TerminalGlyphRect &source = glyph.normalizedSource;
-        const QColor color =
-            terminalRenderingColor(glyph.color, committedAlphaBlending_)
-                .toRgb();
-        const int alpha = color.alpha();
-        const auto premultiply = [alpha](int component) {
-            return static_cast<uchar>((component * alpha + 127) / 255);
-        };
-        const uchar red = premultiply(color.red());
-        const uchar green = premultiply(color.green());
-        const uchar blue = premultiply(color.blue());
-        const uchar opacity = static_cast<uchar>(alpha);
+        if (!hasPreviousColor || previousLogicalColor != glyph.color) {
+            previousLogicalColor = glyph.color;
+            const QColor color =
+                terminalRenderingColor(glyph.color, committedAlphaBlending_)
+                    .toRgb();
+            const int alpha = color.alpha();
+            const auto premultiply = [alpha](int component) {
+                return static_cast<uchar>((component * alpha + 127) / 255);
+            };
+            red = premultiply(color.red());
+            green = premultiply(color.green());
+            blue = premultiply(color.blue());
+            opacity = static_cast<uchar>(alpha);
+            hasPreviousColor = true;
+        }
 
         setVertex(vertices[0], destination.left, destination.top, source.left,
                   source.top, red, green, blue, opacity);

@@ -45,6 +45,20 @@ compaction is amortized. Once the PTY reports backpressure, later replies are
 appended in order without repeating a known-to-fail syscall; the write
 notifier retries the accumulated suffix when the descriptor becomes writable.
 
+Qt and libghostty intentionally meet at a text-encoding boundary. Qt key and
+input-method events expose text as `QString` UTF-16, while
+`ghostty_key_event_set_utf8` accepts a borrowed `char *` plus a UTF-8 byte
+length and does not take ownership. The key encoder therefore converts the
+text once with `QString::toUtf8()` immediately before the synchronous
+libghostty call and keeps the resulting `QByteArray` alive through that call.
+Passing `QString` storage directly would supply UTF-16 bytes with the wrong
+encoding and length. Transporting all UI text as UTF-8 instead would move
+decoding into Qt-facing editing, IME, and composition work, so this single
+boundary conversion is required rather than an optimization target. Search
+similarly converts its UI `QString` once because the worker scans UTF-8 row
+snapshots and maintains byte-to-cell mappings; queued Qt value copies on both
+paths remain implicitly shared.
+
 `bench-terminal-session-io` re-executes itself as a raw deterministic PTY
 writer and reports transport topology, throughput, frame latency, and event-loop
 delay. On the development host, a 16 MiB ANSI stream emitted in 64-byte writes
@@ -149,6 +163,39 @@ grid geometry still require broader invalidation. Compositor output, blur,
 color management, and presentation timing remain host-level measurement
 boundaries.
 
+#### Copy and conversion audit
+
+A Release OpenGL profile on the development host audited full-frame,
+dirty-row, Kitty-movement, and retained custom-shader paths for deep copies and
+repeated representation changes. The measured opportunities were implemented
+as follows:
+
+| Site | Change and evidence | Result |
+| --- | --- | --- |
+| Packed cell color expansion | A rebuilt cell expanded its packed foreground and background into `QColor` even when adjacent cells had identical colors. `QColor::fromRgb` accounted for 3.51% of sampled cycles in the ASCII full-frame scenario and 1.33% in the dirty-row scenario. Separate one-entry foreground and background caches now key expansion by `TerminalCellColor`. | Combined with glyph color reuse below, three pinned 500-frame runs reduced 240x80 full-frame CPU recording from 8,892.1 to 8,096.9 us (-8.9%) and total CPU from 10,268.8 to 9,478.2 us (-7.7%). Aggregate task-clock fell 7.7%, cycles 7.9%, and retired instructions 2.2%. The 5,000-frame dirty-row comparison reduced 240x80 recording from 346.8 to 337.3 us (-2.7%) and total CPU from 384.5 to 374.8 us (-2.5%). |
+| Glyph vertex color conversion | Geometry emission converted and premultiplied every glyph color although glyphs from the same run normally share a color; the production call path accounted for about 1.09% of sampled full-frame cycles. One geometry write now retains the last logical color and its four uploaded bytes. | Included in the full-frame and dirty-row measurements above. Existing mixed alpha, native/linear blending, glyph-batch readback, explicit-color, selection, search, and global-paint contracts preserve output and work counters. Rectangle batches have the same conversion shape, but profiles still do not show enough cost to justify adding state there. |
+| Kitty placement snapshots | Every changed snapshot copied each resolved placement into a second vector used only by the render test probe, while the required materialized vector repeatedly grew. Production now keeps only retained placement nodes, probe geometry is derived from those nodes on demand, and materialization reserves snapshot cardinality. | Across five pinned 5,000-frame movement runs, aggregate task-clock fell 6.2%, cycles 6.5%, and retired instructions 5.6%. Median recording fell from 115.5 to 103.7 us (-10.2%) at 120x40 and from 160.5 to 149.7 us (-6.7%) at 240x80; total CPU fell 9.0% and 6.1% respectively. Texture, node, geometry, material, eviction, and placement-probe contracts were unchanged. |
+| Custom-shader uniform snapshots | `TerminalCustomShaderUniforms` is 4,592 bytes. A newly scheduled render used to publish a time/frame snapshot and immediately copy it again to refresh base state; it also reconverted all 256 palette colors on every base refresh. The updates now share one mutable snapshot before publication, and the converted palette is retained until its `QVector<QColor>` value changes. | This removes one whole-struct copy from each newly scheduled shader frame and makes the usual unchanged-palette refresh a shared-vector comparison. A separate trial that copied the immutable payload directly to mapped RHI storage and patched matrix/opacity in place was not retained: a five-repeat 1,000-frame reverse-order comparison increased whole-benchmark instructions by 0.9% and did not improve task-clock. The compiler-friendly local RHI struct copy remains. |
+
+The same audit found no redundant deep cell copy in worker-to-render frame
+delivery. The queued connection provides the required cross-thread ownership,
+Qt containers remain implicitly shared, dirty rows install shared payloads,
+and installing an update while a render snapshot exists detaches only the
+small outer row table described above.
+Owned grapheme text is also required because libghostty's render callback data
+cannot outlive the callback. Kitty/background pixel-format conversion occurs
+once per changed asset or texture generation and supplies the straight versus
+premultiplied representation required by the selected material path.
+
+Renderer benchmarks compile the render test probe into their pane support.
+Profiles must therefore exclude its full-grid `QVector<QColor>` construction
+and snapshot copies: in the dirty-row profile these appeared as 5.57% in the
+vector constructor and 5.26% in `memmove`, but neither exists in the production
+target. Likewise, full-frame `QColor::fromString` and part of
+`QColor::toRgb()` came from benchmark fixture construction rather than the
+renderer. Attribute call stacks before treating generic copy or conversion
+symbols as production work.
+
 The `kitty-implicit-reorder` renderer scenario alternates the order of 512
 otherwise stable implicit placements. In five pinned 1,000-frame OpenGL
 Release runs on the development host, lazy fallback indexes reduced aggregate
@@ -235,9 +282,11 @@ The remaining data-structure experiments are deliberately workload-gated:
    eviction before comparing flat or hashed indexes; the common one-image path
    is too small to justify a substitution by inspection.
 4. Retained renderer colors remain `QColor` because presentation can introduce
-   alpha and the Qt scene graph consumes `QColor`. A packed RGBA cache is worth
-   testing only with conversion work included and unchanged color-space,
-   minimum-contrast, faint-text, and alpha-blending results.
+   alpha and the Qt scene graph consumes `QColor`; the one-entry packed-input
+   caches above close the demonstrated uniform-run conversion cost. Revisit a
+   broader packed retained representation only if a new profile identifies
+   color bandwidth or footprint after accounting for color-space,
+   minimum-contrast, faint-text, and alpha-blending semantics.
 
 ## Building benchmarks
 
