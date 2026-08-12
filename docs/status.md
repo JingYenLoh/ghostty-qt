@@ -67,8 +67,9 @@ for the intentional upgrade procedure.
 - **Qualification and distribution:** renderer correctness is covered across
   software, OpenGL, and Vulkan, but compositor-specific blending, blur, color
   management, and presentation timing still require representative hardware
-  runs. Distribution packages, saved sessions, and a theme editor are not yet
-  provided.
+  runs. Checkout-local Arch, Debian, and Fedora convenience package recipes are
+  available for build testing, but upstream-ready distribution packages are
+  not yet provided. Saved sessions and a theme editor are also outstanding.
 
 Exact upstream contracts and acceptance criteria live in
 [Features requiring upstream Ghostty APIs](../REQUIRES_UPSTREAM.md).

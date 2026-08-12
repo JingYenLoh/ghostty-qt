@@ -4,6 +4,55 @@ The build tree is directly runnable. Installing a Release build adds runtime
 helpers and resources, desktop activation, metadata, terminfo, themes, and
 shell integration.
 
+## Local distribution packages
+
+Checkout-local convenience recipes are available for three package families:
+
+- `dist/arch/PKGBUILD` produces an Arch package with `makepkg`;
+- `dist/debian/build.sh` produces a `.deb` on Debian unstable; and
+- `dist/rpm/build.sh` produces an RPM on current Fedora.
+
+Initialize the submodule and project-local Zig toolchain before using any
+recipe:
+
+```sh
+git submodule update --init --recursive
+./scripts/bootstrap-zig.sh
+```
+
+On Arch, build and install with:
+
+```sh
+cd dist/arch
+makepkg -si
+```
+
+On Debian unstable, install the build dependencies declared in
+`dist/debian/control`, then build and install with:
+
+```sh
+./dist/debian/build.sh
+sudo apt install ./dist/debian/ghostty-qt-local.deb
+```
+
+On Fedora, install `rpm-build` and the spec's build dependencies, then build
+and install with:
+
+```sh
+sudo dnf install rpm-build
+sudo dnf builddep dist/rpm/ghostty-qt.spec
+./dist/rpm/build.sh
+sudo dnf install dist/rpm/build/RPMS/*/ghostty-qt-*.rpm
+```
+
+These recipes package the current working tree and consume `.local/bin/zig`;
+they do not fetch an immutable source archive. They are intended only for
+local installation, build testing, and packaging iteration. They are not
+signed release artifacts, do not carry distro release/upgrade policy, and are
+not ready to submit to the AUR, Debian/Ubuntu archives, Fedora, or another
+upstream package repository. Dependency names track the stated rolling/current
+targets; older distro releases without Qt 6.10 cannot build ghostty-qt.
+
 ## Install
 
 ```sh

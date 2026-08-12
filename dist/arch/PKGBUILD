@@ -1,0 +1,81 @@
+# Local Arch package for the checkout containing this file.
+
+pkgname=ghostty-qt
+pkgver=0.1.0.r273.g2b35b0b
+pkgrel=1
+pkgdesc='Qt Quick frontend for the Ghostty terminal engine'
+arch=('x86_64' 'aarch64')
+url='https://github.com/JingYenLoh/ghostty-qt'
+depends=(
+    'fontconfig'
+    'gcc-libs'
+    'glibc'
+    'kwindowsystem'
+    'layer-shell-qt'
+    'libxkbcommon'
+    'qt6-base'
+    'qt6-declarative'
+    'qt6-multimedia'
+    'qt6-shadertools'
+    'qt6-wayland'
+    'wayland'
+)
+makedepends=(
+    'cmake'
+    'git'
+    'ncurses'
+    'ninja'
+    'patch'
+    'pkgconf'
+    'python'
+)
+optdepends=('qqc2-desktop-style: KDE Plasma controls matching the desktop style')
+options=('!debug')
+
+_repo_root="$(realpath "$startdir/../..")"
+_zig="$_repo_root/.local/bin/zig"
+
+pkgver() {
+    local version revision_count revision
+
+    version=$(sed -n 's/^project(ghostty-qt VERSION \([^ ]*\).*/\1/p' \
+        "$_repo_root/CMakeLists.txt")
+    revision_count=$(git -C "$_repo_root" rev-list --count HEAD)
+    revision=$(git -C "$_repo_root" rev-parse --short=7 HEAD)
+    printf '%s.r%s.g%s' "$version" "$revision_count" "$revision"
+}
+
+prepare() {
+    if [[ ! -f "$_repo_root/ghostty/CMakeLists.txt" ]]; then
+        printf 'error: initialize the Ghostty submodule first:\n' >&2
+        printf '  git -C %q submodule update --init --recursive\n' "$_repo_root" >&2
+        return 1
+    fi
+
+    if [[ ! -x "$_zig" ]] || [[ $("$_zig" version) != 0.16.0 ]]; then
+        printf 'error: bootstrap the required Zig 0.16.0 toolchain first:\n' >&2
+        printf '  %q/scripts/bootstrap-zig.sh\n' "$_repo_root" >&2
+        return 1
+    fi
+}
+
+build() {
+    cmake -S "$_repo_root" -B "$srcdir/build" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DGHOSTTY_QT_BUILD_TESTS=OFF \
+        -DGHOSTTY_QT_ZIG_EXECUTABLE="$_zig" \
+        -DZIG_EXECUTABLE="$_zig"
+    cmake --build "$srcdir/build" -j"$(nproc)"
+}
+
+package() {
+    DESTDIR="$pkgdir" cmake --install "$srcdir/build"
+
+    # Arch's systemd pacman hook watches /usr/lib/systemd/user.
+    install -d "$pkgdir/usr/lib/systemd/user"
+    mv "$pkgdir/usr/share/systemd/user/"* "$pkgdir/usr/lib/systemd/user/"
+    rmdir "$pkgdir/usr/share/systemd/user"
+    rmdir "$pkgdir/usr/share/systemd"
+}
