@@ -24,6 +24,7 @@
 #include <QtQmlIntegration/qqmlintegration.h>
 
 #include <deque>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <variant>
@@ -46,11 +47,12 @@ struct WorkspaceCloseAssessment {
     }
 };
 
-// Overrides delivered with a remote new-window request belong exclusively to
-// that window's first surface. Optional QString values preserve the
-// distinction between omission and an explicit empty value.
+// Overrides delivered with a remote new-window or new-tab request belong
+// exclusively to that container's first surface. Optional QString values
+// preserve the distinction between omission and an explicit empty value.
 struct FirstSurfaceOverrides {
     std::optional<TerminalCommand> command;
+    std::optional<GhosttyShellIntegrationMode> shellIntegration;
     std::optional<QString> workingDirectory;
     std::optional<QString> titleOverride;
 
@@ -58,6 +60,7 @@ struct FirstSurfaceOverrides {
 };
 
 struct WorkspaceSurfaceSnapshot {
+    SurfaceId surfaceId;
     PaneId paneId;
     std::optional<QString> effectiveTitle;
     QString currentDirectory;
@@ -121,6 +124,8 @@ class TerminalWorkspace : public QQuickItem {
                 NOTIFY customShaderStageComponentChanged)
 
 public:
+    using SurfaceIdAllocator = std::function<SurfaceId()>;
+
     explicit TerminalWorkspace(QQuickItem *parent = nullptr);
     ~TerminalWorkspace() override;
 
@@ -140,6 +145,10 @@ public:
         std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator,
         GhosttyKeybindProgram keybindProgram,
         FirstSurfaceOverrides firstSurfaceOverrides = {});
+    // The process owner installs this before initialization so every child
+    // receives a stable, application-routable GHOSTTY_SURFACE_ID before its
+    // terminal session starts.
+    void setSurfaceIdAllocator(SurfaceIdAllocator allocator);
     [[nodiscard]] bool armInitialSessionStart();
     void applyLaunchOptions(const LaunchOptions &options);
     void applyLaunchOptions(const LaunchOptions &options,
@@ -257,6 +266,9 @@ public:
     // Samples committed GUI-thread state and exposes stable identities rather
     // than pane pointers to process-owned consumers such as the palette.
     [[nodiscard]] QVector<WorkspaceSurfaceSnapshot> surfaceSnapshot() const;
+    [[nodiscard]] SurfaceId surfaceIdForPane(PaneId paneId) const;
+    [[nodiscard]] bool createApplicationTab(
+        PaneId sourcePaneId, FirstSurfaceOverrides firstSurfaceOverrides);
     [[nodiscard]] QString customShaderDiagnostics() const;
 
     Q_INVOKABLE void setCurrentIndex(int index);
@@ -592,9 +604,11 @@ private:
     // commits, including while synchronous model observers can still see its
     // tree node during a batched removal.
     QSet<PaneId> retiringPaneIds_;
+    QHash<PaneId, SurfaceId> surfaceIds_;
     int currentIndex_ = -1;
     quint64 nextTabId_ = 1;
     quint64 nextPaneId_ = 1;
+    SurfaceIdAllocator surfaceIdAllocator_;
     quint64 nextSplitId_ = 1;
     quint64 splitDividerGeneration_ = 0;
     QHash<quint64, SplitDividerItem *> splitDividers_;

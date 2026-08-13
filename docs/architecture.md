@@ -476,7 +476,7 @@ Before Qt starts, raw command-line classification selects one of three paths:
 
 - replace the process with the pinned helper for a supported delegated `+`
   action;
-- run a minimal D-Bus client for `+new-window` or
+- run a minimal D-Bus client for `+new-tab`, `+new-window`, or
   `+toggle-quick-terminal`;
 - construct the full Qt application.
 
@@ -486,6 +486,13 @@ forward a typed activation or continue independently according to frontend
 policy. Activation tokens are scoped to window presentation and removed from
 the inherited terminal environment unless an explicit `env` override restores
 them.
+
+Every pane receives a nonzero process-wide surface ID before its child starts,
+published as `GHOSTTY_SURFACE_ID`. The application registry maps those IDs to
+live window/pane identities. A `+new-tab` `(tas)` action targets that registry,
+then the focused workspace, and finally a new window; its command, working
+directory, shell-integration, and title overrides are confined to the created
+tab's first pane.
 
 Installed D-Bus metadata can delegate cold activation to a systemd user unit.
 Readiness and reload notification use `NOTIFY_SOCKET` directly; ghostty-qt does

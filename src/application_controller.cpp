@@ -430,9 +430,58 @@ bool ApplicationController::activateNewWindow(
 
     FirstSurfaceOverrides firstSurface{
         .command = std::move(overrides.command),
+        .shellIntegration = std::move(overrides.shellIntegration),
         .workingDirectory = std::move(overrides.workingDirectory),
         .titleOverride = std::move(overrides.titleOverride),
     };
+
+    const QPointer<ApplicationController> guard(this);
+    auto created = createWindow(effectiveOptions_, activation, nullptr,
+                                WindowRole::Normal, &firstSurface);
+    if (guard == nullptr) return false;
+    if (created.has_value()) return true;
+    Q_EMIT windowCreationFailed(created.error());
+    return false;
+}
+
+bool ApplicationController::activateNewTab(
+    GhosttyNewTabTransportRequest request,
+    DesktopActivationContext activation)
+{
+    if (!startupWindowHandled_) {
+        Q_EMIT windowCreationFailed(QStringLiteral(
+            "Application action arrived before the startup window decision"));
+        return false;
+    }
+
+    TerminalWorkspace *targetWorkspace = nullptr;
+    PaneId sourcePaneId;
+    if (request.surfaceId.isValid()) {
+        const auto registered = surfaceRegistry_.constFind(request.surfaceId);
+        if (registered != surfaceRegistry_.cend()) {
+            const SurfaceTarget target = registered.value();
+            WindowRecord *const record = recordForWindowId(target.windowId);
+            if (record != nullptr && record->workspace != nullptr
+                && record->workspace->containsPane(target.paneId)) {
+                targetWorkspace = record->workspace;
+                sourcePaneId = target.paneId;
+            } else {
+                surfaceRegistry_.remove(request.surfaceId);
+            }
+        }
+    }
+    if (targetWorkspace == nullptr) targetWorkspace = focusedWorkspace();
+
+    FirstSurfaceOverrides firstSurface{
+        .command = std::move(request.overrides.command),
+        .shellIntegration = std::move(request.overrides.shellIntegration),
+        .workingDirectory = std::move(request.overrides.workingDirectory),
+        .titleOverride = std::move(request.overrides.titleOverride),
+    };
+    if (targetWorkspace != nullptr) {
+        return targetWorkspace->createApplicationTab(
+            sourcePaneId, std::move(firstSurface));
+    }
 
     const QPointer<ApplicationController> guard(this);
     auto created = createWindow(effectiveOptions_, activation, nullptr,
@@ -598,6 +647,11 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
             || options.fullscreen
         ? TerminalSessionStartMode::Deferred
         : TerminalSessionStartMode::Immediate;
+    guardedWorkspace->setSurfaceIdAllocator(
+        [controller = QPointer(this)]() -> SurfaceId {
+            return controller != nullptr ? controller->allocateSurfaceId()
+                                         : SurfaceId{};
+        });
     const bool initialized = guardedWorkspace->initialize(
         withoutInitialCommand(options), initialSessionStartMode,
         initialSessionCoordinator_, requestedKeybindProgram,
@@ -1477,6 +1531,15 @@ TerminalWorkspace *ApplicationController::focusedWorkspace() const
     return nullptr;
 }
 
+SurfaceId ApplicationController::allocateSurfaceId()
+{
+    SurfaceId id;
+    do {
+        id = SurfaceId(nextSurfaceId_++);
+    } while (!id.isValid() || surfaceRegistry_.contains(id));
+    return id;
+}
+
 int ApplicationController::windowCount() const
 {
     return static_cast<int>(
@@ -1643,6 +1706,38 @@ void ApplicationController::registerWindow(
         .quickTerminalSurface = std::move(quickTerminalSurface),
         .quickTerminalAutohideTimer = autohideTimer,
     });
+    for (const WorkspaceSurfaceSnapshot &surface :
+         workspace->surfaceSnapshot()) {
+        if (surface.surfaceId.isValid()) {
+            surfaceRegistry_.insert(
+                surface.surfaceId, {windowId, surface.paneId});
+        }
+    }
+    connect(workspace, &TerminalWorkspace::paneCommitted, this,
+            [this, windowId, guarded = QPointer(workspace)](
+                PaneId paneId, TerminalPane *) {
+                const SurfaceId surfaceId =
+                    guarded != nullptr ? guarded->surfaceIdForPane(paneId)
+                                       : SurfaceId{};
+                if (surfaceId.isValid()
+                    && recordForWindowId(windowId) != nullptr) {
+                    surfaceRegistry_.insert(surfaceId,
+                                            {windowId, paneId});
+                }
+            });
+    connect(workspace, &TerminalWorkspace::paneRemoved, this,
+            [this, windowId, guarded = QPointer(workspace)](
+                PaneId paneId, TerminalPane *) {
+                const SurfaceId surfaceId =
+                    guarded != nullptr ? guarded->surfaceIdForPane(paneId)
+                                       : SurfaceId{};
+                const auto registered = surfaceRegistry_.constFind(surfaceId);
+                if (registered != surfaceRegistry_.cend()
+                    && registered.value()
+                        == SurfaceTarget{windowId, paneId}) {
+                    surfaceRegistry_.remove(surfaceId);
+                }
+            });
     connect(workspace, &QObject::destroyed, this,
             [this, workspace, guardedWindow = QPointer(window)] {
                 workspaceDestroyed(workspace, guardedWindow);
@@ -1925,6 +2020,15 @@ void ApplicationController::unmapAndRetireWindow(QQuickWindow *window)
 void ApplicationController::retireWindow(QQuickWindow *window)
 {
     const auto previousSize = windows_.size();
+    QSet<WindowId> retiringIds;
+    for (const WindowRecord &record : windows_) {
+        if (record.window == nullptr || record.window == window) {
+            retiringIds.insert(record.id);
+        }
+    }
+    surfaceRegistry_.removeIf([&retiringIds](auto iterator) {
+        return retiringIds.contains(iterator.value().windowId);
+    });
     std::erase_if(windows_, [this, window](const WindowRecord &record) {
         const bool remove = record.window == nullptr || record.window == window;
         if (remove && record.workspace == lastActiveWorkspace_) {

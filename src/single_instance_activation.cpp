@@ -1,9 +1,12 @@
 #include "single_instance_activation.h"
 
+#include "ghostty_application_ipc.h"
+
 #include <QDBusAbstractAdaptor>
 #include <QDBusConnectionInterface>
 #include <QDBusError>
 #include <QDBusMessage>
+#include <QDBusMetaType>
 #include <QDBusReply>
 #include <QMetaType>
 #include <QPointer>
@@ -30,6 +33,25 @@ struct InvalidAction {
     QString diagnostic;
 };
 
+std::optional<GhosttyNewTabIpcParameter>
+newTabParameter(const QVariant &parameter)
+{
+    if (parameter.metaType()
+        == QMetaType::fromType<GhosttyNewTabIpcParameter>()) {
+        return parameter.value<GhosttyNewTabIpcParameter>();
+    }
+    if (parameter.metaType() != QMetaType::fromType<QDBusArgument>()) {
+        return std::nullopt;
+    }
+    const QDBusArgument argument = parameter.value<QDBusArgument>();
+    if (argument.currentSignature() != QLatin1StringView("(tas)")) {
+        return std::nullopt;
+    }
+    GhosttyNewTabIpcParameter result;
+    argument >> result;
+    return result;
+}
+
 std::expected<ApplicationActivationRequest, InvalidAction>
 parseAction(const QString &actionName, const QVariantList &parameter,
             const QVariantMap &platformData)
@@ -43,6 +65,8 @@ parseAction(const QString &actionName, const QVariantList &parameter,
     };
     if (actionName == QStringLiteral("new-window")) {
         request.kind = Kind::NewWindow;
+    } else if (actionName == QStringLiteral("new-tab")) {
+        request.kind = Kind::NewTab;
     } else if (actionName == QStringLiteral("new-window-command")) {
         request.kind = Kind::NewWindowCommand;
     } else if (actionName == QStringLiteral("toggle-quick-terminal")) {
@@ -56,7 +80,8 @@ parseAction(const QString &actionName, const QVariantList &parameter,
         });
     }
 
-    if (request.kind != Kind::NewWindowCommand) {
+    if (request.kind != Kind::NewWindowCommand
+        && request.kind != Kind::NewTab) {
         if (parameter.isEmpty()) return request;
         return std::unexpected(InvalidAction{
             .errorName =
@@ -64,6 +89,23 @@ parseAction(const QString &actionName, const QVariantList &parameter,
             .diagnostic =
                 QStringLiteral("%1 does not accept parameters").arg(actionName),
         });
+    }
+
+    if (request.kind == Kind::NewTab) {
+        const std::optional<GhosttyNewTabIpcParameter> value =
+            parameter.size() == 1 ? newTabParameter(parameter.front())
+                                  : std::nullopt;
+        if (!value.has_value()) {
+            return std::unexpected(InvalidAction{
+                .errorName =
+                    QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"),
+                .diagnostic = QStringLiteral(
+                    "new-tab requires exactly one (tas) parameter"),
+            });
+        }
+        request.surfaceId = value->surfaceId;
+        request.arguments = value->arguments;
+        return request;
     }
 
     if (parameter.size() != 1
@@ -113,6 +155,7 @@ SingleInstanceActivation::SingleInstanceActivation(QDBusConnection connection,
     , serviceName_(std::move(serviceName))
     , objectPath_(objectPathForApplicationId(serviceName_))
 {
+    qDBusRegisterMetaType<GhosttyNewTabIpcParameter>();
     (void)new GtkActionsAdaptor(this);
 }
 

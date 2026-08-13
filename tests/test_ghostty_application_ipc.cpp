@@ -67,6 +67,13 @@ const QStringList &payload(const GhosttyApplicationIpcRequest &request)
     return *request.stringArrayParameter;
 }
 
+const GhosttyNewTabIpcParameter &
+newTabPayload(const GhosttyApplicationIpcRequest &request)
+{
+    Q_ASSERT(request.newTabParameter.has_value());
+    return *request.newTabParameter;
+}
+
 class RawArguments final {
 public:
     RawArguments(std::initializer_list<std::string_view> arguments)
@@ -128,6 +135,7 @@ class GhosttyApplicationIpcTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void newTabTargetsExplicitOrEnvironmentSurface();
     void injectsCanonicalCallerDirectoryAndForwardsArguments();
     void canonicalizesConcreteDirectoryAndTargetsCustomClass();
     void expandsHomeForConcreteDirectory();
@@ -143,6 +151,53 @@ private Q_SLOTS:
     void sendsExactGtkActionsPayload();
     void reportsDbusFailureWithoutFallback();
 };
+
+void GhosttyApplicationIpcTest::newTabTargetsExplicitOrEnvironmentSurface()
+{
+    LocalTemporaryDirectory temporary;
+    QVERIFY(temporary.isValid());
+    GhosttyApplicationIpcParseContext context = contextFor(temporary.path());
+    context.surfaceIdEnvironment = QByteArrayLiteral("0x2a");
+
+    auto parsed = parseGhosttyApplicationIpcRequest(
+        GhosttyApplicationIpcAction::NewTab,
+        QList<QByteArray>{
+            QByteArrayLiteral("ghostty"), QByteArrayLiteral("+new-tab"),
+            QByteArrayLiteral("--surface-id= 0x1234 "),
+            QByteArrayLiteral("--shell-integration=fish"),
+            QByteArrayLiteral("--title=remote"),
+        },
+        context);
+    QVERIFY2(parsed.has_value(),
+             parsed ? "" : qPrintable(parsed.error().diagnostic));
+    QCOMPARE(parsed->actionName, QStringLiteral("new-tab"));
+    QVERIFY(!parsed->stringArrayParameter.has_value());
+    QCOMPARE(newTabPayload(*parsed).surfaceId, quint64{0x1234});
+    QCOMPARE(newTabPayload(*parsed).arguments,
+             QStringList({
+                 QStringLiteral("--working-directory=%1")
+                     .arg(QFileInfo(temporary.path()).canonicalFilePath()),
+                 QStringLiteral("--shell-integration=fish"),
+                 QStringLiteral("--title=remote"),
+             }));
+
+    parsed = parseGhosttyApplicationIpcRequest(
+        GhosttyApplicationIpcAction::NewTab,
+        QList<QByteArray>{QByteArrayLiteral("ghostty"),
+                          QByteArrayLiteral("+new-tab")},
+        context);
+    QVERIFY(parsed.has_value());
+    QCOMPARE(newTabPayload(*parsed).surfaceId, quint64{42});
+
+    parsed = parseGhosttyApplicationIpcRequest(
+        GhosttyApplicationIpcAction::NewTab,
+        QList<QByteArray>{QByteArrayLiteral("ghostty"),
+                          QByteArrayLiteral("+new-tab"),
+                          QByteArrayLiteral("--surface-id=invalid")},
+        context);
+    QVERIFY(!parsed.has_value());
+    QVERIFY(parsed.error().diagnostic.contains(QStringLiteral("Surface ID")));
+}
 
 void GhosttyApplicationIpcTest::
     injectsCanonicalCallerDirectoryAndForwardsArguments()
@@ -395,6 +450,8 @@ void GhosttyApplicationIpcTest::
         QStringLiteral("--working-directory=inherit"),
         QStringLiteral("--command=echo first"),
         QStringLiteral("--command=shell: echo second "),
+        QStringLiteral("--shell-integration=fish"),
+        QStringLiteral("--shell-integration=invalid"),
     });
     QVERIFY2(decoded.has_value(),
              decoded ? "" : qPrintable(decoded.error().diagnostic));
@@ -407,6 +464,8 @@ void GhosttyApplicationIpcTest::
     QCOMPARE(decoded->command->shellCommand,
              QByteArrayLiteral("echo second"));
     QVERIFY(!decoded->command->defaultShell);
+    QCOMPARE(decoded->shellIntegration,
+             std::optional{GhosttyShellIntegrationMode::Fish});
 }
 
 void GhosttyApplicationIpcTest::decodesGhosttyCommandGrammar()
@@ -524,6 +583,40 @@ void GhosttyApplicationIpcTest::sendsExactGtkActionsPayload()
              *request.stringArrayParameter);
     QVERIFY(endpoint.platformData.isEmpty());
 
+    const GhosttyApplicationIpcRequest newTab{
+        .applicationId = service,
+        .objectPath = path,
+        .actionName = QStringLiteral("new-tab"),
+        .newTabParameter = GhosttyNewTabIpcParameter{
+            .surfaceId = 0x1234,
+            .arguments = {
+                QStringLiteral("--working-directory=/tab"),
+                QStringLiteral("--shell-integration=zsh"),
+            },
+        },
+    };
+    auto tabFuture = std::async(std::launch::async, [&] {
+        return sendGhosttyApplicationIpcRequest(newTab, bus.client(), 2s);
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(tabFuture.wait_for(0ms)
+                                 == std::future_status::ready,
+                             3000);
+    const auto tabSent = tabFuture.get();
+    QVERIFY2(tabSent.has_value(),
+             tabSent ? "" : qPrintable(tabSent.error().diagnostic));
+    QCOMPARE(endpoint.calls, 2);
+    QCOMPARE(endpoint.actionName, QStringLiteral("new-tab"));
+    QCOMPARE(endpoint.parameters.size(), 1);
+    QCOMPARE(endpoint.parameters.front().metaType(),
+             QMetaType::fromType<QDBusArgument>());
+    const QDBusArgument tabArgument =
+        endpoint.parameters.front().value<QDBusArgument>();
+    QCOMPARE(tabArgument.currentSignature(), QStringLiteral("(tas)"));
+    GhosttyNewTabIpcParameter receivedTab;
+    tabArgument >> receivedTab;
+    QCOMPARE(receivedTab, *newTab.newTabParameter);
+    QVERIFY(endpoint.platformData.isEmpty());
+
     const GhosttyApplicationIpcRequest toggle{
         .applicationId = service,
         .objectPath = path,
@@ -540,7 +633,7 @@ void GhosttyApplicationIpcTest::sendsExactGtkActionsPayload()
     QVERIFY2(toggleSent.has_value(),
              toggleSent ? ""
                         : qPrintable(toggleSent.error().diagnostic));
-    QCOMPARE(endpoint.calls, 2);
+    QCOMPARE(endpoint.calls, 3);
     QCOMPARE(endpoint.actionName,
              QStringLiteral("toggle-quick-terminal"));
     QVERIFY(endpoint.parameters.isEmpty());

@@ -22,6 +22,7 @@
 struct ApplicationActivationRequest {
     enum class Kind {
         Activate,
+        NewTab,
         NewWindow,
         NewWindowCommand,
         ToggleQuickTerminal,
@@ -29,6 +30,7 @@ struct ApplicationActivationRequest {
 
     Kind kind = Kind::Activate;
     QStringList arguments;
+    quint64 surfaceId = 0;
     DesktopActivationContext activation;
 };
 

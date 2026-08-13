@@ -1693,8 +1693,9 @@
           "note": "Before any GUI startup, the raw-argv client reproduces pinned Ghostty's class targeting, concrete cwd tilde/relative realpath normalization, implicit caller-cwd insertion, home/inherit forwarding quirk, opaque arguments after `-e`, UTF-8 validation, and exact org.gtk.Actions new-window-command string-array variant with empty platform data. It performs one blocking D-Bus call with service activation and no retry or local fallback. The primary decodes last-valid command/cwd/title values, including Ghostty's literal relative-path treatment of winning home/inherit values, unknown-option ignoring, direct/shell command grammar, and non-empty argv-after-`-e` precedence; overrides apply only to the registered first surface while preserving the global initial-session lease lifecycle. Warm and cold private-bus process tests cover the real executable path."
         },
         "new-tab": {
-          "status": "planned",
-          "note": "Upstream's new IPC action targets a process-global surface ID and carries command, working-directory, shell-integration, and title overrides. ghostty-qt still needs an application-owned surface registry, child GHOSTTY_SURFACE_ID injection, the typed (tas) D-Bus route, and first-surface tab overrides before this can be claimed."
+          "status": "supported",
+          "scope": "linux",
+          "note": "Before GUI startup, the raw-argv client resolves an explicit --surface-id or inherited GHOSTTY_SURFACE_ID, preserves pinned class/cwd normalization and the -e boundary, and sends the exact org.gtk.Actions new-tab variant containing one (tas) tuple. Every pane receives a nonzero process-wide ID as a zero-padded hexadecimal GHOSTTY_SURFACE_ID before its child starts. The application-owned live registry routes a matching ID to that pane's window, falls back to the focused surface when the ID is zero or stale, and creates a window when no focused surface exists. Command, working-directory, shell-integration, and title overrides apply only to the new tab's first pane; ordinary later tabs and splits inherit current configuration. Parser, private-bus tuple, receiver, stable-target, environment, and override-lifetime tests cover the complete route."
         },
         "show-config": {
           "status": "supported",

@@ -27,10 +27,12 @@ private:
 
 struct TabIdTag;
 struct PaneIdTag;
+struct SurfaceIdTag;
 struct WindowIdTag;
 
 using TabId = WorkspaceId<TabIdTag>;
 using PaneId = WorkspaceId<PaneIdTag>;
+using SurfaceId = WorkspaceId<SurfaceIdTag>;
 using WindowId = WorkspaceId<WindowIdTag>;
 
 struct SurfaceTarget {
@@ -54,5 +56,6 @@ constexpr size_t qHash(WorkspaceId<Tag> id, size_t seed = 0) noexcept
 
 Q_DECLARE_METATYPE(TabId)
 Q_DECLARE_METATYPE(PaneId)
+Q_DECLARE_METATYPE(SurfaceId)
 Q_DECLARE_METATYPE(WindowId)
 Q_DECLARE_METATYPE(SurfaceTarget)

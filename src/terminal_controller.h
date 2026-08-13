@@ -104,6 +104,10 @@ public:
     {
         return launchOptions_.environment;
     }
+    [[nodiscard]] GhosttyShellIntegrationMode launchShellIntegration() const
+    {
+        return launchOptions_.shellIntegration;
+    }
     [[nodiscard]] const TerminalPath &launchWorkingDirectory() const
     {
         return launchOptions_.workingDirectory;

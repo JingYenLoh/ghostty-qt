@@ -4,6 +4,7 @@
 
 #include <QDBusError>
 #include <QDBusMessage>
+#include <QDBusMetaType>
 #include <QDir>
 #include <QFileInfo>
 #include <QStringDecoder>
@@ -21,8 +22,10 @@
 
 namespace {
 
+constexpr auto NewTabArgument = "+new-tab";
 constexpr auto NewWindowArgument = "+new-window";
 constexpr auto ToggleQuickTerminalArgument = "+toggle-quick-terminal";
+constexpr auto NewTabAction = "new-tab";
 constexpr auto NewWindowCommandAction = "new-window-command";
 constexpr auto ToggleQuickTerminalAction = "toggle-quick-terminal";
 
@@ -248,6 +251,33 @@ parseGhosttyCommand(QStringView value)
     return TerminalCommand::direct(std::move(arguments));
 }
 
+std::optional<GhosttyShellIntegrationMode>
+parseShellIntegration(QByteArrayView value)
+{
+    value = trimAsciiWhitespace(value);
+    if (value == "none") return GhosttyShellIntegrationMode::None;
+    if (value == "detect") return GhosttyShellIntegrationMode::Detect;
+    if (value == "bash") return GhosttyShellIntegrationMode::Bash;
+    if (value == "elvish") return GhosttyShellIntegrationMode::Elvish;
+    if (value == "fish") return GhosttyShellIntegrationMode::Fish;
+    if (value == "nushell") return GhosttyShellIntegrationMode::Nushell;
+    if (value == "zsh") return GhosttyShellIntegrationMode::Zsh;
+    return std::nullopt;
+}
+
+std::expected<quint64, GhosttyApplicationIpcError>
+parseSurfaceId(QByteArrayView value)
+{
+    const QByteArray text = trimAsciiWhitespace(value).toByteArray();
+    bool valid = false;
+    const quint64 parsed = text.toULongLong(&valid, 0);
+    if (!valid || text.startsWith('-')) {
+        return std::unexpected(
+            error(QStringLiteral("Surface ID is not an unsigned 64-bit value")));
+    }
+    return parsed;
+}
+
 std::expected<void, GhosttyApplicationIpcError>
 validateRequest(const GhosttyApplicationIpcRequest &request)
 {
@@ -262,18 +292,32 @@ validateRequest(const GhosttyApplicationIpcRequest &request)
                            "identity")));
     }
 
+    const bool newTab = request.actionName == QLatin1StringView(NewTabAction)
+        && request.newTabParameter.has_value()
+        && !request.stringArrayParameter.has_value();
     const bool newWindow = request.actionName
             == QLatin1StringView(NewWindowCommandAction)
-        && request.stringArrayParameter.has_value();
+        && request.stringArrayParameter.has_value()
+        && !request.newTabParameter.has_value();
     const bool toggle = request.actionName
             == QLatin1StringView(ToggleQuickTerminalAction)
-        && !request.stringArrayParameter.has_value();
-    if (!newWindow && !toggle) {
+        && !request.stringArrayParameter.has_value()
+        && !request.newTabParameter.has_value();
+    if (!newTab && !newWindow && !toggle) {
         return std::unexpected(error(
             QStringLiteral("The IPC request has an invalid action payload")));
     }
     if (request.stringArrayParameter) {
         for (const QString &argument : *request.stringArrayParameter) {
+            if (auto encoded =
+                    encodeUtf8(argument, QStringLiteral("Forwarded argument"));
+                !encoded) {
+                return std::unexpected(std::move(encoded.error()));
+            }
+        }
+    }
+    if (request.newTabParameter) {
+        for (const QString &argument : request.newTabParameter->arguments) {
             if (auto encoded =
                     encodeUtf8(argument, QStringLiteral("Forwarded argument"));
                 !encoded) {
@@ -293,6 +337,7 @@ GhosttyApplicationIpcParseContext::fromProcess(QString defaultApplicationId)
         .defaultApplicationId = std::move(defaultApplicationId),
         .workingDirectory = QDir::currentPath(),
         .homeDirectory = QDir::homePath(),
+        .surfaceIdEnvironment = qgetenv("GHOSTTY_SURFACE_ID"),
     };
 }
 
@@ -325,13 +370,20 @@ parseGhosttyApplicationIpcRequest(
         return std::unexpected(std::move(applicationId.error()));
     }
 
-    const QByteArrayView selectedArgument =
-        selectedAction == GhosttyApplicationIpcAction::NewWindow
-        ? QByteArrayView(NewWindowArgument)
-        : QByteArrayView(ToggleQuickTerminalArgument);
+    const QByteArrayView selectedArgument = [&] {
+        switch (selectedAction) {
+        case GhosttyApplicationIpcAction::NewTab:
+            return QByteArrayView(NewTabArgument);
+        case GhosttyApplicationIpcAction::NewWindow:
+            return QByteArrayView(NewWindowArgument);
+        case GhosttyApplicationIpcAction::ToggleQuickTerminal:
+            return QByteArrayView(ToggleQuickTerminalArgument);
+        }
+        Q_UNREACHABLE_RETURN(QByteArrayView{});
+    }();
     qsizetype actionCount = 0;
     for (const QByteArray &argument : arguments | std::views::drop(1)) {
-        if (selectedAction == GhosttyApplicationIpcAction::NewWindow
+        if (selectedAction != GhosttyApplicationIpcAction::ToggleQuickTerminal
             && argument == "-e") {
             break;
         }
@@ -351,12 +403,20 @@ parseGhosttyApplicationIpcRequest(
             .actionName =
                 QString::fromLatin1(ToggleQuickTerminalAction),
             .stringArrayParameter = std::nullopt,
+            .newTabParameter = std::nullopt,
         };
     }
 
     QStringList forwarded;
     forwarded.reserve(arguments.size());
     std::optional<QByteArray> customClass;
+    quint64 surfaceId = 0;
+    if (selectedAction == GhosttyApplicationIpcAction::NewTab
+        && !context.surfaceIdEnvironment.isEmpty()) {
+        if (auto parsed = parseSurfaceId(context.surfaceIdEnvironment)) {
+            surfaceId = *parsed;
+        }
+    }
     bool executeSeen = false;
     bool concreteWorkingDirectorySeen = false;
 
@@ -378,6 +438,13 @@ parseGhosttyApplicationIpcRequest(
             customClass =
                 trimAsciiWhitespace(QByteArrayView(argument).sliced(8))
                     .toByteArray();
+            continue;
+        }
+        if (selectedAction == GhosttyApplicationIpcAction::NewTab
+            && argument.startsWith("--surface-id=")) {
+            auto parsed = parseSurfaceId(QByteArrayView(argument).sliced(13));
+            if (!parsed) return std::unexpected(std::move(parsed.error()));
+            surfaceId = *parsed;
             continue;
         }
         if (argument.startsWith("--working-directory=")) {
@@ -425,12 +492,25 @@ parseGhosttyApplicationIpcRequest(
             QStringLiteral("--working-directory=%1").arg(*canonical));
     }
 
-    return GhosttyApplicationIpcRequest{
+    GhosttyApplicationIpcRequest request{
         .applicationId = *applicationId,
         .objectPath = objectPathForApplicationId(*applicationId),
-        .actionName = QString::fromLatin1(NewWindowCommandAction),
-        .stringArrayParameter = std::move(forwarded),
+        .actionName = QString::fromLatin1(
+            selectedAction == GhosttyApplicationIpcAction::NewTab
+                ? NewTabAction
+                : NewWindowCommandAction),
+        .stringArrayParameter = std::nullopt,
+        .newTabParameter = std::nullopt,
     };
+    if (selectedAction == GhosttyApplicationIpcAction::NewTab) {
+        request.newTabParameter = GhosttyNewTabIpcParameter{
+            .surfaceId = surfaceId,
+            .arguments = std::move(forwarded),
+        };
+    } else {
+        request.stringArrayParameter = std::move(forwarded);
+    }
+    return request;
 }
 
 std::expected<GhosttyApplicationIpcRequest, GhosttyApplicationIpcError>
@@ -475,6 +555,9 @@ sendGhosttyApplicationIpcRequest(
     if (request.stringArrayParameter) {
         parameters.emplaceBack(
             QVariant::fromValue(*request.stringArrayParameter));
+    } else if (request.newTabParameter) {
+        qDBusRegisterMetaType<GhosttyNewTabIpcParameter>();
+        parameters.emplaceBack(QVariant::fromValue(*request.newTabParameter));
     }
     call << request.actionName << parameters << QVariantMap{};
 
@@ -528,6 +611,14 @@ decodeGhosttyNewWindowArguments(const QStringList &arguments)
             continue;
         }
         if (argument.startsWith(
+                QLatin1StringView("--shell-integration="))) {
+            if (auto parsed = parseShellIntegration(
+                    QByteArrayView(*encoded).sliced(20))) {
+                overrides.shellIntegration = *parsed;
+            }
+            continue;
+        }
+        if (argument.startsWith(
                 QLatin1StringView("--working-directory="))) {
             const QByteArrayView value =
                 trimAsciiWhitespace(QByteArrayView(*encoded).sliced(20));
@@ -555,4 +646,15 @@ decodeGhosttyNewWindowArguments(const QStringList &arguments)
             TerminalCommand::direct(std::move(directArguments));
     }
     return overrides;
+}
+
+std::expected<GhosttyNewTabTransportRequest, GhosttyApplicationIpcError>
+decodeGhosttyNewTabParameter(const GhosttyNewTabIpcParameter &parameter)
+{
+    auto overrides = decodeGhosttyNewWindowArguments(parameter.arguments);
+    if (!overrides) return std::unexpected(std::move(overrides.error()));
+    return GhosttyNewTabTransportRequest{
+        .surfaceId = SurfaceId(parameter.surfaceId),
+        .overrides = std::move(*overrides),
+    };
 }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ghostty_shell_integration_mode.h"
+
 #include "terminal_path.h"
 
 #include "linux_cgroup_config.h"
@@ -42,16 +44,6 @@ using TerminalEnvironment = QVector<TerminalEnvironmentEntry>;
 enum class GraphemeWidthMethod : quint8 {
     Legacy,
     Unicode,
-};
-
-enum class GhosttyShellIntegrationMode : quint8 {
-    None,
-    Detect,
-    Bash,
-    Elvish,
-    Fish,
-    Nushell,
-    Zsh,
 };
 
 // This mirrors the pinned Ghostty config bitset. It is launch policy: shell

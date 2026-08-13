@@ -1,5 +1,6 @@
 #include "private_session_bus.h"
 #include "single_instance_activation.h"
+#include "ghostty_application_ipc.h"
 
 #include <QDBusContext>
 #include <QDBusError>
@@ -393,12 +394,21 @@ void SingleInstanceActivationTest::mixedActivationsQueueInFifoOrder()
                            QStringLiteral("command-startup")},
                       }),
         2000));
+    QDBusPendingCallWatcher tab(bus.client().asyncCall(
+        gtkActionCall(
+            service, QStringLiteral("new-tab"),
+            {QVariant::fromValue(GhosttyNewTabIpcParameter{
+                .surfaceId = 0x1234,
+                .arguments = {QStringLiteral("--title=tab")},
+            })}),
+        2000));
     QDBusPendingCallWatcher toggle(bus.client().asyncCall(
         gtkActionCall(service, QStringLiteral("toggle-quick-terminal")), 2000));
     QTest::qWait(100);
     QVERIFY(!activate.isFinished());
     QVERIFY(!newWindow.isFinished());
     QVERIFY(!command.isFinished());
+    QVERIFY(!tab.isFinished());
     QVERIFY(!toggle.isFinished());
 
     std::vector<ApplicationActivationRequest> observed;
@@ -411,13 +421,15 @@ void SingleInstanceActivationTest::mixedActivationsQueueInFifoOrder()
     QTRY_VERIFY_WITH_TIMEOUT(activate.isFinished(), 3000);
     QTRY_VERIFY_WITH_TIMEOUT(newWindow.isFinished(), 3000);
     QTRY_VERIFY_WITH_TIMEOUT(command.isFinished(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(tab.isFinished(), 3000);
     QTRY_VERIFY_WITH_TIMEOUT(toggle.isFinished(), 3000);
     QCOMPARE(activate.reply().type(), QDBusMessage::ReplyMessage);
     QCOMPARE(newWindow.reply().type(), QDBusMessage::ReplyMessage);
     QCOMPARE(command.reply().type(), QDBusMessage::ReplyMessage);
+    QCOMPARE(tab.reply().type(), QDBusMessage::ReplyMessage);
     QCOMPARE(toggle.reply().type(), QDBusMessage::ReplyMessage);
 
-    QCOMPARE(observed.size(), 4);
+    QCOMPARE(observed.size(), 5);
     QCOMPARE(observed[0].kind, ApplicationActivationRequest::Kind::Activate);
     QCOMPARE(observed[0].activation.xdgActivationToken,
              QStringLiteral("activate-token"));
@@ -435,6 +447,11 @@ void SingleInstanceActivationTest::mixedActivationsQueueInFifoOrder()
     QCOMPARE(observed[2].activation.desktopStartupId,
              QStringLiteral("command-startup"));
     QCOMPARE(observed[3].kind,
+             ApplicationActivationRequest::Kind::NewTab);
+    QCOMPARE(observed[3].surfaceId, quint64{0x1234});
+    QCOMPARE(observed[3].arguments,
+             QStringList({QStringLiteral("--title=tab")}));
+    QCOMPARE(observed[4].kind,
              ApplicationActivationRequest::Kind::ToggleQuickTerminal);
 }
 

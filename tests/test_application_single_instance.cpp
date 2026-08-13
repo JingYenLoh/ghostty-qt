@@ -677,6 +677,15 @@ void ApplicationSingleInstanceTest::
     warmHostAcceptsGhosttyCliApplicationActions_data()
 {
     QTest::addColumn<QStringList>("arguments");
+    QTest::newRow("new-tab") << QStringList{
+        QStringLiteral("+new-tab"),
+        QStringLiteral("--surface-id=0"),
+        QStringLiteral("--shell-integration=none"),
+        QStringLiteral("--title=remote tab"),
+        QStringLiteral("-e"),
+        QStringLiteral("/bin/sleep"),
+        QStringLiteral("1"),
+    };
     QTest::newRow("new-window") << QStringList{
         QStringLiteral("+new-window"), QStringLiteral("--title=remote title"),
         QStringLiteral("-e"),          QStringLiteral("/bin/sleep"),
@@ -760,6 +769,13 @@ void ApplicationSingleInstanceTest::
 void ApplicationSingleInstanceTest::ghosttyCliActionColdStartsService_data()
 {
     QTest::addColumn<QStringList>("arguments");
+    QTest::newRow("new-tab") << QStringList{
+        QStringLiteral("+new-tab"),
+        QStringLiteral("--surface-id=0"),
+        QStringLiteral("--title=cold tab"),
+        QStringLiteral("-e"),
+        QStringLiteral("/bin/true"),
+    };
     QTest::newRow("new-window") << QStringList{
         QStringLiteral("+new-window"),
         QStringLiteral("--title=cold"),

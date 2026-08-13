@@ -51,6 +51,7 @@ inline constexpr auto GhosttyPinnedCliActions =
         {"+crash-report", GhosttyCliFrontendSupport::Delegated},
         {"+boo", GhosttyCliFrontendSupport::Delegated},
         {"+new-window", GhosttyCliFrontendSupport::ApplicationIpc},
+        {"+new-tab", GhosttyCliFrontendSupport::ApplicationIpc},
         {"+toggle-quick-terminal", GhosttyCliFrontendSupport::ApplicationIpc},
     });
 

@@ -147,6 +147,23 @@ LaunchOptions baseOptions()
     return options;
 }
 
+TerminalEnvironment withoutSurfaceId(TerminalEnvironment environment)
+{
+    environment.removeIf([](const TerminalEnvironmentEntry &entry) {
+        return entry.key == QByteArrayLiteral("GHOSTTY_SURFACE_ID");
+    });
+    return environment;
+}
+
+QByteArray surfaceIdEnvironment(const TerminalEnvironment &environment)
+{
+    const auto entry = std::ranges::find_if(
+        environment, [](const TerminalEnvironmentEntry &candidate) {
+            return candidate.key == QByteArrayLiteral("GHOSTTY_SURFACE_ID");
+        });
+    return entry != environment.cend() ? entry->value : QByteArray{};
+}
+
 TerminalTypography testTypography(QString prefix, double pointSize)
 {
     TerminalTypography typography;
@@ -1712,7 +1729,12 @@ void TerminalWorkspaceTest::launchOnlyReloadAffectsOnlyFuturePanes()
     QVERIFY(firstController != nullptr);
     QCOMPARE(firstController->launchTerm(),
              QByteArrayLiteral("ghostty-qt-initial"));
-    QCOMPARE(firstController->launchEnvironment(), options.environment);
+    QCOMPARE(withoutSurfaceId(firstController->launchEnvironment()),
+             options.environment);
+    const QByteArray firstSurfaceId =
+        surfaceIdEnvironment(firstController->launchEnvironment());
+    QVERIFY(firstSurfaceId.startsWith(QByteArrayLiteral("0x")));
+    QCOMPARE(firstSurfaceId.size(), 18);
     QCOMPARE(firstController->launchLinuxCgroup(), options.linuxCgroup);
     QVERIFY(!firstController->launchProcessUsesSingleInstance());
     QSignalSpy runtimeOptions(firstController,
@@ -1745,7 +1767,8 @@ void TerminalWorkspaceTest::launchOnlyReloadAffectsOnlyFuturePanes()
     QCOMPARE(first.pane->findChild<TerminalController *>(), firstController);
     QCOMPARE(firstController->launchTerm(),
              QByteArrayLiteral("ghostty-qt-initial"));
-    QCOMPARE(firstController->launchEnvironment(), options.environment);
+    QCOMPARE(withoutSurfaceId(firstController->launchEnvironment()),
+             options.environment);
     QCOMPARE(firstController->launchLinuxCgroup(), options.linuxCgroup);
     QCOMPARE(runtimeOptions.count(), 0);
 
@@ -1758,7 +1781,12 @@ void TerminalWorkspaceTest::launchOnlyReloadAffectsOnlyFuturePanes()
     QVERIFY(tabController != nullptr);
     QCOMPARE(tabController->launchTerm(),
              QByteArrayLiteral("ghostty-qt-reloaded"));
-    QCOMPARE(tabController->launchEnvironment(), reloaded.environment);
+    QCOMPARE(withoutSurfaceId(tabController->launchEnvironment()),
+             reloaded.environment);
+    const QByteArray tabSurfaceId =
+        surfaceIdEnvironment(tabController->launchEnvironment());
+    QCOMPARE(tabSurfaceId.size(), 18);
+    QVERIFY(tabSurfaceId != firstSurfaceId);
     QCOMPARE(tabController->launchLinuxCgroup(), reloaded.linuxCgroup);
     QVERIFY(!tabController->launchProcessUsesSingleInstance());
 
@@ -1770,12 +1798,19 @@ void TerminalWorkspaceTest::launchOnlyReloadAffectsOnlyFuturePanes()
     QVERIFY(splitController != nullptr);
     QCOMPARE(splitController->launchTerm(),
              QByteArrayLiteral("ghostty-qt-reloaded"));
-    QCOMPARE(splitController->launchEnvironment(), reloaded.environment);
+    QCOMPARE(withoutSurfaceId(splitController->launchEnvironment()),
+             reloaded.environment);
+    const QByteArray splitSurfaceId =
+        surfaceIdEnvironment(splitController->launchEnvironment());
+    QCOMPARE(splitSurfaceId.size(), 18);
+    QVERIFY(splitSurfaceId != firstSurfaceId);
+    QVERIFY(splitSurfaceId != tabSurfaceId);
     QCOMPARE(splitController->launchLinuxCgroup(), reloaded.linuxCgroup);
     QVERIFY(!splitController->launchProcessUsesSingleInstance());
     QCOMPARE(firstController->launchTerm(),
              QByteArrayLiteral("ghostty-qt-initial"));
-    QCOMPARE(firstController->launchEnvironment(), options.environment);
+    QCOMPARE(withoutSurfaceId(firstController->launchEnvironment()),
+             options.environment);
     QCOMPARE(firstController->launchLinuxCgroup(), options.linuxCgroup);
 }
 

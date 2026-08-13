@@ -365,6 +365,7 @@ private Q_SLOTS:
     void chromeToolButtonUsesWindowTextForFlatIcon();
     void chromeToolButtonSuppressesActionTextMnemonic();
     void remoteNewWindowOverridesOnlyItsFirstSurface();
+    void remoteNewTabTargetsProcessSurfaceAndScopesOverrides();
     void paletteTargetsEveryLiveSurfaceByCompositeIdentity();
     void paletteTargetFocusMayDestroyApplicationController();
     void sharesOneKeybindProgramGenerationAcrossWindows();
@@ -1277,6 +1278,105 @@ void ApplicationControllerTest::remoteNewWindowOverridesOnlyItsFirstSurface()
     QVERIFY(literalHome != nullptr);
     QCOMPARE(literalHome->launchWorkingDirectory(), QStringLiteral("home"));
     QVERIFY(!literalHome->launchInheritsWorkingDirectory());
+}
+
+void ApplicationControllerTest::
+    remoteNewTabTargetsProcessSurfaceAndScopesOverrides()
+{
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/application-remote-tab-XXXXXX")));
+    QVERIFY(directory.isValid());
+
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.program = {QStringLiteral("/bin/sleep"), QStringLiteral("30")};
+    options.tabInheritWorkingDirectory = false;
+    ApplicationController controller(options, harness.factory(), false);
+    const auto first = controller.createInitialWindow();
+    QVERIFY(first.has_value());
+    QVERIFY(controller.activateNewWindow(GhosttyNewWindowTransportOverrides{}));
+    QCOMPARE(controller.windowCount(), 2);
+    const ApplicationWindow second = controller.windows().constLast();
+
+    const QVector<WorkspaceSurfaceSnapshot> firstSurfaces =
+        first->workspace->surfaceSnapshot();
+    const QVector<WorkspaceSurfaceSnapshot> secondSurfaces =
+        second.workspace->surfaceSnapshot();
+    QCOMPARE(firstSurfaces.size(), 1);
+    QCOMPARE(secondSurfaces.size(), 1);
+    QVERIFY(firstSurfaces.constFirst().surfaceId.isValid());
+    QVERIFY(secondSurfaces.constFirst().surfaceId.isValid());
+    QVERIFY(firstSurfaces.constFirst().surfaceId
+            != secondSurfaces.constFirst().surfaceId);
+
+    const TerminalCommand remoteCommand = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/sh"), QByteArrayLiteral("-c"),
+        QByteArrayLiteral("sleep 30"),
+    });
+    QVERIFY(controller.activateNewTab({
+        .surfaceId = firstSurfaces.constFirst().surfaceId,
+        .overrides = {
+            .command = remoteCommand,
+            .shellIntegration = GhosttyShellIntegrationMode::Fish,
+            .workingDirectory = directory.path(),
+            .titleOverride = QStringLiteral("remote tab"),
+        },
+    }));
+    QCOMPARE(first->workspace->tabCount(), 2);
+    QCOMPARE(second.workspace->tabCount(), 1);
+
+    const QList<TerminalPane *> panes =
+        first->workspace->findChildren<TerminalPane *>();
+    const auto remote = std::ranges::find_if(
+        panes, [](TerminalPane *pane) {
+            return pane->surfaceTitleOverride()
+                == std::optional<QString>{QStringLiteral("remote tab")};
+        });
+    QVERIFY(remote != panes.cend());
+    TerminalController *const terminal =
+        (*remote)->findChild<TerminalController *>();
+    QVERIFY(terminal != nullptr);
+    QCOMPARE(terminal->launchCommand(),
+             std::optional<TerminalCommand>{remoteCommand});
+    QCOMPARE(terminal->launchWorkingDirectory(), directory.path());
+    QCOMPARE(terminal->launchShellIntegration(),
+             GhosttyShellIntegrationMode::Fish);
+
+    const QVector<WorkspaceSurfaceSnapshot> updatedSurfaces =
+        first->workspace->surfaceSnapshot();
+    const auto remoteSurface = std::ranges::find_if(
+        updatedSurfaces, [](const WorkspaceSurfaceSnapshot &surface) {
+            return surface.effectiveTitle
+                == std::optional<QString>{QStringLiteral("remote tab")};
+        });
+    QVERIFY(remoteSurface != updatedSurfaces.cend());
+    QVERIFY(controller.activateNewTab({
+        .surfaceId = remoteSurface->surfaceId,
+    }));
+    QCOMPARE(first->workspace->tabCount(), 3);
+    const QList<TerminalPane *> afterOrdinary =
+        first->workspace->findChildren<TerminalPane *>();
+    QCOMPARE(std::ranges::count_if(
+                 afterOrdinary, [](TerminalPane *pane) {
+                     return pane->surfaceTitleOverride().has_value();
+                 }),
+             1);
+
+    WindowFactoryHarness residentHarness;
+    ApplicationController resident(options, residentHarness.factory(), false);
+    QVERIFY(resident.startWithoutInitialWindow());
+    QVERIFY(resident.activateNewTab({
+        .surfaceId = SurfaceId(0xdead),
+        .overrides = {
+            .titleOverride = QStringLiteral("fallback window"),
+        },
+    }));
+    QCOMPARE(resident.windowCount(), 1);
+    TerminalPane *const fallback = onlyPane(
+        resident.windows().constFirst().workspace);
+    QVERIFY(fallback != nullptr);
+    QCOMPARE(fallback->surfaceTitleOverride(),
+             std::optional<QString>{QStringLiteral("fallback window")});
 }
 
 void ApplicationControllerTest::

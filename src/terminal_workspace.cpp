@@ -23,6 +23,7 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <concepts>
 #include <cstddef>
@@ -33,6 +34,26 @@
 #include <utility>
 
 namespace {
+
+SurfaceId allocateFallbackSurfaceId()
+{
+    static std::atomic<quint64> next{1};
+    return SurfaceId(next.fetch_add(1, std::memory_order_relaxed));
+}
+
+void setSurfaceEnvironment(LaunchOptions &options, SurfaceId surfaceId)
+{
+    constexpr QByteArrayView key("GHOSTTY_SURFACE_ID");
+    options.environment.removeIf([](const TerminalEnvironmentEntry &entry) {
+        return entry.key == QByteArrayView("GHOSTTY_SURFACE_ID");
+    });
+    options.environment.append({
+        .key = QByteArray(key),
+        .value = QStringLiteral("0x%1")
+                     .arg(surfaceId.value(), 16, 16, QLatin1Char('0'))
+                     .toLatin1(),
+    });
+}
 
 constexpr qreal splitGap = 2.0;
 constexpr qreal splitDividerZ = 1.0;
@@ -446,6 +467,7 @@ LaunchOptions TerminalWorkspace::defaultOptions_;
 TerminalWorkspace::TerminalWorkspace(QQuickItem *parent)
     : QQuickItem(parent)
     , effectiveOptions_(defaultOptions_)
+    , surfaceIdAllocator_(allocateFallbackSurfaceId)
 {
     setClip(true);
     if (QGuiApplication::instance() != nullptr) {
@@ -457,6 +479,12 @@ TerminalWorkspace::TerminalWorkspace(QQuickItem *parent)
 }
 
 TerminalWorkspace::~TerminalWorkspace() = default;
+
+void TerminalWorkspace::setSurfaceIdAllocator(SurfaceIdAllocator allocator)
+{
+    if (initialized_ || !allocator) return;
+    surfaceIdAllocator_ = std::move(allocator);
+}
 
 void TerminalWorkspace::setInspectorComponent(QQmlComponent *component)
 {
@@ -1116,12 +1144,27 @@ QVector<WorkspaceSurfaceSnapshot> TerminalWorkspace::surfaceSnapshot() const
             return;
         }
         surfaces.append({
+            .surfaceId = surfaceIds_.value(handle.id),
             .paneId = handle.id,
             .effectiveTitle = handle.pane->effectiveSurfaceTitle(),
             .currentDirectory = handle.pane->currentDirectory(),
         });
     });
     return surfaces;
+}
+
+SurfaceId TerminalWorkspace::surfaceIdForPane(PaneId paneId) const
+{
+    return surfaceIds_.value(paneId);
+}
+
+bool TerminalWorkspace::createApplicationTab(
+    PaneId sourcePaneId, FirstSurfaceOverrides firstSurfaceOverrides)
+{
+    return createNewTab(sourcePaneId, std::nullopt,
+                        TerminalSessionStartMode::Immediate,
+                        std::move(firstSurfaceOverrides))
+        .isValid();
 }
 
 bool TerminalWorkspace::focusPaneForFrontend(PaneId paneId)
@@ -1462,8 +1505,13 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
     std::optional<QString> surfaceTitleOverride)
 {
     const PaneId paneId(nextPaneId_++);
+    SurfaceId surfaceId = surfaceIdAllocator_ ? surfaceIdAllocator_()
+                                              : allocateFallbackSurfaceId();
+    if (!surfaceId.isValid()) surfaceId = allocateFallbackSurfaceId();
+    LaunchOptions surfaceOptions = options;
+    setSurfaceEnvironment(surfaceOptions, surfaceId);
     auto detachedPane = std::make_unique<TerminalPane>(
-        options, nullptr, std::move(initialGeometry), startMode,
+        surfaceOptions, nullptr, std::move(initialGeometry), startMode,
         initialSessionCoordinator_, keybindProgram_,
         std::move(firstSessionCommandOverride));
     TerminalPane *const pane = detachedPane.get();
@@ -1708,6 +1756,7 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
         return {};
     }
     if (!validateOwnership(true)) return {};
+    surfaceIds_.insert(paneId, surfaceId);
     return {paneId, paneGuard};
 }
 
@@ -1742,13 +1791,17 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createNewTab(
         } else {
             options = withoutInitialCommand(std::move(options));
         }
-    } else if (firstSurfaceOverrides.workingDirectory.has_value()) {
+    }
+    if (firstSurfaceOverrides.workingDirectory.has_value()) {
         options.workingDirectory =
             std::move(*firstSurfaceOverrides.workingDirectory);
         // Pinned Ghostty's receiver treats every value, including the literal
         // strings "home" and "inherit", as a path at this stage.
         options.inheritWorkingDirectory = false;
         options.workingDirectoryExplicit = true;
+    }
+    if (firstSurfaceOverrides.shellIntegration.has_value()) {
+        options.shellIntegration = *firstSurfaceOverrides.shellIntegration;
     }
     const int insertionIndex =
         options.windowNewTabPosition == WindowNewTabPosition::Current
@@ -2159,6 +2212,7 @@ void TerminalWorkspace::commitPaneRemoval(PaneId paneId,
         removePaneFromNode(tab->root, paneId);
         Q_EMIT paneRemoved(paneId, pane);
         if (guard == nullptr) return;
+        surfaceIds_.remove(paneId);
         if (tab->root == nullptr) {
             removeTab(tabId);
         } else {
@@ -2460,6 +2514,7 @@ void TerminalWorkspace::commitTabRemoval(PendingTabClose close)
         for (const PaneHandle &handle : panes) {
             Q_EMIT paneRemoved(handle.id, handle.pane);
             if (guard == nullptr) return;
+            surfaceIds_.remove(handle.id);
         }
         for (const IndexedTarget &target : targets) {
             resolvePendingTabRemoval(target.id);

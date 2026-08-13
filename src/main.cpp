@@ -2501,10 +2501,15 @@ int main(int argc, char *argv[])
                      cliAction.argument.data());
         return 2;
     case GhosttyCliActionDisposition::ApplicationIpc: {
-        const GhosttyApplicationIpcAction action =
-            cliAction.argument == std::string_view("+new-window")
-            ? GhosttyApplicationIpcAction::NewWindow
-            : GhosttyApplicationIpcAction::ToggleQuickTerminal;
+        const GhosttyApplicationIpcAction action = [&] {
+            if (cliAction.argument == std::string_view("+new-tab")) {
+                return GhosttyApplicationIpcAction::NewTab;
+            }
+            if (cliAction.argument == std::string_view("+new-window")) {
+                return GhosttyApplicationIpcAction::NewWindow;
+            }
+            return GhosttyApplicationIpcAction::ToggleQuickTerminal;
+        }();
         auto request = parseGhosttyApplicationIpcRequest(
             action, rawArguments,
             GhosttyApplicationIpcParseContext::fromProcess(
@@ -2935,6 +2940,7 @@ int main(int argc, char *argv[])
                     {QByteArrayLiteral("/bin/sh"), QByteArrayLiteral("-c"),
                      editor + QByteArrayLiteral(" ")
                          + shellQuote(encodedPath)}),
+                .shellIntegration = std::nullopt,
                 .workingDirectory = std::nullopt,
                 .titleOverride =
                     QStringLiteral("Editing configuration file %1").arg(*path),
@@ -3197,6 +3203,20 @@ int main(int argc, char *argv[])
                     return controller->activateNewWindow(
                         GhosttyNewWindowTransportOverrides{},
                         std::move(request.activation));
+                case Kind::NewTab: {
+                    auto tab = decodeGhosttyNewTabParameter({
+                        .surfaceId = request.surfaceId,
+                        .arguments = std::move(request.arguments),
+                    });
+                    if (!tab) {
+                        qWarning().noquote()
+                            << "Rejected Ghostty new-tab action:"
+                            << tab.error().diagnostic;
+                        return false;
+                    }
+                    return controller->activateNewTab(
+                        std::move(*tab), std::move(request.activation));
+                }
                 case Kind::NewWindowCommand: {
                     auto overrides =
                         decodeGhosttyNewWindowArguments(request.arguments);

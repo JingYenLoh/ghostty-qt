@@ -10,6 +10,7 @@
 #include "workspace_ids.h"
 
 #include <QObject>
+#include <QHash>
 #include <QPointer>
 #include <QSet>
 #include <QVector>
@@ -32,6 +33,7 @@ class TerminalWorkspace;
 class WindowBlurController;
 class WindowUiController;
 struct FirstSurfaceOverrides;
+struct GhosttyNewTabTransportRequest;
 struct GhosttyNewWindowTransportOverrides;
 struct WorkspaceFrontendActionRequest;
 
@@ -88,8 +90,12 @@ public:
     // startWithoutInitialWindow.
     [[nodiscard]] bool
     activateNoCommand(DesktopActivationContext activation = {});
-    // Ghostty application actions are source-less. Their decoded launch
-    // overrides apply only to the newly created window's first surface.
+    // Ghostty application actions carry no in-process source pointer. Stable
+    // surface IDs route new-tab; decoded launch overrides apply only to the
+    // newly created tab or window's first surface.
+    [[nodiscard]] bool
+    activateNewTab(GhosttyNewTabTransportRequest request,
+                   DesktopActivationContext activation = {});
     [[nodiscard]] bool
     activateNewWindow(GhosttyNewWindowTransportOverrides overrides,
                       DesktopActivationContext activation = {});
@@ -168,6 +174,7 @@ private:
                       PaneId sourcePaneId) const;
     [[nodiscard]] LaunchOptions activationWindowOptions() const;
     [[nodiscard]] TerminalWorkspace *focusedWorkspace() const;
+    [[nodiscard]] SurfaceId allocateSurfaceId();
     [[nodiscard]] bool
     containsWorkspace(const TerminalWorkspace *workspace) const;
     [[nodiscard]] std::vector<QPointer<TerminalWorkspace>>
@@ -224,6 +231,7 @@ private:
     std::unique_ptr<DesktopNotificationService> desktopNotifications_;
     std::unique_ptr<GhosttyApplicationKeybindings> keybindings_;
     std::vector<WindowRecord> windows_;
+    QHash<SurfaceId, SurfaceTarget> surfaceRegistry_;
     QPointer<TerminalWorkspace> lastActiveWorkspace_;
     QPointer<TerminalWorkspace> quitDialogHost_;
     QSet<TerminalWorkspace *> awaitingShutdown_;
@@ -236,4 +244,5 @@ private:
     bool quitRehostScheduled_ = false;
     bool destroying_ = false;
     quint64 nextWindowId_ = 1;
+    quint64 nextSurfaceId_ = 1;
 };
