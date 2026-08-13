@@ -31,7 +31,7 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    struct termios attributes {};
+    struct termios attributes{};
     if (::tcgetattr(STDOUT_FILENO, &attributes) == 0) {
         ::cfmakeraw(&attributes);
         (void)::tcsetattr(STDOUT_FILENO, TCSANOW, &attributes);

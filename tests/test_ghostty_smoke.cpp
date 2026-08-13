@@ -14,15 +14,15 @@ struct EffectCapture {
     bool receivedExpectedUserdata = true;
 };
 
-void capturePtyWrite(GhosttyTerminal, void *userdata,
-                     const uint8_t *data, size_t length)
+void capturePtyWrite(GhosttyTerminal, void *userdata, const uint8_t *data,
+                     size_t length)
 {
     auto *capture = static_cast<EffectCapture *>(userdata);
     if (capture == nullptr) {
         return;
     }
-    capture->receivedExpectedUserdata = capture->receivedExpectedUserdata
-        && userdata == capture;
+    capture->receivedExpectedUserdata =
+        capture->receivedExpectedUserdata && userdata == capture;
     capture->writes.append(reinterpret_cast<const char *>(data),
                            static_cast<qsizetype>(length));
 }
@@ -36,8 +36,8 @@ bool provideDeviceAttributes(GhosttyTerminal, void *userdata,
     }
 
     ++capture->deviceAttributeRequests;
-    capture->receivedExpectedUserdata = capture->receivedExpectedUserdata
-        && userdata == capture;
+    capture->receivedExpectedUserdata =
+        capture->receivedExpectedUserdata && userdata == capture;
     *attributes = GhosttyDeviceAttributes{};
     attributes->primary.conformance_level = GHOSTTY_DA_CONFORMANCE_VT420;
     attributes->primary.features[0] = GHOSTTY_DA_FEATURE_ANSI_COLOR;
@@ -65,7 +65,8 @@ GhosttyCellWide currentCellWidth(GhosttyRenderStateRowCells cells)
 QByteArray currentCellText(GhosttyRenderStateRowCells cells)
 {
     std::array<uint8_t, 16> storage{};
-    GhosttyBuffer buffer{.ptr = storage.data(), .cap = storage.size(), .len = 0};
+    GhosttyBuffer buffer{
+        .ptr = storage.data(), .cap = storage.size(), .len = 0};
     if (ghostty_render_state_row_cells_get(
             cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &buffer)
         != GHOSTTY_SUCCESS) {
@@ -103,13 +104,17 @@ void GhosttySmokeTest::parsesAndRendersText()
     GhosttyRenderStateRowIterator rows = nullptr;
     GhosttyRenderStateRowCells cells = nullptr;
     QCOMPARE(ghostty_render_state_new(nullptr, &state), GHOSTTY_SUCCESS);
-    QCOMPARE(ghostty_render_state_row_iterator_new(nullptr, &rows), GHOSTTY_SUCCESS);
-    QCOMPARE(ghostty_render_state_row_cells_new(nullptr, &cells), GHOSTTY_SUCCESS);
+    QCOMPARE(ghostty_render_state_row_iterator_new(nullptr, &rows),
+             GHOSTTY_SUCCESS);
+    QCOMPARE(ghostty_render_state_row_cells_new(nullptr, &cells),
+             GHOSTTY_SUCCESS);
     QCOMPARE(ghostty_render_state_update(state, terminal), GHOSTTY_SUCCESS);
-    QCOMPARE(ghostty_render_state_get(state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &rows),
+    QCOMPARE(ghostty_render_state_get(
+                 state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &rows),
              GHOSTTY_SUCCESS);
     QVERIFY(ghostty_render_state_row_iterator_next(rows));
-    QCOMPARE(ghostty_render_state_row_get(rows, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &cells),
+    QCOMPARE(ghostty_render_state_row_get(
+                 rows, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &cells),
              GHOSTTY_SUCCESS);
 
     QByteArray text;
@@ -118,7 +123,8 @@ void GhosttySmokeTest::parsesAndRendersText()
         uint8_t storage[16]{};
         GhosttyBuffer buffer{.ptr = storage, .cap = sizeof(storage), .len = 0};
         QCOMPARE(ghostty_render_state_row_cells_get(
-                     cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8, &buffer),
+                     cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8,
+                     &buffer),
                  GHOSTTY_SUCCESS);
         text.append(reinterpret_cast<const char *>(storage),
                     static_cast<qsizetype>(buffer.len));
@@ -138,21 +144,25 @@ void GhosttySmokeTest::exposesWideCjkCellMetadata()
 
     // U+754C (界) has an East Asian width of two cells, followed by ASCII x.
     const QByteArray content = QByteArray::fromHex("e7958c78");
-    ghostty_terminal_vt_write(terminal,
-                              reinterpret_cast<const uint8_t *>(content.constData()),
-                              static_cast<size_t>(content.size()));
+    ghostty_terminal_vt_write(
+        terminal, reinterpret_cast<const uint8_t *>(content.constData()),
+        static_cast<size_t>(content.size()));
 
     GhosttyRenderState state = nullptr;
     GhosttyRenderStateRowIterator rows = nullptr;
     GhosttyRenderStateRowCells cells = nullptr;
     QCOMPARE(ghostty_render_state_new(nullptr, &state), GHOSTTY_SUCCESS);
-    QCOMPARE(ghostty_render_state_row_iterator_new(nullptr, &rows), GHOSTTY_SUCCESS);
-    QCOMPARE(ghostty_render_state_row_cells_new(nullptr, &cells), GHOSTTY_SUCCESS);
+    QCOMPARE(ghostty_render_state_row_iterator_new(nullptr, &rows),
+             GHOSTTY_SUCCESS);
+    QCOMPARE(ghostty_render_state_row_cells_new(nullptr, &cells),
+             GHOSTTY_SUCCESS);
     QCOMPARE(ghostty_render_state_update(state, terminal), GHOSTTY_SUCCESS);
-    QCOMPARE(ghostty_render_state_get(state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &rows),
+    QCOMPARE(ghostty_render_state_get(
+                 state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &rows),
              GHOSTTY_SUCCESS);
     QVERIFY(ghostty_render_state_row_iterator_next(rows));
-    QCOMPARE(ghostty_render_state_row_get(rows, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &cells),
+    QCOMPARE(ghostty_render_state_row_get(
+                 rows, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &cells),
              GHOSTTY_SUCCESS);
 
     QVERIFY(ghostty_render_state_row_cells_next(cells));
@@ -192,22 +202,24 @@ void GhosttySmokeTest::encodesInputAndPasteSafety()
         .mode = GHOSTTY_MODE_BRACKETED_PASTE,
         .value = false,
     };
-    QCOMPARE(ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_MODE,
-                                  &bracketed),
-             GHOSTTY_SUCCESS);
+    QCOMPARE(
+        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_MODE, &bracketed),
+        GHOSTTY_SUCCESS);
     QVERIFY(bracketed.value);
 
     QByteArray pasteInput("line one\nline two");
     size_t pasteSize = 0;
     QCOMPARE(ghostty_paste_encode(pasteInput.data(),
-                                  static_cast<size_t>(pasteInput.size()), bracketed.value,
-                                  nullptr, 0, &pasteSize),
+                                  static_cast<size_t>(pasteInput.size()),
+                                  bracketed.value, nullptr, 0, &pasteSize),
              GHOSTTY_OUT_OF_SPACE);
-    QByteArray pasteOutput(static_cast<qsizetype>(pasteSize), Qt::Uninitialized);
+    QByteArray pasteOutput(static_cast<qsizetype>(pasteSize),
+                           Qt::Uninitialized);
     size_t pasteWritten = 0;
     QCOMPARE(ghostty_paste_encode(
-                 pasteInput.data(), static_cast<size_t>(pasteInput.size()), bracketed.value,
-                 pasteOutput.data(), static_cast<size_t>(pasteOutput.size()), &pasteWritten),
+                 pasteInput.data(), static_cast<size_t>(pasteInput.size()),
+                 bracketed.value, pasteOutput.data(),
+                 static_cast<size_t>(pasteOutput.size()), &pasteWritten),
              GHOSTTY_SUCCESS);
     pasteOutput.resize(static_cast<qsizetype>(pasteWritten));
     QCOMPARE(pasteOutput, QByteArray("\x1b[200~line one\nline two\x1b[201~"));
@@ -223,10 +235,12 @@ void GhosttySmokeTest::encodesInputAndPasteSafety()
 
     char output[32]{};
     size_t written = 0;
-    QCOMPARE(ghostty_key_encoder_encode(encoder, event, output, sizeof(output), &written),
+    QCOMPARE(ghostty_key_encoder_encode(encoder, event, output, sizeof(output),
+                                        &written),
              GHOSTTY_SUCCESS);
     QCOMPARE(written, size_t{1});
-    QCOMPARE(static_cast<unsigned char>(output[0]), static_cast<unsigned char>(0x03));
+    QCOMPARE(static_cast<unsigned char>(output[0]),
+             static_cast<unsigned char>(0x03));
 
     ghostty_key_event_free(event);
     ghostty_key_encoder_free(encoder);
@@ -238,12 +252,13 @@ void GhosttySmokeTest::answersTerminalQueriesThroughWriteCallback()
     QCOMPARE(ghostty_terminal_new(nullptr, &terminal, 80, 24), GHOSTTY_SUCCESS);
 
     EffectCapture capture;
-    QCOMPARE(ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_USERDATA, &capture),
-             GHOSTTY_SUCCESS);
-    QCOMPARE(ghostty_terminal_set(
-                 terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
-                 reinterpret_cast<const void *>(&capturePtyWrite)),
-             GHOSTTY_SUCCESS);
+    QCOMPARE(
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_USERDATA, &capture),
+        GHOSTTY_SUCCESS);
+    QCOMPARE(
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
+                             reinterpret_cast<const void *>(&capturePtyWrite)),
+        GHOSTTY_SUCCESS);
     QCOMPARE(ghostty_terminal_set(
                  terminal, GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES,
                  reinterpret_cast<const void *>(&provideDeviceAttributes)),
@@ -288,17 +303,19 @@ void GhosttySmokeTest::encodesButtonDragMouseReporting()
         .padding_left = 0,
     };
     const bool anyButtonPressed = true;
-    ghostty_mouse_encoder_setopt(encoder, GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size);
-    ghostty_mouse_encoder_setopt(
-        encoder, GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &anyButtonPressed);
+    ghostty_mouse_encoder_setopt(encoder, GHOSTTY_MOUSE_ENCODER_OPT_SIZE,
+                                 &size);
+    ghostty_mouse_encoder_setopt(encoder,
+                                 GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED,
+                                 &anyButtonPressed);
 
     ghostty_mouse_event_set_action(event, GHOSTTY_MOUSE_ACTION_MOTION);
     ghostty_mouse_event_set_button(event, GHOSTTY_MOUSE_BUTTON_LEFT);
     ghostty_mouse_event_set_position(event, GhosttyMousePosition{15.0F, 8.0F});
     std::array<char, 64> output{};
     size_t written = 0;
-    QCOMPARE(ghostty_mouse_encoder_encode(
-                 encoder, event, output.data(), output.size(), &written),
+    QCOMPARE(ghostty_mouse_encoder_encode(encoder, event, output.data(),
+                                          output.size(), &written),
              GHOSTTY_SUCCESS);
     QCOMPARE(QByteArray(output.data(), static_cast<qsizetype>(written)),
              QByteArray("\x1b[<32;2;1M"));

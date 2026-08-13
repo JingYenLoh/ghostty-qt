@@ -20,7 +20,7 @@ case "$graphics_api" in
 esac
 [[ -n "$scenario" ]] || usage
 
-if ! command -v renderdoccmd >/dev/null 2>&1; then
+if ! command -v renderdoccmd > /dev/null 2>&1; then
     printf 'error: renderdoccmd is required; install RenderDoc first\n' >&2
     exit 1
 fi
@@ -44,7 +44,7 @@ if ! scenario_listing=$("$benchmark" --list-scenarios); then
     printf 'error: unable to query benchmark scenarios\n' >&2
     exit 1
 fi
-mapfile -t available_scenarios <<<"$scenario_listing"
+mapfile -t available_scenarios <<< "$scenario_listing"
 scenario_known=
 for available_scenario in "${available_scenarios[@]}"; do
     if [[ "$available_scenario" == "$scenario" ]]; then

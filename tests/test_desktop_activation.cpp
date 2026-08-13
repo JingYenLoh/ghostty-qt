@@ -58,15 +58,19 @@ void DesktopActivationTest::parsesOnlySupportedStringPlatformData()
         DesktopActivationContext::fromPlatformData(platformData);
     QCOMPARE(context.xdgActivationToken, QStringLiteral("token:one"));
     QCOMPARE(context.desktopStartupId, QStringLiteral("startup:two"));
-    QCOMPARE(context.toPlatformData(), QVariantMap({
-        {QStringLiteral("activation-token"), QStringLiteral("token:one")},
-        {QStringLiteral("desktop-startup-id"), QStringLiteral("startup:two")},
-    }));
+    QCOMPARE(
+        context.toPlatformData(),
+        QVariantMap({
+            {QStringLiteral("activation-token"), QStringLiteral("token:one")},
+            {QStringLiteral("desktop-startup-id"),
+             QStringLiteral("startup:two")},
+        }));
 
     const DesktopActivationContext invalid =
         DesktopActivationContext::fromPlatformData({
             {QStringLiteral("activation-token"), 42},
-            {QStringLiteral("desktop-startup-id"), QByteArrayLiteral("convertible")},
+            {QStringLiteral("desktop-startup-id"),
+             QByteArrayLiteral("convertible")},
         });
     QVERIFY(invalid.isEmpty());
     QVERIFY(invalid.toPlatformData().isEmpty());
@@ -74,9 +78,11 @@ void DesktopActivationTest::parsesOnlySupportedStringPlatformData()
     QString embeddedNull = QStringLiteral("token");
     embeddedNull.append(QChar::Null);
     embeddedNull.append(QStringLiteral("suffix"));
-    QVERIFY(DesktopActivationContext::fromPlatformData({
-        {QStringLiteral("activation-token"), embeddedNull},
-    }).isEmpty());
+    QVERIFY(DesktopActivationContext::fromPlatformData(
+                {
+                    {QStringLiteral("activation-token"), embeddedNull},
+                })
+                .isEmpty());
 }
 
 void DesktopActivationTest::capturesAndClearsLauncherEnvironment()
@@ -121,35 +127,34 @@ void DesktopActivationTest::scopesPlatformDataToWindowPresentation()
     QProcessEnvironment childDuringShow;
     int presentations = 0;
     QWindow window;
-    connect(&window, &QWindow::visibleChanged, &window,
-            [&](bool visible) {
-                if (!visible) return;
-                ++presentations;
-                tokenDuringShow = qgetenv("XDG_ACTIVATION_TOKEN");
-                startupDuringShow = qgetenv("DESKTOP_STARTUP_ID");
-                const ScopedEnvironmentVariable lateMutation(
-                    QByteArrayLiteral("GHOSTTY_QT_ACTIVATION_LATE"),
-                    QByteArrayLiteral("during-show"));
-                childDuringShow = sanitizedChildEnvironment();
-            });
-
-    showWindowWithActivation(window, {
-        .xdgActivationToken = QStringLiteral("incoming-token"),
-        .desktopStartupId = QStringLiteral("incoming-startup"),
+    connect(&window, &QWindow::visibleChanged, &window, [&](bool visible) {
+        if (!visible) return;
+        ++presentations;
+        tokenDuringShow = qgetenv("XDG_ACTIVATION_TOKEN");
+        startupDuringShow = qgetenv("DESKTOP_STARTUP_ID");
+        const ScopedEnvironmentVariable lateMutation(
+            QByteArrayLiteral("GHOSTTY_QT_ACTIVATION_LATE"),
+            QByteArrayLiteral("during-show"));
+        childDuringShow = sanitizedChildEnvironment();
     });
+
+    showWindowWithActivation(
+        window,
+        {
+            .xdgActivationToken = QStringLiteral("incoming-token"),
+            .desktopStartupId = QStringLiteral("incoming-startup"),
+        });
 
     QCOMPARE(presentations, 1);
     QCOMPARE(tokenDuringShow, QByteArrayLiteral("incoming-token"));
     QCOMPARE(startupDuringShow, QByteArrayLiteral("incoming-startup"));
-    QCOMPARE(childDuringShow.value(
-                 QStringLiteral("GHOSTTY_QT_ACTIVATION_SENTINEL")),
-             QStringLiteral("before-show"));
+    QCOMPARE(
+        childDuringShow.value(QStringLiteral("GHOSTTY_QT_ACTIVATION_SENTINEL")),
+        QStringLiteral("before-show"));
     QVERIFY(!childDuringShow.contains(
         QStringLiteral("GHOSTTY_QT_ACTIVATION_LATE")));
-    QVERIFY(!childDuringShow.contains(
-        QStringLiteral("XDG_ACTIVATION_TOKEN")));
-    QVERIFY(!childDuringShow.contains(
-        QStringLiteral("DESKTOP_STARTUP_ID")));
+    QVERIFY(!childDuringShow.contains(QStringLiteral("XDG_ACTIVATION_TOKEN")));
+    QVERIFY(!childDuringShow.contains(QStringLiteral("DESKTOP_STARTUP_ID")));
     QVERIFY(!childDuringShow.contains(QStringLiteral("NOTIFY_SOCKET")));
     QVERIFY(!childDuringShow.contains(QStringLiteral("INVOCATION_ID")));
     QVERIFY(!childDuringShow.contains(QStringLiteral("DBUS_STARTER_ADDRESS")));

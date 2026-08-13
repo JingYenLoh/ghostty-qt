@@ -17,62 +17,61 @@ Pane {
     objectName: "terminalSearchOverlay"
     z: 1000
     visible: terminalPane !== null && terminalPane.searchUiActive
-    width: parent ? Math.min(implicitWidth, Math.max(0, parent.width - 16))
-                  : implicitWidth
+    width: parent ? Math.min(implicitWidth, Math.max(0, parent.width - 16)) : implicitWidth
     x: dragging ? boundedX(dragX) : restingX()
     y: dragging ? boundedY(dragY) : restingY()
     padding: 6
 
     function boundedX(value) {
         if (parent === null)
-            return 0
-        return Math.max(0, Math.min(value, parent.width - width))
+            return 0;
+        return Math.max(0, Math.min(value, parent.width - width));
     }
 
     function boundedY(value) {
         if (parent === null)
-            return 0
-        return Math.max(0, Math.min(value, parent.height - height))
+            return 0;
+        return Math.max(0, Math.min(value, parent.height - height));
     }
 
     function restingX() {
         if (parent === null)
-            return 0
-        return boundedX(alignLeft ? 8 : parent.width - width - 8)
+            return 0;
+        return boundedX(alignLeft ? 8 : parent.width - width - 8);
     }
 
     function restingY() {
         if (parent === null)
-            return 0
-        return boundedY(alignTop ? 8 : parent.height - height - 8)
+            return 0;
+        return boundedY(alignTop ? 8 : parent.height - height - 8);
     }
 
     function synchronizeText() {
         if (terminalPane === null)
-            return
+            return;
         if (searchField.text !== terminalPane.searchUiText)
-            searchField.text = terminalPane.searchUiText
+            searchField.text = terminalPane.searchUiText;
     }
 
     function submitText() {
-        searchDebounce.stop()
+        searchDebounce.stop();
         if (terminalPane !== null)
-            terminalPane.setSearchUiText(searchField.text)
+            terminalPane.setSearchUiText(searchField.text);
     }
 
     function focusAndSelect() {
-        Qt.callLater(function() {
+        Qt.callLater(function () {
             if (!root.visible)
-                return
-            searchField.forceActiveFocus()
-            searchField.selectAll()
-        })
+                return;
+            searchField.forceActiveFocus();
+            searchField.selectAll();
+        });
     }
 
     function closeSearch() {
-        searchDebounce.stop()
+        searchDebounce.stop();
         if (terminalPane !== null)
-            terminalPane.endSearchUi()
+            terminalPane.endSearchUi();
     }
 
     contentItem: RowLayout {
@@ -102,44 +101,37 @@ Pane {
                 anchors.fill: parent
                 acceptedButtons: Qt.LeftButton
                 preventStealing: true
-                cursorShape: pressed ? Qt.ClosedHandCursor
-                                     : Qt.OpenHandCursor
+                cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
                 Accessible.name: qsTr("Move search")
 
                 function parentPoint(mouse) {
                     if (root.parent === null)
-                        return Qt.point(0, 0)
-                    return mapToItem(root.parent, mouse.x, mouse.y)
+                        return Qt.point(0, 0);
+                    return mapToItem(root.parent, mouse.x, mouse.y);
                 }
 
-                onPressed: function(mouse) {
-                    root.dragX = root.x
-                    root.dragY = root.y
-                    previousParentPoint = parentPoint(mouse)
-                    root.dragging = true
-                    mouse.accepted = true
+                onPressed: function (mouse) {
+                    root.dragX = root.x;
+                    root.dragY = root.y;
+                    previousParentPoint = parentPoint(mouse);
+                    root.dragging = true;
+                    mouse.accepted = true;
                 }
 
-                onPositionChanged: function(mouse) {
+                onPositionChanged: function (mouse) {
                     if (!pressed)
-                        return
-                    const nextParentPoint = parentPoint(mouse)
-                    root.dragX = root.boundedX(
-                                root.dragX + nextParentPoint.x
-                                - previousParentPoint.x)
-                    root.dragY = root.boundedY(
-                                root.dragY + nextParentPoint.y
-                                - previousParentPoint.y)
-                    previousParentPoint = nextParentPoint
+                        return;
+                    const nextParentPoint = parentPoint(mouse);
+                    root.dragX = root.boundedX(root.dragX + nextParentPoint.x - previousParentPoint.x);
+                    root.dragY = root.boundedY(root.dragY + nextParentPoint.y - previousParentPoint.y);
+                    previousParentPoint = nextParentPoint;
                 }
 
-                onReleased: function(mouse) {
-                    root.alignLeft = root.dragX + root.width / 2
-                            <= root.parent.width / 2
-                    root.alignTop = root.dragY + root.height / 2
-                            <= root.parent.height / 2
-                    root.dragging = false
-                    mouse.accepted = true
+                onReleased: function (mouse) {
+                    root.alignLeft = root.dragX + root.width / 2 <= root.parent.width / 2;
+                    root.alignTop = root.dragY + root.height / 2 <= root.parent.height / 2;
+                    root.dragging = false;
+                    mouse.accepted = true;
                 }
 
                 onCanceled: root.dragging = false
@@ -158,25 +150,23 @@ Pane {
 
             onTextEdited: searchDebounce.restart()
             onActiveFocusChanged: {
-                if (activeFocus && !root.activatingPane
-                        && root.terminalPane !== null) {
+                if (activeFocus && !root.activatingPane && root.terminalPane !== null) {
                     // Activating a workspace pane normally returns focus to
                     // the terminal. Reclaim it once without emitting again.
-                    root.activatingPane = true
-                    root.terminalPane.activated(root.terminalPane)
-                    forceActiveFocus()
-                    root.activatingPane = false
+                    root.activatingPane = true;
+                    root.terminalPane.activated(root.terminalPane);
+                    forceActiveFocus();
+                    root.activatingPane = false;
                 }
             }
-            Keys.onPressed: function(event) {
+            Keys.onPressed: function (event) {
                 if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                    root.submitText()
-                    root.terminalPane.navigateSearch(
-                                event.modifiers & Qt.ShiftModifier ? -1 : 1)
-                    event.accepted = true
+                    root.submitText();
+                    root.terminalPane.navigateSearch(event.modifiers & Qt.ShiftModifier ? -1 : 1);
+                    event.accepted = true;
                 } else if (event.key === Qt.Key_Escape) {
-                    root.closeSearch()
-                    event.accepted = true
+                    root.closeSearch();
+                    event.accepted = true;
                 }
             }
         }
@@ -184,8 +174,7 @@ Pane {
         Label {
             Layout.minimumWidth: 44
             horizontalAlignment: Text.AlignRight
-            text: root.terminalPane !== null
-                  ? root.terminalPane.searchMatchLabel : ""
+            text: root.terminalPane !== null ? root.terminalPane.searchMatchLabel : ""
             Accessible.name: qsTr("Search match count")
         }
 
@@ -195,8 +184,8 @@ Pane {
             accessibleName: qsTr("Previous Match")
             toolTipText: qsTr("Previous Match (Shift+Enter)")
             onClicked: {
-                root.submitText()
-                root.terminalPane.navigateSearch(-1)
+                root.submitText();
+                root.terminalPane.navigateSearch(-1);
             }
         }
 
@@ -206,8 +195,8 @@ Pane {
             accessibleName: qsTr("Next Match")
             toolTipText: qsTr("Next Match (Enter)")
             onClicked: {
-                root.submitText()
-                root.terminalPane.navigateSearch(1)
+                root.submitText();
+                root.terminalPane.navigateSearch(1);
             }
         }
 
@@ -225,7 +214,7 @@ Pane {
         interval: 150
         onTriggered: {
             if (root.terminalPane !== null)
-                root.terminalPane.setSearchUiText(searchField.text)
+                root.terminalPane.setSearchUiText(searchField.text);
         }
     }
 
@@ -234,19 +223,18 @@ Pane {
         ignoreUnknownSignals: true
 
         function onSearchUiTextChanged() {
-            root.synchronizeText()
+            root.synchronizeText();
         }
 
         function onSearchUiActiveChanged() {
-            root.synchronizeText()
-            if (root.terminalPane !== null
-                    && root.terminalPane.searchUiActive)
-                root.focusAndSelect()
+            root.synchronizeText();
+            if (root.terminalPane !== null && root.terminalPane.searchUiActive)
+                root.focusAndSelect();
         }
 
         function onSearchUiFocusRequested() {
-            root.synchronizeText()
-            root.focusAndSelect()
+            root.synchronizeText();
+            root.focusAndSelect();
         }
     }
 

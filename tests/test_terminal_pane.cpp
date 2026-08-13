@@ -85,8 +85,8 @@ bool updatesContain(const QSignalSpy &spy, const QString &needle)
     return frameText(frame).contains(needle);
 }
 
-TerminalActionResult successfulOpenFileResult(
-    quint64 requestId, const QString &path)
+TerminalActionResult successfulOpenFileResult(quint64 requestId,
+                                              const QString &path)
 {
     return {
         .requestId = requestId,
@@ -94,8 +94,7 @@ TerminalActionResult successfulOpenFileResult(
         .effect = TerminalActionEffect::OpenFile,
         .performed = true,
         .payload = path,
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     };
 }
 
@@ -136,8 +135,8 @@ bool rectanglesArePairwiseDisjoint(const QVector<QRectF> &rects)
 {
     for (qsizetype left = 0; left < rects.size(); ++left) {
         for (qsizetype right = left + 1; right < rects.size(); ++right) {
-            if (rectangleArea(
-                    rects.at(left).intersected(rects.at(right))) > 0.0) {
+            if (rectangleArea(rects.at(left).intersected(rects.at(right)))
+                > 0.0) {
                 return false;
             }
         }
@@ -154,18 +153,15 @@ bool rectanglesFitInside(const QVector<QRectF> &rects, const QRectF &bounds)
 
 QRectF expectedSpriteCanvas(const QRectF &sprite, qreal devicePixelRatio)
 {
-    const qreal dpr = std::isfinite(devicePixelRatio)
-            && devicePixelRatio > 0.0
-        ? devicePixelRatio : 1.0;
+    const qreal dpr = std::isfinite(devicePixelRatio) && devicePixelRatio > 0.0
+        ? devicePixelRatio
+        : 1.0;
     const qint64 physicalWidth = qRound64(sprite.width() * dpr);
     const qint64 physicalHeight = qRound64(sprite.height() * dpr);
-    const qreal horizontalPadding =
-        static_cast<qreal>(physicalWidth / 4) / dpr;
-    const qreal verticalPadding =
-        static_cast<qreal>(physicalHeight / 4) / dpr;
-    return sprite.adjusted(
-        -horizontalPadding, -verticalPadding,
-        horizontalPadding, verticalPadding);
+    const qreal horizontalPadding = static_cast<qreal>(physicalWidth / 4) / dpr;
+    const qreal verticalPadding = static_cast<qreal>(physicalHeight / 4) / dpr;
+    return sprite.adjusted(-horizontalPadding, -verticalPadding,
+                           horizontalPadding, verticalPadding);
 }
 
 void useSystemFixedFont(LaunchOptions &options)
@@ -227,12 +223,10 @@ QColor itemPixel(const QQuickWindow &window, const QQuickItem &item,
     const QPointF scene = item.mapToScene(position);
     const qreal xScale = static_cast<qreal>(image.width()) / window.width();
     const qreal yScale = static_cast<qreal>(image.height()) / window.height();
-    const int x = std::clamp(
-        static_cast<int>(std::floor(scene.x() * xScale)),
-        0, image.width() - 1);
-    const int y = std::clamp(
-        static_cast<int>(std::floor(scene.y() * yScale)),
-        0, image.height() - 1);
+    const int x = std::clamp(static_cast<int>(std::floor(scene.x() * xScale)),
+                             0, image.width() - 1);
+    const int y = std::clamp(static_cast<int>(std::floor(scene.y() * yScale)),
+                             0, image.height() - 1);
     return image.pixelColor(x, y);
 }
 
@@ -247,16 +241,16 @@ bool sendWheelEvent(TerminalPane &pane, const QPoint &pixelDelta,
     return event.isAccepted();
 }
 
-bool allVisibleRowsRebuilt(
-    const TerminalPaneRenderProbeSnapshot &before,
-    const TerminalPaneRenderProbeSnapshot &after)
+bool allVisibleRowsRebuilt(const TerminalPaneRenderProbeSnapshot &before,
+                           const TerminalPaneRenderProbeSnapshot &after)
 {
     if (after.rowBuildCounts.isEmpty()) {
         return false;
     }
     for (qsizetype row = 0; row < after.rowBuildCounts.size(); ++row) {
         const quint64 previous = row < before.rowBuildCounts.size()
-            ? before.rowBuildCounts.at(row) : 0;
+            ? before.rowBuildCounts.at(row)
+            : 0;
         if (after.rowBuildCounts.at(row) <= previous) {
             return false;
         }
@@ -266,13 +260,14 @@ bool allVisibleRowsRebuilt(
 
 bool spyContainsBool(const QSignalSpy &spy, bool value)
 {
-    return std::any_of(spy.cbegin(), spy.cend(), [value](const auto &arguments) {
-        return !arguments.isEmpty() && arguments.constFirst().toBool() == value;
-    });
+    return std::any_of(spy.cbegin(), spy.cend(),
+                       [value](const auto &arguments) {
+                           return !arguments.isEmpty()
+                               && arguments.constFirst().toBool() == value;
+                       });
 }
 
-GhosttyKeybindTrigger generationTestKey(
-    quint32 codepoint, quint8 modifiers = 0)
+GhosttyKeybindTrigger generationTestKey(quint32 codepoint, quint8 modifiers = 0)
 {
     return {
         .kind = GhosttyKeybindKeyKind::Unicode,
@@ -281,8 +276,8 @@ GhosttyKeybindTrigger generationTestKey(
     };
 }
 
-GhosttyKeybindDefinition generationTestBinding(
-    QVector<GhosttyKeybindTrigger> sequence, QString action)
+GhosttyKeybindDefinition
+generationTestBinding(QVector<GhosttyKeybindTrigger> sequence, QString action)
 {
     return {
         .sequence = std::move(sequence),
@@ -294,38 +289,38 @@ GhosttyKeybindConfig generationTestConfig()
 {
     GhosttyKeybindConfig config;
     config.root = {
-        generationTestBinding(
-            {generationTestKey('o', GhosttyKeybindCtrl)},
-            QStringLiteral("activate_key_table_once:once")),
+        generationTestBinding({generationTestKey('o', GhosttyKeybindCtrl)},
+                              QStringLiteral("activate_key_table_once:once")),
     };
     config.tables = {
         GhosttyKeybindTable{
             .name = QStringLiteral("edit"),
-            .bindings = {
-                generationTestBinding(
-                    {generationTestKey('x'), generationTestKey('y')},
-                    QStringLiteral("new_tab")),
-            },
+            .bindings =
+                {
+                    generationTestBinding(
+                        {generationTestKey('x'), generationTestKey('y')},
+                        QStringLiteral("new_tab")),
+                },
         },
         GhosttyKeybindTable{
             .name = QStringLiteral("once"),
-            .bindings = {
-                generationTestBinding(
-                    {generationTestKey('x'), generationTestKey('y')},
-                    QStringLiteral("new_tab")),
-            },
+            .bindings =
+                {
+                    generationTestBinding(
+                        {generationTestKey('x'), generationTestKey('y')},
+                        QStringLiteral("new_tab")),
+                },
         },
     };
     return config;
 }
 
-QBitArray cellMask(int columns, int rows,
-                   std::initializer_list<QPoint> cells)
+QBitArray cellMask(int columns, int rows, std::initializer_list<QPoint> cells)
 {
     QBitArray mask(static_cast<qsizetype>(columns) * rows);
     for (const QPoint &cell : cells) {
-        if (cell.x() >= 0 && cell.x() < columns
-            && cell.y() >= 0 && cell.y() < rows) {
+        if (cell.x() >= 0 && cell.x() < columns && cell.y() >= 0
+            && cell.y() < rows) {
             mask.setBit(static_cast<qsizetype>(cell.y()) * columns + cell.x());
         }
     }
@@ -590,14 +585,12 @@ void TerminalPaneTest::lifecycleExitClockDefersWorkspacePaneDestruction()
     options.confirmCloseMode = ConfirmCloseMode::Never;
 
     TerminalWorkspace workspace;
-    QVERIFY(workspace.initialize(options,
-                                 TerminalSessionStartMode::Deferred));
+    QVERIFY(workspace.initialize(options, TerminalSessionStartMode::Deferred));
     TerminalPane *const pane = workspace.findChild<TerminalPane *>();
     QVERIFY(pane != nullptr);
     const PaneId paneId = workspace.surfaceSnapshot().constFirst().paneId;
     const TabId tabId = workspace.tabModel()->idAt(0);
-    terminalPaneForceExitTransitionForTest(pane,
-                                           std::chrono::milliseconds(60));
+    terminalPaneForceExitTransitionForTest(pane, std::chrono::milliseconds(60));
 
     QSignalSpy removed(&workspace, &TerminalWorkspace::paneRemoved);
     QElapsedTimer elapsed;
@@ -619,13 +612,12 @@ void TerminalPaneTest::lifecycleExitClockDefersWorkspacePaneDestruction()
 
     {
         TerminalWorkspace tabWorkspace;
-        QVERIFY(tabWorkspace.initialize(
-            options, TerminalSessionStartMode::Deferred));
-        TerminalPane *const tabPane =
-            tabWorkspace.findChild<TerminalPane *>();
+        QVERIFY(tabWorkspace.initialize(options,
+                                        TerminalSessionStartMode::Deferred));
+        TerminalPane *const tabPane = tabWorkspace.findChild<TerminalPane *>();
         QVERIFY(tabPane != nullptr);
-        terminalPaneForceExitTransitionForTest(
-            tabPane, std::chrono::milliseconds(40));
+        terminalPaneForceExitTransitionForTest(tabPane,
+                                               std::chrono::milliseconds(40));
         QSignalSpy tabPaneRemoved(&tabWorkspace,
                                   &TerminalWorkspace::paneRemoved);
 
@@ -638,13 +630,13 @@ void TerminalPaneTest::lifecycleExitClockDefersWorkspacePaneDestruction()
 
     {
         TerminalWorkspace windowWorkspace;
-        QVERIFY(windowWorkspace.initialize(
-            options, TerminalSessionStartMode::Deferred));
+        QVERIFY(windowWorkspace.initialize(options,
+                                           TerminalSessionStartMode::Deferred));
         TerminalPane *const windowPane =
             windowWorkspace.findChild<TerminalPane *>();
         QVERIFY(windowPane != nullptr);
-        terminalPaneForceExitTransitionForTest(
-            windowPane, std::chrono::milliseconds(40));
+        terminalPaneForceExitTransitionForTest(windowPane,
+                                               std::chrono::milliseconds(40));
         QSignalSpy approved(&windowWorkspace,
                             &TerminalWorkspace::windowCloseApproved);
 
@@ -752,8 +744,7 @@ Item {
         QSKIP("Lifecycle custom shaders require an OpenGL or Vulkan RHI");
     }
     QTRY_VERIFY_WITH_TIMEOUT(
-        pane->terminalCustomShaderUniformSnapshot(0)->paneTransition.y
-            == 1.0F,
+        pane->terminalCustomShaderUniformSnapshot(0)->paneTransition.y == 1.0F,
         3000);
     const auto entering = pane->terminalCustomShaderUniformSnapshot(0);
     QVERIFY(entering->paneTransition.x >= 0.0F);
@@ -1604,9 +1595,8 @@ void TerminalPaneTest::resizeOverlayPositions_data()
     QTest::addColumn<int>("position");
     QTest::addColumn<QPointF>("expectedTopLeft");
 
-    QTest::newRow("center")
-        << static_cast<int>(ResizeOverlayPosition::Center)
-        << QPointF(190.0, 130.0);
+    QTest::newRow("center") << static_cast<int>(ResizeOverlayPosition::Center)
+                            << QPointF(190.0, 130.0);
     QTest::newRow("top-left")
         << static_cast<int>(ResizeOverlayPosition::TopLeft)
         << QPointF(0.0, 0.0);
@@ -1681,15 +1671,13 @@ void TerminalPaneTest::resizeOverlayCoalescesAndRestarts()
     pane.setSize(QSizeF(500.0, 300.0));
     QCoreApplication::processEvents();
     QVERIFY(!pane.resizeOverlayVisible());
-    const TerminalCellMetrics metrics =
-        terminalCellMetrics(options.typography);
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
     const auto initialGeometry = terminalSessionGeometryForViewport(
         pane.width(), pane.height(), metrics.cellWidth, metrics.cellHeight,
         1.0);
     QVERIFY(initialGeometry.has_value());
-    pane.setWidth(
-        (static_cast<qreal>(initialGeometry->columns) + 0.5)
-        * metrics.cellWidth);
+    pane.setWidth((static_cast<qreal>(initialGeometry->columns) + 0.5)
+                  * metrics.cellWidth);
     QCoreApplication::processEvents();
     QVERIFY(!pane.resizeOverlayVisible());
     // Match Ghostty's initial 250 ms settling window: further layout churn
@@ -1698,8 +1686,8 @@ void TerminalPaneTest::resizeOverlayCoalescesAndRestarts()
     QVERIFY(!pane.resizeOverlayVisible());
 
     QSignalSpy textChanged(&pane, &TerminalPane::resizeOverlayTextChanged);
-    QSignalSpy visibilityChanged(
-        &pane, &TerminalPane::resizeOverlayVisibleChanged);
+    QSignalSpy visibilityChanged(&pane,
+                                 &TerminalPane::resizeOverlayVisibleChanged);
     pane.setWidth(580.0);
     pane.setWidth(660.0);
     pane.setWidth(740.0);
@@ -1711,10 +1699,9 @@ void TerminalPaneTest::resizeOverlayCoalescesAndRestarts()
         pane.width(), pane.height(), metrics.cellWidth, metrics.cellHeight,
         1.0);
     QVERIFY(expected.has_value());
-    QCOMPARE(pane.resizeOverlayText(),
-             QStringLiteral("%1 x %2")
-                 .arg(expected->columns)
-                 .arg(expected->rows));
+    QCOMPARE(
+        pane.resizeOverlayText(),
+        QStringLiteral("%1 x %2").arg(expected->columns).arg(expected->rows));
 
     QTest::qWait(150);
     pane.setWidth(820.0);
@@ -1774,8 +1761,8 @@ void TerminalPaneTest::runsCursorBlinkTimerOnlyWhenNeeded()
     auto *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy sessionEnded(pane, &TerminalPane::sessionEnded);
-    auto *cursorTimer = pane->findChild<QTimer *>(
-        QString(), Qt::FindDirectChildrenOnly);
+    auto *cursorTimer =
+        pane->findChild<QTimer *>(QString(), Qt::FindDirectChildrenOnly);
     QVERIFY(cursorTimer != nullptr);
     cursorTimer->setTimerType(Qt::PreciseTimer);
     cursorTimer->setInterval(100);
@@ -1988,17 +1975,16 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     useSystemFixedFont(options);
     options.appearance.foregroundColor = Qt::white;
     options.appearance.backgroundColor = Qt::black;
-    options.appearance.searchForeground = TerminalColorValue::fromColor(
-        QColor(QStringLiteral("#abcdef")));
-    options.appearance.searchBackground = TerminalColorValue::fromColor(
-        QColor(QStringLiteral("#123456")));
-    options.appearance.cursorColor = TerminalColorValue::fromColor(
-        QColor(QStringLiteral("#ff00ff")));
-    options.appearance.cursorTextColor = TerminalColorValue::fromColor(
-        QColor(QStringLiteral("#00ffff")));
+    options.appearance.searchForeground =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#abcdef")));
+    options.appearance.searchBackground =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#123456")));
+    options.appearance.cursorColor =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#ff00ff")));
+    options.appearance.cursorTextColor =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#00ffff")));
 
-    const TerminalCellMetrics metrics =
-        terminalCellMetrics(options.typography);
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
     const qreal cellWidth = metrics.cellWidth;
     const qreal cellHeight = metrics.cellHeight;
 
@@ -2056,7 +2042,8 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     full.cursorColorExplicit = true;
     full.contentRevision = revision;
     for (int row = 0; row < rows; ++row) {
-        full.dirtyRows.append(makeRow(row, rowColors[static_cast<size_t>(row)]));
+        full.dirtyRows.append(
+            makeRow(row, rowColors[static_cast<size_t>(row)]));
     }
     controller->terminalUpdated(full);
     const QImage initialImage = window.grabWindow();
@@ -2319,7 +2306,8 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
 
     const auto centerColor = [&](const QImage &image, int row) {
         const qreal xScale = static_cast<qreal>(image.width()) / window.width();
-        const qreal yScale = static_cast<qreal>(image.height()) / window.height();
+        const qreal yScale =
+            static_cast<qreal>(image.height()) / window.height();
         return image.pixelColor(
             qBound(0, qRound(0.5 * cellWidth * xScale), image.width() - 1),
             qBound(0, qRound((row + 0.5) * cellHeight * yScale),
@@ -2432,8 +2420,8 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     QCOMPARE(revisionCleared.rowSolidBuildCounts,
              revisionClearedSolidBuildCounts);
     QVERIFY(revisionCleared.paintSerial > searched.paintSerial);
-    QVERIFY(approximatelyEqual(centerColor(revisionClearedImage, 1),
-                               rowColors[1]));
+    QVERIFY(
+        approximatelyEqual(centerColor(revisionClearedImage, 1), rowColors[1]));
 
     search.contentRevision = revision;
     controller->searchUpdated(search);
@@ -2461,8 +2449,8 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
         searchRestored.rowSolidBuildCounts;
     ++clearedSearchSolidBuildCounts[1];
     QCOMPARE(clearedSearch.rowSolidBuildCounts, clearedSearchSolidBuildCounts);
-    QVERIFY(approximatelyEqual(centerColor(clearedSearchImage, 1),
-                               rowColors[1]));
+    QVERIFY(
+        approximatelyEqual(centerColor(clearedSearchImage, 1), rowColors[1]));
 
     // Global colors that none of these explicit-RGB rows consume leave the
     // retained row plans and their pixels untouched.
@@ -4262,14 +4250,14 @@ void TerminalPaneTest::retainsTextWhileDimmingUnfocusedSplits()
     pane->setSize(window.size());
     auto *focusSink = new QQuickItem(window.contentItem());
     focusSink->setSize(QSizeF(1.0, 1.0));
-    focusSink->setPosition(QPointF(window.width() - 1.0,
-                                   window.height() - 1.0));
+    focusSink->setPosition(
+        QPointF(window.width() - 1.0, window.height() - 1.0));
     focusSink->setFocusPolicy(Qt::StrongFocus);
     auto *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy sessionEnded(pane, &TerminalPane::sessionEnded);
-    QSignalSpy runtimeOptions(
-        controller, &TerminalController::runtimeOptionsRequested);
+    QSignalSpy runtimeOptions(controller,
+                              &TerminalController::runtimeOptionsRequested);
 
     window.show();
     window.requestActivate();
@@ -4310,15 +4298,13 @@ void TerminalPaneTest::retainsTextWhileDimmingUnfocusedSplits()
     QVERIFY(!baseline.rowNodeSerials.isEmpty());
 
     const QPointF quietPoint(pane->width() - 20.0, 20.0);
-    const QPointF statusPoint(pane->width() - 20.0,
-                              pane->height() - 10.0);
-    const QColor quietBaseline = itemPixel(
-        window, *pane, baselineImage, quietPoint);
-    const QColor statusBaseline = itemPixel(
-        window, *pane, baselineImage, statusPoint);
+    const QPointF statusPoint(pane->width() - 20.0, pane->height() - 10.0);
+    const QColor quietBaseline =
+        itemPixel(window, *pane, baselineImage, quietPoint);
+    const QColor statusBaseline =
+        itemPixel(window, *pane, baselineImage, statusPoint);
 
-    const auto verifyTextRetained = [](const auto &before,
-                                       const auto &after) {
+    const auto verifyTextRetained = [](const auto &before, const auto &after) {
         QCOMPARE(after.rootSerial, before.rootSerial);
         QCOMPARE(after.unfocusedSplitOverlaySerial,
                  before.unfocusedSplitOverlaySerial);
@@ -4337,12 +4323,12 @@ void TerminalPaneTest::retainsTextWhileDimmingUnfocusedSplits()
     QColor expectedNodeColor = firstFill;
     expectedNodeColor.setAlphaF(0.3);
     QCOMPARE(dimmed.unfocusedSplitOverlayColor, expectedNodeColor);
-    QVERIFY(approximatelyEqual(
-        itemPixel(window, *pane, dimmedImage, quietPoint),
-        sourceOver(quietBaseline, firstFill, 0.3)));
-    QVERIFY(approximatelyEqual(
-        itemPixel(window, *pane, dimmedImage, statusPoint),
-        sourceOver(statusBaseline, firstFill, 0.3)));
+    QVERIFY(
+        approximatelyEqual(itemPixel(window, *pane, dimmedImage, quietPoint),
+                           sourceOver(quietBaseline, firstFill, 0.3)));
+    QVERIFY(
+        approximatelyEqual(itemPixel(window, *pane, dimmedImage, statusPoint),
+                           sourceOver(statusBaseline, firstFill, 0.3)));
 
     LaunchOptions reloaded = options;
     // GTK serializes the complementary alpha to two decimals: 1 - 0.676
@@ -4359,9 +4345,9 @@ void TerminalPaneTest::retainsTextWhileDimmingUnfocusedSplits()
     expectedNodeColor = secondFill;
     expectedNodeColor.setAlphaF(0.32);
     QCOMPARE(reloadedProbe.unfocusedSplitOverlayColor, expectedNodeColor);
-    QVERIFY(approximatelyEqual(
-        itemPixel(window, *pane, reloadedImage, quietPoint),
-        sourceOver(quietBaseline, secondFill, 0.32)));
+    QVERIFY(
+        approximatelyEqual(itemPixel(window, *pane, reloadedImage, quietPoint),
+                           sourceOver(quietBaseline, secondFill, 0.32)));
 
     const QColor configuredBackground(QStringLiteral("#102030"));
     reloaded.appearance.backgroundColor = configuredBackground;
@@ -4370,8 +4356,7 @@ void TerminalPaneTest::retainsTextWhileDimmingUnfocusedSplits()
     QVERIFY(!window.grabWindow().isNull());
     const TerminalPaneRenderProbeSnapshot explicitBackgroundReload =
         terminalPaneRenderProbe(pane);
-    QCOMPARE(explicitBackgroundReload.rootSerial,
-             reloadedProbe.rootSerial);
+    QCOMPARE(explicitBackgroundReload.rootSerial, reloadedProbe.rootSerial);
     QCOMPARE(explicitBackgroundReload.unfocusedSplitOverlaySerial,
              reloadedProbe.unfocusedSplitOverlaySerial);
     QCOMPARE(explicitBackgroundReload.unfocusedSplitOverlayColor,
@@ -4402,8 +4387,7 @@ void TerminalPaneTest::retainsTextWhileDimmingUnfocusedSplits()
              fallback.unfocusedSplitOverlaySerial);
     expectedNodeColor = latestBackground;
     expectedNodeColor.setAlphaF(0.32);
-    QCOMPARE(latestFallback.unfocusedSplitOverlayColor,
-             expectedNodeColor);
+    QCOMPARE(latestFallback.unfocusedSplitOverlayColor, expectedNodeColor);
 
     reloaded.splitAppearance.unfocusedFill = secondFill;
     pane->applyRuntimeOptions(reloaded);
@@ -4413,8 +4397,7 @@ void TerminalPaneTest::retainsTextWhileDimmingUnfocusedSplits()
     verifyTextRetained(latestFallback, explicitAgain);
     expectedNodeColor = secondFill;
     expectedNodeColor.setAlphaF(0.32);
-    QCOMPARE(explicitAgain.unfocusedSplitOverlayColor,
-             expectedNodeColor);
+    QCOMPARE(explicitAgain.unfocusedSplitOverlayColor, expectedNodeColor);
 
     reloaded.splitAppearance.unfocusedOpacity = 1.0;
     pane->applyRuntimeOptions(reloaded);
@@ -4433,8 +4416,7 @@ void TerminalPaneTest::retainsTextWhileDimmingUnfocusedSplits()
     verifyTextRetained(disabled, defensiveDefault);
     expectedNodeColor = secondFill;
     expectedNodeColor.setAlphaF(0.3);
-    QCOMPARE(defensiveDefault.unfocusedSplitOverlayColor,
-             expectedNodeColor);
+    QCOMPARE(defensiveDefault.unfocusedSplitOverlayColor, expectedNodeColor);
 
     QVERIFY(pane->executeConfiguredAction(QStringLiteral("start_search")));
     QVERIFY(!window.grabWindow().isNull());
@@ -4458,8 +4440,7 @@ void TerminalPaneTest::retainsTextWhileDimmingUnfocusedSplits()
     const TerminalPaneRenderProbeSnapshot externallyFocused =
         terminalPaneRenderProbe(pane);
     verifyTextRetained(searchEnded, externallyFocused);
-    QCOMPARE(externallyFocused.unfocusedSplitOverlayRect,
-             pane->boundingRect());
+    QCOMPARE(externallyFocused.unfocusedSplitOverlayRect, pane->boundingRect());
 
     pane->setSplit(false);
     QVERIFY(!window.grabWindow().isNull());
@@ -4484,8 +4465,7 @@ void TerminalPaneTest::rebuildsMainTextRowsAfterWindowChange()
     options.appearance.foregroundColor = Qt::white;
     options.appearance.backgroundColor = Qt::black;
 
-    const TerminalCellMetrics metrics =
-        terminalCellMetrics(options.typography);
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
     const qreal cellWidth = metrics.cellWidth;
     const qreal cellHeight = metrics.cellHeight;
 
@@ -4580,13 +4560,13 @@ void TerminalPaneTest::rebuildsMainTextRowsAfterWindowChange()
         QVERIFY(secondRoot.rowBuildCounts[row] > 0);
         QVERIFY(secondRoot.rowNodeSerials[row]
                 != firstRoot.rowNodeSerials[row]);
-        const qreal xScale = static_cast<qreal>(rebuiltImage.width())
-            / secondWindow.width();
-        const qreal yScale = static_cast<qreal>(rebuiltImage.height())
-            / secondWindow.height();
-        const QColor pixel = rebuiltImage.pixelColor(
-            qRound(0.5 * cellWidth * xScale),
-            qRound((row + 0.5) * cellHeight * yScale));
+        const qreal xScale =
+            static_cast<qreal>(rebuiltImage.width()) / secondWindow.width();
+        const qreal yScale =
+            static_cast<qreal>(rebuiltImage.height()) / secondWindow.height();
+        const QColor pixel =
+            rebuiltImage.pixelColor(qRound(0.5 * cellWidth * xScale),
+                                    qRound((row + 0.5) * cellHeight * yScale));
         QVERIFY(approximatelyEqual(pixel, Qt::white));
     }
 
@@ -4625,14 +4605,14 @@ void TerminalPaneTest::routesSearchActionsAndRetainsUiState()
     LaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
-        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
         QStringLiteral("sleep 5"),
     };
     options.hold = true;
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt,
-        TerminalSessionStartMode::Deferred);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy activeSpy(&pane, &TerminalPane::searchUiActiveChanged);
@@ -4654,8 +4634,8 @@ void TerminalPaneTest::routesSearchActionsAndRetainsUiState()
     QVERIFY(pane.executeConfiguredAction(QStringLiteral("search:backend")));
     QCOMPARE(pane.searchUiText(), QStringLiteral("visible entry"));
     QVERIFY(pane.searchUiActive());
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("navigate_search:next")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("navigate_search:next")));
 
     TerminalSearchUpdate progress;
     progress.generation = 99;
@@ -4691,14 +4671,13 @@ void TerminalPaneTest::routesSearchActionsAndRetainsUiState()
 
     pane.endSearchUi();
     QVERIFY(!pane.searchUiActive());
-    QKeyEvent openSearch(
-        QEvent::KeyPress, Qt::Key_F,
-        Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("f"));
+    QKeyEvent openSearch(QEvent::KeyPress, Qt::Key_F,
+                         Qt::ControlModifier | Qt::ShiftModifier,
+                         QStringLiteral("f"));
     QCoreApplication::sendEvent(&pane, &openSearch);
     QVERIFY(openSearch.isAccepted());
     QVERIFY(pane.searchUiActive());
-    QKeyEvent closeSearch(
-        QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QKeyEvent closeSearch(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
     QCoreApplication::sendEvent(&pane, &closeSearch);
     QVERIFY(closeSearch.isAccepted());
     QVERIFY(!pane.searchUiActive());
@@ -4746,16 +4725,14 @@ void TerminalPaneTest::routesSearchActionsAndRetainsUiState()
 
     QSignalSpy searchSelection(
         controller, &TerminalController::searchSelectionActionRequested);
-    QSignalSpy searchRequests(
-        controller, &TerminalController::searchRequested);
+    QSignalSpy searchRequests(controller, &TerminalController::searchRequested);
 
     pane.endSearchUi();
     pane.setSearchUiText(QStringLiteral("retained query"));
     const int nonEmptySearchBefore = searchRequests.count();
     const int nonEmptyTextBefore = textSpy.count();
     const int nonEmptyFocusBefore = focusSpy.count();
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("search_selection")));
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("search_selection")));
     QCOMPARE(searchSelection.count(), 1);
     const quint64 nonEmptyRequestId =
         searchSelection.constFirst().constFirst().toULongLong();
@@ -4766,8 +4743,7 @@ void TerminalPaneTest::routesSearchActionsAndRetainsUiState()
         .effect = TerminalActionEffect::StartSearch,
         .performed = true,
         .payload = selectedText,
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     });
     QCoreApplication::processEvents();
     QVERIFY(pane.searchUiActive());
@@ -4787,8 +4763,7 @@ void TerminalPaneTest::routesSearchActionsAndRetainsUiState()
     const int emptySearchBefore = searchRequests.count();
     const int emptyTextBefore = textSpy.count();
     const int emptyFocusBefore = focusSpy.count();
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("search_selection")));
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("search_selection")));
     QCOMPARE(searchSelection.count(), 2);
     const quint64 emptyRequestId =
         searchSelection.at(1).constFirst().toULongLong();
@@ -4798,13 +4773,11 @@ void TerminalPaneTest::routesSearchActionsAndRetainsUiState()
         .effect = TerminalActionEffect::StartSearch,
         .performed = true,
         .payload = {},
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     });
     QCoreApplication::processEvents();
     QVERIFY(pane.searchUiActive());
-    QCOMPARE(pane.searchUiText(),
-             QStringLiteral("retained empty selection"));
+    QCOMPARE(pane.searchUiText(), QStringLiteral("retained empty selection"));
     QCOMPARE(textSpy.count(), emptyTextBefore);
     QCOMPARE(focusSpy.count(), emptyFocusBefore + 1);
     QCOMPARE(searchRequests.count(), emptySearchBefore + 1);
@@ -4817,8 +4790,7 @@ void TerminalPaneTest::routesSearchActionsAndRetainsUiState()
     const int unavailableSearchBefore = searchRequests.count();
     const int unavailableTextBefore = textSpy.count();
     const int unavailableFocusBefore = focusSpy.count();
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("search_selection")));
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("search_selection")));
     QCOMPARE(searchSelection.count(), 3);
     const quint64 unavailableRequestId =
         searchSelection.at(2).constFirst().toULongLong();
@@ -4830,8 +4802,7 @@ void TerminalPaneTest::routesSearchActionsAndRetainsUiState()
     });
     QCoreApplication::processEvents();
     QVERIFY(!pane.searchUiActive());
-    QCOMPARE(pane.searchUiText(),
-             QStringLiteral("retained empty selection"));
+    QCOMPARE(pane.searchUiText(), QStringLiteral("retained empty selection"));
     QCOMPARE(textSpy.count(), unavailableTextBefore);
     QCOMPARE(focusSpy.count(), unavailableFocusBefore);
     QCOMPARE(searchRequests.count(), unavailableSearchBefore);
@@ -4877,10 +4848,9 @@ void TerminalPaneTest::replacesStartingFrameInsteadOfAccumulatingSceneRoots()
     options.program = {
         QStringLiteral("/bin/sh"),
         QStringLiteral("-c"),
-        QStringLiteral(
-            "sleep 0.2; "
-            "printf '\\033[2J\\033[H\\033[10;10Hscene-root-marker'; "
-            "sleep 3"),
+        QStringLiteral("sleep 0.2; "
+                       "printf '\\033[2J\\033[H\\033[10;10Hscene-root-marker'; "
+                       "sleep 3"),
     };
     options.hold = true;
 
@@ -4908,12 +4878,13 @@ void TerminalPaneTest::replacesStartingFrameInsteadOfAccumulatingSceneRoots()
     QVERIFY(!image.isNull());
 
     const qreal scale = static_cast<qreal>(image.width()) / window.width();
-    const QRect startingTextRegion(
-        qRound(8.0 * scale), qRound(8.0 * scale),
-        qRound(220.0 * scale), qRound(40.0 * scale));
+    const QRect startingTextRegion(qRound(8.0 * scale), qRound(8.0 * scale),
+                                   qRound(220.0 * scale), qRound(40.0 * scale));
     int unexpectedPixels = 0;
-    for (int y = startingTextRegion.top(); y < startingTextRegion.bottom(); ++y) {
-        for (int x = startingTextRegion.left(); x < startingTextRegion.right(); ++x) {
+    for (int y = startingTextRegion.top(); y < startingTextRegion.bottom();
+         ++y) {
+        for (int x = startingTextRegion.left(); x < startingTextRegion.right();
+             ++x) {
             if (!approximatelyEqual(image.pixelColor(x, y), background)) {
                 ++unexpectedPixels;
             }
@@ -4946,8 +4917,8 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     TerminalPane pane(options);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
-    QSignalSpy runtimeOptions(
-        controller, &TerminalController::runtimeOptionsRequested);
+    QSignalSpy runtimeOptions(controller,
+                              &TerminalController::runtimeOptionsRequested);
     LaunchOptions reloaded = options;
     reloaded.typography.pointSize = 14.0;
     reloaded.typography.face(TerminalFontRole::Regular).families = {
@@ -5022,14 +4993,12 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     const LaunchOptions fallback = pane.splitLaunchOptions(splitBase);
     QCOMPARE(fallback.workingDirectory, QDir::currentPath());
     QVERIFY(fallback.inheritWorkingDirectory);
-    QCOMPARE(
-        fallback.typography.face(TerminalFontRole::Regular).families,
-        QStringList({QStringLiteral("Monospace")}));
+    QCOMPARE(fallback.typography.face(TerminalFontRole::Regular).families,
+             QStringList({QStringLiteral("Monospace")}));
     QCOMPARE(fallback.typography.pointSize, 14.0);
 
     splitBase.splitInheritWorkingDirectory = true;
-    const LaunchOptions directoryInherited =
-        pane.splitLaunchOptions(splitBase);
+    const LaunchOptions directoryInherited = pane.splitLaunchOptions(splitBase);
     QCOMPARE(directoryInherited.workingDirectory, QDir::tempPath());
     QVERIFY(!directoryInherited.inheritWorkingDirectory);
 
@@ -5052,9 +5021,8 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     const LaunchOptions tabFallback = pane.tabLaunchOptions(tabBase);
     QCOMPARE(tabFallback.workingDirectory, QDir::currentPath());
     QVERIFY(tabFallback.inheritWorkingDirectory);
-    QCOMPARE(
-        tabFallback.typography.face(TerminalFontRole::Regular).families,
-        QStringList({QStringLiteral("Configured Family")}));
+    QCOMPARE(tabFallback.typography.face(TerminalFontRole::Regular).families,
+             QStringList({QStringLiteral("Configured Family")}));
     QCOMPARE(tabFallback.typography.pointSize, 10.0);
     QVERIFY(tabFallback.program.isEmpty());
     QVERIFY(!tabFallback.hold);
@@ -5064,9 +5032,8 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     const LaunchOptions tabInherited = pane.tabLaunchOptions(tabBase);
     QCOMPARE(tabInherited.workingDirectory, QDir::tempPath());
     QVERIFY(!tabInherited.inheritWorkingDirectory);
-    QCOMPARE(
-        tabInherited.typography.face(TerminalFontRole::Regular).families,
-        QStringList({QStringLiteral("Configured Family")}));
+    QCOMPARE(tabInherited.typography.face(TerminalFontRole::Regular).families,
+             QStringList({QStringLiteral("Configured Family")}));
     QCOMPARE(tabInherited.typography.pointSize, 15.0);
 
     // A split inherits the effective size as its initial config/reset target,
@@ -5130,8 +5097,7 @@ void TerminalPaneTest::reloadsTypographyNonCumulatively()
     QVERIFY(!window.grabWindow().isNull());
     QVERIFY(
         terminalPaneRenderProbe(pane).metrics
-        == terminalCellMetrics(
-            first.typography, window.devicePixelRatio()));
+        == terminalCellMetrics(first.typography, window.devicePixelRatio()));
 
     // Replacing +1 with +2 derives from the regular face again; it must not
     // accumulate into +3 across live reloads.
@@ -5144,8 +5110,7 @@ void TerminalPaneTest::reloadsTypographyNonCumulatively()
     QVERIFY(!window.grabWindow().isNull());
     QVERIFY(
         terminalPaneRenderProbe(pane).metrics
-        == terminalCellMetrics(
-            second.typography, window.devicePixelRatio()));
+        == terminalCellMetrics(second.typography, window.devicePixelRatio()));
 
     // Non-grid metrics rebuild rendering but do not publish redundant PTY
     // geometry.
@@ -5156,10 +5121,9 @@ void TerminalPaneTest::reloadsTypographyNonCumulatively()
     pane->applyRuntimeOptions(baselineOnly);
     QCOMPARE(resized.count(), 0);
     QVERIFY(!window.grabWindow().isNull());
-    QVERIFY(
-        terminalPaneRenderProbe(pane).metrics
-        == terminalCellMetrics(
-            baselineOnly.typography, window.devicePixelRatio()));
+    QVERIFY(terminalPaneRenderProbe(pane).metrics
+            == terminalCellMetrics(baselineOnly.typography,
+                                   window.devicePixelRatio()));
 
     pane->zoomIn();
     QCOMPARE(pane->fontPointSize(), 13.0);
@@ -5185,8 +5149,7 @@ void TerminalPaneTest::reloadsTypographyNonCumulatively()
     QVERIFY(!window.grabWindow().isNull());
     QVERIFY(
         terminalPaneRenderProbe(pane).metrics
-        == terminalCellMetrics(
-            zoomedTypography, window.devicePixelRatio()));
+        == terminalCellMetrics(zoomedTypography, window.devicePixelRatio()));
     const LaunchOptions split = pane->splitLaunchOptions(reloaded);
     QVERIFY(split.typography == zoomedTypography);
 
@@ -5198,23 +5161,20 @@ void TerminalPaneTest::reloadsTypographyNonCumulatively()
     QVERIFY(!window.grabWindow().isNull());
     QVERIFY(
         terminalPaneRenderProbe(pane).metrics
-        == terminalCellMetrics(
-            reloaded.typography, window.devicePixelRatio()));
+        == terminalCellMetrics(reloaded.typography, window.devicePixelRatio()));
 
     // A source-level modifier that produces the same finalized metrics is a
     // render/geometry no-op.
     resized.clear();
     LaunchOptions equivalent = reloaded;
-    equivalent.typography.metricModifiers[
-        TerminalMetric::OverlineThickness] =
+    equivalent.typography.metricModifiers[TerminalMetric::OverlineThickness] =
         TerminalMetricModifiers::Absolute{.pixels = 0};
     pane->applyRuntimeOptions(equivalent);
     QCOMPARE(resized.count(), 0);
     QVERIFY(!window.grabWindow().isNull());
-    QVERIFY(
-        terminalPaneRenderProbe(pane).metrics
-        == terminalCellMetrics(
-            equivalent.typography, window.devicePixelRatio()));
+    QVERIFY(terminalPaneRenderProbe(pane).metrics
+            == terminalCellMetrics(equivalent.typography,
+                                   window.devicePixelRatio()));
 
     window.close();
     delete pane;
@@ -5284,8 +5244,8 @@ void TerminalPaneTest::executesTypedFontSizeActions()
 
     // A valid negative delta is a visual no-op, but still establishes the
     // manual-adjustment lifecycle and therefore blocks the next live reload.
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("increase_font_size:-2")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("increase_font_size:-2")));
     QCOMPARE(pane.fontPointSize(), 12.0);
     QCOMPARE(changed.count(), 0);
     LaunchOptions reloaded = options;
@@ -5299,11 +5259,11 @@ void TerminalPaneTest::executesTypedFontSizeActions()
     pane.applyRuntimeOptions(reloaded);
     QCOMPARE(pane.fontPointSize(), 11.0);
 
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("increase_font_size:1.5")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("increase_font_size:1.5")));
     QCOMPARE(pane.fontPointSize(), 12.5);
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("decrease_font_size:.5")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("decrease_font_size:.5")));
     QCOMPARE(pane.fontPointSize(), 12.0);
 
     QVERIFY(pane.executeConfiguredAction(QStringLiteral("set_font_size:300")));
@@ -5312,8 +5272,8 @@ void TerminalPaneTest::executesTypedFontSizeActions()
     QCOMPARE(pane.fontPointSize(), 1.0);
 
     resized.clear();
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("increase_font_size:nan")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("increase_font_size:nan")));
     QCOMPARE(pane.fontPointSize(), 255.0);
     QVERIFY(!resized.isEmpty());
     const TerminalSessionGeometry tiny =
@@ -5364,9 +5324,8 @@ void TerminalPaneTest::workspaceActionHandlerRetainsMutableState()
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt,
-        TerminalSessionStartMode::Deferred);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
     int totalCalls = 0;
     pane.setWorkspaceActionHandler(
         [calls = 0, &totalCalls](WorkspaceActionRequest) mutable {
@@ -5698,9 +5657,8 @@ void TerminalPaneTest::writesClipboardDestinations()
     };
 
     resetClipboards();
-    writeTerminalClipboard(
-        clipboard, QStringLiteral("standard-write"),
-        TerminalClipboardDestination::Standard);
+    writeTerminalClipboard(clipboard, QStringLiteral("standard-write"),
+                           TerminalClipboardDestination::Standard);
     QTRY_COMPARE(clipboard->text(QClipboard::Clipboard),
                  QStringLiteral("standard-write"));
     if (supportsPrimary) {
@@ -5708,9 +5666,8 @@ void TerminalPaneTest::writesClipboardDestinations()
     }
 
     resetClipboards();
-    writeTerminalClipboard(
-        clipboard, QStringLiteral("primary-write"),
-        TerminalClipboardDestination::Primary);
+    writeTerminalClipboard(clipboard, QStringLiteral("primary-write"),
+                           TerminalClipboardDestination::Primary);
     if (supportsPrimary) {
         QTRY_COMPARE(clipboard->text(QClipboard::Selection),
                      QStringLiteral("primary-write"));
@@ -5721,9 +5678,8 @@ void TerminalPaneTest::writesClipboardDestinations()
     }
 
     resetClipboards();
-    writeTerminalClipboard(
-        clipboard, QStringLiteral("both-write"),
-        TerminalClipboardDestination::PrimaryAndStandard);
+    writeTerminalClipboard(clipboard, QStringLiteral("both-write"),
+                           TerminalClipboardDestination::PrimaryAndStandard);
     QTRY_COMPARE(clipboard->text(QClipboard::Clipboard),
                  QStringLiteral("both-write"));
     if (supportsPrimary) {
@@ -5895,8 +5851,7 @@ void TerminalPaneTest::copiesRawEffectiveSurfaceTitle()
     verifyPrimaryUnchanged();
 
     const QString overrideTitle = QStringLiteral("  override 🌐  ");
-    pane.setSurfaceTitleOverride(
-        std::optional<QString>{overrideTitle});
+    pane.setSurfaceTitleOverride(std::optional<QString>{overrideTitle});
     pane.setSurfaceTitle(QStringLiteral("new hidden base"));
     QVERIFY(pane.executeConfiguredAction(copyAction));
     QTRY_COMPARE(clipboard->text(QClipboard::Clipboard), overrideTitle);
@@ -5949,9 +5904,9 @@ void TerminalPaneTest::reloadsMiddleClickClipboardPolicy()
 
     const auto pressMiddleButton = [&pane](Qt::KeyboardModifiers modifiers) {
         const QPointF position(1.0, 1.0);
-        QMouseEvent event(
-            QEvent::MouseButtonPress, position, position, position,
-            Qt::MiddleButton, Qt::MiddleButton, modifiers);
+        QMouseEvent event(QEvent::MouseButtonPress, position, position,
+                          position, Qt::MiddleButton, Qt::MiddleButton,
+                          modifiers);
         QCoreApplication::sendEvent(&pane, &event);
         QVERIFY(event.isAccepted());
     };
@@ -6883,8 +6838,8 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
     qRegisterMetaType<TerminalUpdate>();
 
     QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
-    QTemporaryDir directory(QDir::current().filePath(
-        QStringLiteral("tmp/mouse-reporting-XXXXXX")));
+    QTemporaryDir directory(
+        QDir::current().filePath(QStringLiteral("tmp/mouse-reporting-XXXXXX")));
     QVERIFY(directory.isValid());
     const QString enableMode =
         directory.filePath(QStringLiteral("enable-mode"));
@@ -6898,15 +6853,14 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
     configured.program = {
         QStringLiteral("/bin/sh"),
         QStringLiteral("-c"),
-        QStringLiteral(
-            "stty -echo; printf 'raw-off-ready\\r\\nmouse-target'; "
-            "while [ ! -e \"$1\" ]; do sleep 0.01; done; "
-            "printf '\\033[?1002h\\r\\nraw-on-ready'; "
-            "while [ ! -e \"$2\" ]; do sleep 0.01; done; "
-            "printf '\\033[?1002l\\r\\nraw-off-again-ready'; "
-            "while [ ! -e \"$3\" ]; do sleep 0.01; done; "
-            "printf '\\033[?1002h\\r\\nraw-on-again-ready'; "
-            "exec cat >/dev/null"),
+        QStringLiteral("stty -echo; printf 'raw-off-ready\\r\\nmouse-target'; "
+                       "while [ ! -e \"$1\" ]; do sleep 0.01; done; "
+                       "printf '\\033[?1002h\\r\\nraw-on-ready'; "
+                       "while [ ! -e \"$2\" ]; do sleep 0.01; done; "
+                       "printf '\\033[?1002l\\r\\nraw-off-again-ready'; "
+                       "while [ ! -e \"$3\" ]; do sleep 0.01; done; "
+                       "printf '\\033[?1002h\\r\\nraw-on-again-ready'; "
+                       "exec cat >/dev/null"),
         QStringLiteral("mouse-reporting-test"),
         enableMode,
         disableMode,
@@ -6925,12 +6879,12 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
     QSignalSpy mouse(controller, &TerminalController::mouseRequested);
     QSignalSpy wheel(controller, &TerminalController::wheelRequested);
     QSignalSpy scroll(controller, &TerminalController::scrollRequested);
-    QSignalSpy selectionBegin(
-        controller, &TerminalController::beginSelectionRequested);
-    QSignalSpy selectionUpdate(
-        controller, &TerminalController::updateSelectionRequested);
-    QSignalSpy selectionEnd(
-        controller, &TerminalController::endSelectionRequested);
+    QSignalSpy selectionBegin(controller,
+                              &TerminalController::beginSelectionRequested);
+    QSignalSpy selectionUpdate(controller,
+                               &TerminalController::updateSelectionRequested);
+    QSignalSpy selectionEnd(controller,
+                            &TerminalController::endSelectionRequested);
 
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updates, QStringLiteral("raw-off-ready")), 5000);
@@ -6940,22 +6894,20 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
 
     const QPointF start(8.0, 8.0);
     const QPointF moved(24.0, 8.0);
-    const auto sendMouse = [&pane](QEvent::Type type,
-                                   const QPointF &position,
+    const auto sendMouse = [&pane](QEvent::Type type, const QPointF &position,
                                    Qt::MouseButton button,
                                    Qt::MouseButtons buttons) {
-        QMouseEvent event(type, position, position, position,
-                          button, buttons, Qt::NoModifier);
+        QMouseEvent event(type, position, position, position, button, buttons,
+                          Qt::NoModifier);
         QCoreApplication::sendEvent(&pane, &event);
         QVERIFY(event.isAccepted());
     };
     const auto sendGesture = [&] {
-        sendMouse(QEvent::MouseButtonPress, start,
-                  Qt::LeftButton, Qt::LeftButton);
-        sendMouse(QEvent::MouseMove, moved,
-                  Qt::NoButton, Qt::LeftButton);
-        sendMouse(QEvent::MouseButtonRelease, moved,
-                  Qt::LeftButton, Qt::NoButton);
+        sendMouse(QEvent::MouseButtonPress, start, Qt::LeftButton,
+                  Qt::LeftButton);
+        sendMouse(QEvent::MouseMove, moved, Qt::NoButton, Qt::LeftButton);
+        sendMouse(QEvent::MouseButtonRelease, moved, Qt::LeftButton,
+                  Qt::NoButton);
     };
     const auto sendWheel = [&pane](int angleDelta = 120,
                                    Qt::KeyboardModifiers modifiers =
@@ -6979,8 +6931,8 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
 
     // Policy true alone cannot capture while the terminal has not requested
     // a DEC mouse mode.
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("toggle_mouse_reporting")));
     QVERIFY(controller->mouseReportingEnabled());
     QVERIFY(!controller->mouseTracking());
     sendGesture();
@@ -7043,16 +6995,13 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
 
     // Ghostty reevaluates capture for every event. Disabling after a reported
     // press suppresses its later motion/release and does not begin selection.
-    sendMouse(QEvent::MouseButtonPress, start,
-              Qt::LeftButton, Qt::LeftButton);
+    sendMouse(QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
     QCOMPARE(mouse.count(), 4);
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("toggle_mouse_reporting")));
     QVERIFY(!controller->mouseTracking());
-    sendMouse(QEvent::MouseMove, moved,
-              Qt::NoButton, Qt::LeftButton);
-    sendMouse(QEvent::MouseButtonRelease, moved,
-              Qt::LeftButton, Qt::NoButton);
+    sendMouse(QEvent::MouseMove, moved, Qt::NoButton, Qt::LeftButton);
+    sendMouse(QEvent::MouseButtonRelease, moved, Qt::LeftButton, Qt::NoButton);
     QCOMPARE(mouse.count(), 4);
     QCOMPARE(selectionBegin.count(), 2);
     QCOMPARE(selectionUpdate.count(), 2);
@@ -7077,15 +7026,12 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
     // Conversely, enabling after a local press lets later events take the
     // newly effective remote path. The local gesture still ends before the
     // reported release atomically clears its selection on the worker.
-    sendMouse(QEvent::MouseButtonPress, start,
-              Qt::LeftButton, Qt::LeftButton);
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("toggle_mouse_reporting")));
+    sendMouse(QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("toggle_mouse_reporting")));
     QVERIFY(controller->mouseTracking());
-    sendMouse(QEvent::MouseMove, moved,
-              Qt::NoButton, Qt::LeftButton);
-    sendMouse(QEvent::MouseButtonRelease, moved,
-              Qt::LeftButton, Qt::NoButton);
+    sendMouse(QEvent::MouseMove, moved, Qt::NoButton, Qt::LeftButton);
+    sendMouse(QEvent::MouseButtonRelease, moved, Qt::LeftButton, Qt::NoButton);
     QCOMPARE(mouse.count(), 6);
     QCOMPARE(selectionBegin.count(), 3);
     QCOMPARE(selectionUpdate.count(), 2);
@@ -7106,12 +7052,12 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
     QCOMPARE(selectionBegin.count(), 4);
     QCOMPARE(selectionUpdate.count(), 3);
     QCOMPARE(selectionEnd.count(), 4);
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("toggle_mouse_reporting")));
     QVERIFY(!controller->mouseReportingEnabled());
     QVERIFY(!controller->mouseTracking());
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("toggle_mouse_reporting")));
     QVERIFY(controller->mouseReportingEnabled());
     QVERIFY(!controller->mouseTracking());
 
@@ -7136,8 +7082,8 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
     enabled.mouseReporting = true;
     pane.applyRuntimeOptions(enabled);
     QVERIFY(controller->mouseTracking());
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("toggle_mouse_reporting")));
     QVERIFY(!controller->mouseTracking());
     // This snapshot is unchanged from options_, but it still replaces the
     // independent runtime override.
@@ -7423,36 +7369,35 @@ void TerminalPaneTest::routesAllPasteEntryPointsThroughController()
     nonText->setData(QStringLiteral("application/octet-stream"),
                      QByteArrayLiteral("not text"));
     clipboard->setMimeData(nonText, QClipboard::Clipboard);
-    QVERIFY(!pane.executeConfiguredAction(
-        QStringLiteral("paste_from_clipboard")));
+    QVERIFY(
+        !pane.executeConfiguredAction(QStringLiteral("paste_from_clipboard")));
     QCOMPARE(pasted.count(), 0);
 
     auto *emptyText = new QMimeData;
     emptyText->setData(QStringLiteral("text/plain"), QByteArray{});
     clipboard->setMimeData(emptyText, QClipboard::Clipboard);
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("paste_from_clipboard")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("paste_from_clipboard")));
     QCOMPARE(pasted.count(), 0);
 
     clipboard->setText(QStringLiteral("shortcut\npaste"),
                        QClipboard::Clipboard);
 
-    QKeyEvent shortcutPress(
-        QEvent::KeyPress, Qt::Key_V,
-        Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("V"));
+    QKeyEvent shortcutPress(QEvent::KeyPress, Qt::Key_V,
+                            Qt::ControlModifier | Qt::ShiftModifier,
+                            QStringLiteral("V"));
     QCoreApplication::sendEvent(&pane, &shortcutPress);
     QCOMPARE(pasted.count(), 1);
     QCOMPARE(pasted.constLast().constFirst().toString(),
              QStringLiteral("shortcut\npaste"));
-    QKeyEvent shortcutRelease(
-        QEvent::KeyRelease, Qt::Key_V,
-        Qt::ControlModifier | Qt::ShiftModifier);
+    QKeyEvent shortcutRelease(QEvent::KeyRelease, Qt::Key_V,
+                              Qt::ControlModifier | Qt::ShiftModifier);
     QCoreApplication::sendEvent(&pane, &shortcutRelease);
 
     clipboard->setText(QStringLiteral("configured\npaste"),
                        QClipboard::Clipboard);
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("paste_from_clipboard")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("paste_from_clipboard")));
     QCOMPARE(pasted.count(), 2);
     QCOMPARE(pasted.constLast().constFirst().toString(),
              QStringLiteral("configured\npaste"));
@@ -7461,9 +7406,8 @@ void TerminalPaneTest::routesAllPasteEntryPointsThroughController()
         clipboard->setText(QStringLiteral("standard must not be used"),
                            QClipboard::Clipboard);
         auto *nonTextSelection = new QMimeData;
-        nonTextSelection->setData(
-            QStringLiteral("application/octet-stream"),
-            QByteArrayLiteral("not text"));
+        nonTextSelection->setData(QStringLiteral("application/octet-stream"),
+                                  QByteArrayLiteral("not text"));
         clipboard->setMimeData(nonTextSelection, QClipboard::Selection);
         QVERIFY(!pane.executeConfiguredAction(
             QStringLiteral("paste_from_selection")));
@@ -7491,12 +7435,11 @@ void TerminalPaneTest::routesAllPasteEntryPointsThroughController()
     }
 
     const int beforeMiddleClick = pasted.count();
-    clipboard->setText(QStringLiteral("middle\npaste"),
-                       QClipboard::Clipboard);
+    clipboard->setText(QStringLiteral("middle\npaste"), QClipboard::Clipboard);
     const QPointF position(1.0, 1.0);
-    QMouseEvent middleClick(
-        QEvent::MouseButtonPress, position, position, position,
-        Qt::MiddleButton, Qt::MiddleButton, Qt::NoModifier);
+    QMouseEvent middleClick(QEvent::MouseButtonPress, position, position,
+                            position, Qt::MiddleButton, Qt::MiddleButton,
+                            Qt::NoModifier);
     QCoreApplication::sendEvent(&pane, &middleClick);
     QVERIFY(middleClick.isAccepted());
     QCOMPARE(pasted.count(), beforeMiddleClick + 1);
@@ -7650,8 +7593,7 @@ void TerminalPaneTest::routesUnsafePasteConfirmationThroughWorker()
     QSignalSpy pasted(controller, &TerminalController::pasteRequested);
     QSignalSpy confirmed(controller,
                          &TerminalController::confirmPasteRequested);
-    QSignalSpy cancelled(controller,
-                         &TerminalController::cancelPasteRequested);
+    QSignalSpy cancelled(controller, &TerminalController::cancelPasteRequested);
     QSignalSpy unsafe(&pane, &TerminalPane::unsafePasteRequested);
     QSignalSpy activity(controller, &TerminalController::activeProcessChanged);
 
@@ -8448,10 +8390,10 @@ void TerminalPaneTest::resolvesMinimumContrastWithShaderOrdering()
     // Default cells contribute no second layer. Ghostty therefore compares
     // against the quantized, premultiplied pane-wide background, even though
     // the compositor color behind the window is unknowable.
-    QCOMPARE(terminalMinimumContrastColorForTest(
-                 QColor(QStringLiteral("#333333")), defaultCell,
-                 translucentWhite, 7.0),
-             QColor(Qt::black));
+    QCOMPARE(
+        terminalMinimumContrastColorForTest(QColor(QStringLiteral("#333333")),
+                                            defaultCell, translucentWhite, 7.0),
+        QColor(Qt::black));
 
     // Sufficient contrast and the exact maximum boundary retain the input.
     QCOMPARE(terminalMinimumContrastColorForTest(Qt::cyan, Qt::black, Qt::black,
@@ -8565,12 +8507,9 @@ void TerminalPaneTest::rendersBackgroundOpacityAndReloadsInPlace()
     QCOMPARE(opaqueCells.baseBackground, QColor(32, 48, 64, 128));
     QCOMPARE(opaqueCells.cellBackgrounds.size(), columns);
     QCOMPARE(opaqueCells.cellBackgrounds.at(0).alpha(), 0);
-    QCOMPARE(opaqueCells.cellBackgrounds.at(1),
-             QColor(32, 48, 64, 255));
-    QCOMPARE(opaqueCells.cellBackgrounds.at(2),
-             QColor(128, 64, 32, 255));
-    QCOMPARE(opaqueCells.cellBackgrounds.at(3),
-             QColor(16, 96, 48, 255));
+    QCOMPARE(opaqueCells.cellBackgrounds.at(1), QColor(32, 48, 64, 255));
+    QCOMPARE(opaqueCells.cellBackgrounds.at(2), QColor(128, 64, 32, 255));
+    QCOMPARE(opaqueCells.cellBackgrounds.at(3), QColor(16, 96, 48, 255));
     QCOMPARE(opaqueCells.cellBackgrounds.at(4), selectionBackground);
     QCOMPARE(opaqueCells.cellBackgrounds.at(5), searchBackground);
     QCOMPARE(opaqueCells.cellBackgrounds.at(6), selectedSearchBackground);
@@ -8649,26 +8588,21 @@ void TerminalPaneTest::rendersBackgroundOpacityAndReloadsInPlace()
     LaunchOptions contrastOpaqueCells = options;
     contrastOpaqueCells.appearance.minimumContrast = 7.0;
     pane->applyRuntimeOptions(contrastOpaqueCells);
-    const TerminalPaneRenderProbeSnapshot beforeContrastReload =
-        paintedProbe();
-    QCOMPARE(beforeContrastReload.baseBackground,
-             QColor(255, 255, 255, 128));
+    const TerminalPaneRenderProbeSnapshot beforeContrastReload = paintedProbe();
+    QCOMPARE(beforeContrastReload.baseBackground, QColor(255, 255, 255, 128));
     QCOMPARE(beforeContrastReload.cellBackgrounds.at(2), QColor(Qt::black));
     QCOMPARE(beforeContrastReload.glyphForegrounds.at(2), QColor(Qt::white));
 
     LaunchOptions contrastTranslucentCells = contrastOpaqueCells;
     contrastTranslucentCells.background.opacityCells = true;
     pane->applyRuntimeOptions(contrastTranslucentCells);
-    const TerminalPaneRenderProbeSnapshot afterContrastReload =
-        paintedProbe();
+    const TerminalPaneRenderProbeSnapshot afterContrastReload = paintedProbe();
     QCOMPARE(afterContrastReload.rootSerial, rootSerial);
     QCOMPARE(afterContrastReload.baseBackground,
              beforeContrastReload.baseBackground);
-    QCOMPARE(afterContrastReload.cellBackgrounds.at(2),
-             QColor(0, 0, 0, 127));
+    QCOMPARE(afterContrastReload.cellBackgrounds.at(2), QColor(0, 0, 0, 127));
     QCOMPARE(afterContrastReload.glyphForegrounds.at(2), QColor(Qt::black));
-    QVERIFY(allVisibleRowsRebuilt(beforeContrastReload,
-                                  afterContrastReload));
+    QVERIFY(allVisibleRowsRebuilt(beforeContrastReload, afterContrastReload));
 
     window.close();
     delete pane;
@@ -9025,23 +8959,25 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     options.appearance.palette[8] = QColor(QStringLiteral("#00ff00"));
     options.appearance.boldColor.kind = TerminalBoldColorKind::Bright;
     options.appearance.faintOpacity = 0.25;
-    options.appearance.selectionBackground.kind = TerminalColorKind::CellForeground;
-    options.appearance.selectionForeground.kind = TerminalColorKind::CellBackground;
-    options.appearance.searchBackground = TerminalColorValue::fromColor(
-        QColor(QStringLiteral("#123456")));
-    options.appearance.searchForeground = TerminalColorValue::fromColor(Qt::white);
-    options.appearance.searchSelectedBackground = TerminalColorValue::fromColor(
-        QColor(QStringLiteral("#654321")));
+    options.appearance.selectionBackground.kind =
+        TerminalColorKind::CellForeground;
+    options.appearance.selectionForeground.kind =
+        TerminalColorKind::CellBackground;
+    options.appearance.searchBackground =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#123456")));
+    options.appearance.searchForeground =
+        TerminalColorValue::fromColor(Qt::white);
+    options.appearance.searchSelectedBackground =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#654321")));
     options.appearance.searchSelectedForeground =
         TerminalColorValue::fromColor(Qt::white);
-    options.appearance.cursorColor = TerminalColorValue::fromColor(
-        QColor(QStringLiteral("#ff00ff")));
-    options.appearance.cursorTextColor = TerminalColorValue::fromColor(
-        QColor(QStringLiteral("#00ffff")));
+    options.appearance.cursorColor =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#ff00ff")));
+    options.appearance.cursorTextColor =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#00ffff")));
     options.appearance.cursorOpacity = 0.5;
 
-    const TerminalCellMetrics metrics =
-        terminalCellMetrics(options.typography);
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
     const qreal cellWidth = metrics.cellWidth;
     const qreal cellHeight = metrics.cellHeight;
 
@@ -9127,12 +9063,9 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     cursorTail.setOverline(true);
 
     const std::array<TerminalUnderlineStyle, 6> underlines{
-        TerminalUnderlineStyle::None,
-        TerminalUnderlineStyle::Single,
-        TerminalUnderlineStyle::Double,
-        TerminalUnderlineStyle::Curly,
-        TerminalUnderlineStyle::Dotted,
-        TerminalUnderlineStyle::Dashed,
+        TerminalUnderlineStyle::None,   TerminalUnderlineStyle::Single,
+        TerminalUnderlineStyle::Double, TerminalUnderlineStyle::Curly,
+        TerminalUnderlineStyle::Dotted, TerminalUnderlineStyle::Dashed,
     };
     for (int i = 0; i < static_cast<int>(underlines.size()); ++i) {
         TerminalCell &cell = update.dirtyRows[0].cells[6 + i];
@@ -9170,17 +9103,21 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     searchUpdate.selectedMatch = 0;
     searchUpdate.columns = columns;
     searchUpdate.rows = rows;
-    searchUpdate.visibleCellMask = cellMask(columns, rows, {
-        QPoint(2, 1), QPoint(3, 1), QPoint(4, 1), QPoint(5, 1),
-    });
-    searchUpdate.selectedCellMask = cellMask(
-        columns, rows, {QPoint(3, 1), QPoint(4, 1)});
+    searchUpdate.visibleCellMask = cellMask(columns, rows,
+                                            {
+                                                QPoint(2, 1),
+                                                QPoint(3, 1),
+                                                QPoint(4, 1),
+                                                QPoint(5, 1),
+                                            });
+    searchUpdate.selectedCellMask =
+        cellMask(columns, rows, {QPoint(3, 1), QPoint(4, 1)});
     controller->searchUpdated(searchUpdate);
     // The synthetic frame was delivered synchronously. Keep a later PTY
     // readiness update from replacing it while the software scene graph is
     // being sampled.
-    QObject::disconnect(controller, &TerminalController::terminalUpdated,
-                        pane, nullptr);
+    QObject::disconnect(controller, &TerminalController::terminalUpdated, pane,
+                        nullptr);
     QTest::qWait(100);
     const QImage image = window.grabWindow();
     QVERIFY(!image.isNull());
@@ -9189,17 +9126,22 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     const qreal yScale = static_cast<qreal>(image.height()) / window.height();
     const auto centerColor = [&](int column) {
         return image.pixelColor(
-            qBound(0, qRound((column + 0.5) * cellWidth * xScale), image.width() - 1),
+            qBound(0, qRound((column + 0.5) * cellWidth * xScale),
+                   image.width() - 1),
             qBound(0, qRound(0.5 * cellHeight * yScale), image.height() - 1));
     };
 
     const QColor selectionPixel = centerColor(0);
-    QVERIFY2(approximatelyEqual(selectionPixel, QColor(QStringLiteral("#ff0000"))),
-             qPrintable(QStringLiteral("selection pixel=%1 image=%2x%3 cell=%4x%5")
-                            .arg(selectionPixel.name(QColor::HexArgb))
-                            .arg(image.width()).arg(image.height())
-                            .arg(cellWidth).arg(cellHeight)));
-    QVERIFY(approximatelyEqual(centerColor(1), QColor(QStringLiteral("#00ff00"))));
+    QVERIFY2(
+        approximatelyEqual(selectionPixel, QColor(QStringLiteral("#ff0000"))),
+        qPrintable(QStringLiteral("selection pixel=%1 image=%2x%3 cell=%4x%5")
+                       .arg(selectionPixel.name(QColor::HexArgb))
+                       .arg(image.width())
+                       .arg(image.height())
+                       .arg(cellWidth)
+                       .arg(cellHeight)));
+    QVERIFY(
+        approximatelyEqual(centerColor(1), QColor(QStringLiteral("#00ff00"))));
     const QColor faintPixel = centerColor(2);
     QVERIFY(faintPixel.red() >= 55 && faintPixel.red() <= 75);
     QVERIFY(faintPixel.green() >= 55 && faintPixel.green() <= 75);
@@ -9213,8 +9155,8 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
             const QColor pixel = image.pixelColor(x, y);
             foundCursorBackground = foundCursorBackground
                 || (pixel.red() >= 120 && pixel.red() <= 140
-                    && pixel.green() <= 10
-                    && pixel.blue() >= 120 && pixel.blue() <= 140);
+                    && pixel.green() <= 10 && pixel.blue() >= 120
+                    && pixel.blue() <= 140);
             foundCursorText = foundCursorText
                 || (pixel.red() <= 10 && pixel.green() >= 245
                     && pixel.blue() >= 245);
@@ -9224,8 +9166,7 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     QVERIFY(foundCursorText);
     bool foundWideCursorDecoration = false;
     for (int y = 0; y < qRound(cellHeight * yScale); ++y) {
-        for (int x = qRound(4.0 * cellWidth * xScale);
-             x < cursorRight; ++x) {
+        for (int x = qRound(4.0 * cellWidth * xScale); x < cursorRight; ++x) {
             const QColor pixel = image.pixelColor(x, y);
             foundWideCursorDecoration = foundWideCursorDecoration
                 || (pixel.red() <= 10 && pixel.green() >= 245
@@ -9262,8 +9203,7 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
         return source.pixelColor(
             qBound(0, qRound((column + 0.5) * cellWidth * xScale),
                    source.width() - 1),
-            qBound(0, qRound(1.5 * cellHeight * yScale),
-                   source.height() - 1));
+            qBound(0, qRound(1.5 * cellHeight * yScale), source.height() - 1));
     };
     int invisiblePixels = 0;
     for (int y = qRound(cellHeight * yScale);
@@ -9308,8 +9248,7 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
         return false;
     };
     QVERIFY(!cursorContains(laterImage, [](const QColor &pixel) {
-        return pixel.red() >= 110 && pixel.green() <= 20
-            && pixel.blue() >= 110;
+        return pixel.red() >= 110 && pixel.green() <= 20 && pixel.blue() >= 110;
     }));
 
     // Losing focus stops the blink timer and immediately presents Ghostty's
@@ -9322,8 +9261,7 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     QTest::qWait(50);
     const QImage unfocusedImage = window.grabWindow();
     QVERIFY(cursorContains(unfocusedImage, [](const QColor &pixel) {
-        return pixel.red() >= 245 && pixel.green() <= 10
-            && pixel.blue() >= 245;
+        return pixel.red() >= 245 && pixel.green() <= 10 && pixel.blue() >= 245;
     }));
 
     pane->forceActiveFocus();
@@ -9331,8 +9269,7 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     QTest::qWait(50);
     const QImage refocusedImage = window.grabWindow();
     QVERIFY(cursorContains(refocusedImage, [](const QColor &pixel) {
-        return pixel.red() >= 120 && pixel.red() <= 140
-            && pixel.green() <= 10
+        return pixel.red() >= 120 && pixel.red() <= 140 && pixel.green() <= 10
             && pixel.blue() >= 120 && pixel.blue() <= 140;
     }));
 
@@ -9380,12 +9317,10 @@ void TerminalPaneTest::rendersResolvedTypographyAndPhysicalGeometry()
     constexpr int columns = 4;
     constexpr int rows = 2;
     window.setColor(Qt::black);
-    window.resize(
-        qCeil(expected.cellWidth * columns),
-        qCeil(expected.cellHeight * rows));
-    auto *pane = new TerminalPane(
-        options, window.contentItem(), std::nullopt,
-        TerminalSessionStartMode::Deferred);
+    window.resize(qCeil(expected.cellWidth * columns),
+                  qCeil(expected.cellHeight * rows));
+    auto *pane = new TerminalPane(options, window.contentItem(), std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
     pane->setSize(window.size());
     auto *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
@@ -9443,52 +9378,46 @@ void TerminalPaneTest::rendersResolvedTypographyAndPhysicalGeometry()
     controller->terminalUpdated(update);
     QVERIFY(!window.grabWindow().isNull());
 
-    const qreal underlinePosition = std::min(
-        expected.underlinePosition, expected.underlineMaximumPosition);
-    const qreal overlinePosition = std::max(
-        expected.overlinePosition, expected.overlineMinimumPosition);
+    const qreal underlinePosition =
+        std::min(expected.underlinePosition, expected.underlineMaximumPosition);
+    const qreal overlinePosition =
+        std::max(expected.overlinePosition, expected.overlineMinimumPosition);
     const qreal cursorTop = expected.cursorTop;
     const qreal cursorLeft =
         static_cast<qreal>(update.cursorColumn) * expected.cellWidth;
 
-    const TerminalPaneRenderProbeSnapshot block =
-        terminalPaneRenderProbe(pane);
+    const TerminalPaneRenderProbeSnapshot block = terminalPaneRenderProbe(pane);
     QVERIFY(block.metrics == expected);
     QVERIFY(block.renderFonts == expected.fontProgram->fonts);
+    QVERIFY(block.fontRoleCellCounts == (std::array<quint64, 4>{1, 1, 1, 1}));
+    QVERIFY(!block.renderFonts[terminalEnumIndex(TerminalFontRole::Regular)]
+                 .bold());
+    QVERIFY(!block.renderFonts[terminalEnumIndex(TerminalFontRole::Regular)]
+                 .italic());
     QVERIFY(
-        block.fontRoleCellCounts
-        == (std::array<quint64, 4>{1, 1, 1, 1}));
-    QVERIFY(!block.renderFonts[
-        terminalEnumIndex(TerminalFontRole::Regular)].bold());
-    QVERIFY(!block.renderFonts[
-        terminalEnumIndex(TerminalFontRole::Regular)].italic());
-    QVERIFY(block.renderFonts[
-        terminalEnumIndex(TerminalFontRole::Bold)].bold());
-    QVERIFY(!block.renderFonts[
-        terminalEnumIndex(TerminalFontRole::Bold)].italic());
-    QVERIFY(!block.renderFonts[
-        terminalEnumIndex(TerminalFontRole::Italic)].bold());
-    QVERIFY(block.renderFonts[
-        terminalEnumIndex(TerminalFontRole::Italic)].italic());
-    QVERIFY(block.renderFonts[
-        terminalEnumIndex(TerminalFontRole::BoldItalic)].bold());
-    QVERIFY(block.renderFonts[
-        terminalEnumIndex(TerminalFontRole::BoldItalic)].italic());
+        block.renderFonts[terminalEnumIndex(TerminalFontRole::Bold)].bold());
+    QVERIFY(
+        !block.renderFonts[terminalEnumIndex(TerminalFontRole::Bold)].italic());
+    QVERIFY(
+        !block.renderFonts[terminalEnumIndex(TerminalFontRole::Italic)].bold());
+    QVERIFY(block.renderFonts[terminalEnumIndex(TerminalFontRole::Italic)]
+                .italic());
+    QVERIFY(block.renderFonts[terminalEnumIndex(TerminalFontRole::BoldItalic)]
+                .bold());
+    QVERIFY(block.renderFonts[terminalEnumIndex(TerminalFontRole::BoldItalic)]
+                .italic());
     QCOMPARE(block.underlineRects.size(), 1);
-    QCOMPARE(
-        block.underlineRects.constFirst(),
-        QRectF(0.0, underlinePosition, expected.cellWidth,
-               expected.underlineThickness));
+    QCOMPARE(block.underlineRects.constFirst(),
+             QRectF(0.0, underlinePosition, expected.cellWidth,
+                    expected.underlineThickness));
     QCOMPARE(block.strikethroughRects.size(), 1);
-    QCOMPARE(
-        block.strikethroughRects.constFirst(),
-        QRectF(0.0, expected.strikethroughPosition,
-               expected.cellWidth, expected.strikethroughThickness));
+    QCOMPARE(block.strikethroughRects.constFirst(),
+             QRectF(0.0, expected.strikethroughPosition, expected.cellWidth,
+                    expected.strikethroughThickness));
     QCOMPARE(block.overlineRects.size(), 1);
-    QCOMPARE(
-        block.overlineRects.constFirst(),
-        QRectF(0.0, overlinePosition, expected.cellWidth,
-               expected.overlineThickness));
+    QCOMPARE(block.overlineRects.constFirst(),
+             QRectF(0.0, overlinePosition, expected.cellWidth,
+                    expected.overlineThickness));
     QCOMPARE(block.cursorRects,
              QVector<QRectF>({
                  QRectF(cursorLeft, cursorTop, expected.cellWidth,
@@ -9514,64 +9443,55 @@ void TerminalPaneTest::rendersResolvedTypographyAndPhysicalGeometry()
         return terminalPaneRenderProbe(pane).cursorRects;
     };
 
-    QCOMPARE(
-        renderCursor(0),
-        QVector<QRectF>({
-            QRectF(cursorLeft + expected.cursorBarLeft, cursorTop,
-                   expected.cursorThickness, expected.cursorHeight),
-        }));
-    QCOMPARE(
-        renderCursor(2),
-        QVector<QRectF>({
-            QRectF(cursorLeft, underlinePosition, expected.cellWidth,
-                   expected.cursorThickness),
-        }));
+    QCOMPARE(renderCursor(0),
+             QVector<QRectF>({
+                 QRectF(cursorLeft + expected.cursorBarLeft, cursorTop,
+                        expected.cursorThickness, expected.cursorHeight),
+             }));
+    QCOMPARE(renderCursor(2),
+             QVector<QRectF>({
+                 QRectF(cursorLeft, underlinePosition, expected.cellWidth,
+                        expected.cursorThickness),
+             }));
 
-    const qreal bottomOffset = std::max(
-        qreal{0.0}, expected.cursorHeight - expected.cursorThickness);
-    const qreal rightOffset = std::max(
-        qreal{0.0}, expected.cellWidth - expected.cursorThickness);
-    const qreal innerTopOffset = std::min(
-        expected.cursorThickness, expected.cursorHeight);
+    const qreal bottomOffset =
+        std::max(qreal{0.0}, expected.cursorHeight - expected.cursorThickness);
+    const qreal rightOffset =
+        std::max(qreal{0.0}, expected.cellWidth - expected.cursorThickness);
+    const qreal innerTopOffset =
+        std::min(expected.cursorThickness, expected.cursorHeight);
     const qreal innerHeight = std::max(
-        qreal{0.0},
-        expected.cursorHeight - 2.0 * expected.cursorThickness);
-    const qreal horizontalThickness = std::min(
-        expected.cursorThickness, expected.cursorHeight);
-    const qreal verticalThickness = std::min(
-        expected.cursorThickness, expected.cellWidth);
+        qreal{0.0}, expected.cursorHeight - 2.0 * expected.cursorThickness);
+    const qreal horizontalThickness =
+        std::min(expected.cursorThickness, expected.cursorHeight);
+    const qreal verticalThickness =
+        std::min(expected.cursorThickness, expected.cellWidth);
     const QVector<QRectF> hollowCursor = renderCursor(3);
-    QCOMPARE(
-        hollowCursor,
-        QVector<QRectF>({
-            QRectF(cursorLeft, cursorTop, expected.cellWidth,
-                   horizontalThickness),
-            QRectF(cursorLeft, cursorTop + bottomOffset,
-                   expected.cellWidth, horizontalThickness),
-            QRectF(cursorLeft, cursorTop + innerTopOffset,
-                   verticalThickness, innerHeight),
-            QRectF(cursorLeft + rightOffset,
-                   cursorTop + innerTopOffset,
-                   verticalThickness, innerHeight),
-        }));
-    const QRectF outerCursor(
-        cursorLeft, cursorTop, expected.cellWidth, expected.cursorHeight);
+    QCOMPARE(hollowCursor,
+             QVector<QRectF>({
+                 QRectF(cursorLeft, cursorTop, expected.cellWidth,
+                        horizontalThickness),
+                 QRectF(cursorLeft, cursorTop + bottomOffset,
+                        expected.cellWidth, horizontalThickness),
+                 QRectF(cursorLeft, cursorTop + innerTopOffset,
+                        verticalThickness, innerHeight),
+                 QRectF(cursorLeft + rightOffset, cursorTop + innerTopOffset,
+                        verticalThickness, innerHeight),
+             }));
+    const QRectF outerCursor(cursorLeft, cursorTop, expected.cellWidth,
+                             expected.cursorHeight);
     const qreal hollowInnerWidth = std::max(
-        qreal{0.0},
-        expected.cellWidth - 2.0 * expected.cursorThickness);
+        qreal{0.0}, expected.cellWidth - 2.0 * expected.cursorThickness);
     const qreal hollowInnerHeight = std::max(
-        qreal{0.0},
-        expected.cursorHeight - 2.0 * expected.cursorThickness);
+        qreal{0.0}, expected.cursorHeight - 2.0 * expected.cursorThickness);
     QVERIFY(rectanglesArePairwiseDisjoint(hollowCursor));
     QVERIFY(rectanglesFitInside(hollowCursor, outerCursor));
-    QVERIFY(qFuzzyCompare(
-        totalRectangleArea(hollowCursor) + 1.0,
-        rectangleArea(outerCursor)
-            - hollowInnerWidth * hollowInnerHeight + 1.0));
+    QVERIFY(qFuzzyCompare(totalRectangleArea(hollowCursor) + 1.0,
+                          rectangleArea(outerCursor)
+                              - hollowInnerWidth * hollowInnerHeight + 1.0));
 
-    QInputMethodEvent preedit(
-        QStringLiteral("composition"),
-        QList<QInputMethodEvent::Attribute>{});
+    QInputMethodEvent preedit(QStringLiteral("composition"),
+                              QList<QInputMethodEvent::Attribute>{});
     QCoreApplication::sendEvent(pane, &preedit);
     QVERIFY(!window.grabWindow().isNull());
     const TerminalPaneRenderProbeSnapshot withPreedit =
@@ -9612,27 +9532,22 @@ void TerminalPaneTest::rendersResolvedTypographyAndPhysicalGeometry()
              withPreedit.overlayTextBuildCount + 2);
 
     LaunchOptions oversizedCursor = options;
-    oversizedCursor.typography.metricModifiers[
-        TerminalMetric::CursorThickness] =
+    oversizedCursor.typography
+        .metricModifiers[TerminalMetric::CursorThickness] =
         TerminalMetricModifiers::Absolute{.pixels = 10'000};
     pane->applyRuntimeOptions(oversizedCursor);
     const TerminalCellMetrics oversizedMetrics = terminalCellMetrics(
         oversizedCursor.typography, window.devicePixelRatio());
     const QVector<QRectF> oversizedHollow = renderCursor(3);
     const QRectF oversizedOuterCursor(
-        static_cast<qreal>(update.cursorColumn)
-            * oversizedMetrics.cellWidth,
-        oversizedMetrics.cursorTop,
-        oversizedMetrics.cellWidth, oversizedMetrics.cursorHeight);
-    QCOMPARE(
-        oversizedHollow,
-        QVector<QRectF>({oversizedOuterCursor}));
+        static_cast<qreal>(update.cursorColumn) * oversizedMetrics.cellWidth,
+        oversizedMetrics.cursorTop, oversizedMetrics.cellWidth,
+        oversizedMetrics.cursorHeight);
+    QCOMPARE(oversizedHollow, QVector<QRectF>({oversizedOuterCursor}));
     QVERIFY(rectanglesArePairwiseDisjoint(oversizedHollow));
-    QVERIFY(rectanglesFitInside(
-        oversizedHollow, oversizedOuterCursor));
-    QCOMPARE(
-        totalRectangleArea(oversizedHollow),
-        rectangleArea(oversizedOuterCursor));
+    QVERIFY(rectanglesFitInside(oversizedHollow, oversizedOuterCursor));
+    QCOMPARE(totalRectangleArea(oversizedHollow),
+             rectangleArea(oversizedOuterCursor));
 
     window.close();
     delete pane;
@@ -9652,12 +9567,10 @@ void TerminalPaneTest::clipsDecorationAndCursorSprites()
     const TerminalCellMetrics initial =
         terminalCellMetrics(options.typography, dpr);
     window.setColor(Qt::black);
-    window.resize(
-        qCeil(initial.cellWidth * 2.0),
-        qCeil(initial.cellHeight * 2.0));
-    auto *pane = new TerminalPane(
-        options, window.contentItem(), std::nullopt,
-        TerminalSessionStartMode::Deferred);
+    window.resize(qCeil(initial.cellWidth * 2.0),
+                  qCeil(initial.cellHeight * 2.0));
+    auto *pane = new TerminalPane(options, window.contentItem(), std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
     pane->setSize(window.size());
     auto *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
@@ -9668,48 +9581,46 @@ void TerminalPaneTest::clipsDecorationAndCursorSprites()
     QTRY_VERIFY_WITH_TIMEOUT(pane->hasActiveFocus(), 1000);
 
     quint64 contentRevision = 0;
-    const auto render =
-        [&](const LaunchOptions &runtime,
-            TerminalUnderlineStyle underlineStyle,
-            bool strikethrough = false,
-            bool overline = false,
-            int cursorStyle = -1) {
-            pane->applyRuntimeOptions(runtime);
+    const auto render = [&](const LaunchOptions &runtime,
+                            TerminalUnderlineStyle underlineStyle,
+                            bool strikethrough = false, bool overline = false,
+                            int cursorStyle = -1) {
+        pane->applyRuntimeOptions(runtime);
 
-            TerminalUpdate update;
-            update.columns = 1;
-            update.rows = 1;
-            update.fullFrame = true;
-            update.foreground = Qt::white;
-            update.background = Qt::black;
-            update.cursorColor = Qt::magenta;
-            update.cursorColorExplicit = true;
-            update.cursorChanged = true;
-            update.cursorVisible = cursorStyle >= 0;
-            update.cursorBlinking = false;
-            update.cursorColumn = 0;
-            update.cursorRow = 0;
-            update.cursorStyle = std::max(cursorStyle, 0);
-            update.cursorColumnSpan = 1;
-            update.contentRevision = ++contentRevision;
+        TerminalUpdate update;
+        update.columns = 1;
+        update.rows = 1;
+        update.fullFrame = true;
+        update.foreground = Qt::white;
+        update.background = Qt::black;
+        update.cursorColor = Qt::magenta;
+        update.cursorColorExplicit = true;
+        update.cursorChanged = true;
+        update.cursorVisible = cursorStyle >= 0;
+        update.cursorBlinking = false;
+        update.cursorColumn = 0;
+        update.cursorRow = 0;
+        update.cursorStyle = std::max(cursorStyle, 0);
+        update.cursorColumnSpan = 1;
+        update.contentRevision = ++contentRevision;
 
-            TerminalRowUpdate row;
-            row.row = 0;
-            row.cells.resize(1);
-            row.cells[0].foreground = Qt::white;
-            row.cells[0].background = Qt::black;
-            row.cells[0].setUnderlineStyle(underlineStyle);
-            row.cells[0].setUnderlineUsesForeground(true);
-            row.cells[0].setStrikeThrough(strikethrough);
-            row.cells[0].setOverline(overline);
-            update.dirtyRows.append(std::move(row));
+        TerminalRowUpdate row;
+        row.row = 0;
+        row.cells.resize(1);
+        row.cells[0].foreground = Qt::white;
+        row.cells[0].background = Qt::black;
+        row.cells[0].setUnderlineStyle(underlineStyle);
+        row.cells[0].setUnderlineUsesForeground(true);
+        row.cells[0].setStrikeThrough(strikethrough);
+        row.cells[0].setOverline(overline);
+        update.dirtyRows.append(std::move(row));
 
-            controller->terminalUpdated(update);
-            if (window.grabWindow().isNull()) {
-                return TerminalPaneRenderProbeSnapshot{};
-            }
-            return terminalPaneRenderProbe(pane);
-        };
+        controller->terminalUpdated(update);
+        if (window.grabWindow().isNull()) {
+            return TerminalPaneRenderProbeSnapshot{};
+        }
+        return terminalPaneRenderProbe(pane);
+    };
     const auto physical = [dpr](qreal logical) {
         return qRound64(logical * dpr);
     };
@@ -9721,11 +9632,9 @@ void TerminalPaneTest::clipsDecorationAndCursorSprites()
     // not be pre-clamped with the single-line rule before the style-specific
     // sprite function sees it.
     LaunchOptions positioned = options;
-    positioned.typography.metricModifiers[
-        TerminalMetric::UnderlinePosition] =
+    positioned.typography.metricModifiers[TerminalMetric::UnderlinePosition] =
         TerminalMetricModifiers::Absolute{.pixels = 10'000};
-    positioned.typography.metricModifiers[
-        TerminalMetric::UnderlineThickness] =
+    positioned.typography.metricModifiers[TerminalMetric::UnderlineThickness] =
         TerminalMetricModifiers::Absolute{.pixels = 1};
     const TerminalCellMetrics positionedMetrics =
         terminalCellMetrics(positioned.typography, dpr);
@@ -9733,39 +9642,33 @@ void TerminalPaneTest::clipsDecorationAndCursorSprites()
     const qint64 height = physical(positionedMetrics.cellHeight);
     const qint64 padding = height / 4;
     const qint64 canvasBottom = height + padding;
-    const qint64 position =
-        physical(positionedMetrics.underlinePosition);
-    const qint64 thickness =
-        physical(positionedMetrics.underlineThickness);
-    const QRectF cell(
-        0.0, 0.0,
-        positionedMetrics.cellWidth,
-        positionedMetrics.cellHeight);
+    const qint64 position = physical(positionedMetrics.underlinePosition);
+    const qint64 thickness = physical(positionedMetrics.underlineThickness);
+    const QRectF cell(0.0, 0.0, positionedMetrics.cellWidth,
+                      positionedMetrics.cellHeight);
     const QRectF cellCanvas = expectedSpriteCanvas(cell, dpr);
-    const qint64 singleY = std::min(
-        position, std::max<qint64>(0, canvasBottom - thickness));
+    const qint64 singleY =
+        std::min(position, std::max<qint64>(0, canvasBottom - thickness));
 
-    const TerminalPaneRenderProbeSnapshot single = render(
-        positioned, TerminalUnderlineStyle::Single);
+    const TerminalPaneRenderProbeSnapshot single =
+        render(positioned, TerminalUnderlineStyle::Single);
     QCOMPARE(single.underlineRects.size(), 1);
     QVERIFY(rectanglesFitInside(single.underlineRects, cellCanvas));
-    QVERIFY(approximatelySame(
-        single.underlineRects.constFirst().top(),
-        static_cast<qreal>(singleY) / dpr));
+    QVERIFY(approximatelySame(single.underlineRects.constFirst().top(),
+                              static_cast<qreal>(singleY) / dpr));
 
-    const TerminalPaneRenderProbeSnapshot dashed = render(
-        positioned, TerminalUnderlineStyle::Dashed);
+    const TerminalPaneRenderProbeSnapshot dashed =
+        render(positioned, TerminalUnderlineStyle::Dashed);
     QVERIFY(!dashed.underlineRects.isEmpty());
     QVERIFY(rectanglesFitInside(dashed.underlineRects, cellCanvas));
     QVector<QRectF> expectedDashes;
     const qint64 dashWidth = width / 3 + 1;
     const qint64 dashCount = width / dashWidth + 1;
     for (qint64 index = 0; index < dashCount; index += 2) {
-        const QRectF dash(
-            static_cast<qreal>(index * dashWidth) / dpr,
-            static_cast<qreal>(singleY) / dpr,
-            static_cast<qreal>(dashWidth) / dpr,
-            static_cast<qreal>(thickness) / dpr);
+        const QRectF dash(static_cast<qreal>(index * dashWidth) / dpr,
+                          static_cast<qreal>(singleY) / dpr,
+                          static_cast<qreal>(dashWidth) / dpr,
+                          static_cast<qreal>(thickness) / dpr);
         const QRectF clipped = dash.intersected(cellCanvas);
         if (!clipped.isEmpty()) {
             expectedDashes.append(clipped);
@@ -9773,68 +9676,59 @@ void TerminalPaneTest::clipsDecorationAndCursorSprites()
     }
     QCOMPARE(dashed.underlineRects, expectedDashes);
 
-    const qint64 doubleMiddle = std::min(
-        position,
-        std::max<qint64>(0, canvasBottom - 2 * thickness));
-    const qint64 doubleFirst =
-        std::max<qint64>(0, doubleMiddle - thickness);
+    const qint64 doubleMiddle =
+        std::min(position, std::max<qint64>(0, canvasBottom - 2 * thickness));
+    const qint64 doubleFirst = std::max<qint64>(0, doubleMiddle - thickness);
     const qint64 doubleSecond = doubleMiddle + thickness;
-    const TerminalPaneRenderProbeSnapshot doubleUnderline = render(
-        positioned, TerminalUnderlineStyle::Double);
+    const TerminalPaneRenderProbeSnapshot doubleUnderline =
+        render(positioned, TerminalUnderlineStyle::Double);
     QCOMPARE(doubleUnderline.underlineRects.size(), 2);
-    QVERIFY(rectanglesFitInside(
-        doubleUnderline.underlineRects, cellCanvas));
-    QVERIFY(approximatelySame(
-        doubleUnderline.underlineRects.at(0).top(),
-        static_cast<qreal>(doubleFirst) / dpr));
-    QVERIFY(approximatelySame(
-        doubleUnderline.underlineRects.at(1).top(),
-        static_cast<qreal>(doubleSecond) / dpr));
+    QVERIFY(rectanglesFitInside(doubleUnderline.underlineRects, cellCanvas));
+    QVERIFY(approximatelySame(doubleUnderline.underlineRects.at(0).top(),
+                              static_cast<qreal>(doubleFirst) / dpr));
+    QVERIFY(approximatelySame(doubleUnderline.underlineRects.at(1).top(),
+                              static_cast<qreal>(doubleSecond) / dpr));
 
     const double radius =
         std::numbers::sqrt2 / 2.0 * static_cast<double>(thickness);
     const double dottedCenter = std::min(
-        static_cast<double>(position)
-            + 0.5 * static_cast<double>(thickness),
+        static_cast<double>(position) + 0.5 * static_cast<double>(thickness),
         static_cast<double>(canvasBottom) - std::ceil(radius));
     const qreal dottedTop = std::max(
-        cellCanvas.top(),
-        static_cast<qreal>(dottedCenter - radius) / dpr);
-    const TerminalPaneRenderProbeSnapshot dotted = render(
-        positioned, TerminalUnderlineStyle::Dotted);
+        cellCanvas.top(), static_cast<qreal>(dottedCenter - radius) / dpr);
+    const TerminalPaneRenderProbeSnapshot dotted =
+        render(positioned, TerminalUnderlineStyle::Dotted);
     QVERIFY(!dotted.underlineRects.isEmpty());
     QVERIFY(rectanglesFitInside(dotted.underlineRects, cellCanvas));
     QVERIFY(rectanglesArePairwiseDisjoint(dotted.underlineRects));
     for (const QRectF &rect : dotted.underlineRects) {
         QVERIFY(approximatelySame(rect.height(), 1.0 / dpr));
     }
-    const auto firstDotted = std::ranges::min_element(
-        dotted.underlineRects, {}, &QRectF::top);
-    const auto lastDotted = std::ranges::max_element(
-        dotted.underlineRects, {}, &QRectF::bottom);
+    const auto firstDotted =
+        std::ranges::min_element(dotted.underlineRects, {}, &QRectF::top);
+    const auto lastDotted =
+        std::ranges::max_element(dotted.underlineRects, {}, &QRectF::bottom);
     QVERIFY(firstDotted != dotted.underlineRects.cend());
     QVERIFY(lastDotted != dotted.underlineRects.cend());
     QVERIFY(firstDotted->top() >= dottedTop - 1e-6);
     QVERIFY(firstDotted->top() <= dottedTop + 1.0 / dpr + 1e-6);
     QVERIFY(lastDotted->bottom()
-            <= std::min(
-                cellCanvas.bottom(),
-                static_cast<qreal>(dottedCenter + radius) / dpr)
+            <= std::min(cellCanvas.bottom(),
+                        static_cast<qreal>(dottedCenter + radius) / dpr)
                 + 1.0 / dpr + 1e-6);
 
-    const double amplitude =
-        static_cast<double>(width) / std::numbers::pi;
-    const double curlyTopPhysical = std::min(
-        static_cast<double>(position),
-        static_cast<double>(canvasBottom)
-            - amplitude - static_cast<double>(thickness));
-    const qreal curlyTop = std::max(
-        cellCanvas.top(),
-        static_cast<qreal>(
-            curlyTopPhysical
-            - static_cast<double>(thickness) / 2.0) / dpr);
-    const TerminalPaneRenderProbeSnapshot curly = render(
-        positioned, TerminalUnderlineStyle::Curly);
+    const double amplitude = static_cast<double>(width) / std::numbers::pi;
+    const double curlyTopPhysical =
+        std::min(static_cast<double>(position),
+                 static_cast<double>(canvasBottom) - amplitude
+                     - static_cast<double>(thickness));
+    const qreal curlyTop =
+        std::max(cellCanvas.top(),
+                 static_cast<qreal>(curlyTopPhysical
+                                    - static_cast<double>(thickness) / 2.0)
+                     / dpr);
+    const TerminalPaneRenderProbeSnapshot curly =
+        render(positioned, TerminalUnderlineStyle::Curly);
     QVERIFY(!curly.underlineRects.isEmpty());
     QVERIFY(rectanglesFitInside(curly.underlineRects, cellCanvas));
     QVERIFY(rectanglesArePairwiseDisjoint(curly.underlineRects));
@@ -9842,61 +9736,51 @@ void TerminalPaneTest::clipsDecorationAndCursorSprites()
     for (const QRectF &rect : curly.underlineRects) {
         QVERIFY(approximatelySame(rect.width(), 1.0 / dpr));
     }
-    const auto firstCurly = std::ranges::min_element(
-        curly.underlineRects, {}, &QRectF::top);
+    const auto firstCurly =
+        std::ranges::min_element(curly.underlineRects, {}, &QRectF::top);
     QVERIFY(firstCurly != curly.underlineRects.cend());
     QVERIFY(firstCurly->top() >= curlyTop - 1e-6);
     QVERIFY(firstCurly->top() <= curlyTop + 1.0 / dpr + 1e-6);
 
     LaunchOptions thickerCurve = positioned;
-    thickerCurve.typography.metricModifiers[
-        TerminalMetric::UnderlineThickness] =
+    thickerCurve.typography
+        .metricModifiers[TerminalMetric::UnderlineThickness] =
         TerminalMetricModifiers::Absolute{.pixels = 3};
-    const TerminalPaneRenderProbeSnapshot thickCurly = render(
-        thickerCurve, TerminalUnderlineStyle::Curly);
+    const TerminalPaneRenderProbeSnapshot thickCurly =
+        render(thickerCurve, TerminalUnderlineStyle::Curly);
     QCOMPARE(thickCurly.underlineRects.size(), width);
-    for (qsizetype column = 0;
-         column < curly.underlineRects.size(); ++column) {
-        QCOMPARE(
-            thickCurly.underlineRects.at(column).left(),
-            curly.underlineRects.at(column).left());
-        QCOMPARE(
-            thickCurly.underlineRects.at(column).width(),
-            curly.underlineRects.at(column).width());
+    for (qsizetype column = 0; column < curly.underlineRects.size(); ++column) {
+        QCOMPARE(thickCurly.underlineRects.at(column).left(),
+                 curly.underlineRects.at(column).left());
+        QCOMPARE(thickCurly.underlineRects.at(column).width(),
+                 curly.underlineRects.at(column).width());
     }
 
     // Very large thicknesses exercise Canvas.rect's implicit clipping in
     // upstream Ghostty. The Qt geometry path must produce the same bounded
     // result instead of painting through arbitrary neighboring rows.
     LaunchOptions extreme = positioned;
-    extreme.typography.metricModifiers[
-        TerminalMetric::UnderlineThickness] =
+    extreme.typography.metricModifiers[TerminalMetric::UnderlineThickness] =
         TerminalMetricModifiers::Absolute{.pixels = 10'000};
-    extreme.typography.metricModifiers[
-        TerminalMetric::StrikethroughPosition] =
+    extreme.typography.metricModifiers[TerminalMetric::StrikethroughPosition] =
         TerminalMetricModifiers::Absolute{.pixels = -10'000};
-    extreme.typography.metricModifiers[
-        TerminalMetric::StrikethroughThickness] =
+    extreme.typography.metricModifiers[TerminalMetric::StrikethroughThickness] =
         TerminalMetricModifiers::Absolute{.pixels = 10'000};
-    extreme.typography.metricModifiers[
-        TerminalMetric::OverlinePosition] =
+    extreme.typography.metricModifiers[TerminalMetric::OverlinePosition] =
         TerminalMetricModifiers::Absolute{.pixels = -10'000};
-    extreme.typography.metricModifiers[
-        TerminalMetric::OverlineThickness] =
+    extreme.typography.metricModifiers[TerminalMetric::OverlineThickness] =
         TerminalMetricModifiers::Absolute{.pixels = 10'000};
     const TerminalCellMetrics extremeMetrics =
         terminalCellMetrics(extreme.typography, dpr);
-    const QRectF extremeCell(
-        0.0, 0.0,
-        extremeMetrics.cellWidth, extremeMetrics.cellHeight);
-    const QRectF extremeCanvas =
-        expectedSpriteCanvas(extremeCell, dpr);
+    const QRectF extremeCell(0.0, 0.0, extremeMetrics.cellWidth,
+                             extremeMetrics.cellHeight);
+    const QRectF extremeCanvas = expectedSpriteCanvas(extremeCell, dpr);
     for (const TerminalUnderlineStyle style : {
              TerminalUnderlineStyle::Double,
              TerminalUnderlineStyle::Dotted,
              TerminalUnderlineStyle::Curly,
              TerminalUnderlineStyle::Dashed,
-        }) {
+         }) {
         const TerminalPaneRenderProbeSnapshot snapshot =
             render(extreme, style, true, true);
         // Ghostty's curly cap subtracts the full stroke width. At absurdly
@@ -9905,92 +9789,72 @@ void TerminalPaneTest::clipsDecorationAndCursorSprites()
         if (style != TerminalUnderlineStyle::Curly) {
             QVERIFY(!snapshot.underlineRects.isEmpty());
         }
-        QVERIFY(rectanglesFitInside(
-            snapshot.underlineRects, extremeCanvas));
+        QVERIFY(rectanglesFitInside(snapshot.underlineRects, extremeCanvas));
         QCOMPARE(snapshot.strikethroughRects.size(), 1);
-        QVERIFY(rectanglesFitInside(
-            snapshot.strikethroughRects, extremeCanvas));
+        QVERIFY(
+            rectanglesFitInside(snapshot.strikethroughRects, extremeCanvas));
         QCOMPARE(snapshot.overlineRects.size(), 1);
-        QVERIFY(rectanglesFitInside(
-            snapshot.overlineRects, extremeCanvas));
+        QVERIFY(rectanglesFitInside(snapshot.overlineRects, extremeCanvas));
     }
 
     // A huge positive position starts entirely below the padded canvas and
     // therefore emits no geometry even when its thickness is also huge.
     LaunchOptions farBelow = extreme;
-    farBelow.typography.metricModifiers[
-        TerminalMetric::StrikethroughPosition] =
+    farBelow.typography.metricModifiers[TerminalMetric::StrikethroughPosition] =
         TerminalMetricModifiers::Absolute{.pixels = 20'000};
-    farBelow.typography.metricModifiers[
-        TerminalMetric::OverlinePosition] =
+    farBelow.typography.metricModifiers[TerminalMetric::OverlinePosition] =
         TerminalMetricModifiers::Absolute{.pixels = 20'000};
-    const TerminalPaneRenderProbeSnapshot below = render(
-        farBelow, TerminalUnderlineStyle::None, true, true);
+    const TerminalPaneRenderProbeSnapshot below =
+        render(farBelow, TerminalUnderlineStyle::None, true, true);
     QVERIFY(below.strikethroughRects.isEmpty());
     QVERIFY(below.overlineRects.isEmpty());
 
     LaunchOptions thickCursor = options;
-    thickCursor.typography.metricModifiers[
-        TerminalMetric::UnderlinePosition] =
+    thickCursor.typography.metricModifiers[TerminalMetric::UnderlinePosition] =
         TerminalMetricModifiers::Absolute{.pixels = 10'000};
-    thickCursor.typography.metricModifiers[
-        TerminalMetric::CursorThickness] =
+    thickCursor.typography.metricModifiers[TerminalMetric::CursorThickness] =
         TerminalMetricModifiers::Absolute{.pixels = 10'000};
-    thickCursor.typography.metricModifiers[
-        TerminalMetric::CursorHeight] =
+    thickCursor.typography.metricModifiers[TerminalMetric::CursorHeight] =
         TerminalMetricModifiers::Absolute{.pixels = 7};
     const TerminalCellMetrics cursorMetrics =
         terminalCellMetrics(thickCursor.typography, dpr);
-    const QRectF cursorOuter(
-        0.0, cursorMetrics.cursorTop,
-        cursorMetrics.cellWidth, cursorMetrics.cursorHeight);
-    const QRectF cursorCanvas =
-        expectedSpriteCanvas(cursorOuter, dpr);
-    const QRectF cursorCell(
-        0.0, 0.0,
-        cursorMetrics.cellWidth, cursorMetrics.cellHeight);
-    const QRectF underlineCursorCanvas =
-        expectedSpriteCanvas(cursorCell, dpr);
+    const QRectF cursorOuter(0.0, cursorMetrics.cursorTop,
+                             cursorMetrics.cellWidth,
+                             cursorMetrics.cursorHeight);
+    const QRectF cursorCanvas = expectedSpriteCanvas(cursorOuter, dpr);
+    const QRectF cursorCell(0.0, 0.0, cursorMetrics.cellWidth,
+                            cursorMetrics.cellHeight);
+    const QRectF underlineCursorCanvas = expectedSpriteCanvas(cursorCell, dpr);
 
-    const TerminalPaneRenderProbeSnapshot bar = render(
-        thickCursor, TerminalUnderlineStyle::None,
-        false, false, 0);
+    const TerminalPaneRenderProbeSnapshot bar =
+        render(thickCursor, TerminalUnderlineStyle::None, false, false, 0);
     QCOMPARE(bar.cursorRects.size(), 1);
     QVERIFY(rectanglesFitInside(bar.cursorRects, cursorCanvas));
-    QCOMPARE(
-        bar.cursorRects.constFirst(),
-        QRectF(
-            cursorMetrics.cursorBarLeft, cursorMetrics.cursorTop,
-            cursorMetrics.cursorThickness,
-            cursorMetrics.cursorHeight)
-            .intersected(cursorCanvas));
+    QCOMPARE(bar.cursorRects.constFirst(),
+             QRectF(cursorMetrics.cursorBarLeft, cursorMetrics.cursorTop,
+                    cursorMetrics.cursorThickness, cursorMetrics.cursorHeight)
+                 .intersected(cursorCanvas));
 
-    const qreal cursorUnderlineY = std::min(
-        cursorMetrics.underlinePosition,
-        cursorMetrics.underlineMaximumPosition);
-    const TerminalPaneRenderProbeSnapshot underlineCursor = render(
-        thickCursor, TerminalUnderlineStyle::None,
-        false, false, 2);
+    const qreal cursorUnderlineY =
+        std::min(cursorMetrics.underlinePosition,
+                 cursorMetrics.underlineMaximumPosition);
+    const TerminalPaneRenderProbeSnapshot underlineCursor =
+        render(thickCursor, TerminalUnderlineStyle::None, false, false, 2);
     QCOMPARE(underlineCursor.cursorRects.size(), 1);
-    QVERIFY(rectanglesFitInside(
-        underlineCursor.cursorRects, underlineCursorCanvas));
-    QCOMPARE(
-        underlineCursor.cursorRects.constFirst(),
-        QRectF(
-            0.0, cursorUnderlineY,
-            cursorMetrics.cellWidth,
-            cursorMetrics.cursorThickness)
-            .intersected(underlineCursorCanvas));
+    QVERIFY(rectanglesFitInside(underlineCursor.cursorRects,
+                                underlineCursorCanvas));
+    QCOMPARE(underlineCursor.cursorRects.constFirst(),
+             QRectF(0.0, cursorUnderlineY, cursorMetrics.cellWidth,
+                    cursorMetrics.cursorThickness)
+                 .intersected(underlineCursorCanvas));
 
-    const TerminalPaneRenderProbeSnapshot hollow = render(
-        thickCursor, TerminalUnderlineStyle::None,
-        false, false, 3);
+    const TerminalPaneRenderProbeSnapshot hollow =
+        render(thickCursor, TerminalUnderlineStyle::None, false, false, 3);
     QCOMPARE(hollow.cursorRects, QVector<QRectF>({cursorOuter}));
     QVERIFY(rectanglesArePairwiseDisjoint(hollow.cursorRects));
     QVERIFY(rectanglesFitInside(hollow.cursorRects, cursorCanvas));
-    QCOMPARE(
-        totalRectangleArea(hollow.cursorRects),
-        rectangleArea(cursorOuter));
+    QCOMPARE(totalRectangleArea(hollow.cursorRects),
+             rectangleArea(cursorOuter));
 
     window.close();
     delete pane;
@@ -10005,20 +9869,20 @@ void TerminalPaneTest::routesEmergencyTabShortcuts()
 
     TerminalPane pane(options);
     QSignalSpy tabChange(&pane, &TerminalPane::requestTabChange);
-    QSignalSpy applicationActions(
-        &pane, &TerminalPane::applicationActionRequested);
+    QSignalSpy applicationActions(&pane,
+                                  &TerminalPane::applicationActionRequested);
 
-    QKeyEvent newWindow(
-        QEvent::KeyPress, Qt::Key_N,
-        Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("N"));
+    QKeyEvent newWindow(QEvent::KeyPress, Qt::Key_N,
+                        Qt::ControlModifier | Qt::ShiftModifier,
+                        QStringLiteral("N"));
     QCoreApplication::sendEvent(&pane, &newWindow);
     QCOMPARE(applicationActions.count(), 1);
     QCOMPARE(qvariant_cast<ApplicationAction>(
                  applicationActions.constFirst().constFirst()),
              ApplicationAction::NewWindow);
 
-    QKeyEvent next(QEvent::KeyPress, Qt::Key_Tab,
-                   Qt::ControlModifier, QStringLiteral("\t"));
+    QKeyEvent next(QEvent::KeyPress, Qt::Key_Tab, Qt::ControlModifier,
+                   QStringLiteral("\t"));
     QCoreApplication::sendEvent(&pane, &next);
     QCOMPARE(tabChange.count(), 1);
     QCOMPARE(tabChange.constLast().constFirst().toInt(), 1);
@@ -10039,8 +9903,8 @@ void TerminalPaneTest::compiledProgramAvailabilityControlsEmergencyShortcuts()
     options.hold = true;
 
     const GhosttyKeybindProgram availableEmpty =
-        GhosttyKeybindProgram::compile(
-            GhosttyKeybindSource::structured({})).program;
+        GhosttyKeybindProgram::compile(GhosttyKeybindSource::structured({}))
+            .program;
     const GhosttyKeybindProgram unavailable =
         GhosttyKeybindProgram::compile(GhosttyKeybindSource{}).program;
     QVERIFY(availableEmpty.isAvailable());
@@ -10051,40 +9915,37 @@ void TerminalPaneTest::compiledProgramAvailabilityControlsEmergencyShortcuts()
     // The injected compiled generation is authoritative even when the launch
     // snapshot says the opposite. An available-but-empty program represents
     // an explicit empty Ghostty set, so emergency shortcuts stay disabled.
-    TerminalPane configured(
-        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
-        {}, availableEmpty);
+    TerminalPane configured(options, nullptr, std::nullopt,
+                            TerminalSessionStartMode::Immediate, {},
+                            availableEmpty);
     QVERIFY(configured.keybindProgram().isSameGeneration(availableEmpty));
     QSignalSpy configuredNewTab(&configured, &TerminalPane::requestNewTab);
-    auto *configuredController =
-        configured.findChild<TerminalController *>();
+    auto *configuredController = configured.findChild<TerminalController *>();
     QVERIFY(configuredController != nullptr);
-    QSignalSpy configuredForwarded(
-        configuredController, &TerminalController::keyRequested);
+    QSignalSpy configuredForwarded(configuredController,
+                                   &TerminalController::keyRequested);
 
-    QKeyEvent configuredShortcut(
-        QEvent::KeyPress, Qt::Key_T,
-        Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("T"));
+    QKeyEvent configuredShortcut(QEvent::KeyPress, Qt::Key_T,
+                                 Qt::ControlModifier | Qt::ShiftModifier,
+                                 QStringLiteral("T"));
     QCoreApplication::sendEvent(&configured, &configuredShortcut);
     QCOMPARE(configuredNewTab.count(), 0);
     QCOMPARE(configuredForwarded.count(), 1);
 
     LaunchOptions misleadingOptions = options;
-    misleadingOptions.keybindSource =
-        GhosttyKeybindSource::structured({});
-    TerminalPane fallback(
-        misleadingOptions, nullptr, std::nullopt,
-        TerminalSessionStartMode::Immediate, {}, unavailable);
+    misleadingOptions.keybindSource = GhosttyKeybindSource::structured({});
+    TerminalPane fallback(misleadingOptions, nullptr, std::nullopt,
+                          TerminalSessionStartMode::Immediate, {}, unavailable);
     QVERIFY(fallback.keybindProgram().isSameGeneration(unavailable));
     QSignalSpy fallbackNewTab(&fallback, &TerminalPane::requestNewTab);
     auto *fallbackController = fallback.findChild<TerminalController *>();
     QVERIFY(fallbackController != nullptr);
-    QSignalSpy fallbackForwarded(
-        fallbackController, &TerminalController::keyRequested);
+    QSignalSpy fallbackForwarded(fallbackController,
+                                 &TerminalController::keyRequested);
 
-    QKeyEvent fallbackShortcut(
-        QEvent::KeyPress, Qt::Key_T,
-        Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("T"));
+    QKeyEvent fallbackShortcut(QEvent::KeyPress, Qt::Key_T,
+                               Qt::ControlModifier | Qt::ShiftModifier,
+                               QStringLiteral("T"));
     QCoreApplication::sendEvent(&fallback, &fallbackShortcut);
     QCOMPARE(fallbackNewTab.count(), 1);
     QCOMPARE(fallbackForwarded.count(), 0);
@@ -10423,10 +10284,9 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
     QSignalSpy closeSurface(&pane, &TerminalPane::requestClose);
     QSignalSpy closeTab(&pane, &TerminalPane::requestCloseTab);
-    QSignalSpy applicationActions(
-        &pane, &TerminalPane::applicationActionRequested);
-    QSignalSpy closeWindowRequested(&pane,
-                                    &TerminalPane::requestCloseWindow);
+    QSignalSpy applicationActions(&pane,
+                                  &TerminalPane::applicationActionRequested);
+    QSignalSpy closeWindowRequested(&pane, &TerminalPane::requestCloseWindow);
     const auto applicationActionCount = [&applicationActions](
                                             ApplicationAction action) {
         return static_cast<int>(std::ranges::count_if(
@@ -10438,28 +10298,27 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
-    QSignalSpy copied(
-        controller, &TerminalController::copyActionRequested);
-    QSignalSpy terminalActions(
-        controller, &TerminalController::terminalActionReady);
+    QSignalSpy copied(controller, &TerminalController::copyActionRequested);
+    QSignalSpy terminalActions(controller,
+                               &TerminalController::terminalActionReady);
     QSignalSpy pasted(controller, &TerminalController::pasteRequested);
 
-    QKeyEvent configuredNewTab(QEvent::KeyPress, Qt::Key_N,
-                               Qt::AltModifier, QStringLiteral("n"));
+    QKeyEvent configuredNewTab(QEvent::KeyPress, Qt::Key_N, Qt::AltModifier,
+                               QStringLiteral("n"));
     QCoreApplication::sendEvent(&pane, &configuredNewTab);
     QCOMPARE(newTab.count(), 1);
 
     // Once the flattened Ghostty set is available, an absent binding must
     // not fall through to the emergency hard-coded shortcuts: it may have
     // been explicitly unbound by the user's configuration.
-    QKeyEvent unboundEmergency(
-        QEvent::KeyPress, Qt::Key_T,
-        Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("T"));
+    QKeyEvent unboundEmergency(QEvent::KeyPress, Qt::Key_T,
+                               Qt::ControlModifier | Qt::ShiftModifier,
+                               QStringLiteral("T"));
     QCoreApplication::sendEvent(&pane, &unboundEmergency);
     QCOMPARE(newTab.count(), 1);
 
-    QKeyEvent zoom(QEvent::KeyPress, Qt::Key_X,
-                   Qt::ControlModifier, QStringLiteral("x"));
+    QKeyEvent zoom(QEvent::KeyPress, Qt::Key_X, Qt::ControlModifier,
+                   QStringLiteral("x"));
     QCoreApplication::sendEvent(&pane, &zoom);
     QCOMPARE(pane.fontPointSize(), 14.5);
 
@@ -10470,28 +10329,26 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QCOMPARE(closeSurface.count(), 1);
     QCOMPARE(closeTab.count(), 0);
 
-    QKeyEvent close(QEvent::KeyPress, Qt::Key_W,
-                    Qt::ControlModifier, QStringLiteral("w"));
+    QKeyEvent close(QEvent::KeyPress, Qt::Key_W, Qt::ControlModifier,
+                    QStringLiteral("w"));
     QCoreApplication::sendEvent(&pane, &close);
     QCOMPARE(closeTab.count(), 1);
-    QCOMPARE(qvariant_cast<CloseTabMode>(
-                 closeTab.constFirst().constFirst()),
+    QCOMPARE(qvariant_cast<CloseTabMode>(closeTab.constFirst().constFirst()),
              CloseTabMode::This);
 
-    QKeyEvent reloadEvent(QEvent::KeyPress, Qt::Key_R,
-                          Qt::ControlModifier, QStringLiteral("r"));
+    QKeyEvent reloadEvent(QEvent::KeyPress, Qt::Key_R, Qt::ControlModifier,
+                          QStringLiteral("r"));
     QCoreApplication::sendEvent(&pane, &reloadEvent);
     QCOMPARE(applicationActionCount(ApplicationAction::ReloadConfig), 1);
 
-    QKeyEvent closeWindow(QEvent::KeyPress, Qt::Key_F4,
-                          Qt::AltModifier);
+    QKeyEvent closeWindow(QEvent::KeyPress, Qt::Key_F4, Qt::AltModifier);
     QCoreApplication::sendEvent(&pane, &closeWindow);
     QCOMPARE(closeWindowRequested.count(), 1);
     QCOMPARE(applicationActionCount(ApplicationAction::Quit), 0);
 
     const int beforeOpenConfig = forwarded.count();
-    QKeyEvent openConfig(QEvent::KeyPress, Qt::Key_Y,
-                         Qt::ControlModifier, QString(QChar(0x19)));
+    QKeyEvent openConfig(QEvent::KeyPress, Qt::Key_Y, Qt::ControlModifier,
+                         QString(QChar(0x19)));
     QCoreApplication::sendEvent(&pane, &openConfig);
     QCOMPARE(applicationActionCount(ApplicationAction::OpenConfig), 1);
     QCOMPARE(forwarded.count(), beforeOpenConfig);
@@ -10541,15 +10398,14 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
 
     // Direct programmatic dispatch reports that the correlated request was
     // accepted; its eventual performed state is delivered asynchronously.
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("copy_to_clipboard")));
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("copy_to_clipboard")));
     QCOMPARE(copied.count(), 2);
     QTRY_COMPARE(terminalActions.count(), 2);
 
     // Unconsumed actions still run, then allow normal VT encoding.
     const int beforeUnconsumedReload = forwarded.count();
-    QKeyEvent unconsumedReload(QEvent::KeyPress, Qt::Key_L,
-                               Qt::ControlModifier, QString(QChar(0x0c)));
+    QKeyEvent unconsumedReload(QEvent::KeyPress, Qt::Key_L, Qt::ControlModifier,
+                               QString(QChar(0x0c)));
     QCoreApplication::sendEvent(&pane, &unconsumedReload);
     QCOMPARE(applicationActionCount(ApplicationAction::ReloadConfig), 2);
     QCOMPARE(forwarded.count(), beforeUnconsumedReload + 1);
@@ -10557,48 +10413,47 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     // Ghostty's ignore action always suppresses encoding, even if the
     // binding itself carries the unconsumed flag.
     const int beforeIgnore = forwarded.count();
-    QKeyEvent ignored(QEvent::KeyPress, Qt::Key_I,
-                      Qt::ControlModifier, QString(QChar(0x09)));
+    QKeyEvent ignored(QEvent::KeyPress, Qt::Key_I, Qt::ControlModifier,
+                      QString(QChar(0x09)));
     QCoreApplication::sendEvent(&pane, &ignored);
     QCOMPARE(forwarded.count(), beforeIgnore);
 
     // A performable chain executes the application action and its supported
     // surface remainder before reporting success.
-    QKeyEvent partialChain(QEvent::KeyPress, Qt::Key_J,
-                           Qt::ControlModifier, QString(QChar(0x0a)));
+    QKeyEvent partialChain(QEvent::KeyPress, Qt::Key_J, Qt::ControlModifier,
+                           QString(QChar(0x0a)));
     QCoreApplication::sendEvent(&pane, &partialChain);
     QCOMPARE(applicationActionCount(ApplicationAction::OpenConfig), 2);
     QCOMPARE(newTab.count(), 3);
 
     // Ghostty executes the complete chain before reporting a surface-closing
     // outcome. Workspace removal is deferred, so the later action is safe.
-    QKeyEvent closingChain(QEvent::KeyPress, Qt::Key_K,
-                           Qt::ControlModifier, QString(QChar(0x0b)));
+    QKeyEvent closingChain(QEvent::KeyPress, Qt::Key_K, Qt::ControlModifier,
+                           QString(QChar(0x0b)));
     QCoreApplication::sendEvent(&pane, &closingChain);
     QCOMPARE(closeTab.count(), 2);
-    QCOMPARE(qvariant_cast<CloseTabMode>(
-                 closeTab.constLast().constFirst()),
+    QCOMPARE(qvariant_cast<CloseTabMode>(closeTab.constLast().constFirst()),
              CloseTabMode::Right);
     QCOMPARE(newTab.count(), 4);
 
     // `quit` is not one of Ghostty's closing-surface actions. A following
     // ignore still runs and therefore leaves the release unsuppressed.
     const int beforeQuitChain = forwarded.count();
-    QKeyEvent quitChain(QEvent::KeyPress, Qt::Key_O,
-                        Qt::ControlModifier, QString(QChar(0x0f)));
+    QKeyEvent quitChain(QEvent::KeyPress, Qt::Key_O, Qt::ControlModifier,
+                        QString(QChar(0x0f)));
     QCoreApplication::sendEvent(&pane, &quitChain);
     QCOMPARE(applicationActionCount(ApplicationAction::Quit), 1);
     QCOMPARE(forwarded.count(), beforeQuitChain);
-    QKeyEvent quitRelease(QEvent::KeyRelease, Qt::Key_O,
-                          Qt::ControlModifier, QString(QChar(0x0f)));
+    QKeyEvent quitRelease(QEvent::KeyRelease, Qt::Key_O, Qt::ControlModifier,
+                          QString(QChar(0x0f)));
     QCoreApplication::sendEvent(&pane, &quitRelease);
     QCOMPARE(forwarded.count(), beforeQuitChain + 1);
 
     // A performable copy waits for the worker's selection decision, then an
     // unavailable result falls through to terminal input.
     const int beforeEmptyCopy = forwarded.count();
-    QKeyEvent emptyCopy(QEvent::KeyPress, Qt::Key_C,
-                        Qt::ControlModifier, QString(QChar(0x03)));
+    QKeyEvent emptyCopy(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier,
+                        QString(QChar(0x03)));
     QCoreApplication::sendEvent(&pane, &emptyCopy);
     QCOMPARE(copied.count(), 3);
     QTRY_COMPARE(terminalActions.count(), 3);
@@ -10611,13 +10466,13 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QVERIFY(pane.executeConfiguredAction(QStringLiteral("start_search")));
     QVERIFY(pane.searchUiActive());
     const int beforeCleanup = forwarded.count();
-    QKeyEvent cleanupPress(QEvent::KeyPress, Qt::Key_E,
-                           Qt::AltModifier, QStringLiteral("e"));
+    QKeyEvent cleanupPress(QEvent::KeyPress, Qt::Key_E, Qt::AltModifier,
+                           QStringLiteral("e"));
     QCoreApplication::sendEvent(&pane, &cleanupPress);
     QVERIFY(!pane.searchUiActive());
     QCOMPARE(forwarded.count(), beforeCleanup + 1);
-    QKeyEvent cleanupRelease(QEvent::KeyRelease, Qt::Key_E,
-                             Qt::AltModifier, QStringLiteral("e"));
+    QKeyEvent cleanupRelease(QEvent::KeyRelease, Qt::Key_E, Qt::AltModifier,
+                             QStringLiteral("e"));
     QCoreApplication::sendEvent(&pane, &cleanupRelease);
     QCOMPARE(forwarded.count(), beforeCleanup + 2);
 
@@ -10629,17 +10484,16 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     const int beforeTitleCopy = forwarded.count();
     clipboard->setText(QStringLiteral("launch title sentinel"),
                        QClipboard::Clipboard);
-    QKeyEvent emptyTitleCopy(QEvent::KeyPress, Qt::Key_D,
-                             Qt::ControlModifier, QString(QChar(0x04)));
+    QKeyEvent emptyTitleCopy(QEvent::KeyPress, Qt::Key_D, Qt::ControlModifier,
+                             QString(QChar(0x04)));
     QCoreApplication::sendEvent(&pane, &emptyTitleCopy);
     QCOMPARE(forwarded.count(), beforeTitleCopy);
     QTRY_COMPARE(clipboard->text(QClipboard::Clipboard),
                  QStringLiteral("/bin/true"));
 
     pane.setSurfaceTitle(QString{});
-    QKeyEvent explicitEmptyTitleCopy(
-        QEvent::KeyPress, Qt::Key_D,
-        Qt::ControlModifier, QString(QChar(0x04)));
+    QKeyEvent explicitEmptyTitleCopy(QEvent::KeyPress, Qt::Key_D,
+                                     Qt::ControlModifier, QString(QChar(0x04)));
     QCoreApplication::sendEvent(&pane, &explicitEmptyTitleCopy);
     QCOMPARE(forwarded.count(), beforeTitleCopy + 1);
 
@@ -10647,8 +10501,8 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     pane.setSurfaceTitle(performableTitle);
     clipboard->setText(QStringLiteral("performable sentinel"),
                        QClipboard::Clipboard);
-    QKeyEvent titleCopy(QEvent::KeyPress, Qt::Key_D,
-                        Qt::ControlModifier, QString(QChar(0x04)));
+    QKeyEvent titleCopy(QEvent::KeyPress, Qt::Key_D, Qt::ControlModifier,
+                        QString(QChar(0x04)));
     QCoreApplication::sendEvent(&pane, &titleCopy);
     QCOMPARE(forwarded.count(), beforeTitleCopy + 1);
     QTRY_COMPARE(clipboard->text(QClipboard::Clipboard), performableTitle);
@@ -10675,8 +10529,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
                                  Qt::ControlModifier, QString(QChar(0x08)));
     QCoreApplication::sendEvent(&pane, &rejectedClosePress);
     QCOMPARE(workspaceRequests.size(), 1);
-    QCOMPARE(workspaceRequests.constLast().action,
-             WorkspaceAction::CloseTab);
+    QCOMPARE(workspaceRequests.constLast().action, WorkspaceAction::CloseTab);
     QCOMPARE(applicationActionCount(ApplicationAction::Ignore),
              beforeRejectedCloseIgnore + 1);
     QCOMPARE(forwarded.count(), beforeRejectedClose);
@@ -10691,8 +10544,8 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     pane.setSurfaceTitle(chainedTitle);
     clipboard->setText(QStringLiteral("old clipboard"));
     const int beforeTitlePaste = pasted.count();
-    QKeyEvent titlePaste(QEvent::KeyPress, Qt::Key_T,
-                         Qt::AltModifier, QStringLiteral("t"));
+    QKeyEvent titlePaste(QEvent::KeyPress, Qt::Key_T, Qt::AltModifier,
+                         QStringLiteral("t"));
     QCoreApplication::sendEvent(&pane, &titlePaste);
     QCOMPARE(pasted.count(), beforeTitlePaste + 1);
     QCOMPARE(pasted.constLast().constFirst().toString(), chainedTitle);
@@ -10709,24 +10562,22 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
                                 Qt::ControlModifier);
     QCoreApplication::sendEvent(&pane, &fullscreenRelease);
     QCOMPARE(forwarded.count(), beforeFullscreen);
-    QVERIFY(!pane.executeConfiguredAction(
-        QStringLiteral("toggle_fullscreen:")));
+    QVERIFY(
+        !pane.executeConfiguredAction(QStringLiteral("toggle_fullscreen:")));
     QCOMPARE(workspaceRequests.size(), 2);
 
     const int beforeMaximize = forwarded.count();
-    QKeyEvent maximizePress(QEvent::KeyPress, Qt::Key_M,
-                            Qt::AltModifier, QStringLiteral("m"));
+    QKeyEvent maximizePress(QEvent::KeyPress, Qt::Key_M, Qt::AltModifier,
+                            QStringLiteral("m"));
     QCoreApplication::sendEvent(&pane, &maximizePress);
     QCOMPARE(workspaceRequests.size(), 3);
     QCOMPARE(workspaceRequests.constLast().action,
              WorkspaceAction::ToggleMaximize);
     QCOMPARE(forwarded.count(), beforeMaximize);
-    QKeyEvent maximizeRelease(QEvent::KeyRelease, Qt::Key_M,
-                              Qt::AltModifier);
+    QKeyEvent maximizeRelease(QEvent::KeyRelease, Qt::Key_M, Qt::AltModifier);
     QCoreApplication::sendEvent(&pane, &maximizeRelease);
     QCOMPARE(forwarded.count(), beforeMaximize);
-    QVERIFY(!pane.executeConfiguredAction(
-        QStringLiteral("toggle_maximize:")));
+    QVERIFY(!pane.executeConfiguredAction(QStringLiteral("toggle_maximize:")));
     QCOMPARE(workspaceRequests.size(), 3);
 
     const int beforeDecorations = forwarded.count();
@@ -10771,23 +10622,26 @@ void TerminalPaneTest::routesBroadConfiguredActionEffects()
     config.root = {
         GhosttyKeybindDefinition{
             .sequence = {controlKey('u')},
-            .actions = {
-                QStringLiteral("close_tab:right"),
-                QStringLiteral("ignore"),
-            },
-            .flags = GhosttyKeybindFlags{
-                .consumed = false,
-                .all = true,
-            },
+            .actions =
+                {
+                    QStringLiteral("close_tab:right"),
+                    QStringLiteral("ignore"),
+                },
+            .flags =
+                GhosttyKeybindFlags{
+                    .consumed = false,
+                    .all = true,
+                },
         },
         GhosttyKeybindDefinition{
             .sequence = {controlKey('p')},
             .actions = {QStringLiteral("copy_to_clipboard")},
-            .flags = GhosttyKeybindFlags{
-                .consumed = false,
-                .all = true,
-                .performable = true,
-            },
+            .flags =
+                GhosttyKeybindFlags{
+                    .consumed = false,
+                    .all = true,
+                    .performable = true,
+                },
         },
     };
     GhosttyKeybindConfig reloadedConfig = config;
@@ -10795,8 +10649,7 @@ void TerminalPaneTest::routesBroadConfiguredActionEffects()
         .sequence = {controlKey('x')},
         .actions = {QStringLiteral("new_tab")},
     });
-    options.keybindSource =
-        GhosttyKeybindSource::structured(std::move(config));
+    options.keybindSource = GhosttyKeybindSource::structured(std::move(config));
 
     TerminalPane pane(options);
     auto *controller = pane.findChild<TerminalController *>();
@@ -10821,8 +10674,8 @@ void TerminalPaneTest::routesBroadConfiguredActionEffects()
 
     // A broad closing action takes precedence over a later ignore action, so
     // the release remains suppressed even though ignore is press-only alone.
-    QKeyEvent closePress(QEvent::KeyPress, Qt::Key_U,
-                         Qt::ControlModifier, QString(QChar(0x15)));
+    QKeyEvent closePress(QEvent::KeyPress, Qt::Key_U, Qt::ControlModifier,
+                         QString(QChar(0x15)));
     QCoreApplication::sendEvent(&pane, &closePress);
     QVERIFY(reloadedDuringBroadDispatch);
     QCOMPARE(broadActions.count(), 1);
@@ -10832,34 +10685,30 @@ void TerminalPaneTest::routesBroadConfiguredActionEffects()
     QCOMPARE(closeChain.serializedActions(),
              QStringList({QStringLiteral("close_tab:right"),
                           QStringLiteral("ignore")}));
-    QCOMPARE(closeChain.inputEffect,
-             GhosttyActionInputEffect::ClosingAction);
+    QCOMPARE(closeChain.inputEffect, GhosttyActionInputEffect::ClosingAction);
     QVERIFY(!closeChain.applicationOnly);
     QCOMPARE(closeChain.entries.size(), 2);
-    QCOMPARE(closeChain.entries.at(0).scope,
-             GhosttyActionScope::Surface);
+    QCOMPARE(closeChain.entries.at(0).scope, GhosttyActionScope::Surface);
     QVERIFY(closeChain.entries.at(0).action.has_value());
-    const auto *closeRequest = std::get_if<WorkspaceActionRequest>(
-        &*closeChain.entries.at(0).action);
+    const auto *closeRequest =
+        std::get_if<WorkspaceActionRequest>(&*closeChain.entries.at(0).action);
     QVERIFY(closeRequest != nullptr);
     QCOMPARE(closeRequest->action, WorkspaceAction::CloseTab);
     QCOMPARE(closeRequest->context.closeTabMode, CloseTabMode::Right);
-    QCOMPARE(closeChain.entries.at(1).scope,
-             GhosttyActionScope::Application);
+    QCOMPARE(closeChain.entries.at(1).scope, GhosttyActionScope::Application);
     QVERIFY(closeChain.entries.at(1).action.has_value());
-    const auto *ignore = std::get_if<ApplicationAction>(
-        &*closeChain.entries.at(1).action);
+    const auto *ignore =
+        std::get_if<ApplicationAction>(&*closeChain.entries.at(1).action);
     QVERIFY(ignore != nullptr);
     QCOMPARE(*ignore, ApplicationAction::Ignore);
-    QKeyEvent closeRelease(QEvent::KeyRelease, Qt::Key_U,
-                           Qt::ControlModifier);
+    QKeyEvent closeRelease(QEvent::KeyRelease, Qt::Key_U, Qt::ControlModifier);
     QCoreApplication::sendEvent(&pane, &closeRelease);
     QCOMPARE(forwarded.count(), 0);
 
     // Broad dispatch ignores performable and is considered performed even
     // when the originating pane lacks the action's dynamic state.
-    QKeyEvent copyPress(QEvent::KeyPress, Qt::Key_P,
-                        Qt::ControlModifier, QString(QChar(0x10)));
+    QKeyEvent copyPress(QEvent::KeyPress, Qt::Key_P, Qt::ControlModifier,
+                        QString(QChar(0x10)));
     QCoreApplication::sendEvent(&pane, &copyPress);
     QCOMPARE(broadActions.count(), 2);
     const GhosttyCompiledActionChain copyChain =
@@ -10871,14 +10720,13 @@ void TerminalPaneTest::routesBroadConfiguredActionEffects()
     QVERIFY(!copyChain.applicationOnly);
     QCOMPARE(copyChain.entries.size(), 1);
     QVERIFY(copyChain.entries.constFirst().action.has_value());
-    const auto *paneAction = std::get_if<GhosttyPaneAction>(
-        &*copyChain.entries.constFirst().action);
+    const auto *paneAction =
+        std::get_if<GhosttyPaneAction>(&*copyChain.entries.constFirst().action);
     QVERIFY(paneAction != nullptr);
-    QVERIFY(std::holds_alternative<
-            GhosttyPaneActions::CopyToClipboard>(*paneAction));
+    QVERIFY(std::holds_alternative<GhosttyPaneActions::CopyToClipboard>(
+        *paneAction));
     QCOMPARE(copied.count(), 0);
-    QKeyEvent copyRelease(QEvent::KeyRelease, Qt::Key_P,
-                          Qt::ControlModifier);
+    QKeyEvent copyRelease(QEvent::KeyRelease, Qt::Key_P, Qt::ControlModifier);
     QCoreApplication::sendEvent(&pane, &copyRelease);
     QCOMPARE(forwarded.count(), 0);
 }
@@ -10905,22 +10753,20 @@ void TerminalPaneTest::routesTypedCloseTabModes()
     for (const auto &testCase : cases) {
         QVERIFY2(pane.executeConfiguredAction(testCase.serialized),
                  qPrintable(testCase.serialized));
-        QCOMPARE(qvariant_cast<CloseTabMode>(
-                     fallback.constLast().constFirst()),
+        QCOMPARE(qvariant_cast<CloseTabMode>(fallback.constLast().constFirst()),
                  testCase.mode);
     }
     QCOMPARE(fallback.count(), 4);
     QVERIFY(!pane.executeConfiguredAction(QStringLiteral("close_tab:")));
-    QVERIFY(!pane.executeConfiguredAction(
-        QStringLiteral("close_tab:other:extra")));
+    QVERIFY(
+        !pane.executeConfiguredAction(QStringLiteral("close_tab:other:extra")));
     QCOMPARE(fallback.count(), 4);
 
     QVector<WorkspaceActionRequest> requests;
-    pane.setWorkspaceActionHandler(
-        [&requests](WorkspaceActionRequest request) {
-            requests.append(request);
-            return true;
-        });
+    pane.setWorkspaceActionHandler([&requests](WorkspaceActionRequest request) {
+        requests.append(request);
+        return true;
+    });
     for (const auto &testCase : cases) {
         QVERIFY(pane.executeConfiguredAction(testCase.serialized));
         QCOMPARE(requests.constLast().action, WorkspaceAction::CloseTab);
@@ -10960,23 +10806,21 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
     QSignalSpy scrolls(controller, &TerminalController::scrollRequested);
     QSignalSpy selectionScrolls(
         controller, &TerminalController::scrollToSelectionActionRequested);
-    QSignalSpy selectAll(
-        controller, &TerminalController::selectAllActionRequested);
-    QSignalSpy copied(
-        controller, &TerminalController::copyActionRequested);
+    QSignalSpy selectAll(controller,
+                         &TerminalController::selectAllActionRequested);
+    QSignalSpy copied(controller, &TerminalController::copyActionRequested);
     QSignalSpy selectionAdjustments(
-        controller,
-        &TerminalController::selectionAdjustmentActionRequested);
-    QSignalSpy terminalActions(
-        controller, &TerminalController::terminalActionReady);
+        controller, &TerminalController::selectionAdjustmentActionRequested);
+    QSignalSpy terminalActions(controller,
+                               &TerminalController::terminalActionReady);
 
     // Before the first worker frame, page actions use the worker's actual
     // 24-row startup geometry rather than the legacy 20-row fallback.
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("scroll_page_down")));
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("scroll_page_down")));
     QCOMPARE(scrolls.count(), 1);
     QCOMPARE(qvariant_cast<TerminalViewportRequest>(
-                 scrolls.constFirst().constFirst()).delta,
+                 scrolls.constFirst().constFirst())
+                 .delta,
              qint64(24));
     scrolls.clear();
 
@@ -10988,23 +10832,23 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
     const int requestedRows =
         resizes.constLast().constFirst().value<TerminalSessionGeometry>().rows;
     QVERIFY(requestedRows > 0);
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("scroll_page_down")));
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("scroll_page_down")));
     QCOMPARE(qvariant_cast<TerminalViewportRequest>(
-                 scrolls.constFirst().constFirst()).delta,
+                 scrolls.constFirst().constFirst())
+                 .delta,
              qint64(requestedRows));
     scrolls.clear();
 
     // Selection-dependent performable bindings always ask the worker. A
     // blank selection resolves as unavailable and only then reaches the PTY.
-    QKeyEvent missingScrollSelection(
-        QEvent::KeyPress, Qt::Key_U, Qt::AltModifier, QStringLiteral("u"));
+    QKeyEvent missingScrollSelection(QEvent::KeyPress, Qt::Key_U,
+                                     Qt::AltModifier, QStringLiteral("u"));
     QCoreApplication::sendEvent(&pane, &missingScrollSelection);
     QCOMPARE(selectionScrolls.count(), 1);
     QTRY_COMPARE(terminalActions.count(), 1);
     QTRY_COMPARE(forwarded.count(), 1);
-    QKeyEvent missingAdjustment(
-        QEvent::KeyPress, Qt::Key_I, Qt::AltModifier, QStringLiteral("i"));
+    QKeyEvent missingAdjustment(QEvent::KeyPress, Qt::Key_I, Qt::AltModifier,
+                                QStringLiteral("i"));
     QCoreApplication::sendEvent(&pane, &missingAdjustment);
     QCOMPARE(selectionAdjustments.count(), 1);
     QTRY_COMPARE(terminalActions.count(), 2);
@@ -11066,18 +10910,17 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
         QStringLiteral("scroll_page_fractional:inf")));
     QCOMPARE(scrolls.count(), beforeUnsafe);
 
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("scroll_to_selection")));
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("adjust_selection:right")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("scroll_to_selection")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("adjust_selection:right")));
     QCOMPARE(scrolls.count(), beforeUnsafe);
     QCOMPARE(selectionScrolls.count(), 2);
     QCOMPARE(selectionAdjustments.count(), 2);
     QTRY_COMPARE(terminalActions.count(), 4);
     for (int index = 2; index < 4; ++index) {
-        const TerminalActionResult result =
-            qvariant_cast<TerminalActionResult>(
-                terminalActions.at(index).constFirst());
+        const TerminalActionResult result = qvariant_cast<TerminalActionResult>(
+            terminalActions.at(index).constFirst());
         QCOMPARE(result.outcome, TerminalActionOutcome::Unavailable);
         QVERIFY(!result.performed);
     }
@@ -11089,8 +10932,8 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
     // The chain waits for each correlated result. Select-all establishes the
     // worker selection before adjustment and scroll run, without consulting
     // the asynchronously updated GUI selection cache.
-    QKeyEvent chainedSelection(
-        QEvent::KeyPress, Qt::Key_Y, Qt::AltModifier, QStringLiteral("y"));
+    QKeyEvent chainedSelection(QEvent::KeyPress, Qt::Key_Y, Qt::AltModifier,
+                               QStringLiteral("y"));
     QCoreApplication::sendEvent(&pane, &chainedSelection);
     QCOMPARE(selectAll.count(), 1);
     QTRY_COMPARE_WITH_TIMEOUT(selectionAdjustments.count(), 1, 3000);
@@ -11117,22 +10960,22 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
     }
     QCOMPARE(copyRequestIds.size(), copied.count());
 
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("scroll_to_selection")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("scroll_to_selection")));
     QCOMPARE(selectionScrolls.count(), 2);
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("adjust_selection:right")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("adjust_selection:right")));
     QCOMPARE(selectionAdjustments.count(), 2);
     QCOMPARE(qvariant_cast<TerminalSelectionAdjustment>(
                  selectionAdjustments.at(1).at(1)),
              TerminalSelectionAdjustment::Right);
 
     const int beforeBoundActions = forwarded.count();
-    QKeyEvent availableScrollSelection(
-        QEvent::KeyPress, Qt::Key_U, Qt::AltModifier, QStringLiteral("u"));
+    QKeyEvent availableScrollSelection(QEvent::KeyPress, Qt::Key_U,
+                                       Qt::AltModifier, QStringLiteral("u"));
     QCoreApplication::sendEvent(&pane, &availableScrollSelection);
-    QKeyEvent availableAdjustment(
-        QEvent::KeyPress, Qt::Key_I, Qt::AltModifier, QStringLiteral("i"));
+    QKeyEvent availableAdjustment(QEvent::KeyPress, Qt::Key_I, Qt::AltModifier,
+                                  QStringLiteral("i"));
     QCoreApplication::sendEvent(&pane, &availableAdjustment);
     QTRY_COMPARE(selectionScrolls.count(), 3);
     QTRY_COMPARE(selectionAdjustments.count(), 3);
@@ -11143,14 +10986,10 @@ void TerminalPaneTest::selectionActionPerformabilityUsesWorkerState_data()
 {
     QTest::addColumn<QString>("action");
 
-    QTest::newRow("copy")
-        << QStringLiteral("copy_to_clipboard:plain");
-    QTest::newRow("search")
-        << QStringLiteral("search_selection");
-    QTest::newRow("scroll")
-        << QStringLiteral("scroll_to_selection");
-    QTest::newRow("adjust")
-        << QStringLiteral("adjust_selection:right");
+    QTest::newRow("copy") << QStringLiteral("copy_to_clipboard:plain");
+    QTest::newRow("search") << QStringLiteral("search_selection");
+    QTest::newRow("scroll") << QStringLiteral("scroll_to_selection");
+    QTest::newRow("adjust") << QStringLiteral("adjust_selection:right");
 }
 
 void TerminalPaneTest::selectionActionPerformabilityUsesWorkerState()
@@ -11163,8 +11002,7 @@ void TerminalPaneTest::selectionActionPerformabilityUsesWorkerState()
     options.program = {
         QStringLiteral("/bin/sh"),
         QStringLiteral("-c"),
-        QStringLiteral(
-            "printf 'worker-authoritative-selection'; sleep 5"),
+        QStringLiteral("printf 'worker-authoritative-selection'; sleep 5"),
     };
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::text({
@@ -11176,12 +11014,12 @@ void TerminalPaneTest::selectionActionPerformabilityUsesWorkerState()
     QVERIFY(controller != nullptr);
     QSignalSpy updates(controller, &TerminalController::terminalUpdated);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
-    QSignalSpy completions(
-        controller, &TerminalController::terminalActionReady);
+    QSignalSpy completions(controller,
+                           &TerminalController::terminalActionReady);
 
     QTRY_VERIFY_WITH_TIMEOUT(
-        updatesContain(
-            updates, QStringLiteral("worker-authoritative-selection")),
+        updatesContain(updates,
+                       QStringLiteral("worker-authoritative-selection")),
         5000);
     QVERIFY(!controller->selectionAvailable());
 
@@ -11189,9 +11027,8 @@ void TerminalPaneTest::selectionActionPerformabilityUsesWorkerState()
     // worker even though the GUI has not received selection availability.
     controller->selectAll();
     QVERIFY(!controller->selectionAvailable());
-    QKeyEvent selectedPress(
-        QEvent::KeyPress, Qt::Key_X, Qt::AltModifier,
-        QStringLiteral("x"));
+    QKeyEvent selectedPress(QEvent::KeyPress, Qt::Key_X, Qt::AltModifier,
+                            QStringLiteral("x"));
     QCoreApplication::sendEvent(&pane, &selectedPress);
     QTRY_COMPARE_WITH_TIMEOUT(completions.count(), 1, 3000);
     const TerminalActionResult selectedResult =
@@ -11202,8 +11039,7 @@ void TerminalPaneTest::selectionActionPerformabilityUsesWorkerState()
     QCOMPARE(forwarded.count(), 0);
     QTRY_VERIFY_WITH_TIMEOUT(controller->selectionAvailable(), 3000);
 
-    QKeyEvent selectedRelease(
-        QEvent::KeyRelease, Qt::Key_X, Qt::AltModifier);
+    QKeyEvent selectedRelease(QEvent::KeyRelease, Qt::Key_X, Qt::AltModifier);
     QCoreApplication::sendEvent(&pane, &selectedRelease);
     QCoreApplication::processEvents();
     const int forwardedBeforeClear = forwarded.count();
@@ -11213,18 +11049,16 @@ void TerminalPaneTest::selectionActionPerformabilityUsesWorkerState()
     // authoritative result does the performable binding replay to the PTY.
     controller->clearSelection();
     QVERIFY(controller->selectionAvailable());
-    QKeyEvent clearedPress(
-        QEvent::KeyPress, Qt::Key_X, Qt::AltModifier,
-        QStringLiteral("x"));
+    QKeyEvent clearedPress(QEvent::KeyPress, Qt::Key_X, Qt::AltModifier,
+                           QStringLiteral("x"));
     QCoreApplication::sendEvent(&pane, &clearedPress);
     QTRY_COMPARE_WITH_TIMEOUT(completions.count(), 2, 3000);
     const TerminalActionResult clearedResult =
-        qvariant_cast<TerminalActionResult>(
-            completions.at(1).constFirst());
+        qvariant_cast<TerminalActionResult>(completions.at(1).constFirst());
     QCOMPARE(clearedResult.outcome, TerminalActionOutcome::Unavailable);
     QVERIFY(!clearedResult.performed);
-    QTRY_COMPARE_WITH_TIMEOUT(
-        forwarded.count(), forwardedBeforeClear + 1, 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(forwarded.count(), forwardedBeforeClear + 1,
+                              3000);
     QTRY_VERIFY_WITH_TIMEOUT(!controller->selectionAvailable(), 3000);
 }
 
@@ -11251,25 +11085,31 @@ void TerminalPaneTest::routesTerminalControlActions()
     QSignalSpy reset(controller, &TerminalController::resetTerminalRequested);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
     QStringList order;
-    connect(controller, &TerminalController::csiRequested,
-            this, [&order](const QByteArray &) { order.append(QStringLiteral("csi")); });
-    connect(controller, &TerminalController::escapeRequested,
-            this, [&order](const QByteArray &) { order.append(QStringLiteral("esc")); });
-    connect(controller, &TerminalController::rawTextRequested,
-            this, [&order](const QByteArray &) { order.append(QStringLiteral("text")); });
-    connect(controller, &TerminalController::resetTerminalRequested,
-            this, [&order] { order.append(QStringLiteral("reset")); });
+    connect(
+        controller, &TerminalController::csiRequested, this,
+        [&order](const QByteArray &) { order.append(QStringLiteral("csi")); });
+    connect(
+        controller, &TerminalController::escapeRequested, this,
+        [&order](const QByteArray &) { order.append(QStringLiteral("esc")); });
+    connect(
+        controller, &TerminalController::rawTextRequested, this,
+        [&order](const QByteArray &) { order.append(QStringLiteral("text")); });
+    connect(controller, &TerminalController::resetTerminalRequested, this,
+            [&order] { order.append(QStringLiteral("reset")); });
 
-    QKeyEvent trigger(QEvent::KeyPress, Qt::Key_C,
-                      Qt::AltModifier, QStringLiteral("c"));
+    QKeyEvent trigger(QEvent::KeyPress, Qt::Key_C, Qt::AltModifier,
+                      QStringLiteral("c"));
     QCoreApplication::sendEvent(&pane, &trigger);
 
-    QCOMPARE(order, QStringList({QStringLiteral("csi"), QStringLiteral("esc"),
-                                 QStringLiteral("text"), QStringLiteral("reset")}));
+    QCOMPARE(order,
+             QStringList({QStringLiteral("csi"), QStringLiteral("esc"),
+                          QStringLiteral("text"), QStringLiteral("reset")}));
     QCOMPARE(csi.count(), 1);
-    QCOMPARE(csi.constFirst().constFirst().toByteArray(), QByteArrayLiteral("31m"));
+    QCOMPARE(csi.constFirst().constFirst().toByteArray(),
+             QByteArrayLiteral("31m"));
     QCOMPARE(escape.count(), 1);
-    QCOMPARE(escape.constFirst().constFirst().toByteArray(), QByteArrayLiteral("7"));
+    QCOMPARE(escape.constFirst().constFirst().toByteArray(),
+             QByteArrayLiteral("7"));
     QCOMPARE(rawText.count(), 1);
     QCOMPARE(rawText.constFirst().constFirst().toByteArray(),
              QByteArrayLiteral(R"(\\x00\\n\\u{1f47b})"));
@@ -11289,7 +11129,8 @@ void TerminalPaneTest::routesTerminalControlActions()
     QCOMPARE(reset.count(), 1);
 }
 
-void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit()
+void TerminalPaneTest::
+    suspendsTerminalActionChainsUntilCorrelatedEffectsCommit()
 {
     LaunchOptions options;
     options.workingDirectory = QDir::tempPath();
@@ -11305,25 +11146,22 @@ void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit(
         QStringLiteral("chain=paste_from_clipboard"),
     });
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt,
-        TerminalSessionStartMode::Deferred);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
 
-    QSignalSpy selectAll(
-        controller, &TerminalController::selectAllActionRequested);
+    QSignalSpy selectAll(controller,
+                         &TerminalController::selectAllActionRequested);
     QSignalSpy adjustments(
-        controller,
-        &TerminalController::selectionAdjustmentActionRequested);
+        controller, &TerminalController::selectionAdjustmentActionRequested);
     QSignalSpy selectionScrolls(
         controller, &TerminalController::scrollToSelectionActionRequested);
     QSignalSpy searchSelection(
         controller, &TerminalController::searchSelectionActionRequested);
-    QSignalSpy copies(
-        controller, &TerminalController::copyActionRequested);
-    QSignalSpy files(
-        controller, &TerminalController::writeTerminalFileRequested);
+    QSignalSpy copies(controller, &TerminalController::copyActionRequested);
+    QSignalSpy files(controller,
+                     &TerminalController::writeTerminalFileRequested);
     QSignalSpy pasted(controller, &TerminalController::pasteRequested);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
 
@@ -11332,38 +11170,29 @@ void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit(
     const QString sentinel = QStringLiteral("correlated-chain-sentinel");
     const QString copiedText = QStringLiteral("correlated selection");
     clipboard->setText(sentinel, QClipboard::Clipboard);
-    const auto clipboardCleanup = qScopeGuard([clipboard] {
-        clipboard->clear(QClipboard::Clipboard);
-    });
+    const auto clipboardCleanup =
+        qScopeGuard([clipboard] { clipboard->clear(QClipboard::Clipboard); });
 
     QStringList effectOrder;
     QString clipboardAtOpen;
     QString clipboardAtPaste;
     QList<QUrl> openedUrls;
-    connect(
-        &pane, &TerminalPane::searchUiFocusRequested, &pane,
-        [&effectOrder] {
-            effectOrder.append(QStringLiteral("search"));
-        });
-    pane.setUrlOpener(
-        [&](const QUrl &url) {
-            effectOrder.append(QStringLiteral("open"));
-            clipboardAtOpen =
-                clipboard->text(QClipboard::Clipboard);
-            openedUrls.append(url);
-            return true;
-        });
-    connect(
-        controller, &TerminalController::pasteRequested, &pane,
-        [&](const QString &) {
-            effectOrder.append(QStringLiteral("paste"));
-            clipboardAtPaste =
-                clipboard->text(QClipboard::Clipboard);
-        });
+    connect(&pane, &TerminalPane::searchUiFocusRequested, &pane,
+            [&effectOrder] { effectOrder.append(QStringLiteral("search")); });
+    pane.setUrlOpener([&](const QUrl &url) {
+        effectOrder.append(QStringLiteral("open"));
+        clipboardAtOpen = clipboard->text(QClipboard::Clipboard);
+        openedUrls.append(url);
+        return true;
+    });
+    connect(controller, &TerminalController::pasteRequested, &pane,
+            [&](const QString &) {
+                effectOrder.append(QStringLiteral("paste"));
+                clipboardAtPaste = clipboard->text(QClipboard::Clipboard);
+            });
 
-    QKeyEvent press(
-        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
-        QStringLiteral("b"));
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+                    QStringLiteral("b"));
     QCoreApplication::sendEvent(&pane, &press);
     QCOMPARE(selectAll.count(), 1);
     QCOMPARE(adjustments.count(), 0);
@@ -11378,8 +11207,7 @@ void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit(
 
     // The release arrives while the chain is worker-suspended. It must stay
     // deferred until the aggregate consumed outcome is known.
-    QKeyEvent release(
-        QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
     QCoreApplication::sendEvent(&pane, &release);
     QCOMPARE(forwarded.count(), 0);
 
@@ -11392,8 +11220,7 @@ void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit(
         .effect = TerminalActionEffect::None,
         .performed = true,
         .payload = {},
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     });
     QCoreApplication::processEvents();
     QCOMPARE(adjustments.count(), 1);
@@ -11436,8 +11263,7 @@ void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit(
     const quint64 searchRequestId =
         searchSelection.constFirst().constFirst().toULongLong();
     QVERIFY(searchRequestId != 0);
-    const QString selectionQuery =
-        QStringLiteral("correlated selection query");
+    const QString selectionQuery = QStringLiteral("correlated selection query");
     Q_EMIT controller->terminalActionReady({
         .requestId = searchRequestId,
         .outcome = TerminalActionOutcome::Success,
@@ -11459,15 +11285,15 @@ void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit(
     QVERIFY(copyRequestId != selectAllRequestId);
     const quint64 unrelatedRequestId =
         copyRequestId == std::numeric_limits<quint64>::max()
-        ? copyRequestId - 1 : copyRequestId + 1;
+        ? copyRequestId - 1
+        : copyRequestId + 1;
     Q_EMIT controller->terminalActionReady({
         .requestId = unrelatedRequestId,
         .outcome = TerminalActionOutcome::Success,
         .effect = TerminalActionEffect::Clipboard,
         .performed = true,
         .payload = QStringLiteral("wrong result"),
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     });
     QCoreApplication::processEvents();
     QCOMPARE(files.count(), 0);
@@ -11479,8 +11305,7 @@ void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit(
         .effect = TerminalActionEffect::Clipboard,
         .performed = true,
         .payload = copiedText,
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     });
 
     // The pane connection is queued: neither the GUI effect nor the later
@@ -11495,13 +11320,11 @@ void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit(
 
     const QList<QVariant> fileArguments = files.constFirst();
     QCOMPARE(fileArguments.size(), 2);
-    const quint64 fileRequestId =
-        fileArguments.constFirst().toULongLong();
+    const quint64 fileRequestId = fileArguments.constFirst().toULongLong();
     QVERIFY(fileRequestId != 0);
     QVERIFY(fileRequestId != copyRequestId);
     const TerminalWriteFileAction fileAction =
-        qvariant_cast<TerminalWriteFileAction>(
-            fileArguments.at(1));
+        qvariant_cast<TerminalWriteFileAction>(fileArguments.at(1));
     QCOMPARE(fileAction.location, TerminalFileLocation::Screen);
     QCOMPARE(fileAction.disposition, TerminalFileDisposition::Open);
     QCOMPARE(fileAction.format, TerminalFileFormat::Plain);
@@ -11514,25 +11337,21 @@ void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit(
         .effect = TerminalActionEffect::OpenFile,
         .performed = true,
         .payload = artifactPath,
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     });
     QCOMPARE(openedUrls.size(), 0);
     QCOMPARE(pasted.count(), 0);
     QCoreApplication::processEvents();
 
-    QCOMPARE(
-        openedUrls,
-        QList<QUrl>{QUrl::fromLocalFile(artifactPath)});
+    QCOMPARE(openedUrls, QList<QUrl>{QUrl::fromLocalFile(artifactPath)});
     QCOMPARE(pasted.count(), 1);
     QCOMPARE(pasted.constFirst().constFirst().toString(), copiedText);
-    QCOMPARE(
-        effectOrder,
-        QStringList({
-            QStringLiteral("search"),
-            QStringLiteral("open"),
-            QStringLiteral("paste"),
-        }));
+    QCOMPARE(effectOrder,
+             QStringList({
+                 QStringLiteral("search"),
+                 QStringLiteral("open"),
+                 QStringLiteral("paste"),
+             }));
     QCOMPARE(clipboardAtOpen, copiedText);
     QCOMPARE(clipboardAtPaste, copiedText);
     QCOMPARE(forwarded.count(), 0);
@@ -11549,47 +11368,40 @@ void TerminalPaneTest::cancelsPendingTerminalActionChainsBeforeSessionStart()
         QStringLiteral("chain=paste_from_clipboard"),
     });
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt,
-        TerminalSessionStartMode::Deferred);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
 
-    QSignalSpy files(
-        controller, &TerminalController::writeTerminalFileRequested);
-    QSignalSpy completions(
-        controller, &TerminalController::terminalActionReady);
+    QSignalSpy files(controller,
+                     &TerminalController::writeTerminalFileRequested);
+    QSignalSpy completions(controller,
+                           &TerminalController::terminalActionReady);
     QSignalSpy pasted(controller, &TerminalController::pasteRequested);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
 
     QClipboard *const clipboard = QGuiApplication::clipboard();
     QVERIFY(clipboard != nullptr);
-    const QString sentinel =
-        QStringLiteral("cancelled-action-chain-clipboard");
+    const QString sentinel = QStringLiteral("cancelled-action-chain-clipboard");
     clipboard->setText(sentinel, QClipboard::Clipboard);
-    const auto clipboardCleanup = qScopeGuard([clipboard] {
-        clipboard->clear(QClipboard::Clipboard);
-    });
+    const auto clipboardCleanup =
+        qScopeGuard([clipboard] { clipboard->clear(QClipboard::Clipboard); });
 
-    QKeyEvent press(
-        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
-        QStringLiteral("b"));
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+                    QStringLiteral("b"));
     QCoreApplication::sendEvent(&pane, &press);
-    QKeyEvent release(
-        QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
     QCoreApplication::sendEvent(&pane, &release);
     QCOMPARE(files.count(), 1);
     QCOMPARE(pasted.count(), 0);
     QCOMPARE(forwarded.count(), 0);
 
-    const quint64 requestId =
-        files.constFirst().constFirst().toULongLong();
+    const quint64 requestId = files.constFirst().constFirst().toULongLong();
     QVERIFY(requestId != 0);
     controller->beginShutdown();
     QCOMPARE(completions.count(), 1);
-    const TerminalActionResult completion =
-        qvariant_cast<TerminalActionResult>(
-            completions.constFirst().constFirst());
+    const TerminalActionResult completion = qvariant_cast<TerminalActionResult>(
+        completions.constFirst().constFirst());
     QCOMPARE(completion.requestId, requestId);
     QCOMPARE(completion.outcome, TerminalActionOutcome::Failed);
     QCOMPARE(completion.effect, TerminalActionEffect::None);
@@ -11605,7 +11417,8 @@ void TerminalPaneTest::dropsQueuedTerminalEffectWhenShutdownBegins()
     LaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
-        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
         QStringLiteral("sleep 5"),
     };
     options.hold = true;
@@ -11619,33 +11432,27 @@ void TerminalPaneTest::dropsQueuedTerminalEffectWhenShutdownBegins()
     QVERIFY(controller != nullptr);
     // Keep the request pending while retaining a real started-worker shutdown
     // signal. The test supplies the correlated result explicitly.
-    QVERIFY(QObject::disconnect(
-        controller, &TerminalController::writeTerminalFileRequested,
-        nullptr, nullptr));
+    QVERIFY(QObject::disconnect(controller,
+                                &TerminalController::writeTerminalFileRequested,
+                                nullptr, nullptr));
 
-    QSignalSpy files(
-        controller, &TerminalController::writeTerminalFileRequested);
+    QSignalSpy files(controller,
+                     &TerminalController::writeTerminalFileRequested);
     QSignalSpy pasted(controller, &TerminalController::pasteRequested);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
-    QSignalSpy inputMethods(
-        controller, &TerminalController::inputMethodRequested);
+    QSignalSpy inputMethods(controller,
+                            &TerminalController::inputMethodRequested);
     QStringList dispatchOrder;
-    connect(controller, &TerminalController::shutdownRequested,
-            this, [&dispatchOrder] {
-                dispatchOrder.append(QStringLiteral("shutdown"));
-            });
-    connect(controller, &TerminalController::pasteRequested,
-            this, [&dispatchOrder] {
-                dispatchOrder.append(QStringLiteral("paste"));
-            });
-    connect(controller, &TerminalController::keyRequested,
-            this, [&dispatchOrder] {
-                dispatchOrder.append(QStringLiteral("key"));
-            });
-    connect(controller, &TerminalController::inputMethodRequested,
-            this, [&dispatchOrder] {
-                dispatchOrder.append(QStringLiteral("ime"));
-            });
+    connect(
+        controller, &TerminalController::shutdownRequested, this,
+        [&dispatchOrder] { dispatchOrder.append(QStringLiteral("shutdown")); });
+    connect(
+        controller, &TerminalController::pasteRequested, this,
+        [&dispatchOrder] { dispatchOrder.append(QStringLiteral("paste")); });
+    connect(controller, &TerminalController::keyRequested, this,
+            [&dispatchOrder] { dispatchOrder.append(QStringLiteral("key")); });
+    connect(controller, &TerminalController::inputMethodRequested, this,
+            [&dispatchOrder] { dispatchOrder.append(QStringLiteral("ime")); });
     int openCount = 0;
     pane.setUrlOpener([&openCount](const QUrl &) {
         ++openCount;
@@ -11654,19 +11461,15 @@ void TerminalPaneTest::dropsQueuedTerminalEffectWhenShutdownBegins()
 
     QClipboard *const clipboard = QGuiApplication::clipboard();
     QVERIFY(clipboard != nullptr);
-    const QString sentinel =
-        QStringLiteral("shutdown-terminal-action-chain");
+    const QString sentinel = QStringLiteral("shutdown-terminal-action-chain");
     clipboard->setText(sentinel, QClipboard::Clipboard);
-    const auto clipboardCleanup = qScopeGuard([clipboard] {
-        clipboard->clear(QClipboard::Clipboard);
-    });
+    const auto clipboardCleanup =
+        qScopeGuard([clipboard] { clipboard->clear(QClipboard::Clipboard); });
 
-    QKeyEvent press(
-        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
-        QStringLiteral("b"));
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+                    QStringLiteral("b"));
     QCoreApplication::sendEvent(&pane, &press);
-    QKeyEvent release(
-        QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
     QCoreApplication::sendEvent(&pane, &release);
     QCOMPARE(files.count(), 1);
     QCOMPARE(pasted.count(), 0);
@@ -11675,9 +11478,8 @@ void TerminalPaneTest::dropsQueuedTerminalEffectWhenShutdownBegins()
 
     // Unrelated input joins the suspended pane FIFO. Shutdown must reach the
     // worker queue before resolving the barrier releases either item.
-    QKeyEvent ordinaryPress(
-        QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
-        QStringLiteral("c"));
+    QKeyEvent ordinaryPress(QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
+                            QStringLiteral("c"));
     QCoreApplication::sendEvent(&pane, &ordinaryPress);
     QInputMethodEvent deferredIme;
     deferredIme.setCommitString(QStringLiteral("deferred-ime"));
@@ -11685,13 +11487,10 @@ void TerminalPaneTest::dropsQueuedTerminalEffectWhenShutdownBegins()
     QCOMPARE(forwarded.count(), 0);
     QCOMPARE(inputMethods.count(), 0);
 
-    const quint64 requestId =
-        files.constFirst().constFirst().toULongLong();
+    const quint64 requestId = files.constFirst().constFirst().toULongLong();
     QVERIFY(requestId != 0);
-    Q_EMIT controller->terminalActionReady(
-        successfulOpenFileResult(
-            requestId,
-            QStringLiteral("/tmp/pre-shutdown-terminal-action.txt")));
+    Q_EMIT controller->terminalActionReady(successfulOpenFileResult(
+        requestId, QStringLiteral("/tmp/pre-shutdown-terminal-action.txt")));
     QCOMPARE(openCount, 0);
     QCOMPARE(pasted.count(), 0);
 
@@ -11702,12 +11501,13 @@ void TerminalPaneTest::dropsQueuedTerminalEffectWhenShutdownBegins()
     QCOMPARE(pasted.count(), 1);
     QCOMPARE(forwarded.count(), 1);
     QCOMPARE(inputMethods.count(), 1);
-    QCOMPARE(dispatchOrder, QStringList({
-        QStringLiteral("shutdown"),
-        QStringLiteral("paste"),
-        QStringLiteral("key"),
-        QStringLiteral("ime"),
-    }));
+    QCOMPARE(dispatchOrder,
+             QStringList({
+                 QStringLiteral("shutdown"),
+                 QStringLiteral("paste"),
+                 QStringLiteral("key"),
+                 QStringLiteral("ime"),
+             }));
 
     // Once graceful shutdown begins, no new worker-backed configured action
     // may enter the correlated request lifecycle.
@@ -11745,36 +11545,29 @@ void TerminalPaneTest::dropsPreExitSearchSelectionEffectOnSessionExit()
         QStringLiteral("chain=paste_from_clipboard"),
     });
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt,
-        TerminalSessionStartMode::Deferred);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
 
     QSignalSpy searchSelections(
         controller, &TerminalController::searchSelectionActionRequested);
-    QSignalSpy searchRequests(
-        controller, &TerminalController::searchRequested);
-    QSignalSpy focusRequests(
-        &pane, &TerminalPane::searchUiFocusRequested);
+    QSignalSpy searchRequests(controller, &TerminalController::searchRequested);
+    QSignalSpy focusRequests(&pane, &TerminalPane::searchUiFocusRequested);
     QSignalSpy pasted(controller, &TerminalController::pasteRequested);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
 
     QClipboard *const clipboard = QGuiApplication::clipboard();
     QVERIFY(clipboard != nullptr);
-    const QString sentinel =
-        QStringLiteral("pre-exit-search-selection-chain");
+    const QString sentinel = QStringLiteral("pre-exit-search-selection-chain");
     clipboard->setText(sentinel, QClipboard::Clipboard);
-    const auto clipboardCleanup = qScopeGuard([clipboard] {
-        clipboard->clear(QClipboard::Clipboard);
-    });
+    const auto clipboardCleanup =
+        qScopeGuard([clipboard] { clipboard->clear(QClipboard::Clipboard); });
 
-    QKeyEvent press(
-        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
-        QStringLiteral("b"));
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+                    QStringLiteral("b"));
     QCoreApplication::sendEvent(&pane, &press);
-    QKeyEvent release(
-        QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
     QCoreApplication::sendEvent(&pane, &release);
     QCOMPARE(searchSelections.count(), 1);
     QCOMPARE(pasted.count(), 0);
@@ -11790,8 +11583,7 @@ void TerminalPaneTest::dropsPreExitSearchSelectionEffectOnSessionExit()
         .effect = TerminalActionEffect::StartSearch,
         .performed = true,
         .payload = QStringLiteral("selection from exited session"),
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     };
 
     if (resultQueuedBeforeExit) {
@@ -11820,9 +11612,8 @@ void TerminalPaneTest::dropsPreExitSearchSelectionEffectOnSessionExit()
 
     // The failed stale action still resolves the chain and releases its input
     // barrier; unrelated input must not remain trapped behind it.
-    QKeyEvent ordinaryPress(
-        QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
-        QStringLiteral("c"));
+    QKeyEvent ordinaryPress(QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
+                            QStringLiteral("c"));
     QCoreApplication::sendEvent(&pane, &ordinaryPress);
     QCOMPARE(forwarded.count(), 1);
 }
@@ -11834,22 +11625,19 @@ void TerminalPaneTest::rejectsDuplicateTerminalActionRequestIds()
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt,
-        TerminalSessionStartMode::Deferred);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
-    QSignalSpy copies(
-        controller, &TerminalController::copyActionRequested);
+    QSignalSpy copies(controller, &TerminalController::copyActionRequested);
     QSignalSpy adjustments(
-        controller,
-        &TerminalController::selectionAdjustmentActionRequested);
+        controller, &TerminalController::selectionAdjustmentActionRequested);
     QSignalSpy selectionScrolls(
         controller, &TerminalController::scrollToSelectionActionRequested);
     QSignalSpy searchSelections(
         controller, &TerminalController::searchSelectionActionRequested);
-    QSignalSpy completions(
-        controller, &TerminalController::terminalActionReady);
+    QSignalSpy completions(controller,
+                           &TerminalController::terminalActionReady);
 
     constexpr quint64 copyRequestId = 42;
     constexpr quint64 adjustmentRequestId = 43;
@@ -11907,9 +11695,8 @@ void TerminalPaneTest::handlesCompletionReentrantlyDuringTerminalActionStart()
         QStringLiteral("chain=paste_from_clipboard"),
     });
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt,
-        TerminalSessionStartMode::Deferred);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
 
@@ -11918,9 +11705,8 @@ void TerminalPaneTest::handlesCompletionReentrantlyDuringTerminalActionStart()
     const QString clipboardText =
         QStringLiteral("reentrant-completion-clipboard");
     clipboard->setText(clipboardText, QClipboard::Clipboard);
-    const auto clipboardCleanup = qScopeGuard([clipboard] {
-        clipboard->clear(QClipboard::Clipboard);
-    });
+    const auto clipboardCleanup =
+        qScopeGuard([clipboard] { clipboard->clear(QClipboard::Clipboard); });
 
     const QString artifactPath =
         QStringLiteral("/tmp/reentrant-terminal-action.txt");
@@ -11931,40 +11717,32 @@ void TerminalPaneTest::handlesCompletionReentrantlyDuringTerminalActionStart()
     });
     QSignalSpy pasted(controller, &TerminalController::pasteRequested);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
-    connect(
-        controller, &TerminalController::writeTerminalFileRequested,
-        &pane,
-        [controller, artifactPath](
-            quint64 requestId, const TerminalWriteFileAction &) {
-            Q_EMIT controller->terminalActionReady(
-                successfulOpenFileResult(requestId, artifactPath));
-            // Exercise a modal/nested event loop while the request signal is
-            // still unwinding through startConfiguredAction().
-            QCoreApplication::processEvents();
-        });
+    connect(controller, &TerminalController::writeTerminalFileRequested, &pane,
+            [controller, artifactPath](quint64 requestId,
+                                       const TerminalWriteFileAction &) {
+                Q_EMIT controller->terminalActionReady(
+                    successfulOpenFileResult(requestId, artifactPath));
+                // Exercise a modal/nested event loop while the request signal
+                // is still unwinding through startConfiguredAction().
+                QCoreApplication::processEvents();
+            });
 
-    QKeyEvent press(
-        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
-        QStringLiteral("b"));
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+                    QStringLiteral("b"));
     QCoreApplication::sendEvent(&pane, &press);
-    QCOMPARE(
-        openedUrls,
-        QList<QUrl>{QUrl::fromLocalFile(artifactPath)});
+    QCOMPARE(openedUrls, QList<QUrl>{QUrl::fromLocalFile(artifactPath)});
     QCOMPARE(pasted.count(), 1);
     QCOMPARE(pasted.constFirst().constFirst().toString(), clipboardText);
 
-    QKeyEvent release(
-        QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
     QCoreApplication::sendEvent(&pane, &release);
     QCOMPARE(forwarded.count(), 0);
 
     // A stranded continuation would retain key deferral and swallow these.
-    QKeyEvent ordinaryPress(
-        QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
-        QStringLiteral("c"));
+    QKeyEvent ordinaryPress(QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
+                            QStringLiteral("c"));
     QCoreApplication::sendEvent(&pane, &ordinaryPress);
-    QKeyEvent ordinaryRelease(
-        QEvent::KeyRelease, Qt::Key_C, Qt::NoModifier);
+    QKeyEvent ordinaryRelease(QEvent::KeyRelease, Qt::Key_C, Qt::NoModifier);
     QCoreApplication::sendEvent(&pane, &ordinaryRelease);
     QCOMPARE(forwarded.count(), 2);
 }
@@ -11976,17 +11754,15 @@ void TerminalPaneTest::retainsWorkerPerformedStateWhenGuiEffectFails()
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::text({
-        QStringLiteral(
-            "performable:alt+b=write_screen_file:open"),
+        QStringLiteral("performable:alt+b=write_screen_file:open"),
     });
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt,
-        TerminalSessionStartMode::Deferred);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
-    QSignalSpy files(
-        controller, &TerminalController::writeTerminalFileRequested);
+    QSignalSpy files(controller,
+                     &TerminalController::writeTerminalFileRequested);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
     int openAttempts = 0;
     pane.setUrlOpener([&openAttempts](const QUrl &) {
@@ -11994,21 +11770,16 @@ void TerminalPaneTest::retainsWorkerPerformedStateWhenGuiEffectFails()
         return false;
     });
 
-    QKeyEvent press(
-        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
-        QStringLiteral("b"));
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+                    QStringLiteral("b"));
     QCoreApplication::sendEvent(&pane, &press);
     QCOMPARE(files.count(), 1);
-    QKeyEvent release(
-        QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
     QCoreApplication::sendEvent(&pane, &release);
 
-    const quint64 requestId =
-        files.constFirst().constFirst().toULongLong();
-    Q_EMIT controller->terminalActionReady(
-        successfulOpenFileResult(
-            requestId,
-            QStringLiteral("/tmp/unhandled-terminal-action.txt")));
+    const quint64 requestId = files.constFirst().constFirst().toULongLong();
+    Q_EMIT controller->terminalActionReady(successfulOpenFileResult(
+        requestId, QStringLiteral("/tmp/unhandled-terminal-action.txt")));
     QCoreApplication::processEvents();
 
     QCOMPARE(openAttempts, 1);
@@ -12028,16 +11799,15 @@ void TerminalPaneTest::defersInputMethodDuringTerminalActionChains()
         QStringLiteral("chain=text:after"),
     });
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt,
-        TerminalSessionStartMode::Deferred);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
-    QSignalSpy files(
-        controller, &TerminalController::writeTerminalFileRequested);
+    QSignalSpy files(controller,
+                     &TerminalController::writeTerminalFileRequested);
     QSignalSpy rawText(controller, &TerminalController::rawTextRequested);
-    QSignalSpy inputMethod(
-        controller, &TerminalController::inputMethodRequested);
+    QSignalSpy inputMethod(controller,
+                           &TerminalController::inputMethodRequested);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
 
     QStringList order;
@@ -12045,20 +11815,17 @@ void TerminalPaneTest::defersInputMethodDuringTerminalActionChains()
         order.append(QStringLiteral("open"));
         return true;
     });
-    connect(
-        controller, &TerminalController::rawTextRequested, &pane,
-        [&order](const QByteArray &) {
-            order.append(QStringLiteral("chain"));
-        });
-    connect(
-        controller, &TerminalController::inputMethodRequested, &pane,
-        [&order](const TerminalInputMethodInput &) {
-            order.append(QStringLiteral("ime"));
-        });
+    connect(controller, &TerminalController::rawTextRequested, &pane,
+            [&order](const QByteArray &) {
+                order.append(QStringLiteral("chain"));
+            });
+    connect(controller, &TerminalController::inputMethodRequested, &pane,
+            [&order](const TerminalInputMethodInput &) {
+                order.append(QStringLiteral("ime"));
+            });
 
-    QKeyEvent press(
-        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
-        QStringLiteral("b"));
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+                    QStringLiteral("b"));
     QCoreApplication::sendEvent(&pane, &press);
     QCOMPARE(files.count(), 1);
 
@@ -12068,15 +11835,11 @@ void TerminalPaneTest::defersInputMethodDuringTerminalActionChains()
     QCOMPARE(inputMethod.count(), 0);
     QCOMPARE(rawText.count(), 0);
 
-    QKeyEvent release(
-        QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
     QCoreApplication::sendEvent(&pane, &release);
-    const quint64 requestId =
-        files.constFirst().constFirst().toULongLong();
-    Q_EMIT controller->terminalActionReady(
-        successfulOpenFileResult(
-            requestId,
-            QStringLiteral("/tmp/ime-order-terminal-action.txt")));
+    const quint64 requestId = files.constFirst().constFirst().toULongLong();
+    Q_EMIT controller->terminalActionReady(successfulOpenFileResult(
+        requestId, QStringLiteral("/tmp/ime-order-terminal-action.txt")));
     QCoreApplication::processEvents();
 
     QCOMPARE(rawText.count(), 1);
@@ -12085,13 +11848,12 @@ void TerminalPaneTest::defersInputMethodDuringTerminalActionChains()
         qvariant_cast<TerminalInputMethodInput>(
             inputMethod.constFirst().constFirst());
     QCOMPARE(committed.commitText, QStringLiteral("committed later"));
-    QCOMPARE(
-        order,
-        QStringList({
-            QStringLiteral("open"),
-            QStringLiteral("chain"),
-            QStringLiteral("ime"),
-        }));
+    QCOMPARE(order,
+             QStringList({
+                 QStringLiteral("open"),
+                 QStringLiteral("chain"),
+                 QStringLiteral("ime"),
+             }));
     QCOMPARE(forwarded.count(), 0);
 }
 
@@ -12105,62 +11867,54 @@ void TerminalPaneTest::preservesDeferredInputFifoDuringReplayReentrancy()
         QStringLiteral("alt+b=write_screen_file:open"),
     });
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt,
-        TerminalSessionStartMode::Deferred);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
-    QSignalSpy files(
-        controller, &TerminalController::writeTerminalFileRequested);
+    QSignalSpy files(controller,
+                     &TerminalController::writeTerminalFileRequested);
     pane.setUrlOpener([](const QUrl &) { return true; });
 
     QStringList order;
     bool injected = false;
     std::optional<TerminalKeyInput> replayedC;
     std::optional<TerminalKeyInput> replayedCRelease;
-    connect(
-        controller, &TerminalController::keyRequested, &pane,
-        [&](const TerminalKeyInput &input) {
-            order.append(QStringLiteral("%1-%2")
-                             .arg(QChar(input.key))
-                             .arg(input.pressed ? QStringLiteral("press")
-                                                : QStringLiteral("release")));
-            if (input.key == Qt::Key_C && input.pressed) replayedC = input;
-            if (input.key == Qt::Key_C && !input.pressed) {
-                replayedCRelease = input;
-            }
-            if (injected || input.key != Qt::Key_C
-                || !input.pressed) {
-                return;
-            }
-            injected = true;
-            QKeyEvent nestedKey(
-                QEvent::KeyPress, Qt::Key_E, Qt::NoModifier,
-                QStringLiteral("e"));
-            QCoreApplication::sendEvent(&pane, &nestedKey);
-            QInputMethodEvent nestedInput;
-            nestedInput.setCommitString(QStringLiteral("new-ime"));
-            QCoreApplication::sendEvent(&pane, &nestedInput);
-        });
-    connect(
-        controller, &TerminalController::inputMethodRequested,
-        &pane, [&order](const TerminalInputMethodInput &input) {
-            order.append(
-                QStringLiteral("ime:%1").arg(input.commitText));
-        });
+    connect(controller, &TerminalController::keyRequested, &pane,
+            [&](const TerminalKeyInput &input) {
+                order.append(QStringLiteral("%1-%2")
+                                 .arg(QChar(input.key))
+                                 .arg(input.pressed
+                                          ? QStringLiteral("press")
+                                          : QStringLiteral("release")));
+                if (input.key == Qt::Key_C && input.pressed) replayedC = input;
+                if (input.key == Qt::Key_C && !input.pressed) {
+                    replayedCRelease = input;
+                }
+                if (injected || input.key != Qt::Key_C || !input.pressed) {
+                    return;
+                }
+                injected = true;
+                QKeyEvent nestedKey(QEvent::KeyPress, Qt::Key_E, Qt::NoModifier,
+                                    QStringLiteral("e"));
+                QCoreApplication::sendEvent(&pane, &nestedKey);
+                QInputMethodEvent nestedInput;
+                nestedInput.setCommitString(QStringLiteral("new-ime"));
+                QCoreApplication::sendEvent(&pane, &nestedInput);
+            });
+    connect(controller, &TerminalController::inputMethodRequested, &pane,
+            [&order](const TerminalInputMethodInput &input) {
+                order.append(QStringLiteral("ime:%1").arg(input.commitText));
+            });
 
-    QKeyEvent trigger(
-        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
-        QStringLiteral("b"));
+    QKeyEvent trigger(QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+                      QStringLiteral("b"));
     QCoreApplication::sendEvent(&pane, &trigger);
     QCOMPARE(files.count(), 1);
-    QKeyEvent triggerRelease(
-        QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QKeyEvent triggerRelease(QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
     QCoreApplication::sendEvent(&pane, &triggerRelease);
 
-    QKeyEvent cPress(
-        QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
-        QStringLiteral("c"));
+    QKeyEvent cPress(QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
+                     QStringLiteral("c"));
     {
         const ScopedKeyboardLayoutTranslation scope(
             cPress,
@@ -12178,8 +11932,7 @@ void TerminalPaneTest::preservesDeferredInputFifoDuringReplayReentrancy()
     QInputMethodEvent oldInput;
     oldInput.setCommitString(QStringLiteral("old-ime"));
     QCoreApplication::sendEvent(&pane, &oldInput);
-    QKeyEvent cRelease(
-        QEvent::KeyRelease, Qt::Key_C, Qt::NoModifier);
+    QKeyEvent cRelease(QEvent::KeyRelease, Qt::Key_C, Qt::NoModifier);
     {
         const ScopedKeyboardLayoutTranslation releaseScope(
             cRelease,
@@ -12189,18 +11942,14 @@ void TerminalPaneTest::preservesDeferredInputFifoDuringReplayReentrancy()
             });
         QCoreApplication::sendEvent(&pane, &cRelease);
     }
-    QKeyEvent dPress(
-        QEvent::KeyPress, Qt::Key_D, Qt::NoModifier,
-        QStringLiteral("d"));
+    QKeyEvent dPress(QEvent::KeyPress, Qt::Key_D, Qt::NoModifier,
+                     QStringLiteral("d"));
     QCoreApplication::sendEvent(&pane, &dPress);
     QVERIFY(order.isEmpty());
 
-    const quint64 requestId =
-        files.constFirst().constFirst().toULongLong();
-    Q_EMIT controller->terminalActionReady(
-        successfulOpenFileResult(
-            requestId,
-            QStringLiteral("/tmp/reentrant-input-fifo.txt")));
+    const quint64 requestId = files.constFirst().constFirst().toULongLong();
+    Q_EMIT controller->terminalActionReady(successfulOpenFileResult(
+        requestId, QStringLiteral("/tmp/reentrant-input-fifo.txt")));
     QCoreApplication::processEvents();
 
     QVERIFY(injected);
@@ -12215,16 +11964,15 @@ void TerminalPaneTest::preservesDeferredInputFifoDuringReplayReentrancy()
     QVERIFY(replayedC->capsLock);
     QVERIFY(replayedC->numLock);
     QVERIFY(replayedC->consumedCapsLock);
-    QCOMPARE(
-        order,
-        QStringList({
-            QStringLiteral("C-press"),
-            QStringLiteral("ime:old-ime"),
-            QStringLiteral("C-release"),
-            QStringLiteral("D-press"),
-            QStringLiteral("E-press"),
-            QStringLiteral("ime:new-ime"),
-        }));
+    QCOMPARE(order,
+             QStringList({
+                 QStringLiteral("C-press"),
+                 QStringLiteral("ime:old-ime"),
+                 QStringLiteral("C-release"),
+                 QStringLiteral("D-press"),
+                 QStringLiteral("E-press"),
+                 QStringLiteral("ime:new-ime"),
+             }));
 }
 
 void TerminalPaneTest::survivesDestructionDuringDelayedActionFinalization()
@@ -12234,39 +11982,31 @@ void TerminalPaneTest::survivesDestructionDuringDelayedActionFinalization()
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::text({
-        QStringLiteral(
-            "performable:alt+b=write_screen_file:copy"),
+        QStringLiteral("performable:alt+b=write_screen_file:copy"),
     });
 
-    auto *pane = new TerminalPane(
-        options, nullptr, std::nullopt,
-        TerminalSessionStartMode::Deferred);
+    auto *pane = new TerminalPane(options, nullptr, std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
     const QPointer<TerminalPane> guard(pane);
     auto *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
-    QSignalSpy files(
-        controller, &TerminalController::writeTerminalFileRequested);
-    connect(
-        controller, &TerminalController::keyRequested, this,
-        [pane](const TerminalKeyInput &) {
-            delete pane;
-        });
+    QSignalSpy files(controller,
+                     &TerminalController::writeTerminalFileRequested);
+    connect(controller, &TerminalController::keyRequested, this,
+            [pane](const TerminalKeyInput &) { delete pane; });
 
-    QKeyEvent press(
-        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
-        QStringLiteral("b"));
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+                    QStringLiteral("b"));
     QCoreApplication::sendEvent(pane, &press);
     QCOMPARE(files.count(), 1);
-    const quint64 requestId =
-        files.constFirst().constFirst().toULongLong();
+    const quint64 requestId = files.constFirst().constFirst().toULongLong();
     Q_EMIT controller->terminalActionReady({
         .requestId = requestId,
         .outcome = TerminalActionOutcome::Failed,
         .effect = TerminalActionEffect::None,
         .performed = false,
         .payload = {},
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     });
     QCoreApplication::processEvents();
     QVERIFY(guard.isNull());
@@ -12282,19 +12022,17 @@ void TerminalPaneTest::dropsPendingConsumedKeyOwnershipOnFocusLoss()
         QStringLiteral("alt+b=write_screen_file:open"),
     });
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt,
-        TerminalSessionStartMode::Deferred);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
-    QSignalSpy files(
-        controller, &TerminalController::writeTerminalFileRequested);
+    QSignalSpy files(controller,
+                     &TerminalController::writeTerminalFileRequested);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
     pane.setUrlOpener([](const QUrl &) { return true; });
 
-    QKeyEvent press(
-        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
-        QStringLiteral("b"));
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+                    QStringLiteral("b"));
     QCoreApplication::sendEvent(&pane, &press);
     QCOMPARE(files.count(), 1);
 
@@ -12307,21 +12045,16 @@ void TerminalPaneTest::dropsPendingConsumedKeyOwnershipOnFocusLoss()
     // binding release.
     QFocusEvent focusIn(QEvent::FocusIn, Qt::OtherFocusReason);
     QCoreApplication::sendEvent(&pane, &focusIn);
-    QKeyEvent ordinaryPress(
-        QEvent::KeyPress, Qt::Key_B, Qt::NoModifier,
-        QStringLiteral("b"));
+    QKeyEvent ordinaryPress(QEvent::KeyPress, Qt::Key_B, Qt::NoModifier,
+                            QStringLiteral("b"));
     QCoreApplication::sendEvent(&pane, &ordinaryPress);
-    QKeyEvent ordinaryRelease(
-        QEvent::KeyRelease, Qt::Key_B, Qt::NoModifier);
+    QKeyEvent ordinaryRelease(QEvent::KeyRelease, Qt::Key_B, Qt::NoModifier);
     QCoreApplication::sendEvent(&pane, &ordinaryRelease);
     QCOMPARE(forwarded.count(), 0);
 
-    const quint64 requestId =
-        files.constFirst().constFirst().toULongLong();
-    Q_EMIT controller->terminalActionReady(
-        successfulOpenFileResult(
-            requestId,
-            QStringLiteral("/tmp/focus-loss-terminal-action.txt")));
+    const quint64 requestId = files.constFirst().constFirst().toULongLong();
+    Q_EMIT controller->terminalActionReady(successfulOpenFileResult(
+        requestId, QStringLiteral("/tmp/focus-loss-terminal-action.txt")));
     QCoreApplication::processEvents();
 
     // The original Alt+B release went elsewhere on focus loss. Draining the
@@ -12348,16 +12081,15 @@ void TerminalPaneTest::routesTerminalFileActions()
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy updates(controller, &TerminalController::terminalUpdated);
-    QSignalSpy requests(
-        controller, &TerminalController::writeTerminalFileRequested);
+    QSignalSpy requests(controller,
+                        &TerminalController::writeTerminalFileRequested);
     QSignalSpy errors(controller, &TerminalController::errorOccurred);
 
     QList<QUrl> openedUrls;
     QString artifactDirectoryPath;
     const auto cleanupArtifact = qScopeGuard([&artifactDirectoryPath] {
         if (!artifactDirectoryPath.isEmpty()) {
-            static_cast<void>(
-                QDir(artifactDirectoryPath).removeRecursively());
+            static_cast<void>(QDir(artifactDirectoryPath).removeRecursively());
         }
     });
     pane.setUrlOpener([&openedUrls](const QUrl &url) {
@@ -12366,8 +12098,7 @@ void TerminalPaneTest::routesTerminalFileActions()
     });
 
     QTRY_VERIFY_WITH_TIMEOUT(
-        updatesContain(
-            updates, QStringLiteral("pane-terminal-file-content")),
+        updatesContain(updates, QStringLiteral("pane-terminal-file-content")),
         5000);
     // The short-lived producer queues its exit after the final update. Wait
     // for the held pane before issuing actions so that exit processing cannot
@@ -12379,26 +12110,22 @@ void TerminalPaneTest::routesTerminalFileActions()
     // the earlier unavailable selection did not invoke the URL opener.
     QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("write_selection_file:open,plain")));
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("write_screen_file:open")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("write_screen_file:open")));
     QCOMPARE(requests.count(), 2);
 
-    const quint64 selectionRequestId =
-        requests.at(0).at(0).toULongLong();
+    const quint64 selectionRequestId = requests.at(0).at(0).toULongLong();
     QVERIFY(selectionRequestId != 0);
     const TerminalWriteFileAction selectionRequest =
-        qvariant_cast<TerminalWriteFileAction>(
-            requests.at(0).at(1));
+        qvariant_cast<TerminalWriteFileAction>(requests.at(0).at(1));
     QCOMPARE(selectionRequest.location, TerminalFileLocation::Selection);
     QCOMPARE(selectionRequest.disposition, TerminalFileDisposition::Open);
     QCOMPARE(selectionRequest.format, TerminalFileFormat::Plain);
-    const quint64 screenRequestId =
-        requests.at(1).at(0).toULongLong();
+    const quint64 screenRequestId = requests.at(1).at(0).toULongLong();
     QVERIFY(screenRequestId != 0);
     QVERIFY(screenRequestId != selectionRequestId);
     const TerminalWriteFileAction screenRequest =
-        qvariant_cast<TerminalWriteFileAction>(
-            requests.at(1).at(1));
+        qvariant_cast<TerminalWriteFileAction>(requests.at(1).at(1));
     QCOMPARE(screenRequest.location, TerminalFileLocation::Screen);
     QCOMPARE(screenRequest.disposition, TerminalFileDisposition::Open);
     QCOMPARE(screenRequest.format, TerminalFileFormat::Plain);
@@ -12414,14 +12141,13 @@ void TerminalPaneTest::routesTerminalFileActions()
 
     QFile file(artifact.filePath());
     QVERIFY(file.open(QIODevice::ReadOnly));
-    QCOMPARE(file.readAll(),
-             QByteArrayLiteral("pane-terminal-file-content"));
+    QCOMPARE(file.readAll(), QByteArrayLiteral("pane-terminal-file-content"));
     file.close();
     QVERIFY(errors.isEmpty());
 
     const QDir artifactDirectory = artifact.absoluteDir();
-    QVERIFY(artifactDirectory.dirName().startsWith(
-        QStringLiteral("ghostty-qt-")));
+    QVERIFY(
+        artifactDirectory.dirName().startsWith(QStringLiteral("ghostty-qt-")));
     QVERIFY(QDir(artifactDirectoryPath).removeRecursively());
 }
 
@@ -12432,9 +12158,8 @@ void TerminalPaneTest::dropsQueuedTerminalFileOpenAfterTeardown()
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
 
-    auto *pane = new TerminalPane(
-        options, nullptr, std::nullopt,
-        TerminalSessionStartMode::Deferred);
+    auto *pane = new TerminalPane(options, nullptr, std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
     auto *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
 
@@ -12443,13 +12168,12 @@ void TerminalPaneTest::dropsQueuedTerminalFileOpenAfterTeardown()
         ++openCount;
         return true;
     });
-    QSignalSpy requests(
-        controller, &TerminalController::writeTerminalFileRequested);
+    QSignalSpy requests(controller,
+                        &TerminalController::writeTerminalFileRequested);
     QVERIFY(pane->executeConfiguredAction(
         QStringLiteral("write_screen_file:open")));
     QCOMPARE(requests.count(), 1);
-    const quint64 requestId =
-        requests.constFirst().constFirst().toULongLong();
+    const quint64 requestId = requests.constFirst().constFirst().toULongLong();
     QVERIFY(requestId != 0);
 
     const QPointer<TerminalPane> guardedPane(pane);
@@ -12458,10 +12182,8 @@ void TerminalPaneTest::dropsQueuedTerminalFileOpenAfterTeardown()
         .outcome = TerminalActionOutcome::Success,
         .effect = TerminalActionEffect::OpenFile,
         .performed = true,
-        .payload =
-            QStringLiteral("/tmp/stale-terminal-file.txt"),
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .payload = QStringLiteral("/tmp/stale-terminal-file.txt"),
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     });
 
     delete pane;
@@ -12473,13 +12195,12 @@ void TerminalPaneTest::dropsQueuedTerminalFileOpenAfterTeardown()
 void TerminalPaneTest::interactsWithOsc8Hyperlinks()
 {
     qRegisterMetaType<TerminalUpdate>();
-    const QByteArray validUri = QStringLiteral(
-        "https://example.test/ghost-👻").toUtf8();
+    const QByteArray validUri =
+        QStringLiteral("https://example.test/ghost-👻").toUtf8();
     const QByteArray invalidUri("https://example.test/%ZZ");
     QByteArray output = QByteArrayLiteral("\033]8;id=valid;");
     output += validUri;
-    output += QByteArrayLiteral(
-        "\033\\A\033[4mB\033[24m\033]8;;\033\\ ");
+    output += QByteArrayLiteral("\033\\A\033[4mB\033[24m\033]8;;\033\\ ");
     output += QByteArrayLiteral("\033]8;id=invalid;");
     output += invalidUri;
     output += QByteArrayLiteral("\033\\C\033]8;;\033\\");
@@ -12501,8 +12222,7 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
         QStringLiteral("ctrl+y=copy_url_to_clipboard"),
     });
 
-    const TerminalCellMetrics metrics =
-        terminalCellMetrics(options.typography);
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
     const qreal cellWidth = metrics.cellWidth;
     const qreal cellHeight = metrics.cellHeight;
 
@@ -12515,18 +12235,18 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
     QVERIFY(controller != nullptr);
     QSignalSpy updates(controller, &TerminalController::terminalUpdated);
     QSignalSpy resolved(controller, &TerminalController::hyperlinkResolved);
-    QSignalSpy hyperlinkQueries(
-        controller, &TerminalController::hyperlinkQueryRequested);
+    QSignalSpy hyperlinkQueries(controller,
+                                &TerminalController::hyperlinkQueryRequested);
     QSignalSpy errors(controller, &TerminalController::errorOccurred);
     QSignalSpy sessionEnded(pane, &TerminalPane::sessionEnded);
     QSignalSpy activationResolved(
         controller, &TerminalController::hyperlinkActivationResolved);
-    QSignalSpy selectionBegun(
-        controller, &TerminalController::beginSelectionRequested);
-    QSignalSpy selectionUpdated(
-        controller, &TerminalController::updateSelectionRequested);
-    QSignalSpy selectionEnded(
-        controller, &TerminalController::endSelectionRequested);
+    QSignalSpy selectionBegun(controller,
+                              &TerminalController::beginSelectionRequested);
+    QSignalSpy selectionUpdated(controller,
+                                &TerminalController::updateSelectionRequested);
+    QSignalSpy selectionEnded(controller,
+                              &TerminalController::endSelectionRequested);
 
     int openCount = 0;
     QUrl openedUrl;
@@ -12547,10 +12267,11 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
     for (const QList<QVariant> &arguments : errors) {
         errorMessages.append(arguments.constFirst().toString());
     }
-    QVERIFY2(renderedText.contains(QStringLiteral("AB C")),
-             qPrintable(QStringLiteral("terminal text: %1 errors: %2 updates: %3")
-                            .arg(renderedText, errorMessages.join(u'|'))
-                            .arg(updates.count())));
+    QVERIFY2(
+        renderedText.contains(QStringLiteral("AB C")),
+        qPrintable(QStringLiteral("terminal text: %1 errors: %2 updates: %3")
+                       .arg(renderedText, errorMessages.join(u'|'))
+                       .arg(updates.count())));
     const TerminalFrame frame = accumulatedFrame(updates);
     QVERIFY(frame.contentRevision != 0);
     QVERIFY(frame.cells.at(0).hasHyperlink());
@@ -12563,13 +12284,12 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
     const auto sendHover = [&](const QPointF &position,
                                const QPointF &oldPosition,
                                Qt::KeyboardModifiers modifiers) {
-        QHoverEvent event(QEvent::HoverMove, position, position,
-                          oldPosition, modifiers);
+        QHoverEvent event(QEvent::HoverMove, position, position, oldPosition,
+                          modifiers);
         QCoreApplication::sendEvent(pane, &event);
     };
     const auto sendMouse = [&](QEvent::Type type, const QPointF &position,
-                               Qt::MouseButton button,
-                               Qt::MouseButtons buttons,
+                               Qt::MouseButton button, Qt::MouseButtons buttons,
                                Qt::KeyboardModifiers modifiers) {
         QMouseEvent event(type, position, position, position, button, buttons,
                           modifiers);
@@ -12591,46 +12311,46 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
                            Qt::ControlModifier);
     QCoreApplication::sendEvent(pane, &controlPress);
     const auto resolvedUri = [&resolved](const QByteArray &uri) {
-        return std::any_of(
-            resolved.cbegin(), resolved.cend(),
-            [&uri](const QList<QVariant> &arguments) {
-                return arguments.at(3).toByteArray() == uri;
-            });
+        return std::any_of(resolved.cbegin(), resolved.cend(),
+                           [&uri](const QList<QVariant> &arguments) {
+                               return arguments.at(3).toByteArray() == uri;
+                           });
     };
     QTRY_VERIFY_WITH_TIMEOUT(resolvedUri(validUri), 1000);
     QVERIFY(hyperlinkQueries.count() >= 1);
-    QTRY_COMPARE_WITH_TIMEOUT(pane->cursor().shape(),
-                              Qt::PointingHandCursor, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(pane->cursor().shape(), Qt::PointingHandCursor,
+                              1000);
 
-    QVERIFY(pane->executeConfiguredAction(
-        QStringLiteral("copy_url_to_clipboard")));
+    QVERIFY(
+        pane->executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
     QGuiApplication::clipboard()->setText(QStringLiteral("sentinel"));
-    QKeyEvent copyPress(QEvent::KeyPress, Qt::Key_Y,
-                        Qt::ControlModifier, QStringLiteral("y"));
+    QKeyEvent copyPress(QEvent::KeyPress, Qt::Key_Y, Qt::ControlModifier,
+                        QStringLiteral("y"));
     QCoreApplication::sendEvent(pane, &copyPress);
     QCOMPARE(QGuiApplication::clipboard()->mimeData()->data(
-                 QStringLiteral("text/plain")), validUri);
-    QCOMPARE(QGuiApplication::clipboard()->text(),
-             QString::fromUtf8(validUri));
-    QKeyEvent copyRelease(QEvent::KeyRelease, Qt::Key_Y,
-                          Qt::ControlModifier, QStringLiteral("y"));
+                 QStringLiteral("text/plain")),
+             validUri);
+    QCOMPARE(QGuiApplication::clipboard()->text(), QString::fromUtf8(validUri));
+    QKeyEvent copyRelease(QEvent::KeyRelease, Qt::Key_Y, Qt::ControlModifier,
+                          QStringLiteral("y"));
     QCoreApplication::sendEvent(pane, &copyRelease);
 
     QVERIFY(!pane->executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard:")));
     QGuiApplication::clipboard()->setText(QStringLiteral("sentinel"));
-    QVERIFY(pane->executeConfiguredAction(
-        QStringLiteral("copy_url_to_clipboard")));
+    QVERIFY(
+        pane->executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
     QCOMPARE(QGuiApplication::clipboard()->mimeData()->data(
-                 QStringLiteral("text/plain")), validUri);
+                 QStringLiteral("text/plain")),
+             validUri);
 
     // Moving within a resolved multi-cell link preserves the URI/mask and
     // does not enqueue another O(link-cells) worker scan.
     const int queryCount = hyperlinkQueries.count();
     sendHover(validSecondPosition, validPosition, Qt::ControlModifier);
     QCOMPARE(hyperlinkQueries.count(), queryCount);
-    QVERIFY(pane->executeConfiguredAction(
-        QStringLiteral("copy_url_to_clipboard")));
+    QVERIFY(
+        pane->executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
     sendHover(validPosition, validSecondPosition, Qt::ControlModifier);
     QCOMPARE(hyperlinkQueries.count(), queryCount);
 
@@ -12639,22 +12359,23 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
     QVERIFY(!pane->linkPreviewRect().isEmpty());
     const QImage afterHover = window.grabWindow();
     QVERIFY(!afterHover.isNull());
-    const qreal xScale = static_cast<qreal>(afterHover.width()) / window.width();
-    const qreal yScale = static_cast<qreal>(afterHover.height()) / window.height();
+    const qreal xScale =
+        static_cast<qreal>(afterHover.width()) / window.width();
+    const qreal yScale =
+        static_cast<qreal>(afterHover.height()) / window.height();
     int previewChanges = 0;
     const QRectF previewRect = pane->linkPreviewRect();
-    const int previewLeft = std::clamp(
-        qFloor(previewRect.left() * xScale), 0, afterHover.width());
-    const int previewRight = std::clamp(
-        qCeil(previewRect.right() * xScale), 0, afterHover.width());
-    const int previewTop = std::clamp(
-        qFloor(previewRect.top() * yScale), 0, afterHover.height());
-    const int previewBottom = std::clamp(
-        qCeil(previewRect.bottom() * yScale), 0, afterHover.height());
+    const int previewLeft =
+        std::clamp(qFloor(previewRect.left() * xScale), 0, afterHover.width());
+    const int previewRight =
+        std::clamp(qCeil(previewRect.right() * xScale), 0, afterHover.width());
+    const int previewTop =
+        std::clamp(qFloor(previewRect.top() * yScale), 0, afterHover.height());
+    const int previewBottom = std::clamp(qCeil(previewRect.bottom() * yScale),
+                                         0, afterHover.height());
     for (int y = previewTop; y < previewBottom; ++y) {
         for (int x = previewLeft; x < previewRight; ++x) {
-            if (beforeHover.pixelColor(x, y)
-                != afterHover.pixelColor(x, y)) {
+            if (beforeHover.pixelColor(x, y) != afterHover.pixelColor(x, y)) {
                 ++previewChanges;
             }
         }
@@ -12683,8 +12404,7 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
     const int firstRowBottom = qRound(cellHeight * yScale);
     for (int y = 0; y < firstRowBottom; ++y) {
         for (int x = nonLinkLeft; x < nonLinkRight; ++x) {
-            if (beforeHover.pixelColor(x, y)
-                != afterHover.pixelColor(x, y)) {
+            if (beforeHover.pixelColor(x, y) != afterHover.pixelColor(x, y)) {
                 ++nonLinkChanges;
             }
         }
@@ -12702,8 +12422,8 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
     QCOMPARE(resolved.count(), resolvedBeforeNoOp);
     QCOMPARE(hyperlinkQueries.count(), queriesBeforeNoOp);
     QCOMPARE(pane->cursor().shape(), Qt::PointingHandCursor);
-    QVERIFY(pane->executeConfiguredAction(
-        QStringLiteral("copy_url_to_clipboard")));
+    QVERIFY(
+        pane->executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
 
     QKeyEvent controlRelease(QEvent::KeyRelease, Qt::Key_Control,
                              Qt::NoModifier);
@@ -12738,10 +12458,11 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
         invalidFrame.contentRevision, TerminalHyperlinkState::Visible,
         TerminalLinkKind::Osc8, invalidUri, QPoint(3, 0), {QPoint(3, 0)});
     QGuiApplication::clipboard()->setText(QStringLiteral("sentinel"));
-    QVERIFY(pane->executeConfiguredAction(
-        QStringLiteral("copy_url_to_clipboard")));
+    QVERIFY(
+        pane->executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
     QCOMPARE(QGuiApplication::clipboard()->mimeData()->data(
-                 QStringLiteral("text/plain")), invalidUri);
+                 QStringLiteral("text/plain")),
+             invalidUri);
     QVERIFY(!pane->executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard:")));
     sendMouse(QEvent::MouseButtonPress, invalidPosition, Qt::LeftButton,
@@ -12775,8 +12496,8 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
               Qt::LeftButton, Qt::ControlModifier);
     sendMouse(QEvent::MouseMove, validSecondPosition, Qt::NoButton,
               Qt::LeftButton, Qt::ControlModifier);
-    sendMouse(QEvent::MouseButtonRelease, validSecondPosition,
-              Qt::LeftButton, Qt::NoButton, Qt::ControlModifier);
+    sendMouse(QEvent::MouseButtonRelease, validSecondPosition, Qt::LeftButton,
+              Qt::NoButton, Qt::ControlModifier);
     QTest::qWait(50);
     QCOMPARE(openCount, 1);
     QCOMPARE(selectionUpdated.count(), selectionUpdatesBeforeDrag + 1);
@@ -12788,12 +12509,12 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
     QCoreApplication::sendEvent(pane, &controlPress);
     sendHover(validPosition, validSecondPosition, Qt::ControlModifier);
     const TerminalFrame focusFrame = accumulatedFrame(updates);
-    controller->hyperlinkResolved(
-        focusFrame.contentRevision, TerminalHyperlinkState::Visible,
-        TerminalLinkKind::Osc8, validUri, QPoint(0, 0),
-        {QPoint(0, 0), QPoint(1, 0)});
-    QVERIFY(pane->executeConfiguredAction(
-        QStringLiteral("copy_url_to_clipboard")));
+    controller->hyperlinkResolved(focusFrame.contentRevision,
+                                  TerminalHyperlinkState::Visible,
+                                  TerminalLinkKind::Osc8, validUri,
+                                  QPoint(0, 0), {QPoint(0, 0), QPoint(1, 0)});
+    QVERIFY(
+        pane->executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
     const int opensBeforeFocusLoss = openCount;
     sendMouse(QEvent::MouseButtonPress, validPosition, Qt::LeftButton,
               Qt::LeftButton, Qt::ControlModifier);
@@ -12805,14 +12526,14 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
     QTRY_VERIFY_WITH_TIMEOUT(!pane->hasActiveFocus(), 1000);
     QVERIFY(!pane->executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard")));
-    controller->hyperlinkActivationResolved(
-        focusFrame.contentRevision, TerminalLinkKind::Osc8, validUri);
+    controller->hyperlinkActivationResolved(focusFrame.contentRevision,
+                                            TerminalLinkKind::Osc8, validUri);
     QTest::qWait(30);
     QCOMPARE(openCount, opensBeforeFocusLoss);
-    controller->hyperlinkResolved(
-        focusFrame.contentRevision, TerminalHyperlinkState::Visible,
-        TerminalLinkKind::Osc8, validUri, QPoint(0, 0),
-        {QPoint(0, 0), QPoint(1, 0)});
+    controller->hyperlinkResolved(focusFrame.contentRevision,
+                                  TerminalHyperlinkState::Visible,
+                                  TerminalLinkKind::Osc8, validUri,
+                                  QPoint(0, 0), {QPoint(0, 0), QPoint(1, 0)});
     QVERIFY(!pane->executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard")));
     QVERIFY2(errors.isEmpty(),
@@ -12840,8 +12561,8 @@ void TerminalPaneTest::interactsWithRegexLinksAndReloadsLinkUrl()
     relativeFile.close();
 
     const QByteArray regexText = QByteArrayLiteral("./relative-link.txt");
-    const QByteArray oscUri = QByteArrayLiteral(
-        "https://example.test/osc-still-enabled");
+    const QByteArray oscUri =
+        QByteArrayLiteral("https://example.test/osc-still-enabled");
     QByteArray output = regexText;
     output += QByteArrayLiteral("\r\n\033]8;;");
     output += oscUri;
@@ -12861,8 +12582,7 @@ void TerminalPaneTest::interactsWithRegexLinksAndReloadsLinkUrl()
         QStringLiteral("ctrl+y=copy_url_to_clipboard"),
     });
 
-    const TerminalCellMetrics metrics =
-        terminalCellMetrics(options.typography);
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
     const qreal cellWidth = metrics.cellWidth;
     const qreal cellHeight = metrics.cellHeight;
 
@@ -12873,8 +12593,8 @@ void TerminalPaneTest::interactsWithRegexLinksAndReloadsLinkUrl()
     auto *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy updates(controller, &TerminalController::terminalUpdated);
-    QSignalSpy queries(
-        controller, &TerminalController::hyperlinkQueryRequested);
+    QSignalSpy queries(controller,
+                       &TerminalController::hyperlinkQueryRequested);
     QSignalSpy resolved(controller, &TerminalController::hyperlinkResolved);
     QSignalSpy activationResolved(
         controller, &TerminalController::hyperlinkActivationResolved);
@@ -12900,8 +12620,8 @@ void TerminalPaneTest::interactsWithRegexLinksAndReloadsLinkUrl()
     const QPointF oscPosition(cellWidth * 0.5, cellHeight * 1.5);
     const auto sendHover = [&](const QPointF &position,
                                const QPointF &oldPosition) {
-        QHoverEvent event(QEvent::HoverMove, position, position,
-                          oldPosition, Qt::ControlModifier);
+        QHoverEvent event(QEvent::HoverMove, position, position, oldPosition,
+                          Qt::ControlModifier);
         QCoreApplication::sendEvent(pane, &event);
     };
     const auto sendMouse = [&](QEvent::Type type, const QPointF &position,
@@ -12929,18 +12649,16 @@ void TerminalPaneTest::interactsWithRegexLinksAndReloadsLinkUrl()
     pane->applyRuntimeOptions(enabled);
     QTRY_VERIFY_WITH_TIMEOUT(
         !resolved.isEmpty()
-            && qvariant_cast<TerminalHyperlinkState>(
-                   resolved.constLast().at(1))
+            && qvariant_cast<TerminalHyperlinkState>(resolved.constLast().at(1))
                 == TerminalHyperlinkState::Visible
-            && qvariant_cast<TerminalLinkKind>(
-                   resolved.constLast().at(2))
+            && qvariant_cast<TerminalLinkKind>(resolved.constLast().at(2))
                 == TerminalLinkKind::Regex,
         1000);
     QCOMPARE(resolved.constLast().at(3).toByteArray(), regexText);
-    QTRY_COMPARE_WITH_TIMEOUT(
-        pane->cursor().shape(), Qt::PointingHandCursor, 1000);
-    QVERIFY(pane->executeConfiguredAction(
-        QStringLiteral("copy_url_to_clipboard")));
+    QTRY_COMPARE_WITH_TIMEOUT(pane->cursor().shape(), Qt::PointingHandCursor,
+                              1000);
+    QVERIFY(
+        pane->executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
     QCOMPARE(QGuiApplication::clipboard()->mimeData()->data(
                  QStringLiteral("text/plain")),
              regexText);
@@ -12950,9 +12668,9 @@ void TerminalPaneTest::interactsWithRegexLinksAndReloadsLinkUrl()
     sendMouse(QEvent::MouseButtonRelease, regexPosition, Qt::LeftButton,
               Qt::NoButton);
     QTRY_COMPARE_WITH_TIMEOUT(activationResolved.count(), 1, 1000);
-    QCOMPARE(qvariant_cast<TerminalLinkKind>(
-                 activationResolved.constLast().at(1)),
-             TerminalLinkKind::Regex);
+    QCOMPARE(
+        qvariant_cast<TerminalLinkKind>(activationResolved.constLast().at(1)),
+        TerminalLinkKind::Regex);
     QCOMPARE(activationResolved.constLast().at(2).toByteArray(), regexText);
     QCOMPARE(openCount, 1);
     QCOMPARE(openedUrl, QUrl::fromLocalFile(relativePath));
@@ -12970,16 +12688,14 @@ void TerminalPaneTest::interactsWithRegexLinksAndReloadsLinkUrl()
     sendHover(oscPosition, regexPosition);
     QTRY_VERIFY_WITH_TIMEOUT(
         !resolved.isEmpty()
-            && qvariant_cast<TerminalHyperlinkState>(
-                   resolved.constLast().at(1))
+            && qvariant_cast<TerminalHyperlinkState>(resolved.constLast().at(1))
                 == TerminalHyperlinkState::Visible
-            && qvariant_cast<TerminalLinkKind>(
-                   resolved.constLast().at(2))
+            && qvariant_cast<TerminalLinkKind>(resolved.constLast().at(2))
                 == TerminalLinkKind::Osc8,
         1000);
     QCOMPARE(resolved.constLast().at(3).toByteArray(), oscUri);
-    QVERIFY(pane->executeConfiguredAction(
-        QStringLiteral("copy_url_to_clipboard")));
+    QVERIFY(
+        pane->executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
     QCOMPARE(QGuiApplication::clipboard()->mimeData()->data(
                  QStringLiteral("text/plain")),
              oscUri);
@@ -12999,10 +12715,10 @@ void TerminalPaneTest::previewsLinksAccordingToPolicyAndBoundsDisplay()
     qRegisterMetaType<TerminalHyperlinkState>();
     qRegisterMetaType<TerminalLinkKind>();
 
-    const QByteArray oscUri = QByteArrayLiteral(
-        "https://example.test/explicit-destination");
-    const QByteArray regexUri = QByteArrayLiteral(
-        "https://example.test/detected-destination");
+    const QByteArray oscUri =
+        QByteArrayLiteral("https://example.test/explicit-destination");
+    const QByteArray regexUri =
+        QByteArrayLiteral("https://example.test/detected-destination");
     QByteArray output = QByteArrayLiteral("\033]8;;");
     output += oscUri;
     output += QByteArrayLiteral("\033\\OSC\033]8;;\033\\\r\n");
@@ -13023,8 +12739,7 @@ void TerminalPaneTest::previewsLinksAccordingToPolicyAndBoundsDisplay()
     options.linkPreviews = LinkPreviewMode::Always;
     useSystemFixedFont(options);
 
-    const TerminalCellMetrics metrics =
-        terminalCellMetrics(options.typography);
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
     const qreal cellWidth = metrics.cellWidth;
     const qreal cellHeight = metrics.cellHeight;
 
@@ -13033,15 +12748,15 @@ void TerminalPaneTest::previewsLinksAccordingToPolicyAndBoundsDisplay()
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy updates(controller, &TerminalController::terminalUpdated);
-    QSignalSpy queries(
-        controller, &TerminalController::hyperlinkQueryRequested);
+    QSignalSpy queries(controller,
+                       &TerminalController::hyperlinkQueryRequested);
     QSignalSpy resolved(controller, &TerminalController::hyperlinkResolved);
     QSignalSpy previewChanged(&pane, &TerminalPane::linkPreviewChanged);
     QSignalSpy activationPreparations(
         controller,
         &TerminalController::hyperlinkActivationPreparationRequested);
-    QSignalSpy selections(
-        controller, &TerminalController::beginSelectionRequested);
+    QSignalSpy selections(controller,
+                          &TerminalController::beginSelectionRequested);
     QSignalSpy sessionEnded(&pane, &TerminalPane::sessionEnded);
 
     QTRY_COMPARE_WITH_TIMEOUT(sessionEnded.count(), 1, 5000);
@@ -13050,26 +12765,23 @@ void TerminalPaneTest::previewsLinksAccordingToPolicyAndBoundsDisplay()
 
     const auto sendHover = [&pane](const QPointF &position,
                                    const QPointF &oldPosition) {
-        QHoverEvent event(QEvent::HoverMove, position, position,
-                          oldPosition, Qt::ControlModifier);
+        QHoverEvent event(QEvent::HoverMove, position, position, oldPosition,
+                          Qt::ControlModifier);
         QCoreApplication::sendEvent(&pane, &event);
     };
     const auto lastResolvedIs = [&resolved](TerminalLinkKind kind,
-                                             const QByteArray &uri) {
+                                            const QByteArray &uri) {
         return !resolved.isEmpty()
-            && qvariant_cast<TerminalHyperlinkState>(
-                   resolved.constLast().at(1))
-                == TerminalHyperlinkState::Visible
-            && qvariant_cast<TerminalLinkKind>(
-                   resolved.constLast().at(2))
-                == kind
+            && qvariant_cast<TerminalHyperlinkState>(resolved.constLast().at(1))
+            == TerminalHyperlinkState::Visible
+            && qvariant_cast<TerminalLinkKind>(resolved.constLast().at(2))
+            == kind
             && resolved.constLast().at(3).toByteArray() == uri;
     };
     const auto previewIsInsidePane = [&pane] {
         const QRectF preview = pane.linkPreviewRect();
         return !preview.isEmpty() && preview.left() >= 0.0
-            && preview.top() >= 0.0
-            && preview.right() <= pane.width()
+            && preview.top() >= 0.0 && preview.right() <= pane.width()
             && preview.bottom() <= pane.height();
     };
 
@@ -13079,8 +12791,8 @@ void TerminalPaneTest::previewsLinksAccordingToPolicyAndBoundsDisplay()
     const QPointF oscPosition(cellWidth * 0.5, cellHeight * 0.5);
     const QPointF regexPosition(cellWidth * 0.5, cellHeight * 1.5);
     sendHover(oscPosition, oscPosition);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        lastResolvedIs(TerminalLinkKind::Osc8, oscUri), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(lastResolvedIs(TerminalLinkKind::Osc8, oscUri),
+                             1000);
     QTRY_VERIFY_WITH_TIMEOUT(!pane.linkPreviewText().isEmpty(), 1000);
     QVERIFY(previewIsInsidePane());
 
@@ -13094,8 +12806,8 @@ void TerminalPaneTest::previewsLinksAccordingToPolicyAndBoundsDisplay()
     QCOMPARE(pane.linkPreviewText(), QString());
     QVERIFY(pane.linkPreviewRect().isEmpty());
     QCOMPARE(queries.count(), oscQueryCount);
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("copy_url_to_clipboard")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
 
     reloaded.linkPreviews = LinkPreviewMode::Osc8;
     pane.applyRuntimeOptions(reloaded);
@@ -13111,10 +12823,10 @@ void TerminalPaneTest::previewsLinksAccordingToPolicyAndBoundsDisplay()
     const QRectF leftPreview = pane.linkPreviewRect();
     QVERIFY(leftPreview.left() < pane.width() / 2.0);
     sendHover(leftPreview.center(), oscPosition);
-    QTRY_COMPARE_WITH_TIMEOUT(
-        pane.linkPreviewText(), previewBeforeRelocation, 1000);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        pane.linkPreviewRect().left() > leftPreview.left(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(pane.linkPreviewText(), previewBeforeRelocation,
+                              1000);
+    QTRY_VERIFY_WITH_TIMEOUT(pane.linkPreviewRect().left() > leftPreview.left(),
+                             1000);
     QVERIFY(previewIsInsidePane());
     QCOMPARE(queries.count(), oscQueryCount);
 
@@ -13122,15 +12834,13 @@ void TerminalPaneTest::previewsLinksAccordingToPolicyAndBoundsDisplay()
     // transparent copy is replaced on the right. It is non-focusable and has
     // no action of its own; presses in that occupied guard do not leak through
     // to a different terminal cell or activate the retained link remotely.
-    QMouseEvent guardPress(
-        QEvent::MouseButtonPress, leftPreview.center(), leftPreview.center(),
-        leftPreview.center(), Qt::LeftButton, Qt::LeftButton,
-        Qt::ControlModifier);
+    QMouseEvent guardPress(QEvent::MouseButtonPress, leftPreview.center(),
+                           leftPreview.center(), leftPreview.center(),
+                           Qt::LeftButton, Qt::LeftButton, Qt::ControlModifier);
     QCoreApplication::sendEvent(&pane, &guardPress);
-    QMouseEvent guardRelease(
-        QEvent::MouseButtonRelease, leftPreview.center(), leftPreview.center(),
-        leftPreview.center(), Qt::LeftButton, Qt::NoButton,
-        Qt::ControlModifier);
+    QMouseEvent guardRelease(QEvent::MouseButtonRelease, leftPreview.center(),
+                             leftPreview.center(), leftPreview.center(),
+                             Qt::LeftButton, Qt::NoButton, Qt::ControlModifier);
     QCoreApplication::sendEvent(&pane, &guardRelease);
     QCOMPARE(activationPreparations.count(), 0);
     QCOMPARE(selections.count(), 0);
@@ -13143,18 +12853,18 @@ void TerminalPaneTest::previewsLinksAccordingToPolicyAndBoundsDisplay()
     pane.applyRuntimeOptions(reloaded);
     QCOMPARE(pane.linkPreviewText(), QString());
     QVERIFY(pane.linkPreviewRect().isEmpty());
-    QTRY_VERIFY_WITH_TIMEOUT(
-        queries.count() > queriesBeforeCapturedDisable, 1000);
-    QVERIFY(!pane.executeConfiguredAction(
-        QStringLiteral("copy_url_to_clipboard")));
+    QTRY_VERIFY_WITH_TIMEOUT(queries.count() > queriesBeforeCapturedDisable,
+                             1000);
+    QVERIFY(
+        !pane.executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
 
     // Re-establish the original hover and guard before exercising pointer
     // motion out of it.
     reloaded.linkPreviews = LinkPreviewMode::Osc8;
     pane.applyRuntimeOptions(reloaded);
     sendHover(oscPosition, leftPreview.center());
-    QTRY_VERIFY_WITH_TIMEOUT(
-        lastResolvedIs(TerminalLinkKind::Osc8, oscUri), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(lastResolvedIs(TerminalLinkKind::Osc8, oscUri),
+                             1000);
     QTRY_VERIFY_WITH_TIMEOUT(!pane.linkPreviewText().isEmpty(), 1000);
     const int restoredOscQueryCount = queries.count();
     const QRectF restoredLeftPreview = pane.linkPreviewRect();
@@ -13168,18 +12878,17 @@ void TerminalPaneTest::previewsLinksAccordingToPolicyAndBoundsDisplay()
     const QPointF plainPosition(cellWidth * 30.5, cellHeight * 2.5);
     sendHover(plainPosition, restoredLeftPreview.center());
     QTRY_VERIFY_WITH_TIMEOUT(pane.linkPreviewText().isEmpty(), 1000);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        queries.count() > restoredOscQueryCount, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(queries.count() > restoredOscQueryCount, 1000);
 
     // `osc8` suppresses only regex previews; it does not suppress detection,
     // copy, or the tracked hover itself. Enabling all previews is immediate
     // and does not enqueue a replacement lookup.
     sendHover(regexPosition, plainPosition);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        lastResolvedIs(TerminalLinkKind::Regex, regexUri), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(lastResolvedIs(TerminalLinkKind::Regex, regexUri),
+                             1000);
     QCOMPARE(pane.linkPreviewText(), QString());
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("copy_url_to_clipboard")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
     const int regexQueryCount = queries.count();
 
     reloaded.linkPreviews = LinkPreviewMode::Always;
@@ -13192,8 +12901,8 @@ void TerminalPaneTest::previewsLinksAccordingToPolicyAndBoundsDisplay()
     pane.applyRuntimeOptions(reloaded);
     QCOMPARE(pane.linkPreviewText(), QString());
     QCOMPARE(queries.count(), regexQueryCount);
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("copy_url_to_clipboard")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
 
     reloaded.linkPreviews = LinkPreviewMode::Always;
     pane.applyRuntimeOptions(reloaded);
@@ -13211,8 +12920,8 @@ void TerminalPaneTest::previewsLinksAccordingToPolicyAndBoundsDisplay()
     // overlay escapes controls and replaces malformed UTF-8.
     QCoreApplication::sendEvent(&pane, &controlPress);
     sendHover(oscPosition, regexPosition);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        lastResolvedIs(TerminalLinkKind::Osc8, oscUri), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(lastResolvedIs(TerminalLinkKind::Osc8, oscUri),
+                             1000);
     QByteArray unsafeUri;
     unsafeUri += QByteArrayLiteral("unsafe:");
     unsafeUri.append('\0');
@@ -13250,8 +12959,8 @@ void TerminalPaneTest::previewsLinksAccordingToPolicyAndBoundsDisplay()
     QVERIFY(!pane.linkPreviewText().isEmpty());
     QCOMPARE(queries.count(), queriesBeforeZoom);
 
-    QHoverEvent leave(QEvent::HoverLeave, QPointF(), QPointF(),
-                      oscPosition, Qt::ControlModifier);
+    QHoverEvent leave(QEvent::HoverLeave, QPointF(), QPointF(), oscPosition,
+                      Qt::ControlModifier);
     QCoreApplication::sendEvent(&pane, &leave);
     QCOMPARE(pane.linkPreviewText(), QString());
     QVERIFY(pane.linkPreviewRect().isEmpty());
@@ -13262,8 +12971,8 @@ void TerminalPaneTest::keepsOsc8InteractionStableAcrossUnrelatedOutput()
     qRegisterMetaType<TerminalUpdate>();
     qRegisterMetaType<TerminalHyperlinkState>();
 
-    const QByteArray uri = QByteArrayLiteral(
-        "https://example.test/live-output");
+    const QByteArray uri =
+        QByteArrayLiteral("https://example.test/live-output");
     const QString script = QStringLiteral(
         "printf '\033[2J\033[H\033]8;;https://example.test/live-output"
         "\033\\LINK\033]8;;\033\\'; "
@@ -13274,7 +12983,9 @@ void TerminalPaneTest::keepsOsc8InteractionStableAcrossUnrelatedOutput()
     LaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
-        QStringLiteral("/bin/sh"), QStringLiteral("-c"), script,
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        script,
     };
     options.hold = true;
     useSystemFixedFont(options);
@@ -13282,8 +12993,7 @@ void TerminalPaneTest::keepsOsc8InteractionStableAcrossUnrelatedOutput()
         QStringLiteral("ctrl+y=copy_url_to_clipboard"),
     });
 
-    const TerminalCellMetrics metrics =
-        terminalCellMetrics(options.typography);
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
     const qreal cellWidth = metrics.cellWidth;
     const qreal cellHeight = metrics.cellHeight;
 
@@ -13294,8 +13004,8 @@ void TerminalPaneTest::keepsOsc8InteractionStableAcrossUnrelatedOutput()
     auto *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy updates(controller, &TerminalController::terminalUpdated);
-    QSignalSpy queries(
-        controller, &TerminalController::hyperlinkQueryRequested);
+    QSignalSpy queries(controller,
+                       &TerminalController::hyperlinkQueryRequested);
     QSignalSpy resolved(controller, &TerminalController::hyperlinkResolved);
     QSignalSpy activationResolved(
         controller, &TerminalController::hyperlinkActivationResolved);
@@ -13312,8 +13022,8 @@ void TerminalPaneTest::keepsOsc8InteractionStableAcrossUnrelatedOutput()
     window.show();
     QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
     pane->forceActiveFocus();
-    QTRY_VERIFY_WITH_TIMEOUT(
-        updatesContain(updates, QStringLiteral("LINK")), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(updatesContain(updates, QStringLiteral("LINK")),
+                             5000);
 
     const QPointF linkPosition(cellWidth * 0.5, cellHeight * 0.5);
     QKeyEvent controlPress(QEvent::KeyPress, Qt::Key_Control,
@@ -13324,32 +13034,30 @@ void TerminalPaneTest::keepsOsc8InteractionStableAcrossUnrelatedOutput()
     QCoreApplication::sendEvent(pane, &hover);
     QTRY_VERIFY_WITH_TIMEOUT(
         !resolved.isEmpty()
-            && qvariant_cast<TerminalHyperlinkState>(
-                   resolved.constLast().at(1))
+            && qvariant_cast<TerminalHyperlinkState>(resolved.constLast().at(1))
                 == TerminalHyperlinkState::Visible,
         1000);
     QCOMPARE(qvariant_cast<TerminalLinkKind>(resolved.constLast().at(2)),
              TerminalLinkKind::Osc8);
     QCOMPARE(resolved.constLast().at(3).toByteArray(), uri);
-    QTRY_COMPARE_WITH_TIMEOUT(
-        pane->cursor().shape(), Qt::PointingHandCursor, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(pane->cursor().shape(), Qt::PointingHandCursor,
+                              1000);
     const int queryCount = queries.count();
     const int resolutionCount = resolved.count();
     const quint64 resolvedRevision = accumulatedFrame(updates).contentRevision;
 
     // Repeated writes to another row advance the broad terminal revision,
     // but they do not affect the tracked target or enqueue another URI scan.
-    QTRY_VERIFY_WITH_TIMEOUT(
-        accumulatedFrame(updates).contentRevision
-            >= resolvedRevision + 5,
-        3000);
-    QVERIFY(frameText(accumulatedFrame(updates)).contains(
-        QStringLiteral("tick-")));
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updates).contentRevision
+                                 >= resolvedRevision + 5,
+                             3000);
+    QVERIFY(
+        frameText(accumulatedFrame(updates)).contains(QStringLiteral("tick-")));
     QCOMPARE(queries.count(), queryCount);
     QCOMPARE(resolved.count(), resolutionCount);
     QCOMPARE(pane->cursor().shape(), Qt::PointingHandCursor);
-    QVERIFY(pane->executeConfiguredAction(
-        QStringLiteral("copy_url_to_clipboard")));
+    QVERIFY(
+        pane->executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
     QCOMPARE(QGuiApplication::clipboard()->mimeData()->data(
                  QStringLiteral("text/plain")),
              uri);
@@ -13361,9 +13069,9 @@ void TerminalPaneTest::keepsOsc8InteractionStableAcrossUnrelatedOutput()
     QCoreApplication::sendEvent(pane, &press);
     QTRY_VERIFY_WITH_TIMEOUT(
         accumulatedFrame(updates).contentRevision > pressRevision, 1000);
-    QMouseEvent release(QEvent::MouseButtonRelease, linkPosition,
-                        linkPosition, linkPosition, Qt::LeftButton,
-                        Qt::NoButton, Qt::ControlModifier);
+    QMouseEvent release(QEvent::MouseButtonRelease, linkPosition, linkPosition,
+                        linkPosition, Qt::LeftButton, Qt::NoButton,
+                        Qt::ControlModifier);
     QCoreApplication::sendEvent(pane, &release);
     QTRY_COMPARE_WITH_TIMEOUT(activationResolved.count(), 1, 1000);
     QCOMPARE(openCount, 1);
@@ -13382,8 +13090,8 @@ void TerminalPaneTest::restoresOsc8HoverAcrossViewportScroll()
     qRegisterMetaType<TerminalUpdate>();
     qRegisterMetaType<TerminalHyperlinkState>();
 
-    const QByteArray uri = QByteArrayLiteral(
-        "https://example.test/tracked-scroll");
+    const QByteArray uri =
+        QByteArrayLiteral("https://example.test/tracked-scroll");
     QByteArray output = QByteArrayLiteral("\033]8;;");
     output += uri;
     output += QByteArrayLiteral("\033\\LINK\033]8;;\033\\");
@@ -13402,8 +13110,7 @@ void TerminalPaneTest::restoresOsc8HoverAcrossViewportScroll()
     options.hold = true;
     useSystemFixedFont(options);
 
-    const TerminalCellMetrics metrics =
-        terminalCellMetrics(options.typography);
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
     const qreal cellWidth = metrics.cellWidth;
     const qreal cellHeight = metrics.cellHeight;
 
@@ -13412,16 +13119,15 @@ void TerminalPaneTest::restoresOsc8HoverAcrossViewportScroll()
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy updates(controller, &TerminalController::terminalUpdated);
-    QSignalSpy queries(
-        controller, &TerminalController::hyperlinkQueryRequested);
+    QSignalSpy queries(controller,
+                       &TerminalController::hyperlinkQueryRequested);
     QSignalSpy resolved(controller, &TerminalController::hyperlinkResolved);
     QSignalSpy sessionEnded(&pane, &TerminalPane::sessionEnded);
 
     QTRY_COMPARE_WITH_TIMEOUT(sessionEnded.count(), 1, 5000);
     QVERIFY(pane.executeConfiguredAction(QStringLiteral("scroll_to_top")));
     QTRY_VERIFY_WITH_TIMEOUT(
-        frameText(accumulatedFrame(updates)).contains(
-            QStringLiteral("LINK")),
+        frameText(accumulatedFrame(updates)).contains(QStringLiteral("LINK")),
         1000);
 
     QKeyEvent controlPress(QEvent::KeyPress, Qt::Key_Control,
@@ -13433,12 +13139,11 @@ void TerminalPaneTest::restoresOsc8HoverAcrossViewportScroll()
     QCoreApplication::sendEvent(&pane, &hover);
     QTRY_VERIFY_WITH_TIMEOUT(
         !resolved.isEmpty()
-            && qvariant_cast<TerminalHyperlinkState>(
-                   resolved.constLast().at(1))
+            && qvariant_cast<TerminalHyperlinkState>(resolved.constLast().at(1))
                 == TerminalHyperlinkState::Visible,
         1000);
-    QTRY_COMPARE_WITH_TIMEOUT(
-        pane.cursor().shape(), Qt::PointingHandCursor, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(pane.cursor().shape(), Qt::PointingHandCursor,
+                              1000);
     QTRY_VERIFY_WITH_TIMEOUT(!pane.linkPreviewText().isEmpty(), 1000);
     QVERIFY(!pane.linkPreviewRect().isEmpty());
     const int queryCount = queries.count();
@@ -13446,26 +13151,24 @@ void TerminalPaneTest::restoresOsc8HoverAcrossViewportScroll()
     QVERIFY(pane.executeConfiguredAction(QStringLiteral("scroll_to_bottom")));
     QTRY_VERIFY_WITH_TIMEOUT(
         !resolved.isEmpty()
-            && qvariant_cast<TerminalHyperlinkState>(
-                   resolved.constLast().at(1))
+            && qvariant_cast<TerminalHyperlinkState>(resolved.constLast().at(1))
                 == TerminalHyperlinkState::Hidden,
         1000);
     QCOMPARE(queries.count(), queryCount);
-    QVERIFY(!pane.executeConfiguredAction(
-        QStringLiteral("copy_url_to_clipboard")));
+    QVERIFY(
+        !pane.executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
     QCOMPARE(pane.cursor().shape(), Qt::IBeamCursor);
     QCOMPARE(pane.linkPreviewText(), QString());
     QVERIFY(pane.linkPreviewRect().isEmpty());
 
     QVERIFY(pane.executeConfiguredAction(QStringLiteral("scroll_to_top")));
     QTRY_VERIFY_WITH_TIMEOUT(
-        qvariant_cast<TerminalHyperlinkState>(
-            resolved.constLast().at(1))
+        qvariant_cast<TerminalHyperlinkState>(resolved.constLast().at(1))
             == TerminalHyperlinkState::Visible,
         1000);
     QCOMPARE(queries.count(), queryCount);
-    QTRY_COMPARE_WITH_TIMEOUT(
-        pane.cursor().shape(), Qt::PointingHandCursor, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(pane.cursor().shape(), Qt::PointingHandCursor,
+                              1000);
     QTRY_VERIFY_WITH_TIMEOUT(!pane.linkPreviewText().isEmpty(), 1000);
     QVERIFY(!pane.linkPreviewRect().isEmpty());
 
@@ -13500,13 +13203,12 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     options.program = {
         QStringLiteral("/bin/sh"),
         QStringLiteral("-c"),
-        QStringLiteral(
-            "stty -echo; printf '%s' \"$1\"; "
-            "while [ ! -e \"$2\" ]; do sleep 0.01; done; "
-            "printf '\\033[?1003l'; "
-            "while [ ! -e \"$3\" ]; do sleep 0.01; done; "
-            "printf '\\033[?1003h'; "
-            "exec cat >/dev/null"),
+        QStringLiteral("stty -echo; printf '%s' \"$1\"; "
+                       "while [ ! -e \"$2\" ]; do sleep 0.01; done; "
+                       "printf '\\033[?1003l'; "
+                       "while [ ! -e \"$3\" ]; do sleep 0.01; done; "
+                       "printf '\\033[?1003h'; "
+                       "exec cat >/dev/null"),
         QStringLiteral("mouse-link-capture-test"),
         QString::fromUtf8(output),
         disableMode,
@@ -13516,8 +13218,7 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     options.mouseReporting = false;
     useSystemFixedFont(options);
 
-    const TerminalCellMetrics metrics =
-        terminalCellMetrics(options.typography);
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
     const qreal cellWidth = metrics.cellWidth;
     const qreal cellHeight = metrics.cellHeight;
     const QPointF linkPosition(cellWidth * 0.5, cellHeight * 0.5);
@@ -13527,10 +13228,10 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy updates(controller, &TerminalController::terminalUpdated);
-    QSignalSpy hyperlinkQueries(
-        controller, &TerminalController::hyperlinkQueryRequested);
-    QSignalSpy hyperlinkResolved(
-        controller, &TerminalController::hyperlinkResolved);
+    QSignalSpy hyperlinkQueries(controller,
+                                &TerminalController::hyperlinkQueryRequested);
+    QSignalSpy hyperlinkResolved(controller,
+                                 &TerminalController::hyperlinkResolved);
     QSignalSpy mouseRequests(controller, &TerminalController::mouseRequested);
     QSignalSpy activationResolved(
         controller, &TerminalController::hyperlinkActivationResolved);
@@ -13541,8 +13242,8 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
         return opened == QUrl::fromEncoded(uri, QUrl::StrictMode);
     });
 
-    QTRY_VERIFY_WITH_TIMEOUT(
-        updatesContain(updates, QStringLiteral("L")), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(updatesContain(updates, QStringLiteral("L")),
+                             5000);
     QTRY_VERIFY_WITH_TIMEOUT(controller->terminalMouseTracking(), 1000);
     QVERIFY(!controller->mouseTracking());
 
@@ -13580,8 +13281,8 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     QTRY_VERIFY_WITH_TIMEOUT(!controller->terminalMouseTracking(), 1000);
     QTRY_VERIFY_WITH_TIMEOUT(!hyperlinkQueries.isEmpty(), 1000);
     QTRY_VERIFY_WITH_TIMEOUT(!hyperlinkResolved.isEmpty(), 1000);
-    QTRY_COMPARE_WITH_TIMEOUT(
-        pane.cursor().shape(), Qt::PointingHandCursor, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(pane.cursor().shape(), Qt::PointingHandCursor,
+                              1000);
 
     touch(reenableMode);
     QTRY_VERIFY_WITH_TIMEOUT(controller->terminalMouseTracking(), 1000);
@@ -13592,8 +13293,8 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
                          Qt::ControlModifier | Qt::ShiftModifier);
     QCoreApplication::sendEvent(&pane, &shiftPress);
     sendHover(Qt::NoModifier);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        hyperlinkQueries.size() > queriesBeforeShift, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(hyperlinkQueries.size() > queriesBeforeShift,
+                             1000);
     QCOMPARE(mouseRequests.count(), 0);
     QTRY_VERIFY_WITH_TIMEOUT(!hyperlinkResolved.isEmpty(), 1000);
 
@@ -13623,17 +13324,16 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     QCoreApplication::sendEvent(&pane, &controlRelease);
     hyperlinkQueries.clear();
     hyperlinkResolved.clear();
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("toggle_mouse_reporting")));
     QVERIFY(controller->mouseTracking());
 
     QCoreApplication::sendEvent(&pane, &controlPress);
     sendHover(Qt::NoModifier);
     QCOMPARE(hyperlinkQueries.count(), 0);
     QCOMPARE(mouseRequests.count(), 1);
-    const TerminalMouseInput capturedMotion =
-        qvariant_cast<TerminalMouseInput>(
-            mouseRequests.constFirst().constFirst());
+    const TerminalMouseInput capturedMotion = qvariant_cast<TerminalMouseInput>(
+        mouseRequests.constFirst().constFirst());
     QCOMPARE(capturedMotion.action, TerminalMouseInput::Motion);
     QVERIFY(capturedMotion.modifiers & Qt::ControlModifier);
 
@@ -13646,14 +13346,15 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     QCOMPARE(hyperlinkQueries.count(), 1);
     QCOMPARE(mouseRequests.count(), 2);
     QTRY_VERIFY_WITH_TIMEOUT(!hyperlinkResolved.isEmpty(), 1000);
-    QCOMPARE(qvariant_cast<TerminalLinkKind>(
-                 hyperlinkResolved.constLast().at(2)),
-             TerminalLinkKind::Osc8);
+    QCOMPARE(
+        qvariant_cast<TerminalLinkKind>(hyperlinkResolved.constLast().at(2)),
+        TerminalLinkKind::Osc8);
     QCOMPARE(hyperlinkResolved.constLast().at(3).toByteArray(), uri);
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("copy_url_to_clipboard")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
     QCOMPARE(QGuiApplication::clipboard()->mimeData()->data(
-                 QStringLiteral("text/plain")), uri);
+                 QStringLiteral("text/plain")),
+             uri);
 
     sendMouse(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton,
               Qt::NoModifier);
@@ -13677,7 +13378,8 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
               Qt::ShiftModifier);
     QCOMPARE(mouseRequests.count(), beforeCapturedGesture + 1);
     QCOMPARE(qvariant_cast<TerminalMouseInput>(
-                 mouseRequests.at(beforeCapturedGesture).constFirst()).action,
+                 mouseRequests.at(beforeCapturedGesture).constFirst())
+                 .action,
              TerminalMouseInput::Press);
 
     // Releasing Shift after a local press allows the later motion and release
@@ -13685,16 +13387,17 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     const int beforeLocalGesture = mouseRequests.count();
     sendMouse(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton,
               Qt::ShiftModifier);
-    sendMouse(QEvent::MouseMove, Qt::NoButton, Qt::LeftButton,
-              Qt::NoModifier);
+    sendMouse(QEvent::MouseMove, Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
     sendMouse(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton,
               Qt::NoModifier);
     QCOMPARE(mouseRequests.count(), beforeLocalGesture + 2);
     QCOMPARE(qvariant_cast<TerminalMouseInput>(
-                 mouseRequests.at(beforeLocalGesture).constFirst()).action,
+                 mouseRequests.at(beforeLocalGesture).constFirst())
+                 .action,
              TerminalMouseInput::Motion);
     QCOMPARE(qvariant_cast<TerminalMouseInput>(
-                 mouseRequests.at(beforeLocalGesture + 1).constFirst()).action,
+                 mouseRequests.at(beforeLocalGesture + 1).constFirst())
+                 .action,
              TerminalMouseInput::Release);
 
     // Physical button state is independent from each event's route. A local
@@ -13705,8 +13408,8 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
               Qt::ShiftModifier);
     sendMouse(QEvent::MouseButtonPress, Qt::RightButton,
               Qt::LeftButton | Qt::RightButton, Qt::NoModifier);
-    sendMouse(QEvent::MouseMove, Qt::NoButton,
-              Qt::LeftButton | Qt::RightButton, Qt::NoModifier);
+    sendMouse(QEvent::MouseMove, Qt::NoButton, Qt::LeftButton | Qt::RightButton,
+              Qt::NoModifier);
     sendMouse(QEvent::MouseButtonRelease, Qt::RightButton, Qt::LeftButton,
               Qt::NoModifier);
     sendMouse(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton,
@@ -13779,7 +13482,8 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
               Qt::ShiftModifier);
     QCOMPARE(mouseRequests.count(), beforeFocusLoss + 1);
     QCOMPARE(qvariant_cast<TerminalMouseInput>(
-                 mouseRequests.constLast().constFirst()).action,
+                 mouseRequests.constLast().constFirst())
+                 .action,
              TerminalMouseInput::Press);
 }
 
@@ -13868,8 +13572,7 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
         sequence('f', QStringLiteral("end_key_sequence"),
                  GhosttyKeybindFlags{.consumed = false}),
     };
-    options.keybindSource =
-        GhosttyKeybindSource::structured(std::move(config));
+    options.keybindSource = GhosttyKeybindSource::structured(std::move(config));
 
     TerminalPane pane(options);
     auto *controller = pane.findChild<TerminalController *>();
@@ -13880,8 +13583,8 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
                         &TerminalController::sequenceResolutionRequested);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
     QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
-    QSignalSpy applicationActions(
-        &pane, &TerminalPane::applicationActionRequested);
+    QSignalSpy applicationActions(&pane,
+                                  &TerminalPane::applicationActionRequested);
     QSignalSpy keySequenceChanges(&pane,
                                   &TerminalPane::pendingKeySequenceChanged);
 
@@ -13925,8 +13628,7 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
     // current press; it must not also travel through the ordinary key signal.
     leader();
     press(Qt::Key_Z, Qt::NoModifier, QStringLiteral("z"));
-    QCOMPARE(resolution(),
-             TerminalSequenceResolution::FlushAndSendCurrent);
+    QCOMPARE(resolution(), TerminalSequenceResolution::FlushAndSendCurrent);
     QVERIFY(pane.pendingKeySequence().isEmpty());
     QCOMPARE(keySequenceChanges.count(), 4);
     QCOMPARE(forwarded.count(), 1);
@@ -13938,8 +13640,7 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
     QCOMPARE(qvariant_cast<ApplicationAction>(
                  applicationActions.constFirst().constFirst()),
              ApplicationAction::ReloadConfig);
-    QCOMPARE(resolution(),
-             TerminalSequenceResolution::FlushAndSendCurrent);
+    QCOMPARE(resolution(), TerminalSequenceResolution::FlushAndSendCurrent);
 
     // A performable action that the workspace rejects behaves as absent.
     pane.setWorkspaceActionHandler([](WorkspaceActionRequest request) {
@@ -13947,8 +13648,7 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
     });
     leader();
     press(Qt::Key_P, Qt::NoModifier, QStringLiteral("p"));
-    QCOMPARE(resolution(),
-             TerminalSequenceResolution::FlushAndSendCurrent);
+    QCOMPARE(resolution(), TerminalSequenceResolution::FlushAndSendCurrent);
 
     // end_key_sequence flushes leaders but consumes the terminating key.
     QVERIFY(
@@ -14012,9 +13712,8 @@ void TerminalPaneTest::preservesStateWithinAKeybindProgramGeneration()
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::structured(config);
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
-        {}, generation);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Immediate, {}, generation);
     QVERIFY(pane.keybindProgram().isSameGeneration(generation));
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
@@ -14103,30 +13802,27 @@ void TerminalPaneTest::newerSameProgramRuntimeUpdateWinsReentry()
     options.keybindSource = GhosttyKeybindSource::structured({});
     options.resizeOverlay.position = ResizeOverlayPosition::Center;
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
-        {}, program);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Immediate, {}, program);
     pane.setSize(QSizeF(500.0, 300.0));
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
-    QSignalSpy runtimeOptions(
-        controller, &TerminalController::runtimeOptionsRequested);
+    QSignalSpy runtimeOptions(controller,
+                              &TerminalController::runtimeOptionsRequested);
 
     LaunchOptions outer = options;
     outer.resizeOverlay.position = ResizeOverlayPosition::TopLeft;
     outer.selectionClipboard.trimTrailingSpaces = false;
     LaunchOptions newer = options;
     newer.resizeOverlay.position = ResizeOverlayPosition::BottomRight;
-    newer.selectionClipboard.copyOnSelect =
-        TerminalCopyOnSelectMode::Disabled;
+    newer.selectionClipboard.copyOnSelect = TerminalCopyOnSelectMode::Disabled;
 
     bool nested = false;
-    connect(&pane, &TerminalPane::resizeOverlayRectChanged,
-            &pane, [&] {
-                if (nested) return;
-                nested = true;
-                pane.applyRuntimeOptions(newer, program);
-            });
+    connect(&pane, &TerminalPane::resizeOverlayRectChanged, &pane, [&] {
+        if (nested) return;
+        nested = true;
+        pane.applyRuntimeOptions(newer, program);
+    });
 
     pane.applyRuntimeOptions(outer, program);
 
@@ -14199,9 +13895,8 @@ void TerminalPaneTest::keyTableResetNotifiesBeforeLaterReentry()
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::structured(config);
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
-        {}, initialProgram);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Immediate, {}, initialProgram);
     QSignalSpy tableChanges(&pane, &TerminalPane::activeKeyTablesChanged);
     QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("activate_key_table:edit")));
@@ -14212,12 +13907,11 @@ void TerminalPaneTest::keyTableResetNotifiesBeforeLaterReentry()
     LaunchOptions newer = options;
     newer.resizeOverlay.position = ResizeOverlayPosition::BottomRight;
     bool nested = false;
-    connect(&pane, &TerminalPane::resizeOverlayRectChanged,
-            &pane, [&] {
-                if (nested) return;
-                nested = true;
-                pane.applyRuntimeOptions(newer, newerProgram);
-            });
+    connect(&pane, &TerminalPane::resizeOverlayRectChanged, &pane, [&] {
+        if (nested) return;
+        nested = true;
+        pane.applyRuntimeOptions(newer, newerProgram);
+    });
 
     pane.applyRuntimeOptions(outer, outerProgram);
 
@@ -14236,14 +13930,14 @@ void TerminalPaneTest::runtimeOptionsObserverMayDestroyPane()
     const GhosttyKeybindProgram program =
         GhosttyKeybindProgram::compile(options.keybindSource).program;
 
-    auto *pane = new TerminalPane(
-        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
-        {}, program);
+    auto *pane =
+        new TerminalPane(options, nullptr, std::nullopt,
+                         TerminalSessionStartMode::Immediate, {}, program);
     const QPointer<TerminalPane> guardedPane(pane);
     auto *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
-    connect(controller, &TerminalController::runtimeOptionsRequested,
-            this, [pane] { delete pane; });
+    connect(controller, &TerminalController::runtimeOptionsRequested, this,
+            [pane] { delete pane; });
 
     LaunchOptions updated = options;
     updated.selectionClipboard.trimTrailingSpaces = false;
@@ -14268,9 +13962,9 @@ void TerminalPaneTest::reloadsSafelyFromSequenceStagingNotification()
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::structured(config);
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
-        {}, initialGeneration);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Immediate, {},
+                      initialGeneration);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy staged(controller,
@@ -14284,15 +13978,15 @@ void TerminalPaneTest::reloadsSafelyFromSequenceStagingNotification()
         QStringLiteral("activate_key_table_once:once")));
     QCOMPARE(tableChanges.count(), 1);
     bool reloaded = false;
-    connect(controller, &TerminalController::sequenceKeyStagingRequested,
-            &pane, [&] {
+    connect(controller, &TerminalController::sequenceKeyStagingRequested, &pane,
+            [&] {
                 if (reloaded) return;
                 reloaded = true;
                 pane.applyRuntimeOptions(options, replacementGeneration);
             });
 
-    QKeyEvent leader(
-        QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QKeyEvent leader(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+                     QStringLiteral("x"));
     QCoreApplication::sendEvent(&pane, &leader);
 
     QVERIFY(reloaded);
@@ -14302,13 +13996,13 @@ void TerminalPaneTest::reloadsSafelyFromSequenceStagingNotification()
     QCOMPARE(staged.count(), 1);
     QCOMPARE(resolved.count(), 1);
     QCOMPARE(resolved.constFirst().at(0), staged.constFirst().at(0));
-    QCOMPARE(qvariant_cast<TerminalSequenceResolution>(
-                 resolved.constFirst().at(1)),
-             TerminalSequenceResolution::Drop);
+    QCOMPARE(
+        qvariant_cast<TerminalSequenceResolution>(resolved.constFirst().at(1)),
+        TerminalSequenceResolution::Drop);
 
     const int forwardedBeforeFormerContinuation = forwarded.count();
-    QKeyEvent continuation(
-        QEvent::KeyPress, Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+    QKeyEvent continuation(QEvent::KeyPress, Qt::Key_Y, Qt::NoModifier,
+                           QStringLiteral("y"));
     QCoreApplication::sendEvent(&pane, &continuation);
     QCOMPARE(forwarded.count(), forwardedBeforeFormerContinuation + 1);
     QCOMPARE(resolved.count(), 1);
@@ -14325,19 +14019,19 @@ void TerminalPaneTest::sequenceStagingObserverMayDestroyPane()
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::structured(config);
 
-    auto *pane = new TerminalPane(
-        options, nullptr, std::nullopt, TerminalSessionStartMode::Deferred,
-        {}, program);
+    auto *pane =
+        new TerminalPane(options, nullptr, std::nullopt,
+                         TerminalSessionStartMode::Deferred, {}, program);
     const QPointer<TerminalPane> guardedPane(pane);
     auto *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QVERIFY(pane->executeConfiguredAction(
         QStringLiteral("activate_key_table:edit")));
-    connect(controller, &TerminalController::sequenceKeyStagingRequested,
-            this, [pane] { delete pane; });
+    connect(controller, &TerminalController::sequenceKeyStagingRequested, this,
+            [pane] { delete pane; });
 
-    QKeyEvent leader(
-        QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QKeyEvent leader(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+                     QStringLiteral("x"));
     QCoreApplication::sendEvent(pane, &leader);
 
     QVERIFY(guardedPane.isNull());
@@ -14354,23 +14048,23 @@ void TerminalPaneTest::sequenceResolutionObserverMayDestroyPane()
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::structured(config);
 
-    auto *pane = new TerminalPane(
-        options, nullptr, std::nullopt, TerminalSessionStartMode::Deferred,
-        {}, program);
+    auto *pane =
+        new TerminalPane(options, nullptr, std::nullopt,
+                         TerminalSessionStartMode::Deferred, {}, program);
     const QPointer<TerminalPane> guardedPane(pane);
     auto *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QVERIFY(pane->executeConfiguredAction(
         QStringLiteral("activate_key_table:edit")));
 
-    QKeyEvent leader(
-        QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QKeyEvent leader(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+                     QStringLiteral("x"));
     QCoreApplication::sendEvent(pane, &leader);
-    connect(controller, &TerminalController::sequenceResolutionRequested,
-            this, [pane] { delete pane; });
+    connect(controller, &TerminalController::sequenceResolutionRequested, this,
+            [pane] { delete pane; });
 
-    QKeyEvent invalid(
-        QEvent::KeyPress, Qt::Key_Z, Qt::NoModifier, QStringLiteral("z"));
+    QKeyEvent invalid(QEvent::KeyPress, Qt::Key_Z, Qt::NoModifier,
+                      QStringLiteral("z"));
     QCoreApplication::sendEvent(pane, &invalid);
 
     QVERIFY(guardedPane.isNull());
@@ -14391,9 +14085,9 @@ void TerminalPaneTest::reloadsSafelyFromOneShotLeaderTableNotification()
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::structured(config);
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
-        {}, initialGeneration);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Immediate, {},
+                      initialGeneration);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy staged(controller,
@@ -14431,9 +14125,9 @@ void TerminalPaneTest::reloadsSafelyFromOneShotLeaderTableNotification()
     QCOMPARE(staged.count(), 1);
     QCOMPARE(resolved.count(), 1);
     QCOMPARE(resolved.constFirst().at(0), staged.constFirst().at(0));
-    QCOMPARE(qvariant_cast<TerminalSequenceResolution>(
-                 resolved.constFirst().at(1)),
-             TerminalSequenceResolution::Drop);
+    QCOMPARE(
+        qvariant_cast<TerminalSequenceResolution>(resolved.constFirst().at(1)),
+        TerminalSequenceResolution::Drop);
 
     const int forwardedBeforeFormerContinuation = forwarded.count();
     press(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
@@ -14449,9 +14143,9 @@ void TerminalPaneTest::reloadsSafelyFromOneShotLeaderTableNotification()
     press(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
     QCOMPARE(newTab.count(), 1);
     QCOMPARE(resolved.count(), 2);
-    QCOMPARE(qvariant_cast<TerminalSequenceResolution>(
-                 resolved.constLast().at(1)),
-             TerminalSequenceResolution::Drop);
+    QCOMPARE(
+        qvariant_cast<TerminalSequenceResolution>(resolved.constLast().at(1)),
+        TerminalSequenceResolution::Drop);
 }
 
 void TerminalPaneTest::oneShotTableObserverCanContinueSequence()
@@ -14465,9 +14159,8 @@ void TerminalPaneTest::oneShotTableObserverCanContinueSequence()
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::structured(config);
 
-    TerminalPane pane(
-        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
-        {}, program);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Immediate, {}, program);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy staged(controller,
@@ -14486,10 +14179,10 @@ void TerminalPaneTest::oneShotTableObserverCanContinueSequence()
     QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("once")}));
 
     QStringList events;
-    connect(controller, &TerminalController::sequenceKeyStagingRequested,
-            &pane, [&events] { events.append(QStringLiteral("stage")); });
-    connect(controller, &TerminalController::sequenceResolutionRequested,
-            &pane, [&events] { events.append(QStringLiteral("resolve")); });
+    connect(controller, &TerminalController::sequenceKeyStagingRequested, &pane,
+            [&events] { events.append(QStringLiteral("stage")); });
+    connect(controller, &TerminalController::sequenceResolutionRequested, &pane,
+            [&events] { events.append(QStringLiteral("resolve")); });
     bool continuationInjected = false;
     connect(&pane, &TerminalPane::activeKeyTablesChanged, &pane, [&] {
         if (continuationInjected || !pane.activeKeyTables().isEmpty()) return;
@@ -14501,9 +14194,9 @@ void TerminalPaneTest::oneShotTableObserverCanContinueSequence()
     press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
 
     QVERIFY(continuationInjected);
-    QCOMPARE(events, QStringList({QStringLiteral("stage"),
-                                  QStringLiteral("table"),
-                                  QStringLiteral("resolve")}));
+    QCOMPARE(events,
+             QStringList({QStringLiteral("stage"), QStringLiteral("table"),
+                          QStringLiteral("resolve")}));
     QCOMPARE(staged.count(), 1);
     QCOMPARE(resolved.count(), 1);
     QCOMPARE(resolved.constFirst().at(0), staged.constFirst().at(0));
@@ -14539,9 +14232,8 @@ void TerminalPaneTest::reloadResolutionObserverUsesReplacementProgram()
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::structured(initialConfig);
-    TerminalPane pane(
-        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
-        {}, initialProgram);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Immediate, {}, initialProgram);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy staged(controller,
@@ -14555,8 +14247,7 @@ void TerminalPaneTest::reloadResolutionObserverUsesReplacementProgram()
         QKeyEvent event(QEvent::KeyPress, key, modifiers, std::move(text));
         QCoreApplication::sendEvent(&pane, &event);
     };
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("set_font_size:20")));
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("set_font_size:20")));
     QCOMPARE(pane.fontPointSize(), 20.0);
     QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("activate_key_table:edit")));
@@ -14565,8 +14256,8 @@ void TerminalPaneTest::reloadResolutionObserverUsesReplacementProgram()
     const quint64 initialToken = staged.constFirst().at(0).toULongLong();
 
     bool replacementLeaderInjected = false;
-    connect(controller, &TerminalController::sequenceResolutionRequested,
-            &pane, [&] {
+    connect(controller, &TerminalController::sequenceResolutionRequested, &pane,
+            [&] {
                 if (replacementLeaderInjected) return;
                 replacementLeaderInjected = true;
                 press(Qt::Key_S, Qt::NoModifier, QStringLiteral("s"));
@@ -14592,29 +14283,28 @@ void TerminalPaneTest::reloadResolutionObserverUsesReplacementProgram()
     QCOMPARE(newTab.count(), 1);
     QCOMPARE(resolved.count(), 2);
     QCOMPARE(resolved.constLast().at(0).toULongLong(), replacementToken);
-    QCOMPARE(qvariant_cast<TerminalSequenceResolution>(
-                 resolved.constLast().at(1)),
-             TerminalSequenceResolution::Drop);
+    QCOMPARE(
+        qvariant_cast<TerminalSequenceResolution>(resolved.constLast().at(1)),
+        TerminalSequenceResolution::Drop);
 }
 
 void TerminalPaneTest::oneShotLeafObserverCanStartSequence()
 {
     GhosttyKeybindConfig config;
     config.root = {
-        generationTestBinding(
-            {generationTestKey('o', GhosttyKeybindCtrl)},
-            QStringLiteral("activate_key_table_once:once")),
-        generationTestBinding(
-            {generationTestKey('q'), generationTestKey('r')},
-            QStringLiteral("new_tab")),
+        generationTestBinding({generationTestKey('o', GhosttyKeybindCtrl)},
+                              QStringLiteral("activate_key_table_once:once")),
+        generationTestBinding({generationTestKey('q'), generationTestKey('r')},
+                              QStringLiteral("new_tab")),
     };
     config.tables = {
         GhosttyKeybindTable{
             .name = QStringLiteral("once"),
-            .bindings = {
-                generationTestBinding(
-                    {generationTestKey('x')}, QStringLiteral("new_tab")),
-            },
+            .bindings =
+                {
+                    generationTestBinding({generationTestKey('x')},
+                                          QStringLiteral("new_tab")),
+                },
         },
     };
     const GhosttyKeybindProgram program =
@@ -14624,9 +14314,8 @@ void TerminalPaneTest::oneShotLeafObserverCanStartSequence()
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::structured(config);
-    TerminalPane pane(
-        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
-        {}, program);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Immediate, {}, program);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy staged(controller,
@@ -14666,21 +14355,20 @@ void TerminalPaneTest::actionObserverCanStartIndependentSequence()
 {
     GhosttyKeybindConfig config;
     config.root = {
-        generationTestBinding(
-            {generationTestKey('x'), generationTestKey('y')},
-            QStringLiteral("activate_key_table:edit")),
-        generationTestBinding(
-            {generationTestKey('q'), generationTestKey('r')},
-            QStringLiteral("new_tab")),
+        generationTestBinding({generationTestKey('x'), generationTestKey('y')},
+                              QStringLiteral("activate_key_table:edit")),
+        generationTestBinding({generationTestKey('q'), generationTestKey('r')},
+                              QStringLiteral("new_tab")),
     };
     config.root.front().flags.consumed = false;
     config.tables = {
         GhosttyKeybindTable{
             .name = QStringLiteral("edit"),
-            .bindings = {
-                generationTestBinding(
-                    {generationTestKey('z')}, QStringLiteral("ignore")),
-            },
+            .bindings =
+                {
+                    generationTestBinding({generationTestKey('z')},
+                                          QStringLiteral("ignore")),
+                },
         },
     };
     const GhosttyKeybindProgram program =
@@ -14690,9 +14378,8 @@ void TerminalPaneTest::actionObserverCanStartIndependentSequence()
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::structured(config);
-    TerminalPane pane(
-        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
-        {}, program);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Immediate, {}, program);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy staged(controller,
@@ -14725,9 +14412,9 @@ void TerminalPaneTest::actionObserverCanStartIndependentSequence()
     QVERIFY(nestedToken != outerToken);
     QCOMPARE(resolved.count(), 1);
     QCOMPARE(resolved.constFirst().at(0).toULongLong(), outerToken);
-    QCOMPARE(qvariant_cast<TerminalSequenceResolution>(
-                 resolved.constFirst().at(1)),
-             TerminalSequenceResolution::FlushAndSendCurrent);
+    QCOMPARE(
+        qvariant_cast<TerminalSequenceResolution>(resolved.constFirst().at(1)),
+        TerminalSequenceResolution::FlushAndSendCurrent);
 
     press(Qt::Key_R, Qt::NoModifier, QStringLiteral("r"));
     QCOMPARE(newTab.count(), 1);
@@ -14739,18 +14426,18 @@ void TerminalPaneTest::deferredUnconsumedKeysPreserveDispatchOrder()
 {
     GhosttyKeybindConfig config;
     config.root = {
-        generationTestBinding(
-            {generationTestKey('a')},
-            QStringLiteral("activate_key_table:edit")),
+        generationTestBinding({generationTestKey('a')},
+                              QStringLiteral("activate_key_table:edit")),
     };
     config.root.front().flags.consumed = false;
     config.tables = {
         GhosttyKeybindTable{
             .name = QStringLiteral("edit"),
-            .bindings = {
-                generationTestBinding(
-                    {generationTestKey('z')}, QStringLiteral("ignore")),
-            },
+            .bindings =
+                {
+                    generationTestBinding({generationTestKey('z')},
+                                          QStringLiteral("ignore")),
+                },
         },
     };
     const GhosttyKeybindProgram program =
@@ -14760,59 +14447,58 @@ void TerminalPaneTest::deferredUnconsumedKeysPreserveDispatchOrder()
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::structured(config);
-    TerminalPane pane(
-        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
-        {}, program);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Immediate, {}, program);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
 
-    connect(&pane, &TerminalPane::activeKeyTablesChanged, &pane, [&] {
-        QKeyEvent press(
-            QEvent::KeyPress, Qt::Key_Q, Qt::NoModifier,
-            QStringLiteral("q"));
-        QCoreApplication::sendEvent(&pane, &press);
-        QKeyEvent release(
-            QEvent::KeyRelease, Qt::Key_Q, Qt::NoModifier,
-            QStringLiteral("q"));
-        QCoreApplication::sendEvent(&pane, &release);
-    }, Qt::SingleShotConnection);
+    connect(
+        &pane, &TerminalPane::activeKeyTablesChanged, &pane,
+        [&] {
+            QKeyEvent press(QEvent::KeyPress, Qt::Key_Q, Qt::NoModifier,
+                            QStringLiteral("q"));
+            QCoreApplication::sendEvent(&pane, &press);
+            QKeyEvent release(QEvent::KeyRelease, Qt::Key_Q, Qt::NoModifier,
+                              QStringLiteral("q"));
+            QCoreApplication::sendEvent(&pane, &release);
+        },
+        Qt::SingleShotConnection);
 
-    QKeyEvent outer(
-        QEvent::KeyPress, Qt::Key_A, Qt::NoModifier,
-        QStringLiteral("a"));
+    QKeyEvent outer(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier,
+                    QStringLiteral("a"));
     QCoreApplication::sendEvent(&pane, &outer);
 
     QCOMPARE(forwarded.count(), 3);
     QCOMPARE(qvariant_cast<TerminalKeyInput>(forwarded.at(0).constFirst()).text,
              QStringLiteral("a"));
-    QVERIFY(qvariant_cast<TerminalKeyInput>(
-        forwarded.at(0).constFirst()).pressed);
+    QVERIFY(
+        qvariant_cast<TerminalKeyInput>(forwarded.at(0).constFirst()).pressed);
     QCOMPARE(qvariant_cast<TerminalKeyInput>(forwarded.at(1).constFirst()).text,
              QStringLiteral("q"));
-    QVERIFY(qvariant_cast<TerminalKeyInput>(
-        forwarded.at(1).constFirst()).pressed);
+    QVERIFY(
+        qvariant_cast<TerminalKeyInput>(forwarded.at(1).constFirst()).pressed);
     QCOMPARE(qvariant_cast<TerminalKeyInput>(forwarded.at(2).constFirst()).text,
              QStringLiteral("q"));
-    QVERIFY(!qvariant_cast<TerminalKeyInput>(
-        forwarded.at(2).constFirst()).pressed);
+    QVERIFY(
+        !qvariant_cast<TerminalKeyInput>(forwarded.at(2).constFirst()).pressed);
 }
 
 void TerminalPaneTest::deferredReleaseWaitsForConsumedPress()
 {
     GhosttyKeybindConfig config;
     config.root = {
-        generationTestBinding(
-            {generationTestKey('a')},
-            QStringLiteral("activate_key_table:edit")),
+        generationTestBinding({generationTestKey('a')},
+                              QStringLiteral("activate_key_table:edit")),
     };
     config.tables = {
         GhosttyKeybindTable{
             .name = QStringLiteral("edit"),
-            .bindings = {
-                generationTestBinding(
-                    {generationTestKey('z')}, QStringLiteral("ignore")),
-            },
+            .bindings =
+                {
+                    generationTestBinding({generationTestKey('z')},
+                                          QStringLiteral("ignore")),
+                },
         },
     };
     const GhosttyKeybindProgram program =
@@ -14822,23 +14508,23 @@ void TerminalPaneTest::deferredReleaseWaitsForConsumedPress()
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::structured(config);
-    TerminalPane pane(
-        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
-        {}, program);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Immediate, {}, program);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
 
-    connect(&pane, &TerminalPane::activeKeyTablesChanged, &pane, [&] {
-        QKeyEvent release(
-            QEvent::KeyRelease, Qt::Key_A, Qt::NoModifier,
-            QStringLiteral("a"));
-        QCoreApplication::sendEvent(&pane, &release);
-    }, Qt::SingleShotConnection);
+    connect(
+        &pane, &TerminalPane::activeKeyTablesChanged, &pane,
+        [&] {
+            QKeyEvent release(QEvent::KeyRelease, Qt::Key_A, Qt::NoModifier,
+                              QStringLiteral("a"));
+            QCoreApplication::sendEvent(&pane, &release);
+        },
+        Qt::SingleShotConnection);
 
-    QKeyEvent outer(
-        QEvent::KeyPress, Qt::Key_A, Qt::NoModifier,
-        QStringLiteral("a"));
+    QKeyEvent outer(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier,
+                    QStringLiteral("a"));
     QCoreApplication::sendEvent(&pane, &outer);
 
     QVERIFY(forwarded.isEmpty());
@@ -14854,8 +14540,7 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
         };
     };
     const auto binding = [&](QVector<GhosttyKeybindTrigger> sequence,
-                             QString action,
-                             GhosttyKeybindFlags flags = {}) {
+                             QString action, GhosttyKeybindFlags flags = {}) {
         return GhosttyKeybindDefinition{
             .sequence = std::move(sequence),
             .actions = {std::move(action)},
@@ -14888,24 +14573,24 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
     config.tables = {
         GhosttyKeybindTable{
             .name = QStringLiteral("edité"),
-            .bindings = {
-                binding({unicode('n')}, QStringLiteral("new_tab")),
-                binding({unicode('x'), unicode('e')},
-                        QStringLiteral("end_key_sequence")),
-                binding({escape},
-                        QStringLiteral("deactivate_key_table")),
-            },
+            .bindings =
+                {
+                    binding({unicode('n')}, QStringLiteral("new_tab")),
+                    binding({unicode('x'), unicode('e')},
+                            QStringLiteral("end_key_sequence")),
+                    binding({escape}, QStringLiteral("deactivate_key_table")),
+                },
         },
         GhosttyKeybindTable{
             .name = QStringLiteral("once"),
-            .bindings = {
-                binding({unicode('x'), unicode('y')},
-                        QStringLiteral("new_tab")),
-            },
+            .bindings =
+                {
+                    binding({unicode('x'), unicode('y')},
+                            QStringLiteral("new_tab")),
+                },
         },
     };
-    options.keybindSource =
-        GhosttyKeybindSource::structured(std::move(config));
+    options.keybindSource = GhosttyKeybindSource::structured(std::move(config));
 
     TerminalPane pane(options);
     auto *controller = pane.findChild<TerminalController *>();
@@ -14926,10 +14611,10 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
     // and emit no table notification.
     QVERIFY(!pane.executeConfiguredAction(
         QStringLiteral("activate_key_table:missing")));
-    QVERIFY(!pane.executeConfiguredAction(
-        QStringLiteral("activate_key_table:")));
-    QVERIFY(!pane.executeConfiguredAction(
-        QStringLiteral("deactivate_key_table")));
+    QVERIFY(
+        !pane.executeConfiguredAction(QStringLiteral("activate_key_table:")));
+    QVERIFY(
+        !pane.executeConfiguredAction(QStringLiteral("deactivate_key_table")));
     QVERIFY(!pane.executeConfiguredAction(
         QStringLiteral("deactivate_all_key_tables")));
     QCOMPARE(tableChanges.count(), 0);
@@ -14956,13 +14641,12 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
     QCOMPARE(resolved.count(), 0);
     press(Qt::Key_E, Qt::NoModifier, QStringLiteral("e"));
     QCOMPARE(resolved.count(), 1);
-    QCOMPARE(qvariant_cast<TerminalSequenceResolution>(
-                 resolved.constLast().at(1)),
-             TerminalSequenceResolution::Flush);
+    QCOMPARE(
+        qvariant_cast<TerminalSequenceResolution>(resolved.constLast().at(1)),
+        TerminalSequenceResolution::Flush);
     // With no active sequence, the exact void action remains a successful
     // safe no-op and emits no synthetic worker resolution.
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("end_key_sequence")));
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("end_key_sequence")));
     QCOMPARE(resolved.count(), 1);
 
     // A performable activation of the already-innermost table behaves as an
@@ -14983,8 +14667,8 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
     QCOMPARE(pane.activeKeyTables(),
              QStringList({QStringLiteral("edité"), QStringLiteral("once")}));
     QCOMPARE(tableChanges.count(), 2);
-    QVERIFY(pane.executeConfiguredAction(
-        QStringLiteral("deactivate_key_table")));
+    QVERIFY(
+        pane.executeConfiguredAction(QStringLiteral("deactivate_key_table")));
     QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edité")}));
     QCOMPARE(tableChanges.count(), 3);
     QVERIFY(pane.executeConfiguredAction(
@@ -14994,8 +14678,8 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
         QStringLiteral("deactivate_all_key_tables")));
     QVERIFY(pane.activeKeyTables().isEmpty());
     QCOMPARE(tableChanges.count(), 5);
-    QVERIFY(!pane.executeConfiguredAction(
-        QStringLiteral("deactivate_key_table")));
+    QVERIFY(
+        !pane.executeConfiguredAction(QStringLiteral("deactivate_key_table")));
     QVERIFY(!pane.executeConfiguredAction(
         QStringLiteral("deactivate_all_key_tables")));
     QCOMPARE(tableChanges.count(), 5);
@@ -15021,8 +14705,7 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
     QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edité")}));
     QCOMPARE(tableChanges.count(), 10);
     LaunchOptions reloaded = options;
-    GhosttyKeybindConfig reloadedConfig =
-        *reloaded.keybindSource.structured();
+    GhosttyKeybindConfig reloadedConfig = *reloaded.keybindSource.structured();
     reloadedConfig.tables.clear();
     reloaded.keybindSource =
         GhosttyKeybindSource::structured(std::move(reloadedConfig));
@@ -15038,34 +14721,32 @@ void TerminalPaneTest::replaysInvalidStructuredSequenceThroughPty()
     LaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
-        QStringLiteral("/bin/sh"),
-        QStringLiteral("-c"),
-        QStringLiteral(
-            "stty raw -echo; "
-            "printf 'keybind-ready'; "
-            "payload=$(dd bs=1 count=2 2>/dev/null); "
-            "stty sane; "
-            "printf 'keybind-bytes:'; "
-            "printf '%s' \"$payload\" | od -An -tx1 | tr -d ' \\n'; "
-            "printf '\\n'")};
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral("stty raw -echo; "
+                       "printf 'keybind-ready'; "
+                       "payload=$(dd bs=1 count=2 2>/dev/null); "
+                       "stty sane; "
+                       "printf 'keybind-bytes:'; "
+                       "printf '%s' \"$payload\" | od -An -tx1 | tr -d ' \\n'; "
+                       "printf '\\n'")};
     options.hold = true;
     GhosttyKeybindConfig config;
     config.root = {GhosttyKeybindDefinition{
-        .sequence = {
-            GhosttyKeybindTrigger{
-                .kind = GhosttyKeybindKeyKind::Unicode,
-                .unicodeCodepoint = 'x',
-                .modifiers = GhosttyKeybindCtrl,
+        .sequence =
+            {
+                GhosttyKeybindTrigger{
+                    .kind = GhosttyKeybindKeyKind::Unicode,
+                    .unicodeCodepoint = 'x',
+                    .modifiers = GhosttyKeybindCtrl,
+                },
+                GhosttyKeybindTrigger{
+                    .kind = GhosttyKeybindKeyKind::Unicode,
+                    .unicodeCodepoint = 'n',
+                },
             },
-            GhosttyKeybindTrigger{
-                .kind = GhosttyKeybindKeyKind::Unicode,
-                .unicodeCodepoint = 'n',
-            },
-        },
         .actions = {QStringLiteral("new_tab")},
     }};
-    options.keybindSource =
-        GhosttyKeybindSource::structured(std::move(config));
+    options.keybindSource = GhosttyKeybindSource::structured(std::move(config));
 
     TerminalPane pane(options);
     auto *controller = pane.findChild<TerminalController *>();
@@ -15111,8 +14792,8 @@ void TerminalPaneTest::rejectsMalformedFrontendActionsWithoutSideEffects()
     QVERIFY(controller != nullptr);
     QSignalSpy copied(controller, &TerminalController::copyRequested);
     QSignalSpy pasted(controller, &TerminalController::pasteRequested);
-    QSignalSpy applicationActions(
-        &pane, &TerminalPane::applicationActionRequested);
+    QSignalSpy applicationActions(&pane,
+                                  &TerminalPane::applicationActionRequested);
 
     QClipboard *const clipboard = QGuiApplication::clipboard();
     QVERIFY(clipboard != nullptr);

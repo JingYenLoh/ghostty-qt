@@ -444,8 +444,7 @@ void TerminalBackdropSceneNode::clearCpuTexture()
     textureRepeat_ = false;
 }
 
-void TerminalBackdropSceneNode::setBase(std::size_t index,
-                                        const QRectF &rect,
+void TerminalBackdropSceneNode::setBase(std::size_t index, const QRectF &rect,
                                         const QColor &color)
 {
     QSGSimpleRectNode *const node = baseBackgrounds_[index];
@@ -465,7 +464,7 @@ void TerminalBackdropSceneNode::clearBases(const QColor &color)
 }
 
 void TerminalBackdropSceneNode::setSolidBase(const QRectF &viewport,
-                                              const QColor &color)
+                                             const QColor &color)
 {
     setBase(0, viewport, color);
     for (std::size_t index = 1; index < baseBackgrounds_.size(); ++index) {
@@ -516,9 +515,8 @@ void TerminalBackdropSceneNode::update(
                 failedMaterialKey_.reset();
                 clearCpuTexture();
                 clearBases(background);
-                imageRect_ = options.repeat
-                    ? viewport
-                    : target.intersected(viewport);
+                imageRect_ =
+                    options.repeat ? viewport : target.intersected(viewport);
                 sourceRect_ = mappedSourceRect(imageRect_, target,
                                                asset->straightRgba.size());
                 return;
@@ -574,11 +572,9 @@ void TerminalBackdropSceneNode::update(
 
     if (textureRepeat_ != options.repeat) {
         texture_->setHorizontalWrapMode(
-            options.repeat ? QSGTexture::Repeat
-                           : QSGTexture::ClampToEdge);
-        texture_->setVerticalWrapMode(
-            options.repeat ? QSGTexture::Repeat
-                           : QSGTexture::ClampToEdge);
+            options.repeat ? QSGTexture::Repeat : QSGTexture::ClampToEdge);
+        texture_->setVerticalWrapMode(options.repeat ? QSGTexture::Repeat
+                                                     : QSGTexture::ClampToEdge);
         textureRepeat_ = options.repeat;
     }
 
@@ -636,8 +632,9 @@ quint64 TerminalBackdropSceneNode::assetSerial() const noexcept
 {
     return hardwareBackdrop_->isDrawable()
         ? hardwareBackdrop_->assetSerial()
-        : textureKey_.transform(
-              [](const CpuTextureKey &key) { return key.assetSerial; })
+        : textureKey_
+              .transform(
+                  [](const CpuTextureKey &key) { return key.assetSerial; })
               .value_or(0);
 }
 
@@ -651,8 +648,7 @@ const QRectF &TerminalBackdropSceneNode::sourceRect() const noexcept
     return sourceRect_;
 }
 
-std::array<QRectF, 4>
-TerminalBackdropSceneNode::baseRects() const noexcept
+std::array<QRectF, 4> TerminalBackdropSceneNode::baseRects() const noexcept
 {
     std::array<QRectF, 4> result;
     std::ranges::transform(

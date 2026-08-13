@@ -17,8 +17,8 @@ namespace GhosttyConfigSnapshotFixture {
 
 inline GhosttyConfigSnapshot snapshot()
 {
-    auto exported = parseGhosttyConfigExportJson(
-        GhosttyConfigExportFixture::json());
+    auto exported =
+        parseGhosttyConfigExportJson(GhosttyConfigExportFixture::json());
     if (!exported) {
         qFatal("Could not parse the complete config test fixture: %s",
                qPrintable(exported.error()));

@@ -30,8 +30,7 @@ void GhosttyLinkMatcherTest::matchesGhosttySchemesAndPaths()
         GhosttyLinkMatch match;
         QCOMPARE(matcher.findNext(input, offset, &match),
                  GhosttyLinkMatchResult::Match);
-        QCOMPARE(input.sliced(match.beginByte,
-                              match.endByte - match.beginByte),
+        QCOMPARE(input.sliced(match.beginByte, match.endByte - match.beginByte),
                  text);
         offset = match.endByte;
     }
@@ -69,8 +68,7 @@ void GhosttyLinkMatcherTest::preservesGhosttyPunctuationAndPathHeuristics()
     GhosttyLinkMatcher matcher;
     const QList<QPair<QByteArray, QByteArray>> cases{
         {"Link inside (https://example.com).", "https://example.com"},
-        {"https://example.com/foo(bar) more",
-         "https://example.com/foo(bar)"},
+        {"https://example.com/foo(bar) more", "https://example.com/foo(bar)"},
         {"Serving HTTP on :: port 8000 (http://[::]:8000/)",
          "http://[::]:8000/"},
         {"open ~/Documents/notes.md please", "~/Documents/notes.md"},
@@ -82,8 +80,7 @@ void GhosttyLinkMatcherTest::preservesGhosttyPunctuationAndPathHeuristics()
         GhosttyLinkMatch match;
         QCOMPARE(matcher.findNext(input, 0, &match),
                  GhosttyLinkMatchResult::Match);
-        QCOMPARE(input.sliced(match.beginByte,
-                              match.endByte - match.beginByte),
+        QCOMPARE(input.sliced(match.beginByte, match.endByte - match.beginByte),
                  expected);
     }
 

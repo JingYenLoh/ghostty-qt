@@ -69,14 +69,14 @@ std::expected<QString, GhosttyApplicationIpcError>
 decodeUtf8(QByteArrayView value, QStringView context)
 {
     if (value.contains('\0')) {
-        return std::unexpected(error(
-            QStringLiteral("%1 contains an embedded NUL").arg(context)));
+        return std::unexpected(
+            error(QStringLiteral("%1 contains an embedded NUL").arg(context)));
     }
     QStringDecoder decoder(QStringDecoder::Utf8);
     QString decoded = decoder(value);
     if (decoder.hasError()) {
-        return std::unexpected(error(
-            QStringLiteral("%1 is not valid UTF-8").arg(context)));
+        return std::unexpected(
+            error(QStringLiteral("%1 is not valid UTF-8").arg(context)));
     }
     return decoded;
 }
@@ -85,27 +85,26 @@ std::expected<QByteArray, GhosttyApplicationIpcError>
 encodeUtf8(QStringView value, QStringView context)
 {
     if (value.contains(u'\0')) {
-        return std::unexpected(error(
-            QStringLiteral("%1 contains an embedded NUL").arg(context)));
+        return std::unexpected(
+            error(QStringLiteral("%1 contains an embedded NUL").arg(context)));
     }
     for (qsizetype index = 0; index < value.size(); ++index) {
         const QChar character = value.at(index);
         if (character.isHighSurrogate()) {
-            if (++index >= value.size()
-                || !value.at(index).isLowSurrogate()) {
+            if (++index >= value.size() || !value.at(index).isLowSurrogate()) {
                 return std::unexpected(error(
                     QStringLiteral("%1 is not valid Unicode").arg(context)));
             }
         } else if (character.isLowSurrogate()) {
-            return std::unexpected(error(
-                QStringLiteral("%1 is not valid Unicode").arg(context)));
+            return std::unexpected(
+                error(QStringLiteral("%1 is not valid Unicode").arg(context)));
         }
     }
     QStringEncoder encoder(QStringEncoder::Utf8);
     QByteArray encoded = encoder(value);
     if (encoder.hasError()) {
-        return std::unexpected(error(
-            QStringLiteral("%1 is not valid Unicode").arg(context)));
+        return std::unexpected(
+            error(QStringLiteral("%1 is not valid Unicode").arg(context)));
     }
     return encoded;
 }
@@ -134,22 +133,22 @@ canonicalPath(QStringView path, QStringView baseDirectory,
               QStringView description)
 {
     if (path.isEmpty()) {
-        return std::unexpected(error(
-            QStringLiteral("%1 is empty").arg(description)));
+        return std::unexpected(
+            error(QStringLiteral("%1 is empty").arg(description)));
     }
     QString candidate = path.toString();
     if (QDir::isRelativePath(candidate)) {
         if (baseDirectory.isEmpty()) {
-            return std::unexpected(error(
-                QStringLiteral("The caller working directory is empty")));
+            return std::unexpected(
+                error(QStringLiteral("The caller working directory is empty")));
         }
         candidate = QDir(baseDirectory.toString()).filePath(candidate);
     }
     const QString canonical = QFileInfo(candidate).canonicalFilePath();
     if (canonical.isEmpty()) {
-        return std::unexpected(error(
-            QStringLiteral("%1 does not resolve to an existing path: %2")
-                .arg(description, candidate)));
+        return std::unexpected(
+            error(QStringLiteral("%1 does not resolve to an existing path: %2")
+                      .arg(description, candidate)));
     }
     if (auto encoded = encodeUtf8(canonical, description); !encoded) {
         return std::unexpected(std::move(encoded.error()));
@@ -158,8 +157,7 @@ canonicalPath(QStringView path, QStringView baseDirectory,
 }
 
 std::expected<QString, GhosttyApplicationIpcError>
-canonicalWorkingDirectory(
-    const GhosttyApplicationIpcParseContext &context)
+canonicalWorkingDirectory(const GhosttyApplicationIpcParseContext &context)
 {
     return canonicalPath(context.workingDirectory, {},
                          QStringLiteral("The caller working directory"));
@@ -272,8 +270,8 @@ parseSurfaceId(QByteArrayView value)
     bool valid = false;
     const quint64 parsed = text.toULongLong(&valid, 0);
     if (!valid || text.startsWith('-')) {
-        return std::unexpected(
-            error(QStringLiteral("Surface ID is not an unsigned 64-bit value")));
+        return std::unexpected(error(
+            QStringLiteral("Surface ID is not an unsigned 64-bit value")));
     }
     return parsed;
 }
@@ -287,20 +285,20 @@ validateRequest(const GhosttyApplicationIpcRequest &request)
     if (!isValidApplicationId(*encodedId)
         || request.objectPath
             != objectPathForApplicationId(request.applicationId)) {
-        return std::unexpected(error(
-            QStringLiteral("The IPC request has an invalid application "
-                           "identity")));
+        return std::unexpected(
+            error(QStringLiteral("The IPC request has an invalid application "
+                                 "identity")));
     }
 
     const bool newTab = request.actionName == QLatin1StringView(NewTabAction)
         && request.newTabParameter.has_value()
         && !request.stringArrayParameter.has_value();
-    const bool newWindow = request.actionName
-            == QLatin1StringView(NewWindowCommandAction)
+    const bool newWindow =
+        request.actionName == QLatin1StringView(NewWindowCommandAction)
         && request.stringArrayParameter.has_value()
         && !request.newTabParameter.has_value();
-    const bool toggle = request.actionName
-            == QLatin1StringView(ToggleQuickTerminalAction)
+    const bool toggle =
+        request.actionName == QLatin1StringView(ToggleQuickTerminalAction)
         && !request.stringArrayParameter.has_value()
         && !request.newTabParameter.has_value();
     if (!newTab && !newWindow && !toggle) {
@@ -348,8 +346,8 @@ parseGhosttyApplicationIpcRequest(
     const GhosttyApplicationIpcParseContext &context)
 {
     if (arguments.isEmpty()) {
-        return std::unexpected(error(
-            QStringLiteral("The argument list must include argv[0]")));
+        return std::unexpected(
+            error(QStringLiteral("The argument list must include argv[0]")));
     }
     for (const QByteArray &argument : arguments) {
         if (argument.contains('\0')) {
@@ -358,9 +356,8 @@ parseGhosttyApplicationIpcRequest(
         }
     }
 
-    auto encodedDefault =
-        encodeUtf8(context.defaultApplicationId,
-                   QStringLiteral("Default application ID"));
+    auto encodedDefault = encodeUtf8(context.defaultApplicationId,
+                                     QStringLiteral("Default application ID"));
     if (!encodedDefault) {
         return std::unexpected(std::move(encodedDefault.error()));
     }
@@ -395,13 +392,11 @@ parseGhosttyApplicationIpcRequest(
                            "once in argv")));
     }
 
-    if (selectedAction
-        == GhosttyApplicationIpcAction::ToggleQuickTerminal) {
+    if (selectedAction == GhosttyApplicationIpcAction::ToggleQuickTerminal) {
         return GhosttyApplicationIpcRequest{
             .applicationId = *applicationId,
             .objectPath = objectPathForApplicationId(*applicationId),
-            .actionName =
-                QString::fromLatin1(ToggleQuickTerminalAction),
+            .actionName = QString::fromLatin1(ToggleQuickTerminalAction),
             .stringArrayParameter = std::nullopt,
             .newTabParameter = std::nullopt,
         };
@@ -452,16 +447,14 @@ parseGhosttyApplicationIpcRequest(
                 trimAsciiWhitespace(QByteArrayView(argument).sliced(20));
             if (value == "home" || value == "inherit") {
                 auto decoded =
-                    decodeUtf8(argument,
-                               QStringLiteral("Forwarded argument"));
+                    decodeUtf8(argument, QStringLiteral("Forwarded argument"));
                 if (!decoded) {
                     return std::unexpected(std::move(decoded.error()));
                 }
                 forwarded.emplaceBack(std::move(*decoded));
                 continue;
             }
-            auto canonical =
-                canonicalExplicitWorkingDirectory(value, context);
+            auto canonical = canonicalExplicitWorkingDirectory(value, context);
             if (!canonical) {
                 return std::unexpected(std::move(canonical.error()));
             }
@@ -535,17 +528,16 @@ QDBusConnection defaultGhosttyApplicationIpcConnection()
 }
 
 std::expected<void, GhosttyApplicationIpcError>
-sendGhosttyApplicationIpcRequest(
-    const GhosttyApplicationIpcRequest &request,
-    const QDBusConnection &connection,
-    std::chrono::milliseconds timeout)
+sendGhosttyApplicationIpcRequest(const GhosttyApplicationIpcRequest &request,
+                                 const QDBusConnection &connection,
+                                 std::chrono::milliseconds timeout)
 {
     if (auto valid = validateRequest(request); !valid) {
         return std::unexpected(std::move(valid.error()));
     }
     if (!connection.isConnected()) {
-        return std::unexpected(
-            error(QStringLiteral("Could not connect to the D-Bus session bus")));
+        return std::unexpected(error(
+            QStringLiteral("Could not connect to the D-Bus session bus")));
     }
 
     QDBusMessage call = QDBusMessage::createMethodCall(
@@ -561,11 +553,9 @@ sendGhosttyApplicationIpcRequest(
     }
     call << request.actionName << parameters << QVariantMap{};
 
-    constexpr auto MaximumTimeout =
-        static_cast<std::chrono::milliseconds::rep>(
-            std::numeric_limits<int>::max());
-    const int timeoutMilliseconds =
-        timeout.count() < 0
+    constexpr auto MaximumTimeout = static_cast<std::chrono::milliseconds::rep>(
+        std::numeric_limits<int>::max());
+    const int timeoutMilliseconds = timeout.count() < 0
         ? -1
         : static_cast<int>(std::min(timeout.count(), MaximumTimeout));
     const QDBusMessage reply =
@@ -576,14 +566,13 @@ sendGhosttyApplicationIpcRequest(
     const QString detail = dbusError.message().isEmpty()
         ? QStringLiteral("unknown D-Bus error")
         : dbusError.message();
-    return std::unexpected(error(
-        QStringLiteral("D-Bus action %1 on %2 failed: %3 (%4)")
-            .arg(request.actionName, request.applicationId, detail,
-                 dbusError.name())));
+    return std::unexpected(
+        error(QStringLiteral("D-Bus action %1 on %2 failed: %3 (%4)")
+                  .arg(request.actionName, request.applicationId, detail,
+                       dbusError.name())));
 }
 
-std::expected<GhosttyNewWindowTransportOverrides,
-              GhosttyApplicationIpcError>
+std::expected<GhosttyNewWindowTransportOverrides, GhosttyApplicationIpcError>
 decodeGhosttyNewWindowArguments(const QStringList &arguments)
 {
     GhosttyNewWindowTransportOverrides overrides;
@@ -604,22 +593,19 @@ decodeGhosttyNewWindowArguments(const QStringList &arguments)
             continue;
         }
         if (argument.startsWith(QLatin1StringView("--command="))) {
-            auto parsed = parseGhosttyCommand(
-                QStringView(argument).sliced(10));
+            auto parsed = parseGhosttyCommand(QStringView(argument).sliced(10));
             // Ghostty logs an invalid command and retains the previous value.
             if (parsed) overrides.command = std::move(*parsed);
             continue;
         }
-        if (argument.startsWith(
-                QLatin1StringView("--shell-integration="))) {
+        if (argument.startsWith(QLatin1StringView("--shell-integration="))) {
             if (auto parsed = parseShellIntegration(
                     QByteArrayView(*encoded).sliced(20))) {
                 overrides.shellIntegration = *parsed;
             }
             continue;
         }
-        if (argument.startsWith(
-                QLatin1StringView("--working-directory="))) {
+        if (argument.startsWith(QLatin1StringView("--working-directory="))) {
             const QByteArrayView value =
                 trimAsciiWhitespace(QByteArrayView(*encoded).sliced(20));
             auto decoded =
@@ -642,8 +628,7 @@ decodeGhosttyNewWindowArguments(const QStringList &arguments)
     }
 
     if (!directArguments.isEmpty()) {
-        overrides.command =
-            TerminalCommand::direct(std::move(directArguments));
+        overrides.command = TerminalCommand::direct(std::move(directArguments));
     }
     return overrides;
 }

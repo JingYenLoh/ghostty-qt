@@ -36,8 +36,8 @@ int configuredExitCode(const char *name, int fallback)
 
     int result = 0;
     const std::string_view value(raw);
-    const auto parsed = std::from_chars(
-        value.data(), value.data() + value.size(), result);
+    const auto parsed =
+        std::from_chars(value.data(), value.data() + value.size(), result);
     return parsed.ec == std::errc{} && parsed.ptr == value.data() + value.size()
             && result >= 0 && result <= 255
         ? result
@@ -49,19 +49,16 @@ int configuredExitCode(const char *name, int fallback)
 // ordinary framed final-child report below.
 int handleFakeSshPhase(int argc, char *argv[], std::string_view input)
 {
-    const char *const logPath =
-        std::getenv("GHOSTTY_QT_FAKE_SSH_PHASE_LOG");
+    const char *const logPath = std::getenv("GHOSTTY_QT_FAKE_SSH_PHASE_LOG");
     if (logPath == nullptr) return -1;
 
     if (argc > 1 && std::string_view(argv[1]) == "-G") {
         if (!writeFile(logPath, "resolve\n", "ab")) return 74;
-        if (std::fputs(
-                "user fixture-user\nhostname fixture.example\n", stdout)
+        if (std::fputs("user fixture-user\nhostname fixture.example\n", stdout)
             == EOF) {
             return 74;
         }
-        return configuredExitCode(
-            "GHOSTTY_QT_FAKE_SSH_RESOLVE_EXIT", 0);
+        return configuredExitCode("GHOSTTY_QT_FAKE_SSH_RESOLVE_EXIT", 0);
     }
 
     bool installing = false;
@@ -90,16 +87,15 @@ int main(int argc, char *argv[])
     std::array<char, 4096> buffer{};
     while (const std::size_t count =
                std::fread(buffer.data(), 1, buffer.size(), stdin)) {
-        input.insert(input.end(), buffer.begin(), buffer.begin() +
-            static_cast<std::ptrdiff_t>(count));
+        input.insert(input.end(), buffer.begin(),
+                     buffer.begin() + static_cast<std::ptrdiff_t>(count));
     }
     if (std::ferror(stdin)) return 74;
 
     const std::string_view inputView = input.empty()
         ? std::string_view{}
         : std::string_view(input.data(), input.size());
-    const int fakeSshResult = handleFakeSshPhase(
-        argc, argv, inputView);
+    const int fakeSshResult = handleFakeSshPhase(argc, argv, inputView);
     if (fakeSshResult >= 0) return fakeSshResult;
 
     std::error_code pathError;
@@ -109,16 +105,17 @@ int main(int argc, char *argv[])
     const char *const sentinel = std::getenv("GHOSTTY_QT_CLI_SENTINEL");
 
     if (std::fprintf(stdout, "PID %lld\nARGC %d\n",
-                     static_cast<long long>(::getpid()), argc) < 0) {
+                     static_cast<long long>(::getpid()), argc)
+        < 0) {
         return 74;
     }
     for (int index = 0; index < argc; ++index) {
         if (!writeField("ARG", argv[index])) return 74;
     }
     if (!writeField("CWD", workingDirectory)
-        || !writeField("ENV", sentinel == nullptr
-                ? std::string_view{}
-                : std::string_view(sentinel))
+        || !writeField("ENV",
+                       sentinel == nullptr ? std::string_view{}
+                                           : std::string_view(sentinel))
         || !writeField("STDIN", inputView)) {
         return 74;
     }

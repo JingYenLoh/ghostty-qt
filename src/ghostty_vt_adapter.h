@@ -193,9 +193,9 @@ public:
             quint64 graphemeDataQueries = 0;
             quint64 contentBackgroundDataQueries = 0;
 
-            friend bool operator==(const CellMaterializationMetrics &,
-                                   const CellMaterializationMetrics &) =
-                default;
+            friend bool
+            operator==(const CellMaterializationMetrics &,
+                       const CellMaterializationMetrics &) = default;
         };
 
         TerminalUpdate update;

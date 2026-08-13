@@ -21,8 +21,7 @@ struct TerminalBackgroundImageAsset {
     quint64 serial = 0;
 };
 
-[[nodiscard]] QRectF
-terminalBackgroundImagePlacement(
+[[nodiscard]] QRectF terminalBackgroundImagePlacement(
     const QRectF &viewport, const QSize &sourcePixels, qreal devicePixelRatio,
     TerminalBackgroundImageFit fit,
     TerminalBackgroundImagePosition position) noexcept;
@@ -30,13 +29,14 @@ terminalBackgroundImagePlacement(
 // Pure reference composition matching Ghostty's background-image shader at
 // source-pixel centers. The returned pixels are premultiplied and already
 // include the terminal background.
-[[nodiscard]] QImage terminalCompositedBackgroundImage(
-    const QImage &source, const QColor &opaqueBackground,
-    quint8 backgroundAlpha, double imageOpacity);
-[[nodiscard]] QImage terminalCompositedBackgroundImage(
-    const TerminalBackgroundImageAsset &asset,
-    const QColor &opaqueBackground, quint8 backgroundAlpha,
-    double imageOpacity);
+[[nodiscard]] QImage
+terminalCompositedBackgroundImage(const QImage &source,
+                                  const QColor &opaqueBackground,
+                                  quint8 backgroundAlpha, double imageOpacity);
+[[nodiscard]] QImage
+terminalCompositedBackgroundImage(const TerminalBackgroundImageAsset &asset,
+                                  const QColor &opaqueBackground,
+                                  quint8 backgroundAlpha, double imageOpacity);
 
 using TerminalBackgroundImageResult =
     std::expected<std::shared_ptr<const TerminalBackgroundImageAsset>, QString>;
@@ -78,17 +78,15 @@ public:
     }
 
 private:
-    explicit TerminalBackgroundImageRequestHandle(
-        std::stop_source stopSource)
+    explicit TerminalBackgroundImageRequestHandle(std::stop_source stopSource)
         : stopSource_(std::move(stopSource))
     {}
 
     std::stop_source stopSource_{std::nostopstate};
 
     friend TerminalBackgroundImageRequestHandle
-    requestTerminalBackgroundImage(
-        const TerminalBackgroundImageRequest &, QObject *,
-        TerminalBackgroundImageCallback);
+    requestTerminalBackgroundImage(const TerminalBackgroundImageRequest &,
+                                   QObject *, TerminalBackgroundImageCallback);
     friend TerminalBackgroundImageRequestHandle
     requestTerminalBackgroundImageForTest(
         const TerminalBackgroundImageRequest &, QObject *,
@@ -100,6 +98,6 @@ private:
 // process-wide. A weak cache shares active images without retaining unused
 // resources or hiding same-path replacements.
 [[nodiscard]] TerminalBackgroundImageRequestHandle
-requestTerminalBackgroundImage(
-    const TerminalBackgroundImageRequest &request, QObject *receiver,
-    TerminalBackgroundImageCallback callback);
+requestTerminalBackgroundImage(const TerminalBackgroundImageRequest &request,
+                               QObject *receiver,
+                               TerminalBackgroundImageCallback callback);

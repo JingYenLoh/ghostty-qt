@@ -9,14 +9,15 @@ cmake_build_dir="$build_root/cmake"
 package_root="$build_root/root"
 zig="$repo_root/.local/bin/zig"
 
-fail() {
+fail()
+{
     printf 'error: %s\n' "$*" >&2
     exit 1
 }
 
 for tool in cmake dpkg-architecture dpkg-deb dpkg-gencontrol \
     dpkg-shlibdeps git ln ninja nproc realpath sed; do
-    command -v "$tool" >/dev/null 2>&1 || fail "required tool not found: $tool"
+    command -v "$tool" > /dev/null 2>&1 || fail "required tool not found: $tool"
 done
 
 if [ ! -f "$repo_root/ghostty/CMakeLists.txt" ]; then
@@ -57,9 +58,9 @@ cmake --build "$cmake_build_dir" -j"$(nproc)"
 DESTDIR="$package_root" cmake --install "$cmake_build_dir"
 
 substvars="$build_root/substvars"
-printf 'misc:Depends=\n' >"$substvars"
+printf 'misc:Depends=\n' > "$substvars"
 sed "1s/([^)]*)/($package_version)/" \
-    "$script_dir/changelog" >"$package_changelog"
+    "$script_dir/changelog" > "$package_changelog"
 set -- \
     -e "$package_root/usr/bin/ghostty-qt" \
     -e "$package_root/usr/bin/ghostty-qt-config-helper"

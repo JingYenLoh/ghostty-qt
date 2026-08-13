@@ -40,8 +40,8 @@
 
 namespace {
 
-bool waitForMarker(QProcess &process, QByteArray &output,
-                   QByteArrayView marker, int timeoutMilliseconds)
+bool waitForMarker(QProcess &process, QByteArray &output, QByteArrayView marker,
+                   int timeoutMilliseconds)
 {
     QElapsedTimer timer;
     timer.start();
@@ -49,9 +49,9 @@ bool waitForMarker(QProcess &process, QByteArray &output,
         output += process.readAllStandardOutput();
         if (output.contains(marker)) return true;
         if (process.state() == QProcess::NotRunning) break;
-        const int remaining = timeoutMilliseconds
-            - static_cast<int>(timer.elapsed());
-        (void) process.waitForReadyRead(std::clamp(remaining, 1, 100));
+        const int remaining =
+            timeoutMilliseconds - static_cast<int>(timer.elapsed());
+        (void)process.waitForReadyRead(std::clamp(remaining, 1, 100));
     }
     output += process.readAllStandardOutput();
     return output.contains(marker);
@@ -66,14 +66,13 @@ QString processFailure(QProcess &process, const QByteArray &output)
              QString::fromUtf8(process.readAllStandardError()));
 }
 
-bool writeGhosttyConfig(const QString &configHome,
-                        const QByteArray &contents)
+bool writeGhosttyConfig(const QString &configHome, const QByteArray &contents)
 {
     const QString ghosttyDirectory =
         QDir(configHome).filePath(QStringLiteral("ghostty"));
     if (!QDir().mkpath(ghosttyDirectory)) return false;
-    QFile config(QDir(ghosttyDirectory).filePath(
-        QStringLiteral("config.ghostty")));
+    QFile config(
+        QDir(ghosttyDirectory).filePath(QStringLiteral("config.ghostty")));
     return config.open(QIODevice::WriteOnly | QIODevice::Truncate)
         && config.write(contents) == contents.size();
 }
@@ -193,8 +192,7 @@ private:
 
 QProcessEnvironment headlessApplicationEnvironment(const QString &configHome)
 {
-    QProcessEnvironment environment =
-        QProcessEnvironment::systemEnvironment();
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     environment.remove(QStringLiteral("TERM_PROGRAM"));
     environment.insert(QStringLiteral("XDG_CONFIG_HOME"), configHome);
     environment.insert(QStringLiteral("GHOSTTY_QT_ALLOW_NON_WAYLAND"),
@@ -206,13 +204,13 @@ QProcessEnvironment headlessApplicationEnvironment(const QString &configHome)
     return environment;
 }
 
-QProcessEnvironment applicationEnvironment(
-    const PrivateSessionBus &bus, const QString &configHome)
+QProcessEnvironment applicationEnvironment(const PrivateSessionBus &bus,
+                                           const QString &configHome)
 {
-    QProcessEnvironment environment
-        = headlessApplicationEnvironment(configHome);
-    environment.insert(
-        QStringLiteral("DBUS_SESSION_BUS_ADDRESS"), bus.address());
+    QProcessEnvironment environment =
+        headlessApplicationEnvironment(configHome);
+    environment.insert(QStringLiteral("DBUS_SESSION_BUS_ADDRESS"),
+                       bus.address());
     return environment;
 }
 
@@ -373,8 +371,9 @@ private:
 
 QDBusMessage activateApplication(QDBusConnection &connection)
 {
-    QDBusMessage request = QDBusMessage::createMethodCall(applicationId(),
-        applicationObjectPath(), QStringLiteral("org.freedesktop.Application"),
+    QDBusMessage request = QDBusMessage::createMethodCall(
+        applicationId(), applicationObjectPath(),
+        QStringLiteral("org.freedesktop.Application"),
         QStringLiteral("Activate"));
     request << QVariantMap{};
     return connection.call(request, QDBus::Block, 15'000);
@@ -382,8 +381,8 @@ QDBusMessage activateApplication(QDBusConnection &connection)
 
 bool writeActivationService(const QString &dataHome)
 {
-    const QString serviceDirectory
-        = QDir(dataHome).filePath(QStringLiteral("dbus-1/services"));
+    const QString serviceDirectory =
+        QDir(dataHome).filePath(QStringLiteral("dbus-1/services"));
     if (!QDir().mkpath(serviceDirectory)) return false;
 
     QString executable = QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE);
@@ -396,16 +395,16 @@ bool writeActivationService(const QString &dataHome)
             "Exec=\"%2\" --single-instance=true --initial-window=false\n")
             .arg(applicationId(), executable)
             .toUtf8();
-    QFile service(QDir(serviceDirectory).filePath(
-        applicationId() + QStringLiteral(".service")));
+    QFile service(QDir(serviceDirectory)
+                      .filePath(applicationId() + QStringLiteral(".service")));
     return service.open(QIODevice::WriteOnly | QIODevice::Truncate)
         && service.write(contents) == contents.size();
 }
 
 bool serviceHasOwner(PrivateSessionBus &bus)
 {
-    const QDBusReply<bool> registered
-        = bus.client().interface()->isServiceRegistered(applicationId());
+    const QDBusReply<bool> registered =
+        bus.client().interface()->isServiceRegistered(applicationId());
     return registered.isValid() && registered.value();
 }
 
@@ -533,9 +532,9 @@ void ApplicationSingleInstanceTest::execFallbackForwardsLauncherPlatformData()
     PrivateSessionBus bus;
     QVERIFY2(bus.start(), qPrintable(bus.errorString()));
     RecordingActivationEndpoint endpoint;
-    QVERIFY(bus.server().registerObject(applicationObjectPath(),
-        QStringLiteral("org.freedesktop.Application"), &endpoint,
-        QDBusConnection::ExportScriptableSlots));
+    QVERIFY(bus.server().registerObject(
+        applicationObjectPath(), QStringLiteral("org.freedesktop.Application"),
+        &endpoint, QDBusConnection::ExportScriptableSlots));
     QVERIFY(bus.server().registerService(applicationId()));
 
     QProcessEnvironment environment =
@@ -557,23 +556,24 @@ void ApplicationSingleInstanceTest::execFallbackForwardsLauncherPlatformData()
     });
 
     QTRY_COMPARE_WITH_TIMEOUT(endpoint.calls, 1, 10'000);
-    QCOMPARE(endpoint.platformData.value(
-                 QStringLiteral("activation-token")).toString(),
+    QCOMPARE(endpoint.platformData.value(QStringLiteral("activation-token"))
+                 .toString(),
              QStringLiteral("fallback-token"));
-    QCOMPARE(endpoint.platformData.value(
-                 QStringLiteral("desktop-startup-id")).toString(),
+    QCOMPARE(endpoint.platformData.value(QStringLiteral("desktop-startup-id"))
+                 .toString(),
              QStringLiteral("fallback-startup"));
     QCOMPARE(endpoint.platformData.size(), 2);
     if (secondary.state() != QProcess::NotRunning) {
         QVERIFY2(secondary.waitForFinished(10'000),
-                 qPrintable(processFailure(
-                     secondary, secondary.readAllStandardOutput())));
+                 qPrintable(processFailure(secondary,
+                                           secondary.readAllStandardOutput())));
     }
     QCOMPARE(secondary.exitStatus(), QProcess::NormalExit);
     QCOMPARE(secondary.exitCode(), 0);
 }
 
-void ApplicationSingleInstanceTest::explicitZeroWindowHostSupportsStandardActivation()
+void ApplicationSingleInstanceTest::
+    explicitZeroWindowHostSupportsStandardActivation()
 {
     if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon"))
             .isEmpty()) {
@@ -593,10 +593,10 @@ void ApplicationSingleInstanceTest::explicitZeroWindowHostSupportsStandardActiva
     PrivateSessionBus bus;
     QVERIFY2(bus.start(), qPrintable(bus.errorString()));
 
-    QProcessEnvironment environment
-        = applicationEnvironment(bus, configHome.path());
+    QProcessEnvironment environment =
+        applicationEnvironment(bus, configHome.path());
     environment.insert(QStringLiteral("GHOSTTY_QT_TEST_DESKTOP_ACTIVATION"),
-        QStringLiteral("1"));
+                       QStringLiteral("1"));
     QProcess primary;
     primary.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
     primary.setArguments({QStringLiteral("--single-instance=true"),
@@ -611,9 +611,10 @@ void ApplicationSingleInstanceTest::explicitZeroWindowHostSupportsStandardActiva
     });
 
     QByteArray output;
-    QVERIFY2(waitForMarker(primary, output,
+    QVERIFY2(waitForMarker(
+                 primary, output,
                  QByteArrayView("GHOSTTY_QT_DESKTOP_ACTIVATION_READY"), 10'000),
-        qPrintable(processFailure(primary, output)));
+             qPrintable(processFailure(primary, output)));
     QVERIFY(serviceHasOwner(bus));
 
     const QDBusMessage reply = activateApplication(bus.client());
@@ -621,10 +622,11 @@ void ApplicationSingleInstanceTest::explicitZeroWindowHostSupportsStandardActiva
     QVERIFY(reply.arguments().isEmpty());
     QVERIFY2(
         waitForMarker(primary, output,
-            QByteArrayView("GHOSTTY_QT_DESKTOP_ACTIVATION_CREATED"), 10'000),
+                      QByteArrayView("GHOSTTY_QT_DESKTOP_ACTIVATION_CREATED"),
+                      10'000),
         qPrintable(processFailure(primary, output)));
     QVERIFY2(primary.waitForFinished(10'000),
-        qPrintable(processFailure(primary, output)));
+             qPrintable(processFailure(primary, output)));
     QCOMPARE(primary.exitStatus(), QProcess::NormalExit);
     QCOMPARE(primary.exitCode(), 0);
     QTRY_VERIFY_WITH_TIMEOUT(!serviceHasOwner(bus), 3000);
@@ -651,8 +653,8 @@ void ApplicationSingleInstanceTest::dbusColdStartsZeroWindowHost()
     QVERIFY(writeFrontendConfig(
         configHome, QByteArrayLiteral("single-instance = false\n")));
 
-    QProcessEnvironment daemonEnvironment
-        = headlessApplicationEnvironment(configHome);
+    QProcessEnvironment daemonEnvironment =
+        headlessApplicationEnvironment(configHome);
     daemonEnvironment.insert(QStringLiteral("XDG_DATA_HOME"), dataHome);
     daemonEnvironment.insert(
         QStringLiteral("GHOSTTY_QT_TEST_DESKTOP_ACTIVATION"),
@@ -667,7 +669,7 @@ void ApplicationSingleInstanceTest::dbusColdStartsZeroWindowHost()
     for (int launch = 0; launch < 2; ++launch) {
         const QDBusMessage reply = activateApplication(bus.client());
         QVERIFY2(reply.type() == QDBusMessage::ReplyMessage,
-            qPrintable(QDBusError(reply).message()));
+                 qPrintable(QDBusError(reply).message()));
         QVERIFY(reply.arguments().isEmpty());
         QTRY_VERIFY_WITH_TIMEOUT(!serviceHasOwner(bus), 10'000);
     }
@@ -770,10 +772,8 @@ void ApplicationSingleInstanceTest::ghosttyCliActionColdStartsService_data()
 {
     QTest::addColumn<QStringList>("arguments");
     QTest::newRow("new-tab") << QStringList{
-        QStringLiteral("+new-tab"),
-        QStringLiteral("--surface-id=0"),
-        QStringLiteral("--title=cold tab"),
-        QStringLiteral("-e"),
+        QStringLiteral("+new-tab"),         QStringLiteral("--surface-id=0"),
+        QStringLiteral("--title=cold tab"), QStringLiteral("-e"),
         QStringLiteral("/bin/true"),
     };
     QTest::newRow("new-window") << QStringList{
@@ -942,11 +942,10 @@ void ApplicationSingleInstanceTest::
     QCOMPARE(portal.createSessionSignature, QStringLiteral("a{sv}"));
     QVERIFY(!portal.createSessionSender.isEmpty());
     if (installDesktopEntry) {
-        if (portal.registerCount == 0
-            && portal.implicitAssociationCount == 1
-            && portal.calls
-                == QStringList({QStringLiteral("CreateSession")})) {
-            QSKIP("This Qt build does not provide host portal registry registration");
+        if (portal.registerCount == 0 && portal.implicitAssociationCount == 1
+            && portal.calls == QStringList({QStringLiteral("CreateSession")})) {
+            QSKIP(
+                "This Qt build does not provide host portal registry registration");
         }
         QCOMPARE(portal.registerCount, 1);
         QVERIFY2(portal.implicitAssociationCount == 0,
@@ -981,20 +980,20 @@ void ApplicationSingleInstanceTest::
 
 #if GHOSTTY_QT_TEST_CONFIG_ENABLED
 
-void ApplicationSingleInstanceTest::residentPrimaryIsReactivatedByBareSecondLaunch()
+void ApplicationSingleInstanceTest::
+    residentPrimaryIsReactivatedByBareSecondLaunch()
 {
-    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon")).isEmpty()) {
+    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon"))
+            .isEmpty()) {
         QSKIP("dbus-daemon is unavailable");
     }
     QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
-    QTemporaryDir configHome(
-        QDir::current().filePath(
-            QStringLiteral("tmp/application-single-instance-XXXXXX")));
+    QTemporaryDir configHome(QDir::current().filePath(
+        QStringLiteral("tmp/application-single-instance-XXXXXX")));
     QVERIFY(configHome.isValid());
-    const QByteArray configContents =
-        "initial-window = true\n"
-        "quit-after-last-window-closed = false\n"
-        "confirm-close-surface = false\n";
+    const QByteArray configContents = "initial-window = true\n"
+                                      "quit-after-last-window-closed = false\n"
+                                      "confirm-close-surface = false\n";
     QVERIFY(writeGhosttyConfig(configHome.path(), configContents));
     QVERIFY(writeFrontendConfig(configHome.path(),
                                 QByteArrayLiteral("single-instance = true\n")));
@@ -1002,11 +1001,10 @@ void ApplicationSingleInstanceTest::residentPrimaryIsReactivatedByBareSecondLaun
     PrivateSessionBus bus;
     QVERIFY2(bus.start(), qPrintable(bus.errorString()));
 
-    QProcessEnvironment environment = applicationEnvironment(
-        bus, configHome.path());
-    environment.insert(
-        QStringLiteral("GHOSTTY_QT_TEST_APPLICATION_LIFETIME"),
-        QStringLiteral("external-activation"));
+    QProcessEnvironment environment =
+        applicationEnvironment(bus, configHome.path());
+    environment.insert(QStringLiteral("GHOSTTY_QT_TEST_APPLICATION_LIFETIME"),
+                       QStringLiteral("external-activation"));
 
     QProcess primary;
     primary.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
@@ -1031,8 +1029,8 @@ void ApplicationSingleInstanceTest::residentPrimaryIsReactivatedByBareSecondLaun
     secondary.start();
     QVERIFY(secondary.waitForStarted(3000));
     QVERIFY2(secondary.waitForFinished(10'000),
-             qPrintable(processFailure(
-                 secondary, secondary.readAllStandardOutput())));
+             qPrintable(
+                 processFailure(secondary, secondary.readAllStandardOutput())));
     QCOMPARE(secondary.exitStatus(), QProcess::NormalExit);
     QCOMPARE(secondary.exitCode(), 0);
 
@@ -1045,42 +1043,40 @@ void ApplicationSingleInstanceTest::residentPrimaryIsReactivatedByBareSecondLaun
     QCOMPARE(primary.exitCode(), 0);
 }
 
-void ApplicationSingleInstanceTest::falseLauncherLeavesPrimaryAtZeroUntilTrueLauncherActivates()
+void ApplicationSingleInstanceTest::
+    falseLauncherLeavesPrimaryAtZeroUntilTrueLauncherActivates()
 {
-    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon")).isEmpty()) {
+    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon"))
+            .isEmpty()) {
         QSKIP("dbus-daemon is unavailable");
     }
     QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
-    QTemporaryDir falseConfigHome(
-        QDir::current().filePath(
-            QStringLiteral("tmp/application-initial-window-false-XXXXXX")));
-    QTemporaryDir trueConfigHome(
-        QDir::current().filePath(
-            QStringLiteral("tmp/application-initial-window-true-XXXXXX")));
+    QTemporaryDir falseConfigHome(QDir::current().filePath(
+        QStringLiteral("tmp/application-initial-window-false-XXXXXX")));
+    QTemporaryDir trueConfigHome(QDir::current().filePath(
+        QStringLiteral("tmp/application-initial-window-true-XXXXXX")));
     QVERIFY(falseConfigHome.isValid());
     QVERIFY(trueConfigHome.isValid());
     QVERIFY(writeGhosttyConfig(
         falseConfigHome.path(),
-        QByteArrayLiteral(
-            "initial-window = false\n"
-            "quit-after-last-window-closed = true\n"
-            "confirm-close-surface = false\n")));
+        QByteArrayLiteral("initial-window = false\n"
+                          "quit-after-last-window-closed = true\n"
+                          "confirm-close-surface = false\n")));
     QVERIFY(writeFrontendConfig(falseConfigHome.path(),
                                 QByteArrayLiteral("single-instance = true\n")));
     QVERIFY(writeGhosttyConfig(
         trueConfigHome.path(),
-        QByteArrayLiteral(
-            "initial-window = true\n"
-            "quit-after-last-window-closed = false\n"
-            "confirm-close-surface = false\n")));
+        QByteArrayLiteral("initial-window = true\n"
+                          "quit-after-last-window-closed = false\n"
+                          "confirm-close-surface = false\n")));
     QVERIFY(writeFrontendConfig(trueConfigHome.path(),
                                 QByteArrayLiteral("single-instance = true\n")));
 
     PrivateSessionBus bus;
     QVERIFY2(bus.start(), qPrintable(bus.errorString()));
 
-    QProcessEnvironment primaryEnvironment = applicationEnvironment(
-        bus, falseConfigHome.path());
+    QProcessEnvironment primaryEnvironment =
+        applicationEnvironment(bus, falseConfigHome.path());
     primaryEnvironment.insert(QStringLiteral("GHOSTTY_QT_TEST_INITIAL_WINDOW"),
                               QStringLiteral("1"));
     QProcess primary;
@@ -1102,8 +1098,8 @@ void ApplicationSingleInstanceTest::falseLauncherLeavesPrimaryAtZeroUntilTrueLau
 
     QProcess falseSecondary;
     falseSecondary.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
-    falseSecondary.setProcessEnvironment(applicationEnvironment(
-        bus, falseConfigHome.path()));
+    falseSecondary.setProcessEnvironment(
+        applicationEnvironment(bus, falseConfigHome.path()));
     falseSecondary.start();
     QVERIFY(falseSecondary.waitForStarted(3000));
     QVERIFY2(falseSecondary.waitForFinished(10'000),
@@ -1118,13 +1114,13 @@ void ApplicationSingleInstanceTest::falseLauncherLeavesPrimaryAtZeroUntilTrueLau
 
     QProcess trueSecondary;
     trueSecondary.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
-    trueSecondary.setProcessEnvironment(applicationEnvironment(
-        bus, trueConfigHome.path()));
+    trueSecondary.setProcessEnvironment(
+        applicationEnvironment(bus, trueConfigHome.path()));
     trueSecondary.start();
     QVERIFY(trueSecondary.waitForStarted(3000));
     QVERIFY2(trueSecondary.waitForFinished(10'000),
-             qPrintable(processFailure(
-                 trueSecondary, trueSecondary.readAllStandardOutput())));
+             qPrintable(processFailure(trueSecondary,
+                                       trueSecondary.readAllStandardOutput())));
     QCOMPARE(trueSecondary.exitStatus(), QProcess::NormalExit);
     QCOMPARE(trueSecondary.exitCode(), 0);
 

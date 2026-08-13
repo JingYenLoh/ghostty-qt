@@ -445,8 +445,7 @@ bool ApplicationController::activateNewWindow(
 }
 
 bool ApplicationController::activateNewTab(
-    GhosttyNewTabTransportRequest request,
-    DesktopActivationContext activation)
+    GhosttyNewTabTransportRequest request, DesktopActivationContext activation)
 {
     if (!startupWindowHandled_) {
         Q_EMIT windowCreationFailed(QStringLiteral(
@@ -479,8 +478,8 @@ bool ApplicationController::activateNewTab(
         .titleOverride = std::move(request.overrides.titleOverride),
     };
     if (targetWorkspace != nullptr) {
-        return targetWorkspace->createApplicationTab(
-            sourcePaneId, std::move(firstSurface));
+        return targetWorkspace->createApplicationTab(sourcePaneId,
+                                                     std::move(firstSurface));
     }
 
     const QPointer<ApplicationController> guard(this);
@@ -654,9 +653,9 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
                                          : SurfaceId{};
         });
     const bool initialized = tabTransfer.has_value()
-        ? guardedWorkspace->initializeEmpty(
-              withoutInitialCommand(options), initialSessionCoordinator_,
-              requestedKeybindProgram)
+        ? guardedWorkspace->initializeEmpty(withoutInitialCommand(options),
+                                            initialSessionCoordinator_,
+                                            requestedKeybindProgram)
         : guardedWorkspace->initialize(
               withoutInitialCommand(options), initialSessionStartMode,
               initialSessionCoordinator_, requestedKeybindProgram,
@@ -757,8 +756,7 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
     if (tabTransfer.has_value()) {
         TerminalWorkspace *const source = tabTransfer->source;
         if (!containsWorkspace(source)
-            || !source->transferTabTo(guardedWorkspace,
-                                      tabTransfer->paneId)) {
+            || !source->transferTabTo(guardedWorkspace, tabTransfer->paneId)) {
             discardCreated();
             return std::unexpected(QStringLiteral(
                 "Could not transfer the selected tab to its new window"));
@@ -1019,8 +1017,8 @@ bool ApplicationController::dispatch(ApplicationAction action,
     return false;
 }
 
-bool ApplicationController::moveTabToNewWindow(
-    TerminalWorkspace *source, PaneId sourcePaneId)
+bool ApplicationController::moveTabToNewWindow(TerminalWorkspace *source,
+                                               PaneId sourcePaneId)
 {
     if (!containsWorkspace(source) || !sourcePaneId.isValid()
         || source->tabCount() <= 1 || quitState_ != QuitState::Idle
@@ -1029,10 +1027,10 @@ bool ApplicationController::moveTabToNewWindow(
     }
     QScreen *const preferredScreen =
         source->window() != nullptr ? source->window()->screen() : nullptr;
-    auto created = createWindow(
-        nextWindowOptions(source, sourcePaneId), {}, preferredScreen,
-        WindowRole::Normal, nullptr,
-        TabTransferRequest{QPointer(source), sourcePaneId});
+    auto created =
+        createWindow(nextWindowOptions(source, sourcePaneId), {},
+                     preferredScreen, WindowRole::Normal, nullptr,
+                     TabTransferRequest{QPointer(source), sourcePaneId});
     if (!created.has_value()) {
         Q_EMIT windowCreationFailed(created.error());
         return false;
@@ -1752,32 +1750,30 @@ void ApplicationController::registerWindow(
     for (const WorkspaceSurfaceSnapshot &surface :
          workspace->surfaceSnapshot()) {
         if (surface.surfaceId.isValid()) {
-            surfaceRegistry_.insert(
-                surface.surfaceId, {windowId, surface.paneId});
+            surfaceRegistry_.insert(surface.surfaceId,
+                                    {windowId, surface.paneId});
         }
     }
     connect(workspace, &TerminalWorkspace::paneCommitted, this,
-            [this, windowId, guarded = QPointer(workspace)](
-                PaneId paneId, TerminalPane *) {
-                const SurfaceId surfaceId =
-                    guarded != nullptr ? guarded->surfaceIdForPane(paneId)
-                                       : SurfaceId{};
+            [this, windowId, guarded = QPointer(workspace)](PaneId paneId,
+                                                            TerminalPane *) {
+                const SurfaceId surfaceId = guarded != nullptr
+                    ? guarded->surfaceIdForPane(paneId)
+                    : SurfaceId{};
                 if (surfaceId.isValid()
                     && recordForWindowId(windowId) != nullptr) {
-                    surfaceRegistry_.insert(surfaceId,
-                                            {windowId, paneId});
+                    surfaceRegistry_.insert(surfaceId, {windowId, paneId});
                 }
             });
     connect(workspace, &TerminalWorkspace::paneRemoved, this,
-            [this, windowId, guarded = QPointer(workspace)](
-                PaneId paneId, TerminalPane *) {
-                const SurfaceId surfaceId =
-                    guarded != nullptr ? guarded->surfaceIdForPane(paneId)
-                                       : SurfaceId{};
+            [this, windowId, guarded = QPointer(workspace)](PaneId paneId,
+                                                            TerminalPane *) {
+                const SurfaceId surfaceId = guarded != nullptr
+                    ? guarded->surfaceIdForPane(paneId)
+                    : SurfaceId{};
                 const auto registered = surfaceRegistry_.constFind(surfaceId);
                 if (registered != surfaceRegistry_.cend()
-                    && registered.value()
-                        == SurfaceTarget{windowId, paneId}) {
+                    && registered.value() == SurfaceTarget{windowId, paneId}) {
                     surfaceRegistry_.remove(surfaceId);
                 }
             });
@@ -1789,8 +1785,8 @@ void ApplicationController::registerWindow(
                 if (surfaceId.isValid() && destinationRecord != nullptr
                     && destinationRecord->workspace != nullptr
                     && destinationRecord->workspace->containsPane(paneId)) {
-                    surfaceRegistry_.insert(
-                        surfaceId, {destinationRecord->id, paneId});
+                    surfaceRegistry_.insert(surfaceId,
+                                            {destinationRecord->id, paneId});
                 }
             });
     connect(workspace, &QObject::destroyed, this,
@@ -1842,8 +1838,8 @@ void ApplicationController::registerWindow(
     syncWindowDecoration(window, workspace);
 
     workspace->setTabTransferHandler(
-        [controller = QPointer(this), guarded = QPointer(workspace)](
-            PaneId paneId) {
+        [controller = QPointer(this),
+         guarded = QPointer(workspace)](PaneId paneId) {
             return controller != nullptr && guarded != nullptr
                 && controller->moveTabToNewWindow(guarded, paneId);
         });

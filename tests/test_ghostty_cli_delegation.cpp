@@ -39,10 +39,7 @@ public:
         }
     }
 
-    [[nodiscard]] std::span<char *const> span() noexcept
-    {
-        return pointers_;
-    }
+    [[nodiscard]] std::span<char *const> span() noexcept { return pointers_; }
 
 private:
     std::vector<std::string> storage_;
@@ -57,12 +54,11 @@ struct ProcessResult final {
     QByteArray standardError;
 };
 
-std::expected<ProcessResult, QString> runProcess(
-    const QString &program,
-    const QStringList &arguments,
-    const QProcessEnvironment &environment,
-    const QString &workingDirectory,
-    const QByteArray &standardInput = {})
+std::expected<ProcessResult, QString>
+runProcess(const QString &program, const QStringList &arguments,
+           const QProcessEnvironment &environment,
+           const QString &workingDirectory,
+           const QByteArray &standardInput = {})
 {
     QProcess process;
     process.setProgram(program);
@@ -72,9 +68,8 @@ std::expected<ProcessResult, QString> runProcess(
     process.setProcessChannelMode(QProcess::SeparateChannels);
     process.start();
     if (!process.waitForStarted(10'000)) {
-        return std::unexpected(
-            QStringLiteral("process did not start: %1")
-                .arg(process.errorString()));
+        return std::unexpected(QStringLiteral("process did not start: %1")
+                                   .arg(process.errorString()));
     }
     const qint64 processId = process.processId();
     const auto cleanup = qScopeGuard([&process] {
@@ -92,9 +87,8 @@ std::expected<ProcessResult, QString> runProcess(
     }
     process.closeWriteChannel();
     if (!process.waitForFinished(30'000)) {
-        return std::unexpected(
-            QStringLiteral("process did not finish: %1")
-                .arg(process.errorString()));
+        return std::unexpected(QStringLiteral("process did not finish: %1")
+                                   .arg(process.errorString()));
     }
     return ProcessResult{
         .exitStatus = process.exitStatus(),
@@ -113,8 +107,8 @@ struct FakeHelperReport final {
     QByteArray standardInput;
 };
 
-std::expected<FakeHelperReport, QString> parseFakeHelperReport(
-    const QByteArray &output)
+std::expected<FakeHelperReport, QString>
+parseFakeHelperReport(const QByteArray &output)
 {
     qsizetype offset = 0;
     const auto takeLine = [&]() -> std::expected<QByteArray, QString> {
@@ -126,24 +120,23 @@ std::expected<FakeHelperReport, QString> parseFakeHelperReport(
         offset = newline + 1;
         return result;
     };
-    const auto takeField = [&](QByteArrayView expectedName)
-        -> std::expected<QByteArray, QString> {
+    const auto takeField =
+        [&](QByteArrayView expectedName) -> std::expected<QByteArray, QString> {
         auto header = takeLine();
         if (!header) return std::unexpected(header.error());
         const QByteArray prefix = expectedName.toByteArray() + ' ';
         if (!header->startsWith(prefix)) {
             return std::unexpected(QStringLiteral("unexpected field header: %1")
-                .arg(QString::fromLatin1(*header)));
+                                       .arg(QString::fromLatin1(*header)));
         }
         bool validLength = false;
-        const qlonglong length = header->mid(prefix.size())
-                                     .toLongLong(&validLength);
-        if (!validLength || length < 0
-            || length > output.size() - offset) {
+        const qlonglong length =
+            header->mid(prefix.size()).toLongLong(&validLength);
+        if (!validLength || length < 0 || length > output.size() - offset) {
             return std::unexpected(QStringLiteral("invalid field length"));
         }
-        const QByteArray result = output.mid(
-            offset, static_cast<qsizetype>(length));
+        const QByteArray result =
+            output.mid(offset, static_cast<qsizetype>(length));
         offset += static_cast<qsizetype>(length);
         if (offset >= output.size() || output.at(offset) != '\n') {
             return std::unexpected(QStringLiteral("missing field terminator"));
@@ -154,8 +147,7 @@ std::expected<FakeHelperReport, QString> parseFakeHelperReport(
 
     auto pidLine = takeLine();
     auto argcLine = takeLine();
-    if (!pidLine || !argcLine
-        || !pidLine->startsWith("PID ")
+    if (!pidLine || !argcLine || !pidLine->startsWith("PID ")
         || !argcLine->startsWith("ARGC ")) {
         return std::unexpected(QStringLiteral("missing fake-helper header"));
     }
@@ -199,8 +191,7 @@ bool copyExecutable(const QString &source, const QString &destination)
 
 QProcessEnvironment controlledEnvironment(const QString &configHome)
 {
-    QProcessEnvironment environment =
-        QProcessEnvironment::systemEnvironment();
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     environment.insert(QStringLiteral("XDG_CONFIG_HOME"), configHome);
     environment.insert(QStringLiteral("XDG_STATE_HOME"),
                        QDir(configHome).filePath(QStringLiteral("state")));
@@ -278,16 +269,16 @@ bool writeFile(const QString &path, QByteArrayView contents)
 std::optional<unsigned int> fileMode(const QString &path)
 {
     const QByteArray encoded = QFile::encodeName(path);
-    struct stat information {};
+    struct stat information{};
     if (::stat(encoded.constData(), &information) != 0) {
         return std::nullopt;
     }
     return static_cast<unsigned int>(information.st_mode & 0777U);
 }
 
-QList<QByteArray> forwardedSshArguments(
-    const QString &program, QByteArrayView term,
-    const QList<QByteArray> &arguments)
+QList<QByteArray> forwardedSshArguments(const QString &program,
+                                        QByteArrayView term,
+                                        const QList<QByteArray> &arguments)
 {
     QList<QByteArray> result{
         QFile::encodeName(program),
@@ -338,8 +329,7 @@ void GhosttyCliDelegationTest::classifiesRawArguments()
                             static_cast<qsizetype>(selected.size())));
     };
 
-    for (const GhosttyCliActionCatalogEntry &entry
-         : GhosttyPinnedCliActions) {
+    for (const GhosttyCliActionCatalogEntry &entry : GhosttyPinnedCliActions) {
         const GhosttyCliActionDisposition disposition = entry.isDelegated()
             ? GhosttyCliActionDisposition::Delegate
             : (entry.isApplicationIpc()
@@ -361,10 +351,8 @@ void GhosttyCliDelegationTest::classifiesRawArguments()
            GhosttyCliActionDisposition::Delegate, "+help");
     expect({"ghostty-qt", "-e", "ghostty", "+help"},
            GhosttyCliActionDisposition::None);
-    expect({"ghostty-qt", "--", "+help"},
-           GhosttyCliActionDisposition::None);
-    expect({"ghostty-qt", "--help"},
-           GhosttyCliActionDisposition::None);
+    expect({"ghostty-qt", "--", "+help"}, GhosttyCliActionDisposition::None);
+    expect({"ghostty-qt", "--help"}, GhosttyCliActionDisposition::None);
     expect({"ghostty-qt", "+help", "--version"},
            GhosttyCliActionDisposition::None);
     expect({"ghostty-qt", "+help", "+list-colors"},
@@ -390,35 +378,33 @@ void GhosttyCliDelegationTest::classifiesRawArguments()
            "+toggle-quick-terminal");
 
     constexpr std::array InvalidActions{
-        "+edit-config=now",
-        "+show-config-json",
-        "+unknown",
-        "+Help",
-        "+helpful",
-        "+help=now",
+        "+edit-config=now", "+show-config-json", "+unknown", "+Help",
+        "+helpful",         "+help=now",
     };
     for (const std::string_view action : InvalidActions) {
-        expect({"ghostty-qt", action},
-               GhosttyCliActionDisposition::Unsupported, action);
+        expect({"ghostty-qt", action}, GhosttyCliActionDisposition::Unsupported,
+               action);
     }
 }
 
 void GhosttyCliDelegationTest::replacementPreservesProcessContract()
 {
 #if !GHOSTTY_QT_TEST_CONFIG_ENABLED
-    QSKIP("The configuration-disabled application deliberately has no CLI helper");
+    QSKIP(
+        "The configuration-disabled application deliberately has no CLI helper");
 #else
     QVERIFY(QDir().mkpath(QStringLiteral("tmp")));
     QTemporaryDir temporary(QDir::current().filePath(
         QStringLiteral("tmp/ghostty-cli-exec-XXXXXX")));
     QVERIFY(temporary.isValid());
-    const QString application = temporary.filePath(QStringLiteral("ghostty-qt"));
-    const QString helper = temporary.filePath(
-        QStringLiteral("ghostty-qt-config-helper"));
-    QVERIFY(copyExecutable(
-        QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE), application));
-    QVERIFY(copyExecutable(
-        QStringLiteral(GHOSTTY_QT_TEST_FAKE_HELPER), helper));
+    const QString application =
+        temporary.filePath(QStringLiteral("ghostty-qt"));
+    const QString helper =
+        temporary.filePath(QStringLiteral("ghostty-qt-config-helper"));
+    QVERIFY(copyExecutable(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
+                           application));
+    QVERIFY(
+        copyExecutable(QStringLiteral(GHOSTTY_QT_TEST_FAKE_HELPER), helper));
     const QString workingDirectory = temporary.filePath(QStringLiteral("cwd"));
     QVERIFY(QDir().mkpath(workingDirectory));
 
@@ -440,8 +426,7 @@ void GhosttyCliDelegationTest::replacementPreservesProcessContract()
              qPrintable(executed.has_value() ? QString{} : executed.error()));
     QCOMPARE(executed->exitStatus, QProcess::NormalExit);
     QCOMPARE(executed->exitCode, 73);
-    QCOMPARE(executed->standardError,
-             QByteArray("fake-stderr\0binary", 18));
+    QCOMPARE(executed->standardError, QByteArray("fake-stderr\0binary", 18));
 
     auto report = parseFakeHelperReport(executed->standardOutput);
     QVERIFY2(report.has_value(),
@@ -465,8 +450,8 @@ void GhosttyCliDelegationTest::replacementPreservesProcessContract()
     auto unexecutable = runProcess(application, {QStringLiteral("+help")},
                                    environment, workingDirectory);
     QVERIFY2(unexecutable.has_value(),
-             qPrintable(unexecutable.has_value()
-                 ? QString{} : unexecutable.error()));
+             qPrintable(unexecutable.has_value() ? QString{}
+                                                 : unexecutable.error()));
     QCOMPARE(unexecutable->exitStatus, QProcess::NormalExit);
     QCOMPARE(unexecutable->exitCode, 126);
     QVERIFY(unexecutable->standardOutput.isEmpty());
@@ -496,17 +481,15 @@ void GhosttyCliDelegationTest::matchesPinnedHelper_data()
 
     QTest::newRow("version") << QStringList{QStringLiteral("+version")}
                              << QByteArrayLiteral("Build Config") << 0;
-    QTest::newRow("help")
-        << QStringList{QStringLiteral("+help")}
-        << QByteArrayLiteral("Available actions:") << 0;
+    QTest::newRow("help") << QStringList{QStringLiteral("+help")}
+                          << QByteArrayLiteral("Available actions:") << 0;
     QTest::newRow("explain-config")
         << QStringList{QStringLiteral("+explain-config"),
                        QStringLiteral("--no-pager"),
                        QStringLiteral("font-size")}
         << QByteArrayLiteral("Font size in points") << 0;
     QTest::newRow("edit-config-help")
-        << QStringList{QStringLiteral("+edit-config"),
-                       QStringLiteral("--help")}
+        << QStringList{QStringLiteral("+edit-config"), QStringLiteral("--help")}
         << QByteArrayLiteral("$VISUAL") << 0;
     QTest::newRow("list-actions")
         << QStringList{QStringLiteral("+list-actions")}
@@ -545,21 +528,17 @@ void GhosttyCliDelegationTest::matchesPinnedHelper_data()
         << QByteArrayLiteral("boo") << 0;
     QTest::newRow("list-keybinds")
         << QStringList{QStringLiteral("+list-keybinds"),
-                       QStringLiteral("--default"),
-                       QStringLiteral("--plain")}
+                       QStringLiteral("--default"), QStringLiteral("--plain")}
         << QByteArrayLiteral("reload_config") << 0;
-    QTest::newRow("show-config")
-        << QStringList{QStringLiteral("+show-config"),
-                       QStringLiteral("--default"),
-                       QStringLiteral("--no-pager")}
-        << QByteArrayLiteral("font-size = 12") << 0;
+    QTest::newRow("show-config") << QStringList{QStringLiteral("+show-config"),
+                                                QStringLiteral("--default"),
+                                                QStringLiteral("--no-pager")}
+                                 << QByteArrayLiteral("font-size = 12") << 0;
     QTest::newRow("ssh-help")
-        << QStringList{QStringLiteral("+ssh"),
-                       QStringLiteral("--help")}
+        << QStringList{QStringLiteral("+ssh"), QStringLiteral("--help")}
         << QByteArrayLiteral("Wrap `ssh` to automatically configure") << 0;
     QTest::newRow("ssh-cache-help")
-        << QStringList{QStringLiteral("+ssh-cache"),
-                       QStringLiteral("--help")}
+        << QStringList{QStringLiteral("+ssh-cache"), QStringLiteral("--help")}
         << QByteArrayLiteral("Manage the SSH terminfo cache") << 0;
     QTest::newRow("ssh-child-success")
         << QStringList{QStringLiteral("+ssh"),
@@ -570,8 +549,7 @@ void GhosttyCliDelegationTest::matchesPinnedHelper_data()
                        QStringLiteral("fixture.example")}
         << QByteArray{} << 0;
     QTest::newRow("validate-config")
-        << QStringList{QStringLiteral("+validate-config")}
-        << QByteArray{} << 0;
+        << QStringList{QStringLiteral("+validate-config")} << QByteArray{} << 0;
     QTest::newRow("action-help-before")
         << QStringList{QStringLiteral("--help"),
                        QStringLiteral("+validate-config")}
@@ -607,17 +585,15 @@ void GhosttyCliDelegationTest::matchesPinnedHelper()
         || arguments.contains(QStringLiteral("+show-face"))) {
         QVERIFY(configureIsolatedFontconfig(temporary.path(), environment));
     }
-    auto helper = runProcess(
-        QStringLiteral(GHOSTTY_QT_TEST_REAL_HELPER), arguments,
-        environment, temporary.path());
-    auto application = runProcess(
-        QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE), arguments,
-        environment, temporary.path());
+    auto helper = runProcess(QStringLiteral(GHOSTTY_QT_TEST_REAL_HELPER),
+                             arguments, environment, temporary.path());
+    auto application = runProcess(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
+                                  arguments, environment, temporary.path());
     QVERIFY2(helper.has_value(),
              qPrintable(helper.has_value() ? QString{} : helper.error()));
-    QVERIFY2(application.has_value(),
-             qPrintable(application.has_value()
-                 ? QString{} : application.error()));
+    QVERIFY2(
+        application.has_value(),
+        qPrintable(application.has_value() ? QString{} : application.error()));
     QCOMPARE(helper->exitStatus, QProcess::NormalExit);
     QCOMPARE(helper->exitCode, expectedExitCode);
     QCOMPARE(application->exitStatus, QProcess::NormalExit);
@@ -643,15 +619,17 @@ void GhosttyCliDelegationTest::delegatesPinnedSshChildContract()
         QStringLiteral("tmp/ghostty-cli-ssh-child-XXXXXX")));
     QVERIFY(temporary.isValid());
 
-    const QString processTmp = temporary.filePath(QStringLiteral("process-tmp"));
+    const QString processTmp =
+        temporary.filePath(QStringLiteral("process-tmp"));
     const QString stateHome = temporary.filePath(QStringLiteral("state"));
     QVERIFY(QDir().mkpath(processTmp));
     QVERIFY(QDir().mkpath(stateHome));
 
-    const QString fakeSsh = QFileInfo(
-        QStringLiteral(GHOSTTY_QT_TEST_FAKE_HELPER)).absoluteFilePath();
-    QProcessEnvironment environment = controlledEnvironment(
-        temporary.filePath(QStringLiteral("config")));
+    const QString fakeSsh =
+        QFileInfo(QStringLiteral(GHOSTTY_QT_TEST_FAKE_HELPER))
+            .absoluteFilePath();
+    QProcessEnvironment environment =
+        controlledEnvironment(temporary.filePath(QStringLiteral("config")));
     environment.insert(QStringLiteral("TMPDIR"), processTmp);
     environment.insert(QStringLiteral("XDG_STATE_HOME"), stateHome);
     environment.insert(QStringLiteral("GHOSTTY_QT_CLI_SENTINEL"),
@@ -668,49 +646,45 @@ void GhosttyCliDelegationTest::delegatesPinnedSshChildContract()
         QStringLiteral("argument with spaces"),
     };
     const QByteArray standardInput("ssh-input\0payload\n", 18);
-    auto executed = runProcess(
-        QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE), sshArguments,
-        environment, temporary.path(), standardInput);
+    auto executed =
+        runProcess(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE), sshArguments,
+                   environment, temporary.path(), standardInput);
     QVERIFY2(executed.has_value(),
-             qPrintable(executed.has_value()
-                 ? QString{} : executed.error()));
+             qPrintable(executed.has_value() ? QString{} : executed.error()));
     QCOMPARE(executed->exitStatus, QProcess::NormalExit);
     QCOMPARE(executed->exitCode, 73);
-    QCOMPARE(executed->standardError,
-             QByteArray("fake-stderr\0binary", 18));
+    QCOMPARE(executed->standardError, QByteArray("fake-stderr\0binary", 18));
 
     auto report = parseFakeHelperReport(executed->standardOutput);
     QVERIFY2(report.has_value(),
              qPrintable(report.has_value() ? QString{} : report.error()));
-    QCOMPARE(report->arguments, forwardedSshArguments(
-        fakeSsh, "xterm-256color",
-        {
-            QByteArrayLiteral("--rare-ssh-option"),
-            QByteArrayLiteral("fixture.example"),
-            QByteArray{},
-            QByteArrayLiteral("argument with spaces"),
-        }));
-    QCOMPARE(report->workingDirectory,
-             QFile::encodeName(temporary.path()));
+    QCOMPARE(
+        report->arguments,
+        forwardedSshArguments(fakeSsh, "xterm-256color",
+                              {
+                                  QByteArrayLiteral("--rare-ssh-option"),
+                                  QByteArrayLiteral("fixture.example"),
+                                  QByteArray{},
+                                  QByteArrayLiteral("argument with spaces"),
+                              }));
+    QCOMPARE(report->workingDirectory, QFile::encodeName(temporary.path()));
     QCOMPARE(report->environmentSentinel,
              QByteArrayLiteral("ssh-child-environment"));
     QCOMPARE(report->standardInput, standardInput);
 
-    auto signaled = runProcess(
-        QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
-        {
-            QStringLiteral("+ssh"),
-            QStringLiteral("--terminfo=false"),
-            QStringLiteral("--forward-env=false"),
-            QStringLiteral("--ssh=/bin/sh"),
-            QStringLiteral("--"),
-            QStringLiteral("-c"),
-            QStringLiteral("kill -TERM $$"),
-        },
-        environment, temporary.path());
+    auto signaled = runProcess(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
+                               {
+                                   QStringLiteral("+ssh"),
+                                   QStringLiteral("--terminfo=false"),
+                                   QStringLiteral("--forward-env=false"),
+                                   QStringLiteral("--ssh=/bin/sh"),
+                                   QStringLiteral("--"),
+                                   QStringLiteral("-c"),
+                                   QStringLiteral("kill -TERM $$"),
+                               },
+                               environment, temporary.path());
     QVERIFY2(signaled.has_value(),
-             qPrintable(signaled.has_value()
-                 ? QString{} : signaled.error()));
+             qPrintable(signaled.has_value() ? QString{} : signaled.error()));
     QCOMPARE(signaled->exitStatus, QProcess::NormalExit);
     QCOMPARE(signaled->exitCode, 128 + SIGTERM);
     QVERIFY(signaled->standardOutput.isEmpty());
@@ -728,31 +702,33 @@ void GhosttyCliDelegationTest::exercisesPinnedSshTerminfoCache()
     QVERIFY(temporary.isValid());
 
     const QString stateHome = temporary.filePath(QStringLiteral("state"));
-    const QString processTmp = temporary.filePath(QStringLiteral("process-tmp"));
+    const QString processTmp =
+        temporary.filePath(QStringLiteral("process-tmp"));
     const QString home = temporary.filePath(QStringLiteral("home"));
-    const QString cacheDecoy = temporary.filePath(QStringLiteral("cache-decoy"));
-    for (const QString &directory
-         : {stateHome, processTmp, home, cacheDecoy}) {
+    const QString cacheDecoy =
+        temporary.filePath(QStringLiteral("cache-decoy"));
+    for (const QString &directory : {stateHome, processTmp, home, cacheDecoy}) {
         QVERIFY(QDir().mkpath(directory));
     }
 
-    const QString fakeSsh = QFileInfo(
-        QStringLiteral(GHOSTTY_QT_TEST_FAKE_HELPER)).absoluteFilePath();
+    const QString fakeSsh =
+        QFileInfo(QStringLiteral(GHOSTTY_QT_TEST_FAKE_HELPER))
+            .absoluteFilePath();
     const QString phaseLog = temporary.filePath(QStringLiteral("phases"));
     const QString payload = temporary.filePath(QStringLiteral("terminfo"));
-    const QString cachePath = QDir(stateHome).filePath(
-        QStringLiteral("ghostty/ssh_cache"));
+    const QString cachePath =
+        QDir(stateHome).filePath(QStringLiteral("ghostty/ssh_cache"));
 
-    QProcessEnvironment environment = controlledEnvironment(
-        temporary.filePath(QStringLiteral("config")));
+    QProcessEnvironment environment =
+        controlledEnvironment(temporary.filePath(QStringLiteral("config")));
     environment.insert(QStringLiteral("HOME"), home);
     environment.insert(QStringLiteral("TMPDIR"), processTmp);
     environment.insert(QStringLiteral("XDG_CACHE_HOME"), cacheDecoy);
     environment.insert(QStringLiteral("XDG_STATE_HOME"), stateHome);
     environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_SSH_PHASE_LOG"),
                        phaseLog);
-    environment.insert(
-        QStringLiteral("GHOSTTY_QT_FAKE_SSH_TERMINFO_PAYLOAD"), payload);
+    environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_SSH_TERMINFO_PAYLOAD"),
+                       payload);
     environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_SSH_FINAL_EXIT"),
                        QStringLiteral("0"));
 
@@ -763,20 +739,20 @@ void GhosttyCliDelegationTest::exercisesPinnedSshTerminfoCache()
         QStringLiteral("fixture-alias"),
     };
     const auto runSsh = [&] {
-        return runProcess(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
-                          arguments, environment, temporary.path());
+        return runProcess(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE), arguments,
+                          environment, temporary.path());
     };
     const auto clearArtifacts = [&] {
-        (void) QFile::remove(phaseLog);
-        (void) QFile::remove(payload);
+        (void)QFile::remove(phaseLog);
+        (void)QFile::remove(payload);
     };
 
     environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_SSH_INSTALL_EXIT"),
                        QStringLiteral("17"));
     auto failedInstall = runSsh();
     QVERIFY2(failedInstall.has_value(),
-             qPrintable(failedInstall.has_value()
-                 ? QString{} : failedInstall.error()));
+             qPrintable(failedInstall.has_value() ? QString{}
+                                                  : failedInstall.error()));
     QCOMPARE(failedInstall->exitStatus, QProcess::NormalExit);
     QCOMPARE(failedInstall->exitCode, 0);
     QCOMPARE(readFile(phaseLog),
@@ -787,22 +763,20 @@ void GhosttyCliDelegationTest::exercisesPinnedSshTerminfoCache()
     QVERIFY(!QFileInfo::exists(cachePath));
     QVERIFY(failedInstall->standardError.contains(
         QByteArrayLiteral("failed to install terminfo")));
-    auto failedReport = parseFakeHelperReport(
-        failedInstall->standardOutput);
+    auto failedReport = parseFakeHelperReport(failedInstall->standardOutput);
     QVERIFY2(failedReport.has_value(),
-             qPrintable(failedReport.has_value()
-                 ? QString{} : failedReport.error()));
-    QCOMPARE(failedReport->arguments, forwardedSshArguments(
-        fakeSsh, "xterm-256color",
-        {QByteArrayLiteral("fixture-alias")}));
+             qPrintable(failedReport.has_value() ? QString{}
+                                                 : failedReport.error()));
+    QCOMPARE(failedReport->arguments,
+             forwardedSshArguments(fakeSsh, "xterm-256color",
+                                   {QByteArrayLiteral("fixture-alias")}));
 
     clearArtifacts();
     environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_SSH_INSTALL_EXIT"),
                        QStringLiteral("0"));
     auto installed = runSsh();
     QVERIFY2(installed.has_value(),
-             qPrintable(installed.has_value()
-                 ? QString{} : installed.error()));
+             qPrintable(installed.has_value() ? QString{} : installed.error()));
     QCOMPARE(installed->exitStatus, QProcess::NormalExit);
     QCOMPARE(installed->exitCode, 0);
     QCOMPARE(readFile(phaseLog),
@@ -812,11 +786,11 @@ void GhosttyCliDelegationTest::exercisesPinnedSshTerminfoCache()
     QVERIFY(!installedPayload->isEmpty());
     auto installedReport = parseFakeHelperReport(installed->standardOutput);
     QVERIFY2(installedReport.has_value(),
-             qPrintable(installedReport.has_value()
-                 ? QString{} : installedReport.error()));
-    QCOMPARE(installedReport->arguments, forwardedSshArguments(
-        fakeSsh, "xterm-ghostty",
-        {QByteArrayLiteral("fixture-alias")}));
+             qPrintable(installedReport.has_value() ? QString{}
+                                                    : installedReport.error()));
+    QCOMPARE(installedReport->arguments,
+             forwardedSshArguments(fakeSsh, "xterm-ghostty",
+                                   {QByteArrayLiteral("fixture-alias")}));
     QVERIFY(isRegularFile(cachePath));
     QCOMPARE(fileMode(cachePath), std::optional<unsigned int>(0600U));
     const auto cacheContents = readFile(cachePath);
@@ -830,19 +804,19 @@ void GhosttyCliDelegationTest::exercisesPinnedSshTerminfoCache()
              qPrintable(cached.has_value() ? QString{} : cached.error()));
     QCOMPARE(cached->exitStatus, QProcess::NormalExit);
     QCOMPARE(cached->exitCode, 0);
-    QCOMPARE(readFile(phaseLog),
-             std::optional<QByteArray>("resolve\nfinal\n"));
+    QCOMPARE(readFile(phaseLog), std::optional<QByteArray>("resolve\nfinal\n"));
     QVERIFY(!QFileInfo::exists(payload));
     auto cachedReport = parseFakeHelperReport(cached->standardOutput);
     QVERIFY2(cachedReport.has_value(),
-             qPrintable(cachedReport.has_value()
-                 ? QString{} : cachedReport.error()));
-    QCOMPARE(cachedReport->arguments, forwardedSshArguments(
-        fakeSsh, "xterm-ghostty",
-        {QByteArrayLiteral("fixture-alias")}));
+             qPrintable(cachedReport.has_value() ? QString{}
+                                                 : cachedReport.error()));
+    QCOMPARE(cachedReport->arguments,
+             forwardedSshArguments(fakeSsh, "xterm-ghostty",
+                                   {QByteArrayLiteral("fixture-alias")}));
     QVERIFY(!cached->standardError.contains(
         QByteArrayLiteral("Setting up xterm-ghostty")));
-    QVERIFY(!QFileInfo::exists(cacheDecoy + QStringLiteral("/ghostty/ssh_cache")));
+    QVERIFY(
+        !QFileInfo::exists(cacheDecoy + QStringLiteral("/ghostty/ssh_cache")));
 #endif
 }
 
@@ -857,26 +831,27 @@ void GhosttyCliDelegationTest::managesPinnedSshCache()
     QVERIFY(temporary.isValid());
 
     const QString stateHome = temporary.filePath(QStringLiteral("state"));
-    const QString processTmp = temporary.filePath(QStringLiteral("process-tmp"));
+    const QString processTmp =
+        temporary.filePath(QStringLiteral("process-tmp"));
     const QString home = temporary.filePath(QStringLiteral("home"));
-    const QString cacheDecoy = temporary.filePath(QStringLiteral("cache-decoy"));
-    for (const QString &directory
-         : {stateHome, processTmp, home, cacheDecoy}) {
+    const QString cacheDecoy =
+        temporary.filePath(QStringLiteral("cache-decoy"));
+    for (const QString &directory : {stateHome, processTmp, home, cacheDecoy}) {
         QVERIFY(QDir().mkpath(directory));
     }
-    const QString cachePath = QDir(stateHome).filePath(
-        QStringLiteral("ghostty/ssh_cache"));
+    const QString cachePath =
+        QDir(stateHome).filePath(QStringLiteral("ghostty/ssh_cache"));
 
-    QProcessEnvironment environment = controlledEnvironment(
-        temporary.filePath(QStringLiteral("config")));
+    QProcessEnvironment environment =
+        controlledEnvironment(temporary.filePath(QStringLiteral("config")));
     environment.insert(QStringLiteral("HOME"), home);
     environment.insert(QStringLiteral("TMPDIR"), processTmp);
     environment.insert(QStringLiteral("XDG_CACHE_HOME"), cacheDecoy);
     environment.insert(QStringLiteral("XDG_STATE_HOME"), stateHome);
     const auto runCache = [&](QStringList arguments) {
         arguments.prepend(QStringLiteral("+ssh-cache"));
-        return runProcess(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
-                          arguments, environment, temporary.path());
+        return runProcess(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE), arguments,
+                          environment, temporary.path());
     };
 
     auto empty = runCache({});
@@ -886,16 +861,13 @@ void GhosttyCliDelegationTest::managesPinnedSshCache()
     QVERIFY(empty->standardOutput.isEmpty());
     QVERIFY(!QFileInfo::exists(cachePath));
 
-    for (const QString &destination
-         : {QStringLiteral("alice@example.test"),
-            QStringLiteral("alice@example.test"),
-            QStringLiteral("root@example.test"),
-            QStringLiteral("carol@other.test")}) {
-        auto added = runCache(
-            {QStringLiteral("--add=") + destination});
+    for (const QString &destination : {QStringLiteral("alice@example.test"),
+                                       QStringLiteral("alice@example.test"),
+                                       QStringLiteral("root@example.test"),
+                                       QStringLiteral("carol@other.test")}) {
+        auto added = runCache({QStringLiteral("--add=") + destination});
         QVERIFY2(added.has_value(),
-                 qPrintable(added.has_value()
-                     ? QString{} : added.error()));
+                 qPrintable(added.has_value() ? QString{} : added.error()));
         QCOMPARE(added->exitCode, 0);
     }
     QVERIFY(isRegularFile(cachePath));
@@ -903,11 +875,9 @@ void GhosttyCliDelegationTest::managesPinnedSshCache()
 
     const QByteArray encodedCachePath = QFile::encodeName(cachePath);
     QCOMPARE(::chmod(encodedCachePath.constData(), 0644), 0);
-    auto repaired = runCache(
-        {QStringLiteral("--add=dave@repair.test")});
+    auto repaired = runCache({QStringLiteral("--add=dave@repair.test")});
     QVERIFY2(repaired.has_value(),
-             qPrintable(repaired.has_value()
-                 ? QString{} : repaired.error()));
+             qPrintable(repaired.has_value() ? QString{} : repaired.error()));
     QCOMPARE(repaired->exitCode, 0);
     QCOMPARE(fileMode(cachePath), std::optional<unsigned int>(0600U));
 
@@ -915,7 +885,8 @@ void GhosttyCliDelegationTest::managesPinnedSshCache()
     QVERIFY2(listed.has_value(),
              qPrintable(listed.has_value() ? QString{} : listed.error()));
     QCOMPARE(listed->exitCode, 0);
-    const QList<QByteArray> lines = listed->standardOutput.trimmed().split('\n');
+    const QList<QByteArray> lines =
+        listed->standardOutput.trimmed().split('\n');
     QCOMPARE(lines.size(), 4);
     QVERIFY(lines.at(0).startsWith("alice@example.test  "));
     QVERIFY(lines.at(1).startsWith("carol@other.test  "));
@@ -940,49 +911,42 @@ void GhosttyCliDelegationTest::managesPinnedSshCache()
 
     auto missing = runCache({QStringLiteral("missing.example")});
     QVERIFY2(missing.has_value(),
-             qPrintable(missing.has_value()
-                 ? QString{} : missing.error()));
+             qPrintable(missing.has_value() ? QString{} : missing.error()));
     QCOMPARE(missing->exitCode, 1);
 
-    auto removed = runCache(
-        {QStringLiteral("--remove=alice@example.test")});
+    auto removed = runCache({QStringLiteral("--remove=alice@example.test")});
     QVERIFY2(removed.has_value(),
-             qPrintable(removed.has_value()
-                 ? QString{} : removed.error()));
+             qPrintable(removed.has_value() ? QString{} : removed.error()));
     QCOMPARE(removed->exitCode, 0);
-    auto removedAgain = runCache(
-        {QStringLiteral("--remove=alice@example.test")});
+    auto removedAgain =
+        runCache({QStringLiteral("--remove=alice@example.test")});
     QVERIFY2(removedAgain.has_value(),
-             qPrintable(removedAgain.has_value()
-                 ? QString{} : removedAgain.error()));
+             qPrintable(removedAgain.has_value() ? QString{}
+                                                 : removedAgain.error()));
     QCOMPARE(removedAgain->exitCode, 1);
 
-    auto invalid = runCache(
-        {QStringLiteral("--add=not a destination")});
+    auto invalid = runCache({QStringLiteral("--add=not a destination")});
     QVERIFY2(invalid.has_value(),
-             qPrintable(invalid.has_value()
-                 ? QString{} : invalid.error()));
+             qPrintable(invalid.has_value() ? QString{} : invalid.error()));
     QCOMPARE(invalid->exitCode, 2);
     auto conflicting = runCache({
         QStringLiteral("--clear"),
         QStringLiteral("--add=conflict.example"),
     });
-    QVERIFY2(conflicting.has_value(),
-             qPrintable(conflicting.has_value()
-                 ? QString{} : conflicting.error()));
+    QVERIFY2(
+        conflicting.has_value(),
+        qPrintable(conflicting.has_value() ? QString{} : conflicting.error()));
     QCOMPARE(conflicting->exitCode, 2);
 
     QFile seeded(cachePath);
     QVERIFY(seeded.open(QIODevice::WriteOnly | QIODevice::Truncate));
-    const QByteArray seed(
-        "old.example|0|xterm-ghostty\n"
-        "future.example|253402300799|xterm-ghostty\n");
+    const QByteArray seed("old.example|0|xterm-ghostty\n"
+                          "future.example|253402300799|xterm-ghostty\n");
     QCOMPARE(seeded.write(seed), seed.size());
     seeded.close();
     auto pruned = runCache({QStringLiteral("--prune=1d")});
     QVERIFY2(pruned.has_value(),
-             qPrintable(pruned.has_value()
-                 ? QString{} : pruned.error()));
+             qPrintable(pruned.has_value() ? QString{} : pruned.error()));
     QCOMPARE(pruned->exitCode, 0);
     QCOMPARE(pruned->standardOutput,
              QByteArrayLiteral("Pruned cache entries: 1\n"));
@@ -994,18 +958,17 @@ void GhosttyCliDelegationTest::managesPinnedSshCache()
 
     auto subsecondPrune = runCache({QStringLiteral("--prune=500ms")});
     QVERIFY2(subsecondPrune.has_value(),
-             qPrintable(subsecondPrune.has_value()
-                 ? QString{} : subsecondPrune.error()));
+             qPrintable(subsecondPrune.has_value() ? QString{}
+                                                   : subsecondPrune.error()));
     QCOMPARE(subsecondPrune->exitCode, 2);
 
     auto cleared = runCache({QStringLiteral("--clear")});
     QVERIFY2(cleared.has_value(),
-             qPrintable(cleared.has_value()
-                 ? QString{} : cleared.error()));
+             qPrintable(cleared.has_value() ? QString{} : cleared.error()));
     QCOMPARE(cleared->exitCode, 0);
     QVERIFY(!QFileInfo::exists(cachePath));
-    QVERIFY(!QFileInfo::exists(
-        cacheDecoy + QStringLiteral("/ghostty/ssh_cache")));
+    QVERIFY(
+        !QFileInfo::exists(cacheDecoy + QStringLiteral("/ghostty/ssh_cache")));
 #endif
 }
 
@@ -1019,19 +982,18 @@ void GhosttyCliDelegationTest::editConfigUsesPinnedEditorContract()
         QStringLiteral("tmp/ghostty-cli-edit-config-XXXXXX")));
     QVERIFY(temporary.isValid());
 
-    const QString editor = temporary.filePath(
-        QStringLiteral("fake editor's executable"));
-    QVERIFY(copyExecutable(
-        QStringLiteral(GHOSTTY_QT_TEST_FAKE_HELPER), editor));
-    const QString editorCommand =
-        QStringLiteral("exec ") + shellQuote(editor);
+    const QString editor =
+        temporary.filePath(QStringLiteral("fake editor's executable"));
+    QVERIFY(
+        copyExecutable(QStringLiteral(GHOSTTY_QT_TEST_FAKE_HELPER), editor));
+    const QString editorCommand = QStringLiteral("exec ") + shellQuote(editor);
     const QByteArray standardInput("editor-input\0payload\n", 21);
 
-    const QString preferredHome = temporary.filePath(
-        QStringLiteral("preferred config home's files"));
+    const QString preferredHome =
+        temporary.filePath(QStringLiteral("preferred config home's files"));
     QVERIFY(QDir().mkpath(preferredHome));
-    const QString preferredPath = QDir(preferredHome).filePath(
-        QStringLiteral("ghostty/config.ghostty"));
+    const QString preferredPath =
+        QDir(preferredHome).filePath(QStringLiteral("ghostty/config.ghostty"));
     QProcessEnvironment preferredEnvironment =
         controlledEnvironment(preferredHome);
     preferredEnvironment.insert(QStringLiteral("VISUAL"), editorCommand);
@@ -1040,22 +1002,19 @@ void GhosttyCliDelegationTest::editConfigUsesPinnedEditorContract()
     preferredEnvironment.insert(QStringLiteral("GHOSTTY_QT_CLI_SENTINEL"),
                                 QStringLiteral("visual-won"));
 
-    auto preferred = runProcess(
-        QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
-        {QStringLiteral("+edit-config")}, preferredEnvironment,
-        temporary.path(), standardInput);
+    auto preferred =
+        runProcess(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
+                   {QStringLiteral("+edit-config")}, preferredEnvironment,
+                   temporary.path(), standardInput);
     QVERIFY2(preferred.has_value(),
-             qPrintable(preferred.has_value()
-                 ? QString{} : preferred.error()));
+             qPrintable(preferred.has_value() ? QString{} : preferred.error()));
     QCOMPARE(preferred->exitStatus, QProcess::NormalExit);
     QCOMPARE(preferred->exitCode, 73);
-    QCOMPARE(preferred->standardError,
-             QByteArray("fake-stderr\0binary", 18));
-    auto preferredReport = parseFakeHelperReport(
-        preferred->standardOutput);
+    QCOMPARE(preferred->standardError, QByteArray("fake-stderr\0binary", 18));
+    auto preferredReport = parseFakeHelperReport(preferred->standardOutput);
     QVERIFY2(preferredReport.has_value(),
-             qPrintable(preferredReport.has_value()
-                 ? QString{} : preferredReport.error()));
+             qPrintable(preferredReport.has_value() ? QString{}
+                                                    : preferredReport.error()));
     QCOMPARE(preferredReport->processId, preferred->processId);
     const QList<QByteArray> expectedPreferredArguments{
         QFile::encodeName(editor),
@@ -1070,38 +1029,35 @@ void GhosttyCliDelegationTest::editConfigUsesPinnedEditorContract()
     QVERIFY(isRegularFile(preferredPath));
     QCOMPARE(QFileInfo(preferredPath).size(), qint64{0});
 
-    const QString legacyHome = temporary.filePath(
-        QStringLiteral("legacy config home's files"));
-    const QString legacyDirectory = QDir(legacyHome).filePath(
-        QStringLiteral("ghostty"));
+    const QString legacyHome =
+        temporary.filePath(QStringLiteral("legacy config home's files"));
+    const QString legacyDirectory =
+        QDir(legacyHome).filePath(QStringLiteral("ghostty"));
     QVERIFY(QDir().mkpath(legacyDirectory));
-    const QString legacyPath = QDir(legacyDirectory).filePath(
-        QStringLiteral("config"));
+    const QString legacyPath =
+        QDir(legacyDirectory).filePath(QStringLiteral("config"));
     QFile legacyFile(legacyPath);
     QVERIFY(legacyFile.open(QIODevice::WriteOnly));
     QCOMPARE(legacyFile.write("font-size = 13\n"), qint64{15});
     legacyFile.close();
 
-    QProcessEnvironment legacyEnvironment =
-        controlledEnvironment(legacyHome);
+    QProcessEnvironment legacyEnvironment = controlledEnvironment(legacyHome);
     legacyEnvironment.insert(QStringLiteral("VISUAL"), QString{});
     legacyEnvironment.insert(QStringLiteral("EDITOR"), editorCommand);
     legacyEnvironment.insert(QStringLiteral("GHOSTTY_QT_CLI_SENTINEL"),
                              QStringLiteral("editor-fallback"));
-    auto legacy = runProcess(
-        QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
-        {QStringLiteral("+edit-config")}, legacyEnvironment,
-        temporary.path());
+    auto legacy = runProcess(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
+                             {QStringLiteral("+edit-config")},
+                             legacyEnvironment, temporary.path());
     QVERIFY2(legacy.has_value(),
              qPrintable(legacy.has_value() ? QString{} : legacy.error()));
     QCOMPARE(legacy->exitStatus, QProcess::NormalExit);
     QCOMPARE(legacy->exitCode, 73);
-    QCOMPARE(legacy->standardError,
-             QByteArray("fake-stderr\0binary", 18));
+    QCOMPARE(legacy->standardError, QByteArray("fake-stderr\0binary", 18));
     auto legacyReport = parseFakeHelperReport(legacy->standardOutput);
     QVERIFY2(legacyReport.has_value(),
-             qPrintable(legacyReport.has_value()
-                 ? QString{} : legacyReport.error()));
+             qPrintable(legacyReport.has_value() ? QString{}
+                                                 : legacyReport.error()));
     QCOMPARE(legacyReport->processId, legacy->processId);
     const QList<QByteArray> expectedLegacyArguments{
         QFile::encodeName(editor),
@@ -1110,30 +1066,31 @@ void GhosttyCliDelegationTest::editConfigUsesPinnedEditorContract()
     QCOMPARE(legacyReport->arguments, expectedLegacyArguments);
     QCOMPARE(legacyReport->environmentSentinel,
              QByteArrayLiteral("editor-fallback"));
-    QVERIFY(!QFileInfo::exists(QDir(legacyHome).filePath(
-        QStringLiteral("ghostty/config.ghostty"))));
+    QVERIFY(!QFileInfo::exists(
+        QDir(legacyHome).filePath(QStringLiteral("ghostty/config.ghostty"))));
 
-    const QString missingEditorHome = temporary.filePath(
-        QStringLiteral("missing editor config"));
+    const QString missingEditorHome =
+        temporary.filePath(QStringLiteral("missing editor config"));
     QVERIFY(QDir().mkpath(missingEditorHome));
-    const QString missingEditorPath = QDir(missingEditorHome).filePath(
-        QStringLiteral("ghostty/config.ghostty"));
+    const QString missingEditorPath =
+        QDir(missingEditorHome)
+            .filePath(QStringLiteral("ghostty/config.ghostty"));
     const QProcessEnvironment missingEditorEnvironment =
         controlledEnvironment(missingEditorHome);
-    auto missingEditor = runProcess(
-        QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
-        {QStringLiteral("+edit-config")}, missingEditorEnvironment,
-        temporary.path());
-    auto directMissingEditor = runProcess(
-        QStringLiteral(GHOSTTY_QT_TEST_REAL_HELPER),
-        {QStringLiteral("+edit-config")}, missingEditorEnvironment,
-        temporary.path());
+    auto missingEditor = runProcess(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
+                                    {QStringLiteral("+edit-config")},
+                                    missingEditorEnvironment, temporary.path());
+    auto directMissingEditor =
+        runProcess(QStringLiteral(GHOSTTY_QT_TEST_REAL_HELPER),
+                   {QStringLiteral("+edit-config")}, missingEditorEnvironment,
+                   temporary.path());
     QVERIFY2(missingEditor.has_value(),
-             qPrintable(missingEditor.has_value()
-                 ? QString{} : missingEditor.error()));
+             qPrintable(missingEditor.has_value() ? QString{}
+                                                  : missingEditor.error()));
     QVERIFY2(directMissingEditor.has_value(),
              qPrintable(directMissingEditor.has_value()
-                 ? QString{} : directMissingEditor.error()));
+                            ? QString{}
+                            : directMissingEditor.error()));
     QCOMPARE(missingEditor->exitStatus, QProcess::NormalExit);
     QCOMPARE(missingEditor->exitCode, 1);
     QVERIFY(missingEditor->standardOutput.isEmpty());
@@ -1141,13 +1098,12 @@ void GhosttyCliDelegationTest::editConfigUsesPinnedEditorContract()
         QByteArrayLiteral("$EDITOR or $VISUAL")));
     QVERIFY(missingEditor->standardError.contains(
         QByteArrayLiteral("\x1b]8;;file://")
-            + QFile::encodeName(missingEditorPath)));
+        + QFile::encodeName(missingEditorPath)));
     QCOMPARE(missingEditor->exitStatus, directMissingEditor->exitStatus);
     QCOMPARE(missingEditor->exitCode, directMissingEditor->exitCode);
     QCOMPARE(missingEditor->standardOutput,
              directMissingEditor->standardOutput);
-    QCOMPARE(missingEditor->standardError,
-             directMissingEditor->standardError);
+    QCOMPARE(missingEditor->standardError, directMissingEditor->standardError);
     QVERIFY(isRegularFile(missingEditorPath));
     QCOMPARE(QFileInfo(missingEditorPath).size(), qint64{0});
 #endif
@@ -1277,39 +1233,38 @@ void GhosttyCliDelegationTest::enforcesBuildConfigurationBoundary()
     const QProcessEnvironment environment =
         controlledEnvironment(temporary.path());
 
-    auto privateAction = runProcess(
-        QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
-        {QStringLiteral("+show-config-json")},
-        environment, temporary.path());
+    auto privateAction = runProcess(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
+                                    {QStringLiteral("+show-config-json")},
+                                    environment, temporary.path());
     QVERIFY2(privateAction.has_value(),
-             qPrintable(privateAction.has_value()
-                 ? QString{} : privateAction.error()));
+             qPrintable(privateAction.has_value() ? QString{}
+                                                  : privateAction.error()));
     QCOMPARE(privateAction->exitStatus, QProcess::NormalExit);
     QCOMPARE(privateAction->exitCode, 2);
     QVERIFY(privateAction->standardOutput.isEmpty());
     QVERIFY(privateAction->standardError.contains(
         QByteArrayLiteral("unsupported Ghostty CLI action")));
 
-    auto multipleActions = runProcess(
-        QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
-        {QStringLiteral("+help"), QStringLiteral("+list-fonts")},
-        environment, temporary.path());
+    auto multipleActions =
+        runProcess(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
+                   {QStringLiteral("+help"), QStringLiteral("+list-fonts")},
+                   environment, temporary.path());
     QVERIFY2(multipleActions.has_value(),
-             qPrintable(multipleActions.has_value()
-                 ? QString{} : multipleActions.error()));
+             qPrintable(multipleActions.has_value() ? QString{}
+                                                    : multipleActions.error()));
     QCOMPARE(multipleActions->exitStatus, QProcess::NormalExit);
     QCOMPARE(multipleActions->exitCode, 2);
     QVERIFY(multipleActions->standardOutput.isEmpty());
     QVERIFY(multipleActions->standardError.contains(
         QByteArrayLiteral("multiple Ghostty CLI actions")));
 
-    auto mixedVersion = runProcess(
-        QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
-        {QStringLiteral("+help"), QStringLiteral("--version")},
-        environment, temporary.path());
+    auto mixedVersion =
+        runProcess(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
+                   {QStringLiteral("+help"), QStringLiteral("--version")},
+                   environment, temporary.path());
     QVERIFY2(mixedVersion.has_value(),
-             qPrintable(mixedVersion.has_value()
-                 ? QString{} : mixedVersion.error()));
+             qPrintable(mixedVersion.has_value() ? QString{}
+                                                 : mixedVersion.error()));
     QCOMPARE(mixedVersion->exitStatus, QProcess::NormalExit);
     QCOMPARE(mixedVersion->exitCode, 0);
     QVERIFY(mixedVersion->standardOutput.startsWith(
@@ -1317,12 +1272,12 @@ void GhosttyCliDelegationTest::enforcesBuildConfigurationBoundary()
     QVERIFY(!mixedVersion->standardOutput.contains(
         QByteArrayLiteral("app runtime")));
 
-    auto frontendHelp = runProcess(
-        QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
-        {QStringLiteral("--help")}, environment, temporary.path());
+    auto frontendHelp =
+        runProcess(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
+                   {QStringLiteral("--help")}, environment, temporary.path());
     QVERIFY2(frontendHelp.has_value(),
-             qPrintable(frontendHelp.has_value()
-                 ? QString{} : frontendHelp.error()));
+             qPrintable(frontendHelp.has_value() ? QString{}
+                                                 : frontendHelp.error()));
     QCOMPARE(frontendHelp->exitStatus, QProcess::NormalExit);
     QCOMPARE(frontendHelp->exitCode, 0);
     QVERIFY(frontendHelp->standardOutput.contains(
@@ -1331,8 +1286,7 @@ void GhosttyCliDelegationTest::enforcesBuildConfigurationBoundary()
         QByteArrayLiteral("-e PROGRAM [ARGUMENTS...]")));
 
 #if GHOSTTY_QT_TEST_CONFIG_ENABLED
-    for (const GhosttyCliActionCatalogEntry &entry
-         : GhosttyPinnedCliActions) {
+    for (const GhosttyCliActionCatalogEntry &entry : GhosttyPinnedCliActions) {
         if (!entry.isDelegated()) continue;
         QVERIFY(frontendHelp->standardOutput.contains(
             QByteArray(entry.argument.data(),
@@ -1343,20 +1297,21 @@ void GhosttyCliDelegationTest::enforcesBuildConfigurationBoundary()
         {QStringLiteral("+new-window")}, environment, temporary.path());
     QVERIFY2(helperUnsupported.has_value(),
              qPrintable(helperUnsupported.has_value()
-                 ? QString{} : helperUnsupported.error()));
+                            ? QString{}
+                            : helperUnsupported.error()));
     QCOMPARE(helperUnsupported->exitStatus, QProcess::NormalExit);
     QCOMPARE(helperUnsupported->exitCode, 64);
     QVERIFY(helperUnsupported->standardOutput.isEmpty());
     QVERIFY(helperUnsupported->standardError.contains(
         QByteArrayLiteral("no supported public CLI action")));
 
-    auto helperVersion = runProcess(
-        QStringLiteral(GHOSTTY_QT_TEST_REAL_HELPER),
-        {QStringLiteral("+help"), QStringLiteral("--version")},
-        environment, temporary.path());
+    auto helperVersion =
+        runProcess(QStringLiteral(GHOSTTY_QT_TEST_REAL_HELPER),
+                   {QStringLiteral("+help"), QStringLiteral("--version")},
+                   environment, temporary.path());
     QVERIFY2(helperVersion.has_value(),
-             qPrintable(helperVersion.has_value()
-                 ? QString{} : helperVersion.error()));
+             qPrintable(helperVersion.has_value() ? QString{}
+                                                  : helperVersion.error()));
     QCOMPARE(helperVersion->exitStatus, QProcess::NormalExit);
     QCOMPARE(helperVersion->exitCode, 64);
     QVERIFY(helperVersion->standardOutput.isEmpty());
@@ -1369,7 +1324,8 @@ void GhosttyCliDelegationTest::enforcesBuildConfigurationBoundary()
         environment, temporary.path());
     QVERIFY2(helperPrivateMix.has_value(),
              qPrintable(helperPrivateMix.has_value()
-                 ? QString{} : helperPrivateMix.error()));
+                            ? QString{}
+                            : helperPrivateMix.error()));
     QCOMPARE(helperPrivateMix->exitStatus, QProcess::NormalExit);
     QCOMPARE(helperPrivateMix->exitCode, 64);
     QVERIFY(helperPrivateMix->standardOutput.isEmpty());
@@ -1437,27 +1393,25 @@ void GhosttyCliDelegationTest::enforcesBuildConfigurationBoundary()
                    environment, temporary.path());
     QVERIFY2(obsoletePrivateOption.has_value(),
              qPrintable(obsoletePrivateOption.has_value()
-                 ? QString{} : obsoletePrivateOption.error()));
+                            ? QString{}
+                            : obsoletePrivateOption.error()));
     QCOMPARE(obsoletePrivateOption->exitStatus, QProcess::NormalExit);
     QCOMPARE(obsoletePrivateOption->exitCode, 64);
     QVERIFY(obsoletePrivateOption->standardOutput.isEmpty());
     QVERIFY(obsoletePrivateOption->standardError.contains(
         QByteArrayLiteral("+show-config-json takes no options")));
 #else
-    for (const GhosttyCliActionCatalogEntry &entry
-        : GhosttyPinnedCliActions) {
+    for (const GhosttyCliActionCatalogEntry &entry : GhosttyPinnedCliActions) {
         if (!entry.isDelegated()) continue;
         const QByteArray actionName(
             entry.argument.data(),
             static_cast<qsizetype>(entry.argument.size()));
         QVERIFY(!frontendHelp->standardOutput.contains(actionName));
-        auto action = runProcess(
-            QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
-            {QString::fromLatin1(actionName)}, environment,
-            temporary.path());
+        auto action = runProcess(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
+                                 {QString::fromLatin1(actionName)}, environment,
+                                 temporary.path());
         QVERIFY2(action.has_value(),
-                 qPrintable(action.has_value()
-                     ? QString{} : action.error()));
+                 qPrintable(action.has_value() ? QString{} : action.error()));
         QCOMPARE(action->exitStatus, QProcess::NormalExit);
         QCOMPARE(action->exitCode, 1);
         QVERIFY(action->standardOutput.isEmpty());

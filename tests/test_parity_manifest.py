@@ -5,11 +5,10 @@ from __future__ import annotations
 
 import importlib.util
 import os
-from pathlib import Path
 import sys
 import tempfile
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GHOSTTY_SOURCE = Path(
@@ -52,9 +51,7 @@ class ParityManifestTest(unittest.TestCase):
     def test_revision_file_rejects_non_hash_content(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "GHOSTTY_REVISION").write_text(
-                "not-a-commit\n", encoding="utf-8"
-            )
+            (root / "GHOSTTY_REVISION").write_text("not-a-commit\n", encoding="utf-8")
             with self.assertRaisesRegex(
                 PARITY.ParityError,
                 "must contain one full lowercase Git hash",

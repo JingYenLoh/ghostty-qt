@@ -48,24 +48,18 @@ void GhosttyConfigEditTest::selectsUsingPinnedLinuxPrecedence_data()
     QTest::addColumn<QString>("expectedName");
 
     QTest::newRow("both-non-empty")
-        << true << QByteArrayLiteral("preferred")
-        << true << QByteArrayLiteral("legacy")
-        << QStringLiteral("config.ghostty");
+        << true << QByteArrayLiteral("preferred") << true
+        << QByteArrayLiteral("legacy") << QStringLiteral("config.ghostty");
     QTest::newRow("preferred-empty-legacy-non-empty")
-        << true << QByteArray{}
-        << true << QByteArrayLiteral("legacy")
+        << true << QByteArray{} << true << QByteArrayLiteral("legacy")
         << QStringLiteral("config");
-    QTest::newRow("both-empty")
-        << true << QByteArray{}
-        << true << QByteArray{}
-        << QStringLiteral("config.ghostty");
+    QTest::newRow("both-empty") << true << QByteArray{} << true << QByteArray{}
+                                << QStringLiteral("config.ghostty");
     QTest::newRow("preferred-missing-legacy-empty")
-        << false << QByteArray{}
-        << true << QByteArray{}
+        << false << QByteArray{} << true << QByteArray{}
         << QStringLiteral("config");
     QTest::newRow("preferred-missing-legacy-non-empty")
-        << false << QByteArray{}
-        << true << QByteArrayLiteral("legacy")
+        << false << QByteArray{} << true << QByteArrayLiteral("legacy")
         << QStringLiteral("config");
 }
 
@@ -88,8 +82,7 @@ void GhosttyConfigEditTest::selectsUsingPinnedLinuxPrecedence()
 
     const auto selected = prepareGhosttyConfigForEditing({preferred, legacy});
     if (!selected.has_value()) QFAIL(qPrintable(selected.error()));
-    QCOMPARE(*selected,
-             QDir(temporary.path()).filePath(expectedName));
+    QCOMPARE(*selected, QDir(temporary.path()).filePath(expectedName));
     if (preferredExists) QCOMPARE(readFile(preferred), preferredContents);
     if (legacyExists) QCOMPARE(readFile(legacy), legacyContents);
 }
@@ -98,12 +91,11 @@ void GhosttyConfigEditTest::createsPreferredPathAndParentWithoutTruncation()
 {
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
-    const QString directory = QDir(temporary.path()).filePath(
-        QStringLiteral("nested/ghostty"));
+    const QString directory =
+        QDir(temporary.path()).filePath(QStringLiteral("nested/ghostty"));
     const QString preferred =
         QDir(directory).filePath(QStringLiteral("config.ghostty"));
-    const QString legacy =
-        QDir(directory).filePath(QStringLiteral("config"));
+    const QString legacy = QDir(directory).filePath(QStringLiteral("config"));
 
     const auto selected = prepareGhosttyConfigForEditing({preferred, legacy});
     if (!selected.has_value()) QFAIL(qPrintable(selected.error()));
@@ -122,12 +114,11 @@ void GhosttyConfigEditTest::opensEncodedLocalUrlAndReportsDesktopFailure()
 {
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
-    const QString directory = QDir(temporary.path()).filePath(
-        QStringLiteral("config space # 猫"));
+    const QString directory =
+        QDir(temporary.path()).filePath(QStringLiteral("config space # 猫"));
     const QString preferred =
         QDir(directory).filePath(QStringLiteral("config.ghostty"));
-    const QString legacy =
-        QDir(directory).filePath(QStringLiteral("config"));
+    const QString legacy = QDir(directory).filePath(QStringLiteral("config"));
 
     QUrl observed;
     const auto opened = openGhosttyConfigForEditing(
@@ -168,14 +159,13 @@ void GhosttyConfigEditTest::rejectsInvalidPathsAndCreationFailure()
     QVERIFY(writeFile(blocker, QByteArrayLiteral("not a directory")));
     const QString preferred =
         QDir(blocker).filePath(QStringLiteral("config.ghostty"));
-    const QString legacy =
-        QDir(blocker).filePath(QStringLiteral("config"));
+    const QString legacy = QDir(blocker).filePath(QStringLiteral("config"));
     int attempts = 0;
-    const auto failed = openGhosttyConfigForEditing(
-        {preferred, legacy}, [&attempts](const QUrl &) {
-            ++attempts;
-            return true;
-        });
+    const auto failed = openGhosttyConfigForEditing({preferred, legacy},
+                                                    [&attempts](const QUrl &) {
+                                                        ++attempts;
+                                                        return true;
+                                                    });
     QVERIFY(!failed.has_value());
     QCOMPARE(attempts, 0);
     QVERIFY(failed.error().contains(QStringLiteral("directory")));

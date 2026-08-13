@@ -502,7 +502,7 @@ translateWorkspaceAction(GhosttySerializedActionView parsed,
             return reject(Error::InvalidFormat, actionName, parameter);
         }
         return accept(setsSurfaceTitle   ? WorkspaceAction::SetSurfaceTitle
-                      : setsTabTitle     ? WorkspaceAction::SetTabTitle
+                          : setsTabTitle ? WorkspaceAction::SetTabTitle
                                          : WorkspaceAction::SetWindowTitle,
                       context, actionName, parameter, std::move(*title));
     }

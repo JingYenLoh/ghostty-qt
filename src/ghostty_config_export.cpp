@@ -2395,9 +2395,9 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
                                  result.dragHandle, DragHandleModes);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
-    if (auto parsed = assignEnum(QLatin1StringView("grapheme-width-method"),
-                                 result.graphemeWidthMethod,
-                                 GraphemeWidthMethods);
+    if (auto parsed =
+            assignEnum(QLatin1StringView("grapheme-width-method"),
+                       result.graphemeWidthMethod, GraphemeWidthMethods);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
     if (auto parsed = assignEnum(QLatin1StringView("window-decoration"),

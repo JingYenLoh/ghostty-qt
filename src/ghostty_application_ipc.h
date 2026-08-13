@@ -32,9 +32,8 @@ struct GhosttyNewTabIpcParameter final {
     bool operator==(const GhosttyNewTabIpcParameter &) const = default;
 };
 
-inline QDBusArgument &
-operator<<(QDBusArgument &argument,
-           const GhosttyNewTabIpcParameter &parameter)
+inline QDBusArgument &operator<<(QDBusArgument &argument,
+                                 const GhosttyNewTabIpcParameter &parameter)
 {
     argument.beginStructure();
     argument << parameter.surfaceId << parameter.arguments;
@@ -42,9 +41,8 @@ operator<<(QDBusArgument &argument,
     return argument;
 }
 
-inline const QDBusArgument &
-operator>>(const QDBusArgument &argument,
-           GhosttyNewTabIpcParameter &parameter)
+inline const QDBusArgument &operator>>(const QDBusArgument &argument,
+                                       GhosttyNewTabIpcParameter &parameter)
 {
     argument.beginStructure();
     argument >> parameter.surfaceId >> parameter.arguments;

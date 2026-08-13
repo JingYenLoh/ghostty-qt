@@ -273,8 +273,9 @@ public:
     // than pane pointers to process-owned consumers such as the palette.
     [[nodiscard]] QVector<WorkspaceSurfaceSnapshot> surfaceSnapshot() const;
     [[nodiscard]] SurfaceId surfaceIdForPane(PaneId paneId) const;
-    [[nodiscard]] bool createApplicationTab(
-        PaneId sourcePaneId, FirstSurfaceOverrides firstSurfaceOverrides);
+    [[nodiscard]] bool
+    createApplicationTab(PaneId sourcePaneId,
+                         FirstSurfaceOverrides firstSurfaceOverrides);
     [[nodiscard]] bool transferTabTo(TerminalWorkspace *destination,
                                      PaneId sourcePaneId);
     [[nodiscard]] QString customShaderDiagnostics() const;
@@ -344,8 +345,7 @@ Q_SIGNALS:
     // A live surface retained its identity while its containing tab moved to
     // another registered workspace. Process-owned registries update this
     // target in place rather than applying creation/removal ordering.
-    void paneTransferred(PaneId paneId, TerminalPane *pane,
-                         SurfaceId surfaceId,
+    void paneTransferred(PaneId paneId, TerminalPane *pane, SurfaceId surfaceId,
                          TerminalWorkspace *destination);
     void broadActionsRequested(const GhosttyCompiledActionChain &actions);
     void workspaceActivated();

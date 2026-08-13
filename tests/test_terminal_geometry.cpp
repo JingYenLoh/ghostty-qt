@@ -23,8 +23,7 @@ private Q_SLOTS:
 void TerminalGeometryTest::convertsLogicalViewportToDeviceGeometry()
 {
     const std::optional<TerminalSessionGeometry> geometry =
-        terminalSessionGeometryForViewport(
-            431.75, 207.25, 10.0, 17.0, 1.5);
+        terminalSessionGeometryForViewport(431.75, 207.25, 10.0, 17.0, 1.5);
     QVERIFY(geometry.has_value());
     QCOMPARE(*geometry,
              TerminalSessionGeometry({
@@ -49,11 +48,10 @@ void TerminalGeometryTest::rejectsInvalidViewport_data()
     QTest::newRow("negative-height") << 100.0 << -1.0 << 8.0 << 16.0 << 1.0;
     QTest::newRow("zero-cell-width") << 100.0 << 100.0 << 0.0 << 16.0 << 1.0;
     QTest::newRow("nan-cell-height")
-        << 100.0 << 100.0 << 8.0
-        << std::numeric_limits<double>::quiet_NaN() << 1.0;
-    QTest::newRow("infinite-scale")
-        << 100.0 << 100.0 << 8.0 << 16.0
-        << std::numeric_limits<double>::infinity();
+        << 100.0 << 100.0 << 8.0 << std::numeric_limits<double>::quiet_NaN()
+        << 1.0;
+    QTest::newRow("infinite-scale") << 100.0 << 100.0 << 8.0 << 16.0
+                                    << std::numeric_limits<double>::infinity();
 }
 
 void TerminalGeometryTest::rejectsInvalidViewport()
@@ -63,18 +61,18 @@ void TerminalGeometryTest::rejectsInvalidViewport()
     QFETCH(double, cellWidth);
     QFETCH(double, cellHeight);
     QFETCH(double, devicePixelRatio);
-    QVERIFY(!terminalSessionGeometryForViewport(
-                 width, height, cellWidth, cellHeight, devicePixelRatio)
+    QVERIFY(!terminalSessionGeometryForViewport(width, height, cellWidth,
+                                                cellHeight, devicePixelRatio)
                  .has_value());
 }
 
 void TerminalGeometryTest::saturatesExtremeValues()
 {
     const std::optional<TerminalSessionGeometry> geometry =
-        terminalSessionGeometryForViewport(
-            std::numeric_limits<double>::max(),
-            std::numeric_limits<double>::max(),
-            1.0, 1.0, std::numeric_limits<double>::max());
+        terminalSessionGeometryForViewport(std::numeric_limits<double>::max(),
+                                           std::numeric_limits<double>::max(),
+                                           1.0, 1.0,
+                                           std::numeric_limits<double>::max());
     QVERIFY(geometry.has_value());
     QCOMPARE(geometry->columns, 1);
     QCOMPARE(geometry->rows, 1);
@@ -86,15 +84,14 @@ void TerminalGeometryTest::saturatesExtremeValues()
 
 void TerminalGeometryTest::normalizesWorkerFacingGeometry()
 {
-    const TerminalSessionGeometry geometry =
-        normalizedTerminalSessionGeometry({
-            .columns = -1,
-            .rows = std::numeric_limits<int>::max(),
-            .cellWidthPixels = 0,
-            .cellHeightPixels = -10,
-            .surfaceWidthPixels = 0,
-            .surfaceHeightPixels = -1,
-        });
+    const TerminalSessionGeometry geometry = normalizedTerminalSessionGeometry({
+        .columns = -1,
+        .rows = std::numeric_limits<int>::max(),
+        .cellWidthPixels = 0,
+        .cellHeightPixels = -10,
+        .surfaceWidthPixels = 0,
+        .surfaceHeightPixels = -1,
+    });
     QCOMPARE(geometry.columns, 1);
     QCOMPARE(geometry.rows,
              static_cast<int>(std::numeric_limits<quint16>::max()));

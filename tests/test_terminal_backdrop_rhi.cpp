@@ -35,10 +35,7 @@ bool near(int actual, int expected, int tolerance = 8)
 
 class BackdropItem final : public QQuickItem {
 public:
-    BackdropItem()
-    {
-        setFlag(QQuickItem::ItemHasContents);
-    }
+    BackdropItem() { setFlag(QQuickItem::ItemHasContents); }
 
     void setImage(TestImage image, quint64 serial)
     {
@@ -87,8 +84,7 @@ public:
     }
 
 protected:
-    QSGNode *updatePaintNode(QSGNode *oldNode,
-                             UpdatePaintNodeData *) override
+    QSGNode *updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *) override
     {
         auto *node = oldNode != nullptr
             ? static_cast<TerminalBackdropQsgNode *>(oldNode)
@@ -156,10 +152,10 @@ void TerminalBackdropRhiTest::initTestCase()
 
 void TerminalBackdropRhiTest::embedsShaderResources()
 {
-    QVERIFY(QFile::exists(QStringLiteral(
-        ":/ghostty-qt/shaders/terminal_backdrop.vert.qsb")));
-    QVERIFY(QFile::exists(QStringLiteral(
-        ":/ghostty-qt/shaders/terminal_backdrop.frag.qsb")));
+    QVERIFY(QFile::exists(
+        QStringLiteral(":/ghostty-qt/shaders/terminal_backdrop.vert.qsb")));
+    QVERIFY(QFile::exists(
+        QStringLiteral(":/ghostty-qt/shaders/terminal_backdrop.frag.qsb")));
 
     QFile fragment(
         QStringLiteral(":/ghostty-qt/shaders/terminal_backdrop.frag.qsb"));
@@ -187,8 +183,7 @@ void TerminalBackdropRhiTest::samplesStraightAlphaBeforePremultiplication()
     QQuickWindow window;
     BackdropItem item;
     item.setImage(std::move(image), 1);
-    item.setComposition(Qt::black, 1.0, false,
-                        QRectF(0.0, 0.0, 4.0, 1.0));
+    item.setComposition(Qt::black, 1.0, false, QRectF(0.0, 0.0, 4.0, 1.0));
     const QImage frame = render(item, window, QSize(4, 1));
     if (frame.isNull()) {
         QSKIP("The platform cannot initialize the requested RHI context.");
@@ -262,8 +257,7 @@ void TerminalBackdropRhiTest::repeatsWithAHardModuloSeam()
     QQuickWindow window;
     BackdropItem item;
     item.setImage(std::move(image), 3);
-    item.setComposition(Qt::black, 1.0, true,
-                        QRectF(0.0, 0.0, 8.0, 1.0));
+    item.setComposition(Qt::black, 1.0, true, QRectF(0.0, 0.0, 8.0, 1.0));
     const QImage frame = render(item, window, QSize(16, 1));
     if (frame.isNull()) {
         QSKIP("The platform cannot initialize the requested RHI context.");
@@ -274,8 +268,7 @@ void TerminalBackdropRhiTest::repeatsWithAHardModuloSeam()
     }
     QCOMPARE(window.rendererInterface()->graphicsApi(), requestedGraphicsApi);
 
-    const int tileWidth =
-        qRound(8.0 * window.devicePixelRatio());
+    const int tileWidth = qRound(8.0 * window.devicePixelRatio());
     QVERIFY(tileWidth > 1);
     QVERIFY(frame.width() >= 2 * tileWidth);
     const QColor beforeSeam = frame.pixelColor(tileWidth - 1, 0);
@@ -324,8 +317,7 @@ void TerminalBackdropRhiTest::composesRelativeAndGlobalOpacity()
     QCOMPARE(window.rendererInterface()->graphicsApi(), requestedGraphicsApi);
 
     const QPoint samplePoint(
-        std::min(frame.width() - 1,
-                 qRound(2.0 * window.devicePixelRatio())),
+        std::min(frame.width() - 1, qRound(2.0 * window.devicePixelRatio())),
         0);
     QColor sample = frame.pixelColor(samplePoint);
     QVERIFY2(near(sample.red(), 255),

@@ -7,13 +7,14 @@ repo_root=$(realpath "$script_dir/../..")
 build_root="$script_dir/build"
 zig="$repo_root/.local/bin/zig"
 
-fail() {
+fail()
+{
     printf 'error: %s\n' "$*" >&2
     exit 1
 }
 
 for tool in cmake find git nproc realpath rpmbuild sed; do
-    command -v "$tool" >/dev/null 2>&1 || fail "required tool not found: $tool"
+    command -v "$tool" > /dev/null 2>&1 || fail "required tool not found: $tool"
 done
 
 if [ ! -f "$repo_root/ghostty/CMakeLists.txt" ]; then

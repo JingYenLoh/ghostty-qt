@@ -504,11 +504,9 @@ void GhosttyApplicationKeybindings::continueBroadExecution()
             } else {
                 for (const SurfaceTarget &snapshotTarget : surfaces) {
                     const auto current = std::ranges::find(
-                        surfaces_, snapshotTarget.pane,
-                        &SurfaceTarget::pane);
-                    const SurfaceTarget target = current != surfaces_.cend()
-                        ? *current
-                        : snapshotTarget;
+                        surfaces_, snapshotTarget.pane, &SurfaceTarget::pane);
+                    const SurfaceTarget target =
+                        current != surfaces_.cend() ? *current : snapshotTarget;
                     if (!surfaceTargetIsLive(target)) continue;
                     (void)target.workspace->executeBroadSurfaceAction(
                         {

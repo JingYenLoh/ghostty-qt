@@ -663,8 +663,8 @@ GhosttyResult terminalModeGet(GhosttyTerminal terminal, GhosttyMode mode,
         .mode = mode,
         .value = false,
     };
-    const GhosttyResult result = ghostty_terminal_get(
-        terminal, GHOSTTY_TERMINAL_DATA_MODE, &config);
+    const GhosttyResult result =
+        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_MODE, &config);
     if (result == GHOSTTY_SUCCESS) *value = config.value;
     return result;
 }
@@ -679,8 +679,8 @@ GhosttyResult terminalModeSet(GhosttyTerminal terminal, GhosttyMode mode,
     return ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_MODE, &config);
 }
 
-GhosttyResult terminalModeSetDefault(GhosttyTerminal terminal,
-                                     GhosttyMode mode, bool value)
+GhosttyResult terminalModeSetDefault(GhosttyTerminal terminal, GhosttyMode mode,
+                                     bool value)
 {
     const GhosttyTerminalModeConfig config{
         .mode = mode,
@@ -958,8 +958,8 @@ public:
                                       adapterOptions.graphemeWidthUnicode)
                 != GHOSTTY_SUCCESS
             || ghostty_terminal_set(terminal_,
-                                     GHOSTTY_TERMINAL_OPT_TITLE_REPORT,
-                                     &adapterOptions.titleReport)
+                                    GHOSTTY_TERMINAL_OPT_TITLE_REPORT,
+                                    &adapterOptions.titleReport)
                 != GHOSTTY_SUCCESS
             || ghostty_terminal_set(
                    terminal_, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES,
@@ -1200,8 +1200,8 @@ public:
         colorScheme_ = scheme;
 
         bool reportEnabled = false;
-        if (terminalModeGet(
-                terminal_, GHOSTTY_MODE_COLOR_SCHEME_REPORT, &reportEnabled)
+        if (terminalModeGet(terminal_, GHOSTTY_MODE_COLOR_SCHEME_REPORT,
+                            &reportEnabled)
                 != GHOSTTY_SUCCESS
             || !reportEnabled || !callbacks_.writePty) {
             return;
@@ -1213,8 +1213,8 @@ public:
                                                report.data(), report.size(),
                                                &written)
             == GHOSTTY_SUCCESS) {
-            callbacks_.writePty(QByteArrayView(
-                report.data(), static_cast<qsizetype>(written)));
+            callbacks_.writePty(
+                QByteArrayView(report.data(), static_cast<qsizetype>(written)));
         }
     }
 
@@ -2375,9 +2375,8 @@ public:
     GhosttyVtAdapter::SemanticPromptState semanticPromptState() const
     {
         bool atPrompt = false;
-        return ghostty_terminal_get(terminal_,
-                                    GHOSTTY_TERMINAL_DATA_CURSOR_AT_PROMPT,
-                                    &atPrompt)
+        return ghostty_terminal_get(
+                   terminal_, GHOSTTY_TERMINAL_DATA_CURSOR_AT_PROMPT, &atPrompt)
                 == GHOSTTY_SUCCESS
             ? (atPrompt ? SemanticPromptState::AtPrompt
                         : SemanticPromptState::Away)
@@ -4612,9 +4611,9 @@ public:
                     switch (contentTag) {
                     case GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE: {
                         GhosttyColorPaletteIndex paletteIndex = 0;
-                        if (ghostty_cell_get(
-                                rawCell, GHOSTTY_CELL_DATA_COLOR_PALETTE,
-                                &paletteIndex)
+                        if (ghostty_cell_get(rawCell,
+                                             GHOSTTY_CELL_DATA_COLOR_PALETTE,
+                                             &paletteIndex)
                             != GHOSTTY_SUCCESS) {
                             return RenderResult::Retry;
                         }
@@ -4624,8 +4623,8 @@ public:
                     }
                     case GHOSTTY_CELL_CONTENT_BG_COLOR_RGB:
                         if (ghostty_cell_get(rawCell,
-                                            GHOSTTY_CELL_DATA_COLOR_RGB,
-                                            &background)
+                                             GHOSTTY_CELL_DATA_COLOR_RGB,
+                                             &background)
                             != GHOSTTY_SUCCESS) {
                             return RenderResult::Retry;
                         }
@@ -4633,10 +4632,10 @@ public:
                         break;
                     case GHOSTTY_CELL_CONTENT_CODEPOINT:
                     case GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME:
-                        backgroundExplicit = style.bg_color.tag
-                            != GHOSTTY_STYLE_COLOR_NONE;
-                        background = resolveStyleColor(
-                            style.bg_color, colors, colors.background);
+                        backgroundExplicit =
+                            style.bg_color.tag != GHOSTTY_STYLE_COLOR_NONE;
+                        background = resolveStyleColor(style.bg_color, colors,
+                                                       colors.background);
                         break;
                     default: return RenderResult::Retry;
                     }
@@ -4917,9 +4916,9 @@ private:
         auto *impl = static_cast<Impl *>(userdata);
         if (impl != nullptr && impl->callbacks_.writePty && data != nullptr
             && length > 0) {
-            impl->callbacks_.writePty(QByteArrayView(
-                reinterpret_cast<const char *>(data),
-                static_cast<qsizetype>(length)));
+            impl->callbacks_.writePty(
+                QByteArrayView(reinterpret_cast<const char *>(data),
+                               static_cast<qsizetype>(length)));
         }
     }
 

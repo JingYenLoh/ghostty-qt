@@ -32,11 +32,8 @@ void ghostty_qt_link_matcher_destroy(GhosttyQtLinkMatcher *matcher);
 // the original UTF-8 input. Calling again with the previous match's end offset
 // has the same subject-slicing semantics as Ghostty's StringMap iterator.
 GhosttyQtLinkMatcherStatus ghostty_qt_link_matcher_find_next(
-    GhosttyQtLinkMatcher *matcher,
-    const uint8_t *input,
-    size_t input_length,
-    size_t search_offset,
-    GhosttyQtLinkMatch *out_match);
+    GhosttyQtLinkMatcher *matcher, const uint8_t *input, size_t input_length,
+    size_t search_offset, GhosttyQtLinkMatch *out_match);
 
 #ifdef __cplusplus
 }

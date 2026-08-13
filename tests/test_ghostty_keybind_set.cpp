@@ -19,24 +19,23 @@ static_assert(!std::is_copy_assignable_v<GhosttyKeybindState>);
 static_assert(!std::is_move_constructible_v<GhosttyKeybindState>);
 static_assert(!std::is_move_assignable_v<GhosttyKeybindState>);
 
-template<typename Source>
-GhosttyKeybindLoadReport installProgram(
-    GhosttyKeybindState &state, const Source &source)
+template <typename Source>
+GhosttyKeybindLoadReport installProgram(GhosttyKeybindState &state,
+                                        const Source &source)
 {
     GhosttyKeybindCompilation compilation =
         GhosttyKeybindProgram::compile(source);
-    (void) state.replaceProgram(std::move(compilation.program));
+    (void)state.replaceProgram(std::move(compilation.program));
     return std::move(compilation.report);
 }
 
-GhosttyKeybindLoadReport installProgram(
-    GhosttyKeybindState &state, std::initializer_list<QString> values)
+GhosttyKeybindLoadReport installProgram(GhosttyKeybindState &state,
+                                        std::initializer_list<QString> values)
 {
     return installProgram(state, QStringList(values));
 }
 
-GhosttyKeybindMatch requireMatch(
-    std::optional<GhosttyKeybindMatch> match)
+GhosttyKeybindMatch requireMatch(std::optional<GhosttyKeybindMatch> match)
 {
     if (!match.has_value()) {
         QTest::qFail("expected keybind match", __FILE__, __LINE__);
@@ -60,8 +59,7 @@ constexpr quint32 xkbKeycode(unsigned int evdevCode)
     return static_cast<quint32>(evdevCode + 8U);
 }
 
-GhosttyKeybindTrigger unicodeTrigger(quint32 codepoint,
-                                     quint8 modifiers = 0)
+GhosttyKeybindTrigger unicodeTrigger(quint32 codepoint, quint8 modifiers = 0)
 {
     return {
         .kind = GhosttyKeybindKeyKind::Unicode,
@@ -87,10 +85,8 @@ GhosttyKeybindTrigger physicalTrigger(QString name, quint8 modifiers = 0)
     };
 }
 
-GhosttyKeybindDefinition binding(
-    QVector<GhosttyKeybindTrigger> sequence,
-    QString action,
-    GhosttyKeybindFlags flags = {})
+GhosttyKeybindDefinition binding(QVector<GhosttyKeybindTrigger> sequence,
+                                 QString action, GhosttyKeybindFlags flags = {})
 {
     return {
         .sequence = std::move(sequence),
@@ -140,7 +136,8 @@ private Q_SLOTS:
     void matchesLinuxDefaultLikeBindings();
 };
 
-void GhosttyKeybindStateTest::distinguishesUnavailableAndAvailableEmptyPrograms()
+void GhosttyKeybindStateTest::
+    distinguishesUnavailableAndAvailableEmptyPrograms()
 {
     const GhosttyKeybindProgram unavailable;
     const GhosttyKeybindProgram anotherUnavailable;
@@ -157,8 +154,7 @@ void GhosttyKeybindStateTest::distinguishesUnavailableAndAvailableEmptyPrograms(
     QVERIFY(!unavailableGeneration.isAvailable());
     QVERIFY(unavailableGeneration.isEmpty());
     QVERIFY(!unavailableGeneration.isSameGeneration(unavailable));
-    QVERIFY(!unavailableGeneration.isSameGeneration(
-        nextUnavailableGeneration));
+    QVERIFY(!unavailableGeneration.isSameGeneration(nextUnavailableGeneration));
 
     const GhosttyKeybindCompilation emptyCompilation =
         GhosttyKeybindProgram::compile(QStringList{});
@@ -202,11 +198,13 @@ void GhosttyKeybindStateTest::walksDeepSequencesIteratively()
 void GhosttyKeybindStateTest::parsesEqualsAndPlusTriggerDelimiters()
 {
     GhosttyKeybindState set;
-    const GhosttyKeybindLoadReport report = installProgram(set, {
-        QStringLiteral("ctrl+==increase_font_size:1"),
-        QStringLiteral("ctrl++=increase_font_size:2"),
-        QStringLiteral("=+alt=text:=hello"),
-    });
+    const GhosttyKeybindLoadReport report =
+        installProgram(set,
+                       {
+                           QStringLiteral("ctrl+==increase_font_size:1"),
+                           QStringLiteral("ctrl++=increase_font_size:2"),
+                           QStringLiteral("=+alt=text:=hello"),
+                       });
 
     QCOMPARE(report.count(Disposition::Installed), 3);
     QCOMPARE(set.size(), 3);
@@ -217,9 +215,9 @@ void GhosttyKeybindStateTest::parsesEqualsAndPlusTriggerDelimiters()
     QCOMPARE(serializedActions(requireMatch(set.match(
                  Qt::Key_Plus, Qt::ControlModifier, QStringLiteral("+")))),
              QStringList({QStringLiteral("increase_font_size:2")}));
-    QVERIFY(!set.match(Qt::Key_Plus,
-                       Qt::ControlModifier | Qt::ShiftModifier,
-                       QStringLiteral("+")).has_value());
+    QVERIFY(!set.match(Qt::Key_Plus, Qt::ControlModifier | Qt::ShiftModifier,
+                       QStringLiteral("+"))
+                 .has_value());
     QCOMPARE(serializedActions(requireMatch(set.match(
                  Qt::Key_Equal, Qt::AltModifier, QStringLiteral("=")))),
              QStringList({QStringLiteral("text:=hello")}));
@@ -237,8 +235,8 @@ void GhosttyKeybindStateTest::loadsTaggedSources()
     QVERIFY(text.structured() == nullptr);
     const GhosttyKeybindLoadReport textReport = installProgram(set, text);
     QCOMPARE(textReport.count(Disposition::Installed), 1);
-    QCOMPARE(serializedActions(requireMatch(set.match(
-                 Qt::Key_T, Qt::AltModifier, QStringLiteral("t")))),
+    QCOMPARE(serializedActions(requireMatch(
+                 set.match(Qt::Key_T, Qt::AltModifier, QStringLiteral("t")))),
              QStringList({QStringLiteral("new_tab")}));
 
     const GhosttyKeybindSource emptyText = GhosttyKeybindSource::text({});
@@ -249,7 +247,7 @@ void GhosttyKeybindStateTest::loadsTaggedSources()
     QVERIFY(installProgram(set, emptyText).records.isEmpty());
     QVERIFY(set.isEmpty());
 
-    (void) installProgram(set, text);
+    (void)installProgram(set, text);
     QCOMPARE(set.size(), 1);
 
     const GhosttyKeybindSource unavailable;
@@ -272,22 +270,25 @@ void GhosttyKeybindStateTest::loadsTaggedSources()
                            QStringLiteral("new_window"))};
     const GhosttyKeybindSource structured =
         GhosttyKeybindSource::structured(std::move(config));
-    const GhosttyKeybindLoadReport structuredReport = installProgram(set, structured);
+    const GhosttyKeybindLoadReport structuredReport =
+        installProgram(set, structured);
     QCOMPARE(structuredReport.count(Disposition::Installed), 1);
-    QCOMPARE(serializedActions(requireMatch(set.match(
-                 Qt::Key_N, Qt::AltModifier, QStringLiteral("n")))),
+    QCOMPARE(serializedActions(requireMatch(
+                 set.match(Qt::Key_N, Qt::AltModifier, QStringLiteral("n")))),
              QStringList({QStringLiteral("new_window")}));
 }
 
 void GhosttyKeybindStateTest::matchesNamedAndW3cPhysicalKeys()
 {
     GhosttyKeybindState set;
-    const GhosttyKeybindLoadReport report = installProgram(set, {
-        QStringLiteral("ctrl+arrow_left=goto_split:left"),
-        QStringLiteral("alt+F4=close_window"),
-        QStringLiteral("shift+PageDown=scroll_page_down"),
-        QStringLiteral("KeyA=physical_a"),
-    });
+    const GhosttyKeybindLoadReport report =
+        installProgram(set,
+                       {
+                           QStringLiteral("ctrl+arrow_left=goto_split:left"),
+                           QStringLiteral("alt+F4=close_window"),
+                           QStringLiteral("shift+PageDown=scroll_page_down"),
+                           QStringLiteral("KeyA=physical_a"),
+                       });
 
     QCOMPARE(report.count(Disposition::Installed), 4);
 
@@ -319,11 +320,13 @@ void GhosttyKeybindStateTest::matchesNamedAndW3cPhysicalKeys()
 void GhosttyKeybindStateTest::physicalBindingsTakePrecedenceOverUnicode()
 {
     GhosttyKeybindState set;
-    const GhosttyKeybindLoadReport report = installProgram(set, {
-        QStringLiteral("ctrl+a=unicode_action"),
-        // Configured later is not what establishes priority: key kind does.
-        QStringLiteral("ctrl+key_a=physical_action"),
-    });
+    const GhosttyKeybindLoadReport report = installProgram(
+        set,
+        {
+            QStringLiteral("ctrl+a=unicode_action"),
+            // Configured later is not what establishes priority: key kind does.
+            QStringLiteral("ctrl+key_a=physical_action"),
+        });
     QCOMPARE(report.count(Disposition::Installed), 2);
 
     const GhosttyKeybindMatch &match = requireMatch(
@@ -349,8 +352,8 @@ void GhosttyKeybindStateTest::nativePhysicalBindingsAreLayoutIndependent()
 
     // A layout can report a different logical Qt key and text for the physical
     // KeyA location. Its native XKB keycode remains KEY_A + 8.
-    const GhosttyKeybindMatch &remapped = requireMatch(set.match(
-        GhosttyKeybindEvent{
+    const GhosttyKeybindMatch &remapped =
+        requireMatch(set.match(GhosttyKeybindEvent{
             .qtKey = Qt::Key_Q,
             .modifiers = Qt::ControlModifier,
             .text = QStringLiteral("q"),
@@ -363,12 +366,13 @@ void GhosttyKeybindStateTest::nativePhysicalBindingsAreLayoutIndependent()
 
     // The logical A produced by a different physical location must not match.
     QVERIFY(!set.match(GhosttyKeybindEvent{
-        .qtKey = Qt::Key_A,
-        .modifiers = Qt::ControlModifier,
-        .text = QStringLiteral("a"),
-        .nativeScanCode = xkbKeycode(KEY_Q),
-        .unshiftedCodepoint = 'a',
-    }).has_value());
+                           .qtKey = Qt::Key_A,
+                           .modifiers = Qt::ControlModifier,
+                           .text = QStringLiteral("a"),
+                           .nativeScanCode = xkbKeycode(KEY_Q),
+                           .unshiftedCodepoint = 'a',
+                       })
+                 .has_value());
 }
 
 void GhosttyKeybindStateTest::honorsFunctionalXkbRemapsForPhysicalBindings()
@@ -462,13 +466,12 @@ void GhosttyKeybindStateTest::distinguishesKeypadAndModifierLocations()
              QStringList({QStringLiteral("right_control")}));
 
     // Synthetic events without native data retain a useful keypad fallback.
-    QCOMPARE(serializedActions(requireMatch(set.match(
-                 Qt::Key_1, Qt::AltModifier, QStringLiteral("1")))),
+    QCOMPARE(serializedActions(requireMatch(
+                 set.match(Qt::Key_1, Qt::AltModifier, QStringLiteral("1")))),
              QStringList({QStringLiteral("top_row")}));
-    QCOMPARE(serializedActions(requireMatch(set.match(
-                 Qt::Key_1,
-                 Qt::AltModifier | Qt::KeypadModifier,
-                 QStringLiteral("1")))),
+    QCOMPARE(serializedActions(requireMatch(
+                 set.match(Qt::Key_1, Qt::AltModifier | Qt::KeypadModifier,
+                           QStringLiteral("1")))),
              QStringList({QStringLiteral("keypad")}));
     QCOMPARE(serializedActions(requireMatch(set.match(
                  Qt::Key_Colon, Qt::ShiftModifier, QStringLiteral(":")))),
@@ -620,9 +623,9 @@ void GhosttyKeybindStateTest::matchesShiftedUnicodeByUnshiftedCodepoint()
 
     // Qt text carries '<', while Ghostty's Unicode trigger is the unshifted
     // comma codepoint at the same logical location.
-    QVERIFY(!set.match(Qt::Key_Less,
-                       Qt::ControlModifier | Qt::ShiftModifier,
-                       QStringLiteral("<")).has_value());
+    QVERIFY(!set.match(Qt::Key_Less, Qt::ControlModifier | Qt::ShiftModifier,
+                       QStringLiteral("<"))
+                 .has_value());
     QCOMPARE(serializedActions(requireMatch(set.match(GhosttyKeybindEvent{
                  .qtKey = Qt::Key_Less,
                  .modifiers = Qt::ControlModifier | Qt::ShiftModifier,
@@ -636,22 +639,25 @@ void GhosttyKeybindStateTest::matchesShiftedUnicodeByUnshiftedCodepoint()
                  .count(Disposition::Installed),
              1);
     QVERIFY(!set.match(GhosttyKeybindEvent{
-                 .qtKey = Qt::Key_Less,
-                 .modifiers = Qt::ControlModifier | Qt::ShiftModifier,
-                 .text = QStringLiteral("<"),
-                 .nativeScanCode = xkbKeycode(KEY_COMMA),
-                 .unshiftedCodepoint = ',',
-    }).has_value());
+                           .qtKey = Qt::Key_Less,
+                           .modifiers = Qt::ControlModifier | Qt::ShiftModifier,
+                           .text = QStringLiteral("<"),
+                           .nativeScanCode = xkbKeycode(KEY_COMMA),
+                           .unshiftedCodepoint = ',',
+                       })
+                 .has_value());
 }
 
 void GhosttyKeybindStateTest::matchesFullUnicodeCaseFoldsAndScalars()
 {
     GhosttyKeybindState set;
-    const GhosttyKeybindLoadReport report = installProgram(set, {
-        QStringLiteral("ctrl+ß=first"),
-        QStringLiteral("ctrl+ẞ=second"),
-        QStringLiteral("alt+Σ=sigma"),
-    });
+    const GhosttyKeybindLoadReport report =
+        installProgram(set,
+                       {
+                           QStringLiteral("ctrl+ß=first"),
+                           QStringLiteral("ctrl+ẞ=second"),
+                           QStringLiteral("alt+Σ=sigma"),
+                       });
 
     QCOMPARE(report.count(Disposition::Installed), 3);
     QCOMPARE(set.size(), 2);
@@ -696,10 +702,12 @@ void GhosttyKeybindStateTest::ordersAndFiltersUnicodeCandidates()
         .unshiftedCodepoint = ',',
     };
 
-    QCOMPARE(installProgram(set, {
-                 QStringLiteral("ctrl+shift+,=unshifted"),
-                 QStringLiteral("ctrl+shift+<=shifted"),
-             }).count(Disposition::Installed),
+    QCOMPARE(installProgram(set,
+                            {
+                                QStringLiteral("ctrl+shift+,=unshifted"),
+                                QStringLiteral("ctrl+shift+<=shifted"),
+                            })
+                 .count(Disposition::Installed),
              2);
     QCOMPARE(serializedActions(requireMatch(set.match(shifted))),
              QStringList({QStringLiteral("shifted")}));
@@ -710,22 +718,26 @@ void GhosttyKeybindStateTest::ordersAndFiltersUnicodeCandidates()
     QCOMPARE(serializedActions(requireMatch(set.match(shifted))),
              QStringList({QStringLiteral("unshifted")}));
 
-    QCOMPARE(installProgram(set, {
-                 QStringLiteral("ctrl+ß=sharp_s"),
-                 QStringLiteral("ctrl+é=precomposed"),
-                 QStringLiteral("ctrl+a=letter"),
-             }).count(Disposition::Installed),
+    QCOMPARE(installProgram(set,
+                            {
+                                QStringLiteral("ctrl+ß=sharp_s"),
+                                QStringLiteral("ctrl+é=precomposed"),
+                                QStringLiteral("ctrl+a=letter"),
+                            })
+                 .count(Disposition::Installed),
              3);
     QVERIFY(!set.match(GhosttyKeybindEvent{
-                 .qtKey = Qt::Key_unknown,
-                 .modifiers = Qt::ControlModifier,
-                 .text = QStringLiteral("ss"),
-             }).has_value());
+                           .qtKey = Qt::Key_unknown,
+                           .modifiers = Qt::ControlModifier,
+                           .text = QStringLiteral("ss"),
+                       })
+                 .has_value());
     QVERIFY(!set.match(GhosttyKeybindEvent{
-                 .qtKey = Qt::Key_unknown,
-                 .modifiers = Qt::ControlModifier,
-                 .text = QStringLiteral("e\u0301"),
-             }).has_value());
+                           .qtKey = Qt::Key_unknown,
+                           .modifiers = Qt::ControlModifier,
+                           .text = QStringLiteral("e\u0301"),
+                       })
+                 .has_value());
     QCOMPARE(serializedActions(requireMatch(set.match(GhosttyKeybindEvent{
                  .qtKey = Qt::Key_A,
                  .modifiers = Qt::ControlModifier,
@@ -733,33 +745,37 @@ void GhosttyKeybindStateTest::ordersAndFiltersUnicodeCandidates()
              }))),
              QStringList({QStringLiteral("letter")}));
     QVERIFY(!set.match(GhosttyKeybindEvent{
-                 .qtKey = Qt::Key_unknown,
-                 .modifiers = Qt::ControlModifier,
-                 .text = QStringLiteral("ab"),
-             }).has_value());
+                           .qtKey = Qt::Key_unknown,
+                           .modifiers = Qt::ControlModifier,
+                           .text = QStringLiteral("ab"),
+                       })
+                 .has_value());
 
     QCOMPARE(serializedActions(requireMatch(set.match(GhosttyKeybindEvent{
                  .qtKey = Qt::Key_A,
                  .modifiers = Qt::ControlModifier | Qt::KeypadModifier
-                    | Qt::GroupSwitchModifier,
+                     | Qt::GroupSwitchModifier,
                  .text = QStringLiteral("a"),
              }))),
              QStringList({QStringLiteral("letter")}));
     QVERIFY(!set.match(GhosttyKeybindEvent{
-                 .qtKey = Qt::Key_A,
-                 .modifiers = Qt::ControlModifier | Qt::AltModifier
-                    | Qt::KeypadModifier | Qt::GroupSwitchModifier,
-                 .text = QStringLiteral("a"),
-             }).has_value());
+                           .qtKey = Qt::Key_A,
+                           .modifiers = Qt::ControlModifier | Qt::AltModifier
+                               | Qt::KeypadModifier | Qt::GroupSwitchModifier,
+                           .text = QStringLiteral("a"),
+                       })
+                 .has_value());
 }
 
 void GhosttyKeybindStateTest::unicodeBindingsSurviveSharedProgramAndReload()
 {
     GhosttyKeybindState original;
-    QCOMPARE(installProgram(original, {
-                 QStringLiteral("ctrl+ß=sharp_s"),
-                 QStringLiteral("alt+Σ=sigma"),
-             }).count(Disposition::Installed),
+    QCOMPARE(installProgram(original,
+                            {
+                                QStringLiteral("ctrl+ß=sharp_s"),
+                                QStringLiteral("alt+Σ=sigma"),
+                            })
+                 .count(Disposition::Installed),
              2);
     GhosttyKeybindState copy(original.program());
     QVERIFY(original.program().isSameGeneration(copy.program()));
@@ -779,11 +795,13 @@ void GhosttyKeybindStateTest::unicodeBindingsSurviveSharedProgramAndReload()
                  .text = QStringLiteral("ς"),
              }))),
              QStringList({QStringLiteral("sigma")}));
-    QVERIFY(!original.match(GhosttyKeybindEvent{
-                 .qtKey = Qt::Key_unknown,
-                 .modifiers = Qt::ControlModifier,
-                 .text = QStringLiteral("ẞ"),
-             }).has_value());
+    QVERIFY(!original
+                 .match(GhosttyKeybindEvent{
+                     .qtKey = Qt::Key_unknown,
+                     .modifiers = Qt::ControlModifier,
+                     .text = QStringLiteral("ẞ"),
+                 })
+                 .has_value());
     QCOMPARE(serializedActions(requireMatch(original.match(
                  Qt::Key_X, Qt::ControlModifier, QStringLiteral("x")))),
              QStringList({QStringLiteral("replacement")}));
@@ -792,13 +810,15 @@ void GhosttyKeybindStateTest::unicodeBindingsSurviveSharedProgramAndReload()
 void GhosttyKeybindStateTest::appendsAdjacentChainsInOrder()
 {
     GhosttyKeybindState set;
-    const GhosttyKeybindLoadReport report = installProgram(set, {
-        QStringLiteral("performable:ctrl+a=new_tab"),
-        QStringLiteral("chain=goto_split:left"),
-        QStringLiteral("chain=toggle_split_zoom"),
-        QStringLiteral("ctrl+b=next_tab"),
-        QStringLiteral("chain=close_tab:this"),
-    });
+    const GhosttyKeybindLoadReport report =
+        installProgram(set,
+                       {
+                           QStringLiteral("performable:ctrl+a=new_tab"),
+                           QStringLiteral("chain=goto_split:left"),
+                           QStringLiteral("chain=toggle_split_zoom"),
+                           QStringLiteral("ctrl+b=next_tab"),
+                           QStringLiteral("chain=close_tab:this"),
+                       });
 
     QCOMPARE(report.count(Disposition::Installed), 2);
     QCOMPARE(report.count(Disposition::Chained), 3);
@@ -883,19 +903,22 @@ void GhosttyKeybindStateTest::compiledMatchesOwnPositionalMetadata()
         }};
         const GhosttyKeybindSource source =
             GhosttyKeybindSource::structured(std::move(config));
-        QCOMPARE(installProgram(structuredSet, source).count(Disposition::Installed), 2);
+        QCOMPARE(
+            installProgram(structuredSet, source).count(Disposition::Installed),
+            2);
         rootSnapshot = requireMatch(structuredSet.match(
             Qt::Key_R, Qt::NoModifier, QStringLiteral("r")));
         QVERIFY(structuredSet.activateTable(QStringLiteral("owned")));
-        namedSnapshot = structuredSet.advance({
-            .qtKey = Qt::Key_N,
-            .text = QStringLiteral("n"),
-        }).match;
+        namedSnapshot = structuredSet
+                            .advance({
+                                .qtKey = Qt::Key_N,
+                                .text = QStringLiteral("n"),
+                            })
+                            .match;
     }
 
     const GhosttyKeybindCompilation replacement =
-        GhosttyKeybindProgram::compile(
-            {QStringLiteral("ctrl+x=reset")});
+        GhosttyKeybindProgram::compile({QStringLiteral("ctrl+x=reset")});
     QVERIFY(structuredSet.replaceProgram(replacement.program));
     QVERIFY(structuredSet.program().isSameGeneration(replacement.program));
     QVERIFY(!structuredSet.hasTable(QStringLiteral("owned")));
@@ -914,8 +937,7 @@ void GhosttyKeybindStateTest::compiledMatchesOwnPositionalMetadata()
     const GhosttyPaneAction *rootPane =
         rootSnapshot.actionChain.entries[0].getIf<GhosttyPaneAction>();
     QVERIFY(rootPane != nullptr);
-    const auto *search =
-        std::get_if<GhosttyPaneActions::Search>(rootPane);
+    const auto *search = std::get_if<GhosttyPaneActions::Search>(rootPane);
     QVERIFY(search != nullptr);
     QCOMPARE(search->serializedNeedle, QByteArray("root:needle"));
 
@@ -933,8 +955,7 @@ void GhosttyKeybindStateTest::compiledMatchesOwnPositionalMetadata()
     const GhosttyPaneAction *namedPane =
         namedSnapshot.actionChain.entries[0].getIf<GhosttyPaneAction>();
     QVERIFY(namedPane != nullptr);
-    const auto *text =
-        std::get_if<GhosttyPaneActions::SendText>(namedPane);
+    const auto *text = std::get_if<GhosttyPaneActions::SendText>(namedPane);
     QVERIFY(text != nullptr);
     QCOMPARE(text->serializedBytes, QByteArray("table:payload"));
 }
@@ -942,15 +963,17 @@ void GhosttyKeybindStateTest::compiledMatchesOwnPositionalMetadata()
 void GhosttyKeybindStateTest::preservesLocalFlags()
 {
     GhosttyKeybindState set;
-    const GhosttyKeybindLoadReport report = installProgram(set, {
-        QStringLiteral("performable:unconsumed:ctrl+shift+c=copy_to_clipboard:mixed"),
-        QStringLiteral("shift+insert=paste_from_selection"),
-    });
+    const GhosttyKeybindLoadReport report = installProgram(
+        set,
+        {
+            QStringLiteral(
+                "performable:unconsumed:ctrl+shift+c=copy_to_clipboard:mixed"),
+            QStringLiteral("shift+insert=paste_from_selection"),
+        });
 
     QCOMPARE(report.count(Disposition::Installed), 2);
     const GhosttyKeybindMatch &copy = requireMatch(
-        set.match(Qt::Key_C,
-                  Qt::ControlModifier | Qt::ShiftModifier,
+        set.match(Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier,
                   QStringLiteral("C")));
     QVERIFY(!copy.consumed);
     QVERIFY(copy.performable);
@@ -964,19 +987,22 @@ void GhosttyKeybindStateTest::preservesLocalFlags()
                  .has_value());
 }
 
-void GhosttyKeybindStateTest::supportsSequencesAndCatchAllWhileRejectingDeferredForms()
+void GhosttyKeybindStateTest::
+    supportsSequencesAndCatchAllWhileRejectingDeferredForms()
 {
     GhosttyKeybindState set;
-    const GhosttyKeybindLoadReport report = installProgram(set, {
-        QStringLiteral("ctrl+a>n=new_window"),
-        QStringLiteral("copy-mode/ctrl+c=copy_to_clipboard"),
-        QStringLiteral("copy-mode/"),
-        QStringLiteral("ctrl+catch_all=ignore"),
-        QStringLiteral("global:ctrl+g=toggle_quick_terminal"),
-        QStringLiteral("all:ctrl+a=select_all"),
-        // A chain cannot jump over an unsupported entry.
-        QStringLiteral("chain=quit"),
-    });
+    const GhosttyKeybindLoadReport report = installProgram(
+        set,
+        {
+            QStringLiteral("ctrl+a>n=new_window"),
+            QStringLiteral("copy-mode/ctrl+c=copy_to_clipboard"),
+            QStringLiteral("copy-mode/"),
+            QStringLiteral("ctrl+catch_all=ignore"),
+            QStringLiteral("global:ctrl+g=toggle_quick_terminal"),
+            QStringLiteral("all:ctrl+a=select_all"),
+            // A chain cannot jump over an unsupported entry.
+            QStringLiteral("chain=quit"),
+        });
 
     QCOMPARE(set.size(), 2);
     QCOMPARE(report.count(Disposition::Installed), 2);
@@ -1017,11 +1043,13 @@ void GhosttyKeybindStateTest::supportsSequencesAndCatchAllWhileRejectingDeferred
 void GhosttyKeybindStateTest::advancesSharedPrefixSequences()
 {
     GhosttyKeybindState set;
-    QCOMPARE(installProgram(set, {
-                 QStringLiteral("ctrl+a>b=new_tab"),
-                 QStringLiteral("ctrl+a>c=next_tab"),
-                 QStringLiteral("ctrl+a>d>e=previous_tab"),
-             }).count(Disposition::Installed),
+    QCOMPARE(installProgram(set,
+                            {
+                                QStringLiteral("ctrl+a>b=new_tab"),
+                                QStringLiteral("ctrl+a>c=next_tab"),
+                                QStringLiteral("ctrl+a>d>e=previous_tab"),
+                            })
+                 .count(Disposition::Installed),
              3);
 
     GhosttyKeybindStep step = set.advance({
@@ -1041,10 +1069,11 @@ void GhosttyKeybindStateTest::advancesSharedPrefixSequences()
     QVERIFY(!set.sequenceActive());
 
     QCOMPARE(set.advance({
-                 .qtKey = Qt::Key_A,
-                 .modifiers = Qt::ControlModifier,
-                 .text = QStringLiteral("a"),
-             }).kind,
+                             .qtKey = Qt::Key_A,
+                             .modifiers = Qt::ControlModifier,
+                             .text = QStringLiteral("a"),
+                         })
+                 .kind,
              GhosttyKeybindStepKind::Leader);
     step = set.advance({.qtKey = Qt::Key_D, .text = QStringLiteral("d")});
     QCOMPARE(step.kind, GhosttyKeybindStepKind::Leader);
@@ -1130,7 +1159,7 @@ void GhosttyKeybindStateTest::retainsConfiguredLabelsForActiveSequence()
 void GhosttyKeybindStateTest::recoversInvalidSequencesAndHonorsCatchAll()
 {
     GhosttyKeybindState set;
-    (void) installProgram(set, {QStringLiteral("ctrl+a>b=new_tab")});
+    (void)installProgram(set, {QStringLiteral("ctrl+a>b=new_tab")});
     const GhosttyKeybindEvent leader{
         .qtKey = Qt::Key_A,
         .modifiers = Qt::ControlModifier,
@@ -1140,9 +1169,10 @@ void GhosttyKeybindStateTest::recoversInvalidSequencesAndHonorsCatchAll()
 
     // Modifier-only events do not cancel a pending sequence.
     QCOMPARE(set.advance({
-                 .qtKey = Qt::Key_Shift,
-                 .modifiers = Qt::ShiftModifier,
-             }).kind,
+                             .qtKey = Qt::Key_Shift,
+                             .modifiers = Qt::ShiftModifier,
+                         })
+                 .kind,
              GhosttyKeybindStepKind::Unmatched);
     QVERIFY(set.sequenceActive());
 
@@ -1156,10 +1186,11 @@ void GhosttyKeybindStateTest::recoversInvalidSequencesAndHonorsCatchAll()
 
     // A bare root catch_all=ignore is Ghostty's special invalid-sequence
     // guard. It drops the queued prefix and the invalid continuation.
-    (void) installProgram(set, {
-        QStringLiteral("ctrl+a>b=new_tab"),
-        QStringLiteral("catch_all=ignore"),
-    });
+    (void)installProgram(set,
+                         {
+                             QStringLiteral("ctrl+a>b=new_tab"),
+                             QStringLiteral("catch_all=ignore"),
+                         });
     QCOMPARE(set.advance(leader).kind, GhosttyKeybindStepKind::Leader);
     step = set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")});
     QCOMPARE(step.kind, GhosttyKeybindStepKind::IgnoredSequence);
@@ -1167,44 +1198,50 @@ void GhosttyKeybindStateTest::recoversInvalidSequencesAndHonorsCatchAll()
 
     // Recovery still keys off the presence of ignore in a chain, while the
     // compiled input effect retains closing-before-ignore precedence.
-    (void) installProgram(set, {
-        QStringLiteral("ctrl+a>b=new_tab"),
-        QStringLiteral("catch_all=close_window"),
-        QStringLiteral("chain=ignore"),
-    });
-    const GhosttyKeybindMatch closeAndIgnore = requireMatch(
-        set.match(Qt::Key_Z, Qt::NoModifier, QStringLiteral("z")));
+    (void)installProgram(set,
+                         {
+                             QStringLiteral("ctrl+a>b=new_tab"),
+                             QStringLiteral("catch_all=close_window"),
+                             QStringLiteral("chain=ignore"),
+                         });
+    const GhosttyKeybindMatch closeAndIgnore =
+        requireMatch(set.match(Qt::Key_Z, Qt::NoModifier, QStringLiteral("z")));
     QCOMPARE(serializedActions(closeAndIgnore),
-             QStringList({QStringLiteral("close_window"),
-                          QStringLiteral("ignore")}));
+             QStringList(
+                 {QStringLiteral("close_window"), QStringLiteral("ignore")}));
     QCOMPARE(closeAndIgnore.actionChain.inputEffect,
              GhosttyActionInputEffect::ClosingAction);
     QCOMPARE(set.advance(leader).kind, GhosttyKeybindStepKind::Leader);
-    QCOMPARE(set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")})
-                 .kind,
-             GhosttyKeybindStepKind::IgnoredSequence);
+    QCOMPARE(
+        set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")}).kind,
+        GhosttyKeybindStepKind::IgnoredSequence);
 
     // A non-ignore root catch-all is not executed during recovery.
-    (void) installProgram(set, {
-        QStringLiteral("ctrl+a>b=new_tab"),
-        QStringLiteral("catch_all=reload_config"),
-    });
+    (void)installProgram(set,
+                         {
+                             QStringLiteral("ctrl+a>b=new_tab"),
+                             QStringLiteral("catch_all=reload_config"),
+                         });
     QCOMPARE(set.advance(leader).kind, GhosttyKeybindStepKind::Leader);
-    QCOMPARE(set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")}).kind,
-             GhosttyKeybindStepKind::InvalidSequence);
+    QCOMPARE(
+        set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")}).kind,
+        GhosttyKeybindStepKind::InvalidSequence);
 
     // Parameterized ignore is invalid Ghostty action grammar and must not
     // inherit ignore's special invalid-sequence behavior.
-    (void) installProgram(set, {
-        QStringLiteral("ctrl+a>b=new_tab"),
-        QStringLiteral("catch_all=ignore:bogus"),
-    });
+    (void)installProgram(set,
+                         {
+                             QStringLiteral("ctrl+a>b=new_tab"),
+                             QStringLiteral("catch_all=ignore:bogus"),
+                         });
     QCOMPARE(set.advance(leader).kind, GhosttyKeybindStepKind::Leader);
-    QCOMPARE(set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")}).kind,
-             GhosttyKeybindStepKind::InvalidSequence);
+    QCOMPARE(
+        set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")}).kind,
+        GhosttyKeybindStepKind::InvalidSequence);
 
     // A catch-all inside the active sequence is an ordinary leaf.
-    (void) installProgram(set, {QStringLiteral("ctrl+a>catch_all=reload_config")});
+    (void)installProgram(set,
+                         {QStringLiteral("ctrl+a>catch_all=reload_config")});
     QCOMPARE(set.advance(leader).kind, GhosttyKeybindStepKind::Leader);
     step = set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")});
     QCOMPARE(step.kind, GhosttyKeybindStepKind::Binding);
@@ -1215,18 +1252,21 @@ void GhosttyKeybindStateTest::recoversInvalidSequencesAndHonorsCatchAll()
 void GhosttyKeybindStateTest::preservesLookupPriorityInsideSequences()
 {
     GhosttyKeybindState set;
-    (void) installProgram(set, {
-        QStringLiteral("ctrl+a>b=unicode_leaf"),
-        QStringLiteral("ctrl+a>key_b=physical_leaf"),
-        QStringLiteral("ctrl+x>catch_all=bare_catch_all"),
-        QStringLiteral("ctrl+x>ctrl+catch_all=modified_catch_all"),
-    });
+    (void)installProgram(
+        set,
+        {
+            QStringLiteral("ctrl+a>b=unicode_leaf"),
+            QStringLiteral("ctrl+a>key_b=physical_leaf"),
+            QStringLiteral("ctrl+x>catch_all=bare_catch_all"),
+            QStringLiteral("ctrl+x>ctrl+catch_all=modified_catch_all"),
+        });
 
     QCOMPARE(set.advance({
-                 .qtKey = Qt::Key_A,
-                 .modifiers = Qt::ControlModifier,
-                 .text = QStringLiteral("a"),
-             }).kind,
+                             .qtKey = Qt::Key_A,
+                             .modifiers = Qt::ControlModifier,
+                             .text = QStringLiteral("a"),
+                         })
+                 .kind,
              GhosttyKeybindStepKind::Leader);
     GhosttyKeybindStep step = set.advance({
         .qtKey = Qt::Key_B,
@@ -1240,10 +1280,11 @@ void GhosttyKeybindStateTest::preservesLookupPriorityInsideSequences()
              QStringList({QStringLiteral("physical_leaf")}));
 
     QCOMPARE(set.advance({
-                 .qtKey = Qt::Key_X,
-                 .modifiers = Qt::ControlModifier,
-                 .text = QStringLiteral("x"),
-             }).kind,
+                             .qtKey = Qt::Key_X,
+                             .modifiers = Qt::ControlModifier,
+                             .text = QStringLiteral("x"),
+                         })
+                 .kind,
              GhosttyKeybindStepKind::Leader);
     step = set.advance({
         .qtKey = Qt::Key_Z,
@@ -1254,10 +1295,11 @@ void GhosttyKeybindStateTest::preservesLookupPriorityInsideSequences()
              QStringList({QStringLiteral("modified_catch_all")}));
 
     QCOMPARE(set.advance({
-                 .qtKey = Qt::Key_X,
-                 .modifiers = Qt::ControlModifier,
-                 .text = QStringLiteral("x"),
-             }).kind,
+                             .qtKey = Qt::Key_X,
+                             .modifiers = Qt::ControlModifier,
+                             .text = QStringLiteral("x"),
+                         })
+                 .kind,
              GhosttyKeybindStepKind::Leader);
     step = set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")});
     QCOMPARE(serializedActions(step),
@@ -1268,17 +1310,17 @@ void GhosttyKeybindStateTest::sharesProgramWithoutSharingMutableState()
 {
     GhosttyKeybindConfig config;
     config.root = {
-        binding({unicodeTrigger('a', GhosttyKeybindCtrl),
-                 unicodeTrigger('b')},
+        binding({unicodeTrigger('a', GhosttyKeybindCtrl), unicodeTrigger('b')},
                 QStringLiteral("root_sequence")),
     };
     config.tables = {
         GhosttyKeybindTable{
             .name = QStringLiteral("named"),
-            .bindings = {
-                binding({unicodeTrigger('n')},
-                        QStringLiteral("named_binding")),
-            },
+            .bindings =
+                {
+                    binding({unicodeTrigger('n')},
+                            QStringLiteral("named_binding")),
+                },
         },
     };
     const GhosttyKeybindCompilation compilation =
@@ -1300,14 +1342,11 @@ void GhosttyKeybindStateTest::sharesProgramWithoutSharingMutableState()
         .qtKey = Qt::Key_B,
         .text = QStringLiteral("b"),
     };
-    QCOMPARE(first.advance(rootLeader).kind,
-             GhosttyKeybindStepKind::Leader);
+    QCOMPARE(first.advance(rootLeader).kind, GhosttyKeybindStepKind::Leader);
     QVERIFY(first.sequenceActive());
     QVERIFY(!second.sequenceActive());
-    QCOMPARE(second.advance(rootLeaf).kind,
-             GhosttyKeybindStepKind::Unmatched);
-    QCOMPARE(second.advance(rootLeader).kind,
-             GhosttyKeybindStepKind::Leader);
+    QCOMPARE(second.advance(rootLeaf).kind, GhosttyKeybindStepKind::Unmatched);
+    QCOMPARE(second.advance(rootLeader).kind, GhosttyKeybindStepKind::Leader);
     QCOMPARE(serializedActions(first.advance(rootLeaf)),
              QStringList({QStringLiteral("root_sequence")}));
     QVERIFY(!first.sequenceActive());
@@ -1321,13 +1360,14 @@ void GhosttyKeybindStateTest::sharesProgramWithoutSharingMutableState()
                  .text = QStringLiteral("n"),
              })),
              QStringList({QStringLiteral("named_binding")}));
-    QCOMPARE(second.advance({
-                 .qtKey = Qt::Key_N,
-                 .text = QStringLiteral("n"),
-             }).kind,
+    QCOMPARE(second
+                 .advance({
+                     .qtKey = Qt::Key_N,
+                     .text = QStringLiteral("n"),
+                 })
+                 .kind,
              GhosttyKeybindStepKind::Unmatched);
-    QCOMPARE(first.activeTableNames(),
-             QStringList({QStringLiteral("named")}));
+    QCOMPARE(first.activeTableNames(), QStringList({QStringLiteral("named")}));
     QVERIFY(second.activeTableNames().isEmpty());
     QVERIFY(first.deactivateTable());
 }
@@ -1337,17 +1377,18 @@ void GhosttyKeybindStateTest::loadsStructuredDefinitionsAndRetainsFlags()
     GhosttyKeybindConfig config;
     config.root = {
         GhosttyKeybindDefinition{
-            .sequence = {
-                GhosttyKeybindTrigger{
-                    .kind = GhosttyKeybindKeyKind::Unicode,
-                    .unicodeCodepoint = 'x',
-                    .modifiers = GhosttyKeybindCtrl,
+            .sequence =
+                {
+                    GhosttyKeybindTrigger{
+                        .kind = GhosttyKeybindKeyKind::Unicode,
+                        .unicodeCodepoint = 'x',
+                        .modifiers = GhosttyKeybindCtrl,
+                    },
+                    GhosttyKeybindTrigger{
+                        .kind = GhosttyKeybindKeyKind::Physical,
+                        .physicalName = QStringLiteral("key_y"),
+                    },
                 },
-                GhosttyKeybindTrigger{
-                    .kind = GhosttyKeybindKeyKind::Physical,
-                    .physicalName = QStringLiteral("key_y"),
-                },
-            },
             .actions = {QStringLiteral("new_tab"),
                         QStringLiteral("goto_split:left")},
             .flags = {.consumed = false, .performable = true},
@@ -1386,16 +1427,17 @@ void GhosttyKeybindStateTest::loadsStructuredDefinitionsAndRetainsFlags()
     QCOMPARE(set.size(), 4);
     QVERIFY(set.hasTable(QStringLiteral("copy-mode")));
 
-    const GhosttyKeybindMatch all = requireMatch(
-        set.match(Qt::Key_G, Qt::NoModifier, QStringLiteral("g")));
+    const GhosttyKeybindMatch all =
+        requireMatch(set.match(Qt::Key_G, Qt::NoModifier, QStringLiteral("g")));
     QVERIFY(all.all);
     QVERIFY(!all.global);
 
     QCOMPARE(set.advance({
-                 .qtKey = Qt::Key_X,
-                 .modifiers = Qt::ControlModifier,
-                 .text = QStringLiteral("x"),
-             }).kind,
+                             .qtKey = Qt::Key_X,
+                             .modifiers = Qt::ControlModifier,
+                             .text = QStringLiteral("x"),
+                         })
+                 .kind,
              GhosttyKeybindStepKind::Leader);
     const GhosttyKeybindStep step = set.advance({
         .qtKey = Qt::Key_Y,
@@ -1443,8 +1485,8 @@ void GhosttyKeybindStateTest::rejectsBroadStructuredSequences()
     QCOMPARE(report.count(Disposition::Installed), 1);
     QCOMPARE(set.size(), 1);
 
-    const GhosttyKeybindMatch match = requireMatch(
-        set.match(Qt::Key_V, Qt::NoModifier, QStringLiteral("v")));
+    const GhosttyKeybindMatch match =
+        requireMatch(set.match(Qt::Key_V, Qt::NoModifier, QStringLiteral("v")));
     QVERIFY(match.all);
 }
 
@@ -1458,22 +1500,25 @@ void GhosttyKeybindStateTest::routesNamedTablesNewestToOldestAndRoot()
     config.tables = {
         GhosttyKeybindTable{
             .name = QStringLiteral("A"),
-            .bindings = {
-                binding({unicodeTrigger('q')}, QStringLiteral("table_a_q")),
-                binding({unicodeTrigger('a')}, QStringLiteral("table_a_a")),
-            },
+            .bindings =
+                {
+                    binding({unicodeTrigger('q')}, QStringLiteral("table_a_q")),
+                    binding({unicodeTrigger('a')}, QStringLiteral("table_a_a")),
+                },
         },
         GhosttyKeybindTable{
             .name = QStringLiteral("B"),
-            .bindings = {
-                binding({unicodeTrigger('b')}, QStringLiteral("table_b_b")),
-            },
+            .bindings =
+                {
+                    binding({unicodeTrigger('b')}, QStringLiteral("table_b_b")),
+                },
         },
         GhosttyKeybindTable{
             .name = QStringLiteral("C"),
-            .bindings = {
-                binding({catchAllTrigger()}, QStringLiteral("table_c_any")),
-            },
+            .bindings =
+                {
+                    binding({catchAllTrigger()}, QStringLiteral("table_c_any")),
+                },
         },
     };
 
@@ -1496,8 +1541,7 @@ void GhosttyKeybindStateTest::routesNamedTablesNewestToOldestAndRoot()
              QStringList({QStringLiteral("table_b_b")}));
 
     step = set.advance({.qtKey = Qt::Key_R, .text = QStringLiteral("r")});
-    QCOMPARE(serializedActions(step),
-             QStringList({QStringLiteral("root_r")}));
+    QCOMPARE(serializedActions(step), QStringList({QStringLiteral("root_r")}));
 
     QVERIFY(set.activateTable(QStringLiteral("C")));
     step = set.advance({.qtKey = Qt::Key_Q, .text = QStringLiteral("q")});
@@ -1517,7 +1561,7 @@ void GhosttyKeybindStateTest::enforcesTableStackAndActivationRules()
     };
 
     GhosttyKeybindState set;
-    (void) installProgram(set, config);
+    (void)installProgram(set, config);
     QVERIFY(!set.hasActiveTables());
     QVERIFY(set.hasTable(QStringLiteral("A")));
     QVERIFY(!set.hasTable(QStringLiteral("missing")));
@@ -1541,10 +1585,10 @@ void GhosttyKeybindStateTest::enforcesTableStackAndActivationRules()
     QVERIFY(!set.deactivateAllTables());
     QVERIFY(!set.deactivateTable());
 
-    for (qsizetype index = 0;
-         index < GhosttyKeybindState::MaximumActiveTables; ++index) {
-        const QString name = index % 2 == 0
-            ? QStringLiteral("A") : QStringLiteral("B");
+    for (qsizetype index = 0; index < GhosttyKeybindState::MaximumActiveTables;
+         ++index) {
+        const QString name =
+            index % 2 == 0 ? QStringLiteral("A") : QStringLiteral("B");
         QVERIFY(set.activateTable(name));
     }
     QCOMPARE(set.activeTableNames().size(),
@@ -1562,40 +1606,42 @@ void GhosttyKeybindStateTest::handlesOneShotTablesExactly()
     config.tables = {
         GhosttyKeybindTable{
             .name = QStringLiteral("A"),
-            .bindings = {
-                binding({unicodeTrigger('a')}, QStringLiteral("table_a")),
-                binding({unicodeTrigger('p')}, QStringLiteral("performable"),
-                        GhosttyKeybindFlags{.performable = true}),
-            },
+            .bindings =
+                {
+                    binding({unicodeTrigger('a')}, QStringLiteral("table_a")),
+                    binding({unicodeTrigger('p')},
+                            QStringLiteral("performable"),
+                            GhosttyKeybindFlags{.performable = true}),
+                },
         },
         GhosttyKeybindTable{
             .name = QStringLiteral("B"),
-            .bindings = {
-                binding({unicodeTrigger('b')}, QStringLiteral("table_b")),
-            },
+            .bindings =
+                {
+                    binding({unicodeTrigger('b')}, QStringLiteral("table_b")),
+                },
         },
         GhosttyKeybindTable{
             .name = QStringLiteral("C"),
-            .bindings = {
-                binding({catchAllTrigger()}, QStringLiteral("table_c_any")),
-            },
+            .bindings =
+                {
+                    binding({catchAllTrigger()}, QStringLiteral("table_c_any")),
+                },
         },
     };
 
     GhosttyKeybindState set;
-    (void) installProgram(set, config);
+    (void)installProgram(set, config);
     QVERIFY(set.activateTable(QStringLiteral("A"), true));
     GhosttyKeybindStep step = set.advance({
         .qtKey = Qt::Key_R,
         .text = QStringLiteral("r"),
     });
-    QCOMPARE(serializedActions(step),
-             QStringList({QStringLiteral("root")}));
+    QCOMPARE(serializedActions(step), QStringList({QStringLiteral("root")}));
     QVERIFY(!step.activeTablesChanged);
     QCOMPARE(set.activeTableNames(), QStringList({QStringLiteral("A")}));
     step = set.advance({.qtKey = Qt::Key_A, .text = QStringLiteral("a")});
-    QCOMPARE(serializedActions(step),
-             QStringList({QStringLiteral("table_a")}));
+    QCOMPARE(serializedActions(step), QStringList({QStringLiteral("table_a")}));
     QVERIFY(step.activeTablesChanged);
     QVERIFY(set.activeTableNames().isEmpty());
 
@@ -1609,15 +1655,13 @@ void GhosttyKeybindStateTest::handlesOneShotTablesExactly()
     QVERIFY(set.activateTable(QStringLiteral("A"), true));
     QVERIFY(set.activateTable(QStringLiteral("B")));
     step = set.advance({.qtKey = Qt::Key_A, .text = QStringLiteral("a")});
-    QCOMPARE(serializedActions(step),
-             QStringList({QStringLiteral("table_a")}));
+    QCOMPARE(serializedActions(step), QStringList({QStringLiteral("table_a")}));
     QVERIFY(!step.activeTablesChanged);
     QCOMPARE(set.activeTableNames(),
              QStringList({QStringLiteral("A"), QStringLiteral("B")}));
     QVERIFY(set.deactivateTable());
     step = set.advance({.qtKey = Qt::Key_A, .text = QStringLiteral("a")});
-    QCOMPARE(serializedActions(step),
-             QStringList({QStringLiteral("table_a")}));
+    QCOMPARE(serializedActions(step), QStringList({QStringLiteral("table_a")}));
     QVERIFY(step.activeTablesChanged);
     QVERIFY(set.activeTableNames().isEmpty());
 
@@ -1642,55 +1686,59 @@ void GhosttyKeybindStateTest::keepsTableSequenceAndCatchAllSemantics()
     config.tables = {
         GhosttyKeybindTable{
             .name = QStringLiteral("persistent"),
-            .bindings = {
-                binding({unicodeTrigger('x'), unicodeTrigger('n')},
-                        QStringLiteral("persistent_sequence"), flags),
-                binding({catchAllTrigger()}, QStringLiteral("ignore")),
-            },
+            .bindings =
+                {
+                    binding({unicodeTrigger('x'), unicodeTrigger('n')},
+                            QStringLiteral("persistent_sequence"), flags),
+                    binding({catchAllTrigger()}, QStringLiteral("ignore")),
+                },
         },
         GhosttyKeybindTable{
             .name = QStringLiteral("shadow"),
-            .bindings = {
-                binding({catchAllTrigger()}, QStringLiteral("reload_config")),
-            },
+            .bindings =
+                {
+                    binding({catchAllTrigger()},
+                            QStringLiteral("reload_config")),
+                },
         },
         GhosttyKeybindTable{
             .name = QStringLiteral("one-shot"),
-            .bindings = {
-                binding({unicodeTrigger('x'), unicodeTrigger('n')},
-                        QStringLiteral("one_shot_sequence")),
-                binding({catchAllTrigger()}, QStringLiteral("ignore")),
-            },
+            .bindings =
+                {
+                    binding({unicodeTrigger('x'), unicodeTrigger('n')},
+                            QStringLiteral("one_shot_sequence")),
+                    binding({catchAllTrigger()}, QStringLiteral("ignore")),
+                },
         },
     };
 
     GhosttyKeybindState set;
-    (void) installProgram(set, config);
+    (void)installProgram(set, config);
     QVERIFY(set.activateTable(QStringLiteral("persistent")));
-    QCOMPARE(set.advance({.qtKey = Qt::Key_X, .text = QStringLiteral("x")})
-                 .kind,
-             GhosttyKeybindStepKind::Leader);
+    QCOMPARE(
+        set.advance({.qtKey = Qt::Key_X, .text = QStringLiteral("x")}).kind,
+        GhosttyKeybindStepKind::Leader);
     QVERIFY(set.activateTable(QStringLiteral("shadow")));
-    QCOMPARE(set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")})
-                 .kind,
-             GhosttyKeybindStepKind::InvalidSequence);
-    QCOMPARE(set.activeTableNames(),
-             QStringList({QStringLiteral("persistent"),
-                          QStringLiteral("shadow")}));
+    QCOMPARE(
+        set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")}).kind,
+        GhosttyKeybindStepKind::InvalidSequence);
+    QCOMPARE(
+        set.activeTableNames(),
+        QStringList({QStringLiteral("persistent"), QStringLiteral("shadow")}));
 
     QVERIFY(set.deactivateTable());
-    QCOMPARE(set.advance({.qtKey = Qt::Key_X, .text = QStringLiteral("x")})
-                 .kind,
-             GhosttyKeybindStepKind::Leader);
-    QCOMPARE(set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")})
-                 .kind,
-             GhosttyKeybindStepKind::IgnoredSequence);
+    QCOMPARE(
+        set.advance({.qtKey = Qt::Key_X, .text = QStringLiteral("x")}).kind,
+        GhosttyKeybindStepKind::Leader);
+    QCOMPARE(
+        set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")}).kind,
+        GhosttyKeybindStepKind::IgnoredSequence);
     QCOMPARE(set.activeTableNames(),
              QStringList({QStringLiteral("persistent")}));
 
-    QCOMPARE(set.advance({.qtKey = Qt::Key_X, .text = QStringLiteral("x")})
-                 .kind,
-             GhosttyKeybindStepKind::Leader);
+    QCOMPARE(
+        set.advance({.qtKey = Qt::Key_X, .text = QStringLiteral("x")}).kind,
+        GhosttyKeybindStepKind::Leader);
     const GhosttyKeybindStep leaf = set.advance({
         .qtKey = Qt::Key_N,
         .text = QStringLiteral("n"),
@@ -1729,42 +1777,42 @@ void GhosttyKeybindStateTest::keepsTableSequenceAndCatchAllSemantics()
     QCOMPARE(secondOneShotLeader.kind, GhosttyKeybindStepKind::Leader);
     QVERIFY(secondOneShotLeader.activeTablesChanged);
     QVERIFY(set.activeTableNames().isEmpty());
-    QCOMPARE(set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")})
-                 .kind,
-             GhosttyKeybindStepKind::InvalidSequence);
+    QCOMPARE(
+        set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")}).kind,
+        GhosttyKeybindStepKind::InvalidSequence);
 }
 
 void GhosttyKeybindStateTest::replacingProgramResetsOnlyOwningState()
 {
     GhosttyKeybindConfig initial;
     initial.root = {
-        binding({unicodeTrigger('a', GhosttyKeybindCtrl),
-                 unicodeTrigger('b')},
+        binding({unicodeTrigger('a', GhosttyKeybindCtrl), unicodeTrigger('b')},
                 QStringLiteral("initial_sequence")),
     };
     initial.tables = {
         GhosttyKeybindTable{
             .name = QStringLiteral("initial-table"),
-            .bindings = {
-                binding({unicodeTrigger('i')},
-                        QStringLiteral("initial_table_binding")),
-            },
+            .bindings =
+                {
+                    binding({unicodeTrigger('i')},
+                            QStringLiteral("initial_table_binding")),
+                },
         },
     };
 
     GhosttyKeybindConfig replacement;
     replacement.root = {
-        binding({unicodeTrigger('x', GhosttyKeybindCtrl),
-                 unicodeTrigger('y')},
+        binding({unicodeTrigger('x', GhosttyKeybindCtrl), unicodeTrigger('y')},
                 QStringLiteral("replacement_sequence")),
     };
     replacement.tables = {
         GhosttyKeybindTable{
             .name = QStringLiteral("replacement-table"),
-            .bindings = {
-                binding({unicodeTrigger('r')},
-                        QStringLiteral("replacement_table_binding")),
-            },
+            .bindings =
+                {
+                    binding({unicodeTrigger('r')},
+                            QStringLiteral("replacement_table_binding")),
+                },
         },
     };
 
@@ -1812,11 +1860,13 @@ void GhosttyKeybindStateTest::replacingProgramResetsOnlyOwningState()
              QStringList({QStringLiteral("initial_table_binding")}));
 
     QVERIFY(replaced.activateTable(QStringLiteral("replacement-table")));
-    QCOMPARE(replaced.advance({
-                 .qtKey = Qt::Key_X,
-                 .modifiers = Qt::ControlModifier,
-                 .text = QStringLiteral("x"),
-             }).kind,
+    QCOMPARE(replaced
+                 .advance({
+                     .qtKey = Qt::Key_X,
+                     .modifiers = Qt::ControlModifier,
+                     .text = QStringLiteral("x"),
+                 })
+                 .kind,
              GhosttyKeybindStepKind::Leader);
     QVERIFY(!replaced.replaceProgram(replacementCompilation.program));
     QVERIFY(replaced.sequenceActive());
@@ -1837,14 +1887,16 @@ void GhosttyKeybindStateTest::replacingProgramResetsOnlyOwningState()
 void GhosttyKeybindStateTest::rejectsMalformedBindings()
 {
     GhosttyKeybindState set;
-    const GhosttyKeybindLoadReport report = installProgram(set, {
-        QStringLiteral("ctrl+ctrl+a=quit"),
-        QStringLiteral("ctrl+not_a_key=quit"),
-        QStringLiteral("ctrl+a"),
-        QStringLiteral("ctrl+a="),
-        QStringLiteral("performable:performable:ctrl+a=quit"),
-        QStringLiteral("ctrl+a+b=quit"),
-    });
+    const GhosttyKeybindLoadReport report = installProgram(
+        set,
+        {
+            QStringLiteral("ctrl+ctrl+a=quit"),
+            QStringLiteral("ctrl+not_a_key=quit"),
+            QStringLiteral("ctrl+a"),
+            QStringLiteral("ctrl+a="),
+            QStringLiteral("performable:performable:ctrl+a=quit"),
+            QStringLiteral("ctrl+a+b=quit"),
+        });
 
     QCOMPARE(set.size(), 0);
     QCOMPARE(report.count(Disposition::Invalid), 6);
@@ -1857,11 +1909,13 @@ void GhosttyKeybindStateTest::rejectsMalformedBindings()
 void GhosttyKeybindStateTest::replacesDuplicateTriggers()
 {
     GhosttyKeybindState set;
-    const GhosttyKeybindLoadReport report = installProgram(set, {
-        QStringLiteral("ctrl+A=first"),
-        QStringLiteral("unconsumed:ctrl+a=second"),
-        QStringLiteral("chain=third"),
-    });
+    const GhosttyKeybindLoadReport report =
+        installProgram(set,
+                       {
+                           QStringLiteral("ctrl+A=first"),
+                           QStringLiteral("unconsumed:ctrl+a=second"),
+                           QStringLiteral("chain=third"),
+                       });
 
     QCOMPARE(report.count(Disposition::Installed), 2);
     QCOMPARE(set.size(), 1);
@@ -1875,35 +1929,34 @@ void GhosttyKeybindStateTest::replacesDuplicateTriggers()
 void GhosttyKeybindStateTest::matchesLinuxDefaultLikeBindings()
 {
     GhosttyKeybindState set;
-    const GhosttyKeybindLoadReport report = installProgram(set, {
-        QStringLiteral("copy=copy_to_clipboard:mixed"),
-        QStringLiteral("ctrl+shift+tab=previous_tab"),
-        QStringLiteral("ctrl+tab=next_tab"),
-        QStringLiteral("ctrl+shift+t=new_tab"),
-        QStringLiteral("ctrl+alt+arrow_down=goto_split:down"),
-        QStringLiteral("alt+digit_1=goto_tab:physical"),
-        QStringLiteral("alt+1=goto_tab:unicode"),
-        QStringLiteral("escape=end_search"),
-        QStringLiteral("ctrl+enter=toggle_fullscreen"),
-    });
+    const GhosttyKeybindLoadReport report = installProgram(
+        set,
+        {
+            QStringLiteral("copy=copy_to_clipboard:mixed"),
+            QStringLiteral("ctrl+shift+tab=previous_tab"),
+            QStringLiteral("ctrl+tab=next_tab"),
+            QStringLiteral("ctrl+shift+t=new_tab"),
+            QStringLiteral("ctrl+alt+arrow_down=goto_split:down"),
+            QStringLiteral("alt+digit_1=goto_tab:physical"),
+            QStringLiteral("alt+1=goto_tab:unicode"),
+            QStringLiteral("escape=end_search"),
+            QStringLiteral("ctrl+enter=toggle_fullscreen"),
+        });
 
     QCOMPARE(report.count(Disposition::Installed), 9);
 
     QCOMPARE(serializedActions(requireMatch(set.match(
-                 Qt::Key_Backtab,
-                 Qt::ControlModifier | Qt::ShiftModifier))),
+                 Qt::Key_Backtab, Qt::ControlModifier | Qt::ShiftModifier))),
              QStringList({QStringLiteral("previous_tab")}));
-    QCOMPARE(serializedActions(requireMatch(
-                 set.match(Qt::Key_Tab, Qt::ControlModifier))),
+    QCOMPARE(serializedActions(
+                 requireMatch(set.match(Qt::Key_Tab, Qt::ControlModifier))),
              QStringList({QStringLiteral("next_tab")}));
-    QCOMPARE(serializedActions(requireMatch(set.match(
-                 Qt::Key_T,
-                 Qt::ControlModifier | Qt::ShiftModifier,
-                 QString(QChar(0x14))))),
+    QCOMPARE(serializedActions(requireMatch(
+                 set.match(Qt::Key_T, Qt::ControlModifier | Qt::ShiftModifier,
+                           QString(QChar(0x14))))),
              QStringList({QStringLiteral("new_tab")}));
     QCOMPARE(serializedActions(requireMatch(set.match(
-                 Qt::Key_Down,
-                 Qt::ControlModifier | Qt::AltModifier))),
+                 Qt::Key_Down, Qt::ControlModifier | Qt::AltModifier))),
              QStringList({QStringLiteral("goto_split:down")}));
 
     // Both bindings exist in Ghostty's Linux defaults. Physical digit_1 wins.
@@ -1913,11 +1966,11 @@ void GhosttyKeybindStateTest::matchesLinuxDefaultLikeBindings()
     QCOMPARE(serializedActions(digit),
              QStringList({QStringLiteral("goto_tab:physical")}));
 
-    QCOMPARE(serializedActions(requireMatch(
-                 set.match(Qt::Key_Escape, Qt::NoModifier))),
+    QCOMPARE(serializedActions(
+                 requireMatch(set.match(Qt::Key_Escape, Qt::NoModifier))),
              QStringList({QStringLiteral("end_search")}));
-    QCOMPARE(serializedActions(requireMatch(
-                 set.match(Qt::Key_Return, Qt::ControlModifier))),
+    QCOMPARE(serializedActions(
+                 requireMatch(set.match(Qt::Key_Return, Qt::ControlModifier))),
              QStringList({QStringLiteral("toggle_fullscreen")}));
 }
 

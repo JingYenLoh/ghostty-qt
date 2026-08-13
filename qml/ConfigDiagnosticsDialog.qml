@@ -15,13 +15,12 @@ Dialog {
     modal: true
     focus: visible
     closePolicy: Popup.NoAutoClose
-    visible: uiController !== null
-             && uiController.configurationDiagnosticsVisible
+    visible: uiController !== null && uiController.configurationDiagnosticsVisible
     title: qsTr("Configuration Errors")
 
     function ignore() {
         if (uiController !== null)
-            uiController.ignoreConfigurationDiagnostics()
+            uiController.ignoreConfigurationDiagnostics();
     }
 
     contentItem: ColumnLayout {
@@ -43,8 +42,7 @@ Dialog {
                 id: diagnosticsText
 
                 objectName: "configurationDiagnosticsText"
-                text: root.uiController !== null
-                      ? root.uiController.configurationDiagnosticsText : ""
+                text: root.uiController !== null ? root.uiController.configurationDiagnosticsText : ""
                 readOnly: true
                 selectByMouse: true
                 wrapMode: TextEdit.WrapAnywhere
@@ -68,7 +66,7 @@ Dialog {
             DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
             onClicked: {
                 if (root.uiController !== null)
-                    root.uiController.retryConfigurationDiagnostics()
+                    root.uiController.retryConfigurationDiagnostics();
             }
         }
     }

@@ -93,8 +93,7 @@ void accumulateCellMaterializationMetrics(
     total->cells += sample.cells;
     total->primaryDataQueries += sample.primaryDataQueries;
     total->graphemeDataQueries += sample.graphemeDataQueries;
-    total->contentBackgroundDataQueries +=
-        sample.contentBackgroundDataQueries;
+    total->contentBackgroundDataQueries += sample.contentBackgroundDataQueries;
 }
 
 std::optional<int> integerOption(const QString &value, bool allowZero = false)
@@ -698,9 +697,9 @@ std::optional<Measurement> runBenchmark(const BenchmarkOptions &options,
                                  &measurement.applyChecksum, error)) {
             return std::nullopt;
         }
-        if (!validateCellMaterializationTopology(
-                snapshot.cellMaterialization, snapshot.colorStateQueries,
-                options, workload, error)) {
+        if (!validateCellMaterializationTopology(snapshot.cellMaterialization,
+                                                 snapshot.colorStateQueries,
+                                                 options, workload, error)) {
             return std::nullopt;
         }
         if (!validateRetainedFrameSharing(
@@ -715,8 +714,7 @@ std::optional<Measurement> runBenchmark(const BenchmarkOptions &options,
             measurement.endToEndNanoseconds.append(endToEndNanoseconds);
             accumulateApplyMetrics(&measurement.applyMetrics, applyMetrics);
             accumulateCellMaterializationMetrics(
-                &measurement.cellMaterialization,
-                snapshot.cellMaterialization);
+                &measurement.cellMaterialization, snapshot.cellMaterialization);
             measurement.colorStateQueries += snapshot.colorStateQueries;
             ++measurement.retainedSnapshots;
         }
@@ -809,23 +807,23 @@ void printMeasurement(const BenchmarkOptions &options, Workload workload,
            << " terminal_cells_copied="
            << measurement.applyMetrics.terminalCellsCopied
            << " terminal_cell_bytes_copied=" << terminalCellBytesCopied << '\n';
-    output << "queries materialized_cells="
-           << measurement.cellMaterialization.cells
-           << " primary_cell_data_queries="
-           << measurement.cellMaterialization.primaryDataQueries
-           << " grapheme_data_queries="
-           << measurement.cellMaterialization.graphemeDataQueries
-           << " content_background_data_queries="
-           << measurement.cellMaterialization.contentBackgroundDataQueries
-           << " color_state_queries=" << measurement.colorStateQueries
-           << " cell_data_queries_per_cell="
-           << static_cast<double>(
-                  measurement.cellMaterialization.primaryDataQueries
-                  + measurement.cellMaterialization.graphemeDataQueries
-                  + measurement.cellMaterialization
-                        .contentBackgroundDataQueries)
-                / static_cast<double>(measurement.cellMaterialization.cells)
-           << '\n';
+    output
+        << "queries materialized_cells="
+        << measurement.cellMaterialization.cells
+        << " primary_cell_data_queries="
+        << measurement.cellMaterialization.primaryDataQueries
+        << " grapheme_data_queries="
+        << measurement.cellMaterialization.graphemeDataQueries
+        << " content_background_data_queries="
+        << measurement.cellMaterialization.contentBackgroundDataQueries
+        << " color_state_queries=" << measurement.colorStateQueries
+        << " cell_data_queries_per_cell="
+        << static_cast<double>(
+               measurement.cellMaterialization.primaryDataQueries
+               + measurement.cellMaterialization.graphemeDataQueries
+               + measurement.cellMaterialization.contentBackgroundDataQueries)
+            / static_cast<double>(measurement.cellMaterialization.cells)
+        << '\n';
     output << "validation snapshot_checksum=" << measurement.snapshotChecksum
            << " apply_checksum=" << measurement.applyChecksum
            << " retained_snapshot_checksum="

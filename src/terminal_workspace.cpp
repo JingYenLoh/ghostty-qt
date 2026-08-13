@@ -2024,8 +2024,7 @@ bool TerminalWorkspace::transferTabTo(TerminalWorkspace *destination,
     sourceTab->root->collectPanes(panes);
     if (panes.empty()
         || std::ranges::any_of(panes, [this](const PaneHandle &handle) {
-               return !handle.isValid()
-                   || paneForId(handle.id) != handle.pane
+               return !handle.isValid() || paneForId(handle.id) != handle.pane
                    || !surfaceIds_.value(handle.id).isValid();
            })) {
         return false;
@@ -2033,21 +2032,19 @@ bool TerminalWorkspace::transferTabTo(TerminalWorkspace *destination,
 
     const QPointer<TerminalWorkspace> sourceGuard(this);
     const QPointer<TerminalWorkspace> destinationGuard(destination);
-    const bool previousSourceMutation =
-        std::exchange(topologyMutation_, true);
+    const bool previousSourceMutation = std::exchange(topologyMutation_, true);
     const bool previousDestinationMutation =
         std::exchange(destination->topologyMutation_, true);
-    const auto restoreMutations = qScopeGuard(
-        [sourceGuard, destinationGuard, previousSourceMutation,
-         previousDestinationMutation] {
-            if (sourceGuard != nullptr) {
-                sourceGuard->topologyMutation_ = previousSourceMutation;
-            }
-            if (destinationGuard != nullptr) {
-                destinationGuard->topologyMutation_ =
-                    previousDestinationMutation;
-            }
-        });
+    const auto restoreMutations = qScopeGuard([sourceGuard, destinationGuard,
+                                               previousSourceMutation,
+                                               previousDestinationMutation] {
+        if (sourceGuard != nullptr) {
+            sourceGuard->topologyMutation_ = previousSourceMutation;
+        }
+        if (destinationGuard != nullptr) {
+            destinationGuard->topologyMutation_ = previousDestinationMutation;
+        }
+    });
 
     for (const PaneHandle &handle : panes) {
         resolvePendingPaneRemoval(handle);
@@ -2085,8 +2082,8 @@ bool TerminalWorkspace::transferTabTo(TerminalWorkspace *destination,
         }
     };
     advanceCounter(destination->nextTabId_, destinationTab.id.value());
-    const auto retainSplitIds = [&](const auto &self, const Node *node)
-        -> void {
+    const auto retainSplitIds = [&](const auto &self,
+                                    const Node *node) -> void {
         if (node == nullptr) return;
         if (!node->isLeaf()) {
             advanceCounter(destination->nextSplitId_, node->splitId);
@@ -2109,7 +2106,7 @@ bool TerminalWorkspace::transferTabTo(TerminalWorkspace *destination,
         if (const auto diagnostic = customShaderDiagnostics_.find(handle.id);
             diagnostic != customShaderDiagnostics_.end()) {
             destination->customShaderDiagnostics_.insert(handle.id,
-                                                          diagnostic.value());
+                                                         diagnostic.value());
             customShaderDiagnostics_.erase(diagnostic);
         }
 
@@ -2136,9 +2133,8 @@ bool TerminalWorkspace::transferTabTo(TerminalWorkspace *destination,
     Q_ASSERT(sourceModelRemoved);
     if (!sourceModelRemoved) return false;
 
-    const bool destinationModelInserted =
-        destination->tabModel_.insert(0,
-                                      destination->tabListEntry(destinationTab));
+    const bool destinationModelInserted = destination->tabModel_.insert(
+        0, destination->tabListEntry(destinationTab));
     if (sourceGuard == nullptr || destinationGuard == nullptr) return false;
     Q_ASSERT(destinationModelInserted);
     if (!destinationModelInserted) return false;
@@ -3753,8 +3749,7 @@ void TerminalWorkspace::finishTitlePrompt(quint64 promptId,
                 pane->setSurfaceTitleOverride(std::move(titleOverride));
                 if (guard == nullptr) return;
             }
-        } else if (const auto *tabId =
-                       std::get_if<TabId>(&prompt.target)) {
+        } else if (const auto *tabId = std::get_if<TabId>(&prompt.target)) {
             if (tabById(*tabId) != nullptr) {
                 dispatchAction({
                     WorkspaceAction::SetTabTitle,

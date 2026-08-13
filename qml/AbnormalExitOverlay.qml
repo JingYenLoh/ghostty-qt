@@ -31,8 +31,7 @@ Pane {
         Label {
             objectName: "terminalAbnormalExitMessage"
             Layout.fillWidth: true
-            text: root.terminalPane !== null
-                  ? root.terminalPane.abnormalExitText : ""
+            text: root.terminalPane !== null ? root.terminalPane.abnormalExitText : ""
             color: "#ffffff"
             font.bold: true
             wrapMode: Text.Wrap
@@ -45,7 +44,7 @@ Pane {
             Accessible.name: qsTr("Close failed terminal")
             onClicked: {
                 if (root.terminalPane !== null)
-                    root.terminalPane.dismissAbnormalExit()
+                    root.terminalPane.dismissAbnormalExit();
             }
         }
     }

@@ -5,18 +5,13 @@
 
 #include <optional>
 
-template<typename Model>
+template <typename Model>
 concept PubliclyMutableTabModel =
     requires(Model &model, TabListEntry entry) { model.append(entry); }
-    || requires(Model &model, TabListEntry entry) {
-        model.insert(0, entry);
-    }
-    || requires(Model &model, TabListEntry entry) {
-        model.replace(entry.id, entry);
-    }
-    || requires(Model &model, TabListEntry entry) {
-        model.move(entry.id, 0);
-    }
+    || requires(Model &model, TabListEntry entry) { model.insert(0, entry); }
+    || requires(Model &model,
+                TabListEntry entry) { model.replace(entry.id, entry); }
+    || requires(Model &model, TabListEntry entry) { model.move(entry.id, 0); }
     || requires(Model &model) { model.removeAt(0); };
 
 static_assert(!PubliclyMutableTabModel<TabListModel>);

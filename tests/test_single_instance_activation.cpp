@@ -1,6 +1,6 @@
+#include "ghostty_application_ipc.h"
 #include "private_session_bus.h"
 #include "single_instance_activation.h"
-#include "ghostty_application_ipc.h"
 
 #include <QDBusContext>
 #include <QDBusError>
@@ -395,12 +395,11 @@ void SingleInstanceActivationTest::mixedActivationsQueueInFifoOrder()
                       }),
         2000));
     QDBusPendingCallWatcher tab(bus.client().asyncCall(
-        gtkActionCall(
-            service, QStringLiteral("new-tab"),
-            {QVariant::fromValue(GhosttyNewTabIpcParameter{
-                .surfaceId = 0x1234,
-                .arguments = {QStringLiteral("--title=tab")},
-            })}),
+        gtkActionCall(service, QStringLiteral("new-tab"),
+                      {QVariant::fromValue(GhosttyNewTabIpcParameter{
+                          .surfaceId = 0x1234,
+                          .arguments = {QStringLiteral("--title=tab")},
+                      })}),
         2000));
     QDBusPendingCallWatcher toggle(bus.client().asyncCall(
         gtkActionCall(service, QStringLiteral("toggle-quick-terminal")), 2000));
@@ -446,8 +445,7 @@ void SingleInstanceActivationTest::mixedActivationsQueueInFifoOrder()
              }));
     QCOMPARE(observed[2].activation.desktopStartupId,
              QStringLiteral("command-startup"));
-    QCOMPARE(observed[3].kind,
-             ApplicationActivationRequest::Kind::NewTab);
+    QCOMPARE(observed[3].kind, ApplicationActivationRequest::Kind::NewTab);
     QCOMPARE(observed[3].surfaceId, quint64{0x1234});
     QCOMPARE(observed[3].arguments,
              QStringList({QStringLiteral("--title=tab")}));

@@ -64,8 +64,7 @@ void ApplicationAppearanceTest::usesGhosttyLuminanceBoundary()
                  TerminalColorScheme::Dark),
              TerminalColorScheme::Light);
     QCOMPARE(ApplicationAppearance::resolveColorScheme(
-                 WindowTheme::Ghostty, QColor{},
-                 TerminalColorScheme::Light),
+                 WindowTheme::Ghostty, QColor{}, TerminalColorScheme::Light),
              TerminalColorScheme::Dark);
 }
 

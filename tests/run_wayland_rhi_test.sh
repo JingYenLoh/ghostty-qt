@@ -28,8 +28,8 @@ fi
 if [[ ! -S "$wayland_socket" ]]; then
     unavailable "Wayland socket $wayland_socket is not available"
 fi
-if command -v nc >/dev/null 2>&1 \
-    && ! nc -zU "$wayland_socket" >/dev/null 2>&1; then
+if command -v nc > /dev/null 2>&1 &&
+    ! nc -zU "$wayland_socket" > /dev/null 2>&1; then
     unavailable \
         "Wayland socket $wayland_socket cannot be reached from this environment"
 fi

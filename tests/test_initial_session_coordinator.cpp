@@ -143,8 +143,8 @@ void InitialSessionCoordinatorTest::payloadUpdatesApplyToTheNextGrant()
             == std::optional(original));
 
     QVERIFY(coordinator.release(holder.ticket));
-    const Coordinator::RequestResult promoted = coordinator.request(
-        waiter.ticket);
+    const Coordinator::RequestResult promoted =
+        coordinator.request(waiter.ticket);
     QVERIFY(promoted.granted());
     QVERIFY(promoted.payload == std::optional(updated));
 
@@ -207,10 +207,8 @@ void InitialSessionCoordinatorTest::requestChangesAreQueuedToTheAffinityThread()
 
     QSignalSpy changed(&coordinator, &Coordinator::requestsChanged);
     QThread *deliveryThread = nullptr;
-    connect(&coordinator, &Coordinator::requestsChanged,
-            &coordinator, [&deliveryThread] {
-                deliveryThread = QThread::currentThread();
-            });
+    connect(&coordinator, &Coordinator::requestsChanged, &coordinator,
+            [&deliveryThread] { deliveryThread = QThread::currentThread(); });
 
     bool released = false;
     std::jthread worker([&coordinator, &released, holder] {

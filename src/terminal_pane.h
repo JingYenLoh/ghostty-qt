@@ -578,9 +578,8 @@ private:
     void refreshCustomShaderUniformBase(
         std::optional<std::chrono::steady_clock::time_point> frameTime =
             std::nullopt);
-    void advanceCustomShaderFrame(
-        TerminalCustomShaderUniforms *uniforms,
-        std::chrono::steady_clock::time_point now);
+    void advanceCustomShaderFrame(TerminalCustomShaderUniforms *uniforms,
+                                  std::chrono::steady_clock::time_point now);
     void prepareCustomShaderFrame();
     void maybeStartPaneEnterTransition();
     void startPaneTransition(bool entering, std::chrono::milliseconds duration);

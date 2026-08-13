@@ -21,10 +21,7 @@ public:
     PrivateSessionBus(const PrivateSessionBus &) = delete;
     PrivateSessionBus &operator=(const PrivateSessionBus &) = delete;
 
-    bool start()
-    {
-        return start(QProcessEnvironment::systemEnvironment());
-    }
+    bool start() { return start(QProcessEnvironment::systemEnvironment()); }
 
     bool start(QProcessEnvironment environment)
     {
@@ -32,23 +29,23 @@ public:
         const QString temporaryRoot =
             QDir::current().filePath(QStringLiteral("tmp"));
         if (!QDir().mkpath(temporaryRoot)) {
-            error_ = QStringLiteral("could not create %1")
-                         .arg(temporaryRoot);
+            error_ = QStringLiteral("could not create %1").arg(temporaryRoot);
             return false;
         }
         runtimeDirectory_ = std::make_unique<QTemporaryDir>(
-            QDir(temporaryRoot).filePath(
-                QStringLiteral("dbus-XXXXXX")));
+            QDir(temporaryRoot).filePath(QStringLiteral("dbus-XXXXXX")));
         if (!runtimeDirectory_->isValid()) {
-            error_ = QStringLiteral("could not create a temporary D-Bus directory under %1")
-                         .arg(temporaryRoot);
+            error_ =
+                QStringLiteral(
+                    "could not create a temporary D-Bus directory under %1")
+                    .arg(temporaryRoot);
             return false;
         }
 
-        const QString requestedAddress
-            = QStringLiteral("unix:path=%1")
-                  .arg(QDir(runtimeDirectory_->path())
-                          .filePath(QStringLiteral("bus")));
+        const QString requestedAddress =
+            QStringLiteral("unix:path=%1")
+                .arg(QDir(runtimeDirectory_->path())
+                         .filePath(QStringLiteral("bus")));
         environment.insert(QStringLiteral("XDG_RUNTIME_DIR"),
                            runtimeDirectory_->path());
         // An activated service must use the starter bus supplied by the
@@ -59,45 +56,43 @@ public:
         environment.remove(QStringLiteral("DBUS_STARTER_BUS_TYPE"));
         process_.setProcessEnvironment(environment);
         process_.setProgram(QStringLiteral("dbus-daemon"));
-        process_.setArguments({QStringLiteral("--session"),
-                               QStringLiteral("--address=%1")
-                                   .arg(requestedAddress),
-                               QStringLiteral("--nofork"),
-                               QStringLiteral("--print-address=1")});
+        process_.setArguments(
+            {QStringLiteral("--session"),
+             QStringLiteral("--address=%1").arg(requestedAddress),
+             QStringLiteral("--nofork"), QStringLiteral("--print-address=1")});
         process_.start();
         if (!process_.waitForStarted(3000)
-            || (!process_.canReadLine()
-                && !process_.waitForReadyRead(3000))) {
-            error_ = QStringLiteral(
-                         "dbus-daemon did not publish an address: %1; stdout=%2; stderr=%3")
-                         .arg(process_.errorString(),
-                              QString::fromUtf8(process_.readAllStandardOutput()),
-                              QString::fromUtf8(process_.readAllStandardError()));
+            || (!process_.canReadLine() && !process_.waitForReadyRead(3000))) {
+            error_ =
+                QStringLiteral(
+                    "dbus-daemon did not publish an address: %1; stdout=%2; stderr=%3")
+                    .arg(process_.errorString(),
+                         QString::fromUtf8(process_.readAllStandardOutput()),
+                         QString::fromUtf8(process_.readAllStandardError()));
             return false;
         }
 
         address_ = QString::fromUtf8(process_.readLine()).trimmed();
         if (address_.isEmpty()) {
-            error_ = QStringLiteral("dbus-daemon published an empty address; stderr=%1")
-                         .arg(QString::fromUtf8(
-                             process_.readAllStandardError()));
+            error_ =
+                QStringLiteral(
+                    "dbus-daemon published an empty address; stderr=%1")
+                    .arg(QString::fromUtf8(process_.readAllStandardError()));
             return false;
         }
 
-        const QString suffix = QUuid::createUuid()
-                                   .toString(QUuid::WithoutBraces)
-                                   .remove(u'-');
+        const QString suffix =
+            QUuid::createUuid().toString(QUuid::WithoutBraces).remove(u'-');
         serverName_ = QStringLiteral("ghostty_test_server_%1").arg(suffix);
         clientName_ = QStringLiteral("ghostty_test_client_%1").arg(suffix);
-        server_.emplace(
-            QDBusConnection::connectToBus(address_, serverName_));
-        client_.emplace(
-            QDBusConnection::connectToBus(address_, clientName_));
+        server_.emplace(QDBusConnection::connectToBus(address_, serverName_));
+        client_.emplace(QDBusConnection::connectToBus(address_, clientName_));
         if (!server_->isConnected() || !client_->isConnected()) {
-            error_ = QStringLiteral(
-                         "could not connect test clients to %1: server=%2 client=%3")
-                         .arg(address_, server_->lastError().message(),
-                              client_->lastError().message());
+            error_ =
+                QStringLiteral(
+                    "could not connect test clients to %1: server=%2 client=%3")
+                    .arg(address_, server_->lastError().message(),
+                         client_->lastError().message());
             return false;
         }
         return true;
@@ -129,9 +124,9 @@ public:
     QDBusConnection &client() { return *client_; }
     QDBusConnection connectClient()
     {
-        const QString name = QStringLiteral("ghostty_test_client_%1")
-                                 .arg(QUuid::createUuid().toString(
-                                     QUuid::WithoutBraces));
+        const QString name =
+            QStringLiteral("ghostty_test_client_%1")
+                .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
         additionalClientNames_.push_back(name);
         return QDBusConnection::connectToBus(address_, name);
     }

@@ -408,14 +408,13 @@ struct PlacementCandidateBucket {
                             GenerationZSourceSignature{
                                 desired.image->generation, desired.z, source});
         if (selected >= 0) return selected;
-        selected =
-            takeFrom(fallback->generation, desired.image->generation);
+        selected = takeFrom(fallback->generation, desired.image->generation);
         if (selected >= 0) return selected;
         selected = takeFrom(fallback->zGeometry,
                             ZGeometrySignature{desired.z, destination, source});
         if (selected >= 0) return selected;
-        selected = takeFrom(fallback->zSource,
-                            ZSourceSignature{desired.z, source});
+        selected =
+            takeFrom(fallback->zSource, ZSourceSignature{desired.z, source});
         return selected >= 0 ? selected : any.take(consumed);
     }
 };

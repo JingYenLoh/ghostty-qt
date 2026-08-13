@@ -34,7 +34,7 @@ case "$passes" in
     *) usage ;;
 esac
 
-if ! command -v renderdoccmd >/dev/null 2>&1; then
+if ! command -v renderdoccmd > /dev/null 2>&1; then
     printf 'error: renderdoccmd is required; install RenderDoc first\n' >&2
     exit 1
 fi

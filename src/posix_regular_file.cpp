@@ -92,9 +92,8 @@ readBoundedPosixRegularFile(QByteArrayView path, qsizetype maximumSize)
     std::array<char, 64 * 1024> buffer{};
     while (true) {
         const qsizetype remaining = maximumSize - contents.size();
-        const qsizetype requestSize = remaining < std::ssize(buffer)
-            ? remaining + 1
-            : std::ssize(buffer);
+        const qsizetype requestSize =
+            remaining < std::ssize(buffer) ? remaining + 1 : std::ssize(buffer);
         ssize_t count = -1;
         do {
             count = ::read(file->descriptor.get(), buffer.data(),

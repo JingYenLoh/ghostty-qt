@@ -89,8 +89,7 @@ struct DecodeFailure {
 };
 
 QMutex cacheMutex;
-QHash<DecodedImageKey,
-      std::weak_ptr<const TerminalBackgroundImageAsset>>
+QHash<DecodedImageKey, std::weak_ptr<const TerminalBackgroundImageAsset>>
     decodedImages;
 QHash<DecodedImageKey, DecodeFailure> decodeFailures;
 QHash<QString, DecodeFailure> sourceFailures;
@@ -109,8 +108,7 @@ QThreadPool &backgroundImageThreadPool()
     return *pool;
 }
 
-qreal alignedOffset(qreal available,
-                    TerminalBackgroundImagePosition position,
+qreal alignedOffset(qreal available, TerminalBackgroundImagePosition position,
                     bool horizontal) noexcept
 {
     constexpr auto positionCount =
@@ -271,8 +269,7 @@ decodeImageFile(QFile &file, const QString &path)
         std::move(*asset));
 }
 
-void deliver(std::vector<Waiter> waiters,
-             TerminalBackgroundImageResult result)
+void deliver(std::vector<Waiter> waiters, TerminalBackgroundImageResult result)
 {
     QObject *const dispatcher = QCoreApplication::instance();
     if (dispatcher == nullptr) return;
@@ -364,9 +361,7 @@ QRectF terminalBackgroundImagePlacement(
 
     QSizeF target;
     switch (fit) {
-    case TerminalBackgroundImageFit::Stretch:
-        target = viewport.size();
-        break;
+    case TerminalBackgroundImageFit::Stretch: target = viewport.size(); break;
     case TerminalBackgroundImageFit::None:
         target = QSizeF(sourcePixels) / devicePixelRatio;
         break;
@@ -391,10 +386,10 @@ QRectF terminalBackgroundImagePlacement(
                   target.width(), target.height());
 }
 
-QImage terminalCompositedBackgroundImage(
-    const TerminalBackgroundImageAsset &asset,
-    const QColor &opaqueBackground, quint8 backgroundAlpha,
-    double imageOpacity)
+QImage
+terminalCompositedBackgroundImage(const TerminalBackgroundImageAsset &asset,
+                                  const QColor &opaqueBackground,
+                                  quint8 backgroundAlpha, double imageOpacity)
 {
     const QImage &rgba = asset.straightRgba;
     if (rgba.isNull() || rgba.format() != QImage::Format_RGBA8888
@@ -406,8 +401,7 @@ QImage terminalCompositedBackgroundImage(
     result.setDevicePixelRatio(1.0);
     if (result.isNull()) return {};
 
-    const double globalAlpha =
-        static_cast<double>(backgroundAlpha) / 255.0;
+    const double globalAlpha = static_cast<double>(backgroundAlpha) / 255.0;
     if (globalAlpha <= 0.0) {
         result.fill(Qt::transparent);
         return result;
@@ -431,8 +425,7 @@ QImage terminalCompositedBackgroundImage(
             const qsizetype offset = 4 * static_cast<qsizetype>(x);
             const double sourceAlpha = sourceLine[offset + 3] / 255.0;
             const double weightedAlpha = sourceAlpha * multiplier;
-            const double backgroundWeight =
-                std::max(0.0, 1.0 - weightedAlpha);
+            const double backgroundWeight = std::max(0.0, 1.0 - weightedAlpha);
             const double finalAlpha =
                 globalAlpha * (weightedAlpha + backgroundWeight);
             destination[x] =
@@ -451,15 +444,15 @@ QImage terminalCompositedBackgroundImage(
     return result;
 }
 
-QImage terminalCompositedBackgroundImage(
-    const QImage &source, const QColor &opaqueBackground,
-    quint8 backgroundAlpha, double imageOpacity)
+QImage terminalCompositedBackgroundImage(const QImage &source,
+                                         const QColor &opaqueBackground,
+                                         quint8 backgroundAlpha,
+                                         double imageOpacity)
 {
     auto asset = prepareTerminalBackgroundImage(source, 0);
-    return asset
-        ? terminalCompositedBackgroundImage(
-              *asset, opaqueBackground, backgroundAlpha, imageOpacity)
-        : QImage{};
+    return asset ? terminalCompositedBackgroundImage(
+                       *asset, opaqueBackground, backgroundAlpha, imageOpacity)
+                 : QImage{};
 }
 
 namespace {

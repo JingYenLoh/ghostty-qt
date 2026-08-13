@@ -13,8 +13,7 @@ Rectangle {
     enabled: false
     focus: false
     visible: uiController !== null && uiController.toastVisible
-    width: Math.min(implicitWidth, parent ? Math.max(0, parent.width - 32)
-                                         : implicitWidth)
+    width: Math.min(implicitWidth, parent ? Math.max(0, parent.width - 32) : implicitWidth)
     height: implicitHeight
     implicitWidth: toastLabel.implicitWidth + 28
     implicitHeight: toastLabel.implicitHeight + 18
@@ -28,9 +27,7 @@ Rectangle {
 
         anchors.centerIn: parent
         width: Math.min(implicitWidth, root.width - 28)
-        text: root.uiController !== null
-              ? root.uiController.toastMessage
-              : ""
+        text: root.uiController !== null ? root.uiController.toastMessage : ""
         color: palette.toolTipText
         horizontalAlignment: Text.AlignHCenter
         elide: Text.ElideRight
@@ -39,14 +36,11 @@ Rectangle {
     Timer {
         id: expiryTimer
 
-        interval: root.uiController !== null
-                  ? Math.max(1,
-                      root.uiController.toastDurationMilliseconds)
-                  : 1
+        interval: root.uiController !== null ? Math.max(1, root.uiController.toastDurationMilliseconds) : 1
         repeat: false
         onTriggered: {
             if (root.uiController !== null)
-                root.uiController.expireToast()
+                root.uiController.expireToast();
         }
     }
 
@@ -55,20 +49,18 @@ Rectangle {
         ignoreUnknownSignals: true
 
         function onToastChanged() {
-            expiryTimer.stop()
+            expiryTimer.stop();
             // Read the controller directly: when it is attached after QML
             // construction, this handler can run before root.visible's
             // binding has reevaluated for the same notification signal.
-            if (root.uiController !== null
-                    && root.uiController.toastVisible)
-                expiryTimer.restart()
+            if (root.uiController !== null && root.uiController.toastVisible)
+                expiryTimer.restart();
         }
     }
 
     Component.onCompleted: {
-        if (root.uiController !== null
-                && root.uiController.toastVisible)
-            expiryTimer.start()
+        if (root.uiController !== null && root.uiController.toastVisible)
+            expiryTimer.start();
     }
 
     Accessible.name: toastLabel.text

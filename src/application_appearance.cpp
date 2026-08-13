@@ -8,8 +8,7 @@ double perceivedLuminance(const QColor &color) noexcept
 {
     if (!color.isValid()) return 0.0;
     // Ghostty's color utility uses the AERT coefficients over 8-bit RGB.
-    return (0.299 * color.red() + 0.587 * color.green()
-            + 0.114 * color.blue())
+    return (0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue())
         / 255.0;
 }
 

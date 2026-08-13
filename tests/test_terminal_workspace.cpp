@@ -51,9 +51,9 @@
 
 namespace {
 
-static_assert(std::is_same_v<
-              decltype(std::declval<TerminalWorkspace &>().tabModel()),
-              const TabListModel *>);
+static_assert(
+    std::is_same_v<decltype(std::declval<TerminalWorkspace &>().tabModel()),
+                   const TabListModel *>);
 
 class ShellEnvironment final {
 public:
@@ -81,16 +81,12 @@ private:
 
 class KeyReleaseReceiver final : public QObject {
 public:
-    int releaseCount() const noexcept
-    {
-        return releaseCount_;
-    }
+    int releaseCount() const noexcept { return releaseCount_; }
 
 protected:
     bool event(QEvent *event) override
     {
-        if (event != nullptr
-            && event->type() == QEvent::KeyRelease) {
+        if (event != nullptr && event->type() == QEvent::KeyRelease) {
             ++releaseCount_;
         }
         return QObject::event(event);
@@ -110,12 +106,12 @@ public:
 
         QFile shellFile(shellPath_);
         if (!shellFile.open(QIODevice::WriteOnly)) return false;
-        const QByteArray script = QByteArrayLiteral(
-            "#!/bin/sh\n"
-            "ready_dir=\"${0%/*}/ready\"\n"
-            "trap '' HUP\n"
-            ": > \"$ready_dir/$$\"\n"
-            "exec /bin/sleep 30\n");
+        const QByteArray script =
+            QByteArrayLiteral("#!/bin/sh\n"
+                              "ready_dir=\"${0%/*}/ready\"\n"
+                              "trap '' HUP\n"
+                              ": > \"$ready_dir/$$\"\n"
+                              "exec /bin/sleep 30\n");
         if (shellFile.write(script) != script.size()) return false;
         shellFile.close();
         return shellFile.setPermissions(QFileDevice::ReadOwner
@@ -131,7 +127,8 @@ public:
     int readyProcessCount() const
     {
         return QDir(readyDirectory_)
-            .entryList(QDir::Files | QDir::NoDotAndDotDot).size();
+            .entryList(QDir::Files | QDir::NoDotAndDotDot)
+            .size();
     }
 
 private:
@@ -169,39 +166,44 @@ TerminalTypography testTypography(QString prefix, double pointSize)
     TerminalTypography typography;
     typography.pointSize = pointSize;
     typography.face(TerminalFontRole::Regular) = {
-        .families = {
-            prefix + QStringLiteral(" Regular"),
-            prefix + QStringLiteral(" Regular Fallback"),
-        },
-        .style = TerminalFontStyles::Named{
-            prefix + QStringLiteral(" Book"),
-        },
+        .families =
+            {
+                prefix + QStringLiteral(" Regular"),
+                prefix + QStringLiteral(" Regular Fallback"),
+            },
+        .style =
+            TerminalFontStyles::Named{
+                prefix + QStringLiteral(" Book"),
+            },
     };
     typography.face(TerminalFontRole::Bold) = {
-        .families = {
-            prefix + QStringLiteral(" Bold"),
-            prefix + QStringLiteral(" Bold Fallback"),
-        },
-        .style = TerminalFontStyles::Named{
-            prefix + QStringLiteral(" Heavy"),
-        },
+        .families =
+            {
+                prefix + QStringLiteral(" Bold"),
+                prefix + QStringLiteral(" Bold Fallback"),
+            },
+        .style =
+            TerminalFontStyles::Named{
+                prefix + QStringLiteral(" Heavy"),
+            },
     };
     typography.face(TerminalFontRole::Italic) = {
-        .families = {
-            prefix + QStringLiteral(" Italic"),
-        },
+        .families =
+            {
+                prefix + QStringLiteral(" Italic"),
+            },
         .style = TerminalFontStyles::Disabled{},
     };
     typography.face(TerminalFontRole::BoldItalic) = {
-        .families = {
-            prefix + QStringLiteral(" Bold Italic"),
-        },
+        .families =
+            {
+                prefix + QStringLiteral(" Bold Italic"),
+            },
         .style = TerminalFontStyles::Automatic{},
     };
     for (std::size_t index = 0;
          index < terminalEnumIndex(TerminalMetric::Count); ++index) {
-        const TerminalMetric metric =
-            static_cast<TerminalMetric>(index);
+        const TerminalMetric metric = static_cast<TerminalMetric>(index);
         if (index % 2 == 0) {
             typography.metricModifiers[metric] =
                 TerminalMetricModifiers::Absolute{
@@ -219,19 +221,17 @@ TerminalTypography testTypography(QString prefix, double pointSize)
 
 void sendCtrlKPressAndRelease(TerminalPane *pane)
 {
-    QKeyEvent press(QEvent::KeyPress, Qt::Key_K,
-                    Qt::ControlModifier, QString(QChar(0x0b)));
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_K, Qt::ControlModifier,
+                    QString(QChar(0x0b)));
     QCoreApplication::sendEvent(pane, &press);
-    QKeyEvent release(QEvent::KeyRelease, Qt::Key_K,
-                      Qt::ControlModifier);
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_K, Qt::ControlModifier);
     QCoreApplication::sendEvent(pane, &release);
 }
 
 QList<QQuickItem *> splitDividerItems(TerminalWorkspace *workspace)
 {
     return workspace->findChildren<QQuickItem *>(
-        QStringLiteral("_ghosttyQtSplitDivider"),
-        Qt::FindDirectChildrenOnly);
+        QStringLiteral("_ghosttyQtSplitDivider"), Qt::FindDirectChildrenOnly);
 }
 
 QPoint windowPoint(const TerminalWorkspace *workspace,
@@ -249,8 +249,8 @@ bool approximatelyEqual(const QColor &left, const QColor &right)
         && std::abs(left.alpha() - right.alpha()) <= tolerance;
 }
 
-TerminalActionResult successfulOpenFileResult(
-    quint64 requestId, const QString &path)
+TerminalActionResult successfulOpenFileResult(quint64 requestId,
+                                              const QString &path)
 {
     return {
         .requestId = requestId,
@@ -258,14 +258,12 @@ TerminalActionResult successfulOpenFileResult(
         .effect = TerminalActionEffect::OpenFile,
         .performed = true,
         .payload = path,
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     };
 }
 
 TerminalActionResult successfulTerminalActionResult(
-    quint64 requestId,
-    TerminalActionEffect effect = TerminalActionEffect::None,
+    quint64 requestId, TerminalActionEffect effect = TerminalActionEffect::None,
     const QString &payload = {})
 {
     return {
@@ -274,8 +272,7 @@ TerminalActionResult successfulTerminalActionResult(
         .effect = effect,
         .performed = true,
         .payload = payload,
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     };
 }
 
@@ -353,10 +350,10 @@ QColor itemPixel(const QQuickWindow &window, const QQuickItem &item,
     const qreal xScale = static_cast<qreal>(image.width()) / window.width();
     const qreal yScale = static_cast<qreal>(image.height()) / window.height();
     return image.pixelColor(
-        std::clamp(static_cast<int>(std::floor(scene.x() * xScale)),
-                   0, image.width() - 1),
-        std::clamp(static_cast<int>(std::floor(scene.y() * yScale)),
-                   0, image.height() - 1));
+        std::clamp(static_cast<int>(std::floor(scene.x() * xScale)), 0,
+                   image.width() - 1),
+        std::clamp(static_cast<int>(std::floor(scene.y() * yScale)), 0,
+                   image.height() - 1));
 }
 
 bool dividerPaintsExactColor(QQuickWindow *window, QQuickItem *divider,
@@ -370,8 +367,7 @@ bool dividerPaintsExactColor(QQuickWindow *window, QQuickItem *divider,
     const QRectF sceneRect = divider->mapRectToScene(divider->boundingRect());
     const qreal xScale = static_cast<qreal>(image.width()) / window->width();
     const qreal yScale = static_cast<qreal>(image.height()) / window->height();
-    const bool verticalDivider =
-        divider->cursor().shape() == Qt::SplitHCursor;
+    const bool verticalDivider = divider->cursor().shape() == Qt::SplitHCursor;
     const qreal thicknessScale = verticalDivider ? xScale : yScale;
     const qreal start = verticalDivider ? sceneRect.left() : sceneRect.top();
     const qreal end = verticalDivider ? sceneRect.right() : sceneRect.bottom();
@@ -385,22 +381,21 @@ bool dividerPaintsExactColor(QQuickWindow *window, QQuickItem *divider,
     const int alongLimit = verticalDivider ? image.height() : image.width();
     const int thicknessLimit = verticalDivider ? image.width() : image.height();
     const qreal alongScale = verticalDivider ? yScale : xScale;
-    const qreal alongStart = verticalDivider
-        ? sceneRect.top() : sceneRect.left();
-    const qreal alongEnd = verticalDivider
-        ? sceneRect.bottom() : sceneRect.right();
+    const qreal alongStart =
+        verticalDivider ? sceneRect.top() : sceneRect.left();
+    const qreal alongEnd =
+        verticalDivider ? sceneRect.bottom() : sceneRect.right();
     const int physicalAlongStart = std::max(0, qRound(alongStart * alongScale));
-    const int physicalAlongEnd = std::min(
-        alongLimit, qRound(alongEnd * alongScale));
+    const int physicalAlongEnd =
+        std::min(alongLimit, qRound(alongEnd * alongScale));
     if (physicalAlongStart >= physicalAlongEnd
         || physicalEnd >= thicknessLimit) {
         return false;
     }
 
     const auto pixel = [&](int thicknessPosition, int along) {
-        return verticalDivider
-            ? image.pixelColor(thicknessPosition, along)
-            : image.pixelColor(along, thicknessPosition);
+        return verticalDivider ? image.pixelColor(thicknessPosition, along)
+                               : image.pixelColor(along, thicknessPosition);
     };
     // Scan for a cross-section away from nested T-junctions. At that point,
     // every physical pixel in the half-open two-DIP stripe must be colored,
@@ -415,10 +410,10 @@ bool dividerPaintsExactColor(QQuickWindow *window, QQuickItem *divider,
         }
         if (filled
             && (!requireDifferentNeighbors
-                || (!approximatelyEqual(
-                        pixel(physicalStart - 1, along), expected)
-                    && !approximatelyEqual(
-                        pixel(physicalEnd, along), expected)))) {
+                || (!approximatelyEqual(pixel(physicalStart - 1, along),
+                                        expected)
+                    && !approximatelyEqual(pixel(physicalEnd, along),
+                                           expected)))) {
             return true;
         }
     }
@@ -1006,23 +1001,18 @@ void TerminalWorkspaceTest::typographyReloadReachesLiveAndFuturePanes()
     QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 2);
 
     LaunchOptions reloaded = options;
-    reloaded.typography =
-        testTypography(QStringLiteral("Reloaded"), 17.0);
+    reloaded.typography = testTypography(QStringLiteral("Reloaded"), 17.0);
     workspace.applyLaunchOptions(reloaded);
     QVERIFY(workspace.effectiveLaunchOptions().typography
             == reloaded.typography);
 
-    const auto verifyTypography =
-        [&reloaded](const TerminalPane *pane) {
-            QVERIFY(pane != nullptr);
-            const LaunchOptions inherited =
-                pane->splitLaunchOptions(reloaded);
-            QVERIFY(inherited.typography == reloaded.typography);
-            QCOMPARE(pane->fontPointSize(),
-                     reloaded.typography.pointSize);
-        };
-    for (const TerminalPane *pane :
-         workspace.findChildren<TerminalPane *>()) {
+    const auto verifyTypography = [&reloaded](const TerminalPane *pane) {
+        QVERIFY(pane != nullptr);
+        const LaunchOptions inherited = pane->splitLaunchOptions(reloaded);
+        QVERIFY(inherited.typography == reloaded.typography);
+        QCOMPARE(pane->fontPointSize(), reloaded.typography.pointSize);
+    };
+    for (const TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
         verifyTypography(pane);
     }
 
@@ -1036,8 +1026,7 @@ void TerminalWorkspaceTest::typographyReloadReachesLiveAndFuturePanes()
     verifyTypography(split.pane);
 
     QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 4);
-    for (const TerminalPane *pane :
-         workspace.findChildren<TerminalPane *>()) {
+    for (const TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
         verifyTypography(pane);
     }
 }
@@ -1054,8 +1043,7 @@ void TerminalWorkspaceTest::backgroundOpacityReloadIsPaneLocalAndInherited()
     options.hold = true;
     options.confirmCloseMode = ConfirmCloseMode::Never;
     options.appearance.foregroundColor = Qt::white;
-    options.appearance.backgroundColor =
-        QColor(QStringLiteral("#101820"));
+    options.appearance.backgroundColor = QColor(QStringLiteral("#101820"));
     options.alphaBlending = TerminalAlphaBlending::Native;
     options.background = {
         .opacity = 0.25,
@@ -1096,45 +1084,44 @@ void TerminalWorkspaceTest::backgroundOpacityReloadIsPaneLocalAndInherited()
     QVERIFY(secondWorkerThread != nullptr);
 
     quint64 contentRevision = 1;
-    const auto publishFrame =
-        [&contentRevision](TerminalPane *pane, const QColor &background,
-                           const QColor &explicitBackground) {
-            TerminalController *const controller =
-                pane->findChild<TerminalController *>();
-            if (controller == nullptr) return false;
+    const auto publishFrame = [&contentRevision](
+                                  TerminalPane *pane, const QColor &background,
+                                  const QColor &explicitBackground) {
+        TerminalController *const controller =
+            pane->findChild<TerminalController *>();
+        if (controller == nullptr) return false;
 
-            TerminalUpdate update;
-            update.columns = 2;
-            update.rows = 1;
-            update.fullFrame = true;
-            update.colorsChanged = true;
-            update.foreground = Qt::white;
-            update.background = background;
-            update.cursorColor = Qt::white;
-            update.cursorChanged = true;
-            update.cursorVisible = false;
-            update.contentRevision = contentRevision++;
+        TerminalUpdate update;
+        update.columns = 2;
+        update.rows = 1;
+        update.fullFrame = true;
+        update.colorsChanged = true;
+        update.foreground = Qt::white;
+        update.background = background;
+        update.cursorColor = Qt::white;
+        update.cursorChanged = true;
+        update.cursorVisible = false;
+        update.contentRevision = contentRevision++;
 
-            TerminalRowUpdate row;
-            row.row = 0;
-            row.cells.resize(update.columns);
-            for (TerminalCell &cell : row.cells) {
-                cell.foreground = Qt::white;
-                cell.background = background;
-            }
-            row.cells[1].background = explicitBackground;
-            row.cells[1].setBackgroundExplicit(true);
-            update.dirtyRows.append(std::move(row));
+        TerminalRowUpdate row;
+        row.row = 0;
+        row.cells.resize(update.columns);
+        for (TerminalCell &cell : row.cells) {
+            cell.foreground = Qt::white;
+            cell.background = background;
+        }
+        row.cells[1].background = explicitBackground;
+        row.cells[1].setBackgroundExplicit(true);
+        update.dirtyRows.append(std::move(row));
 
-            controller->terminalUpdated(update);
-            // The test-owned frame must remain authoritative while the real
-            // workers continue running in the background.
-            QObject::disconnect(
-                controller, &TerminalController::terminalUpdated, pane,
-                nullptr);
-            pane->update();
-            return true;
-        };
+        controller->terminalUpdated(update);
+        // The test-owned frame must remain authoritative while the real
+        // workers continue running in the background.
+        QObject::disconnect(controller, &TerminalController::terminalUpdated,
+                            pane, nullptr);
+        pane->update();
+        return true;
+    };
 
     const QColor firstBackground(QStringLiteral("#203040"));
     const QColor firstExplicit(QStringLiteral("#904020"));
@@ -1150,11 +1137,9 @@ void TerminalWorkspaceTest::backgroundOpacityReloadIsPaneLocalAndInherited()
     };
     const auto verifyBackgroundLayers =
         [&withAlpha](const TerminalPaneRenderProbeSnapshot &probe,
-                     const QColor &background,
-                     const QColor &explicitBackground, int baseAlpha,
-                     int explicitAlpha) {
-            QCOMPARE(probe.baseBackground,
-                     withAlpha(background, baseAlpha));
+                     const QColor &background, const QColor &explicitBackground,
+                     int baseAlpha, int explicitAlpha) {
+            QCOMPARE(probe.baseBackground, withAlpha(background, baseAlpha));
             QCOMPARE(probe.cellBackgrounds.size(), 2);
             QCOMPARE(probe.cellBackgrounds.at(0).alpha(), 0);
             QCOMPARE(probe.cellBackgrounds.at(1),
@@ -1182,16 +1167,15 @@ void TerminalWorkspaceTest::backgroundOpacityReloadIsPaneLocalAndInherited()
     const QRectF firstGeometry(first.pane->position(), first.pane->size());
     const QRectF secondGeometry(second.pane->position(), second.pane->size());
     const PaneId activePaneId =
-        workspace->tabModel()->entryAt(workspace->currentIndex())
-            ->activePaneId;
+        workspace->tabModel()->entryAt(workspace->currentIndex())->activePaneId;
     QSignalSpy firstResize(firstController,
                            &TerminalController::resizeRequested);
     QSignalSpy secondResize(secondController,
                             &TerminalController::resizeRequested);
-    QSignalSpy firstRuntime(
-        firstController, &TerminalController::runtimeOptionsRequested);
-    QSignalSpy secondRuntime(
-        secondController, &TerminalController::runtimeOptionsRequested);
+    QSignalSpy firstRuntime(firstController,
+                            &TerminalController::runtimeOptionsRequested);
+    QSignalSpy secondRuntime(secondController,
+                             &TerminalController::runtimeOptionsRequested);
 
     LaunchOptions reloaded = options;
     reloaded.background = {
@@ -1239,19 +1223,17 @@ void TerminalWorkspaceTest::backgroundOpacityReloadIsPaneLocalAndInherited()
              firstController.data());
     QCOMPARE(second.pane->findChild<TerminalController *>(),
              secondController.data());
-    QCOMPARE(firstController->findChild<QThread *>(),
-             firstWorkerThread.data());
+    QCOMPARE(firstController->findChild<QThread *>(), firstWorkerThread.data());
     QCOMPARE(secondController->findChild<QThread *>(),
              secondWorkerThread.data());
     QVERIFY(firstController->sessionStarted());
     QVERIFY(secondController->sessionStarted());
-    QCOMPARE(QRectF(first.pane->position(), first.pane->size()),
-             firstGeometry);
+    QCOMPARE(QRectF(first.pane->position(), first.pane->size()), firstGeometry);
     QCOMPARE(QRectF(second.pane->position(), second.pane->size()),
              secondGeometry);
-    QCOMPARE(workspace->tabModel()->entryAt(workspace->currentIndex())
-                 ->activePaneId,
-             activePaneId);
+    QCOMPARE(
+        workspace->tabModel()->entryAt(workspace->currentIndex())->activePaneId,
+        activePaneId);
     QCOMPARE(firstResize.count(), 0);
     QCOMPARE(secondResize.count(), 0);
     QCOMPARE(firstRuntime.count(), 0);
@@ -1821,8 +1803,7 @@ void TerminalWorkspaceTest::inheritedTypographyChangesOnlyPointSize()
     sourceOptions.program = {QStringLiteral("/bin/true")};
     sourceOptions.hold = true;
     sourceOptions.confirmCloseMode = ConfirmCloseMode::Never;
-    sourceOptions.typography =
-        testTypography(QStringLiteral("Source"), 12.0);
+    sourceOptions.typography = testTypography(QStringLiteral("Source"), 12.0);
     TerminalWorkspace::setDefaultLaunchOptions(sourceOptions);
 
     TerminalWorkspace workspace;
@@ -1844,8 +1825,7 @@ void TerminalWorkspaceTest::inheritedTypographyChangesOnlyPointSize()
     QVERIFY(tabOptions.typography == expected);
 
     const std::optional<LaunchOptions> windowOptions =
-        workspace.newWindowLaunchOptions(
-            applicationOptions, source.paneId);
+        workspace.newWindowLaunchOptions(applicationOptions, source.paneId);
     QVERIFY(windowOptions.has_value());
     QVERIFY(windowOptions->typography == expected);
 
@@ -1857,7 +1837,7 @@ void TerminalWorkspaceTest::inheritedTypographyChangesOnlyPointSize()
 }
 
 void TerminalWorkspaceTest::
-initializationSurvivesReentrantConfigurationObservers()
+    initializationSurvivesReentrantConfigurationObservers()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions initial = baseOptions();
@@ -1875,12 +1855,11 @@ initializationSurvivesReentrantConfigurationObservers()
     {
         auto *workspace = new TerminalWorkspace;
         const QPointer<TerminalWorkspace> guard(workspace);
-        connect(workspace, &TerminalWorkspace::tabBarVisibleChanged,
-                this, [workspace] { delete workspace; });
+        connect(workspace, &TerminalWorkspace::tabBarVisibleChanged, this,
+                [workspace] { delete workspace; });
 
         QVERIFY(workspace->initialize(
-            requested, TerminalSessionStartMode::Deferred, {},
-            initialProgram));
+            requested, TerminalSessionStartMode::Deferred, {}, initialProgram));
         QVERIFY(guard.isNull());
     }
 
@@ -1896,15 +1875,15 @@ initializationSurvivesReentrantConfigurationObservers()
         GhosttyKeybindProgram::compile(newer.keybindSource).program;
 
     bool nested = false;
-    connect(&workspace, &TerminalWorkspace::tabBarVisibleChanged,
-            &workspace, [&] {
+    connect(&workspace, &TerminalWorkspace::tabBarVisibleChanged, &workspace,
+            [&] {
                 if (nested) return;
                 nested = true;
                 workspace.applyLaunchOptions(newer, newerProgram);
             });
 
-    QVERIFY(workspace.initialize(
-        requested, TerminalSessionStartMode::Immediate, {}, initialProgram));
+    QVERIFY(workspace.initialize(requested, TerminalSessionStartMode::Immediate,
+                                 {}, initialProgram));
     QVERIFY(nested);
     QCOMPARE(workspace.effectiveLaunchOptions(), newer);
     QVERIFY(workspace.keybindProgram().isSameGeneration(newerProgram));
@@ -1918,11 +1897,10 @@ initializationSurvivesReentrantConfigurationObservers()
     QVERIFY(controller != nullptr);
     QVERIFY(controller->launchGeometry().has_value());
     const TerminalCellMetrics metrics = terminalCellMetrics(newer.typography);
-    QCOMPARE(
-        *controller->launchGeometry(),
-        terminalSessionGeometryForViewport(
-            workspace.width(), workspace.height(),
-            metrics.cellWidth, metrics.cellHeight, 1.0));
+    QCOMPARE(*controller->launchGeometry(),
+             terminalSessionGeometryForViewport(
+                 workspace.width(), workspace.height(), metrics.cellWidth,
+                 metrics.cellHeight, 1.0));
 }
 
 void TerminalWorkspaceTest::tabPublicationMayDestroyWorkspace()
@@ -1949,10 +1927,10 @@ void TerminalWorkspaceTest::tabPublicationMayDestroyWorkspace()
         auto *workspace = new TerminalWorkspace;
         workspace->setSize(QSizeF(640.0, 360.0));
         const QPointer<TerminalWorkspace> guard(workspace);
-        connect(workspace->tabModel(), &QAbstractItemModel::rowsInserted,
-                this, [workspace] { delete workspace; });
-        QVERIFY(workspace->initialize(
-            options, TerminalSessionStartMode::Deferred));
+        connect(workspace->tabModel(), &QAbstractItemModel::rowsInserted, this,
+                [workspace] { delete workspace; });
+        QVERIFY(
+            workspace->initialize(options, TerminalSessionStartMode::Deferred));
         QVERIFY(guard.isNull());
     }
 
@@ -1960,8 +1938,8 @@ void TerminalWorkspaceTest::tabPublicationMayDestroyWorkspace()
         TerminalWorkspace *workspace = initializedWorkspace();
         QVERIFY(workspace != nullptr);
         const QPointer<TerminalWorkspace> guard(workspace);
-        connect(workspace->tabModel(), &QAbstractItemModel::rowsInserted,
-                this, [workspace] { delete workspace; });
+        connect(workspace->tabModel(), &QAbstractItemModel::rowsInserted, this,
+                [workspace] { delete workspace; });
         workspace->newTab();
         QVERIFY(guard.isNull());
     }
@@ -1970,8 +1948,8 @@ void TerminalWorkspaceTest::tabPublicationMayDestroyWorkspace()
         TerminalWorkspace *workspace = initializedWorkspace();
         QVERIFY(workspace != nullptr);
         const QPointer<TerminalWorkspace> guard(workspace);
-        connect(workspace, &TerminalWorkspace::tabTitlesChanged,
-                this, [workspace] { delete workspace; });
+        connect(workspace, &TerminalWorkspace::tabTitlesChanged, this,
+                [workspace] { delete workspace; });
         workspace->newTab();
         QVERIFY(guard.isNull());
     }
@@ -1980,8 +1958,8 @@ void TerminalWorkspaceTest::tabPublicationMayDestroyWorkspace()
         TerminalWorkspace *workspace = initializedWorkspace();
         QVERIFY(workspace != nullptr);
         const QPointer<TerminalWorkspace> guard(workspace);
-        connect(workspace, &TerminalWorkspace::tabBarVisibleChanged,
-                this, [workspace] { delete workspace; });
+        connect(workspace, &TerminalWorkspace::tabBarVisibleChanged, this,
+                [workspace] { delete workspace; });
         workspace->newTab();
         QVERIFY(guard.isNull());
     }
@@ -2007,8 +1985,10 @@ void TerminalWorkspaceTest::deferredInitialSessionCancelsAndScopesToFirstPane()
         temporary.filePath(QStringLiteral("unexpected-start"));
     LaunchOptions markerOptions = options;
     markerOptions.program = {
-        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
-        QStringLiteral("printf started > \"$0\""), startMarker,
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf started > \"$0\""),
+        startMarker,
     };
     {
         QQuickWindow window;
@@ -2016,8 +1996,8 @@ void TerminalWorkspaceTest::deferredInitialSessionCancelsAndScopesToFirstPane()
         auto *workspace = new TerminalWorkspace(window.contentItem());
         workspace->setParentItem(window.contentItem());
         workspace->setSize(window.size());
-        QVERIFY(workspace->initialize(
-            markerOptions, TerminalSessionStartMode::Deferred));
+        QVERIFY(workspace->initialize(markerOptions,
+                                      TerminalSessionStartMode::Deferred));
         TerminalController *const controller =
             workspace->findChild<TerminalController *>();
         QVERIFY(controller != nullptr);
@@ -2026,8 +2006,8 @@ void TerminalWorkspaceTest::deferredInitialSessionCancelsAndScopesToFirstPane()
         controller->sendRawText(QByteArrayLiteral("must-not-run\n"));
         QPointer<TerminalWorkspace> guardedWorkspace(workspace);
         QPointer<TerminalController> guardedController(controller);
-        connect(workspace, &TerminalWorkspace::windowCloseApproved,
-                &window, [workspace] { delete workspace; });
+        connect(workspace, &TerminalWorkspace::windowCloseApproved, &window,
+                [workspace] { delete workspace; });
         workspace->requestWindowClose();
         QTRY_VERIFY_WITH_TIMEOUT(guardedWorkspace.isNull(), 1000);
         QVERIFY(guardedController.isNull());
@@ -2044,15 +2024,15 @@ void TerminalWorkspaceTest::deferredInitialSessionCancelsAndScopesToFirstPane()
         auto *workspace = new TerminalWorkspace(window.contentItem());
         workspace->setParentItem(window.contentItem());
         workspace->setSize(window.size());
-        QVERIFY(workspace->initialize(
-            options, TerminalSessionStartMode::Deferred));
+        QVERIFY(
+            workspace->initialize(options, TerminalSessionStartMode::Deferred));
         TerminalPane *const pane = workspace->findChild<TerminalPane *>();
         QVERIFY(pane != nullptr);
         QPointer<TerminalWorkspace> guardedWorkspace(workspace);
         QPointer<TerminalPane> guardedPane(pane);
-        connect(pane, &TerminalPane::processStateChanged,
-                &window, [workspace] { delete workspace; },
-                Qt::SingleShotConnection);
+        connect(
+            pane, &TerminalPane::processStateChanged, &window,
+            [workspace] { delete workspace; }, Qt::SingleShotConnection);
         QVERIFY(workspace->armInitialSessionStart());
         window.showMaximized();
         QTRY_VERIFY_WITH_TIMEOUT(guardedWorkspace.isNull(), 1000);
@@ -2065,8 +2045,8 @@ void TerminalWorkspaceTest::deferredInitialSessionCancelsAndScopesToFirstPane()
         auto *workspace = new TerminalWorkspace(window.contentItem());
         workspace->setParentItem(window.contentItem());
         workspace->setSize(window.size());
-        QVERIFY(workspace->initialize(
-            options, TerminalSessionStartMode::Deferred));
+        QVERIFY(
+            workspace->initialize(options, TerminalSessionStartMode::Deferred));
         TerminalPane *const pane = workspace->findChild<TerminalPane *>();
         QVERIFY(pane != nullptr);
         TerminalController *const controller =
@@ -2109,8 +2089,7 @@ void TerminalWorkspaceTest::deferredInitialSessionCancelsAndScopesToFirstPane()
 
     TerminalWorkspace workspace;
     workspace.setSize(QSizeF(640.0, 360.0));
-    QVERIFY(workspace.initialize(
-        options, TerminalSessionStartMode::Deferred));
+    QVERIFY(workspace.initialize(options, TerminalSessionStartMode::Deferred));
     const CurrentTabProbe first = currentTabProbe(workspace);
     QVERIFY(first.pane != nullptr);
     TerminalController *const firstController =
@@ -2136,8 +2115,7 @@ void TerminalWorkspaceTest::deferredInitialSessionCancelsAndScopesToFirstPane()
     QVERIFY(!firstController->sessionStarted());
 }
 
-void TerminalWorkspaceTest::
-keybindProgramStorageIsSharedWhilePaneStateIsLocal()
+void TerminalWorkspaceTest::keybindProgramStorageIsSharedWhilePaneStateIsLocal()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
@@ -2160,16 +2138,15 @@ keybindProgramStorageIsSharedWhilePaneStateIsLocal()
             .actions = {QStringLiteral("ignore")},
         }},
     }};
-    options.keybindSource =
-        GhosttyKeybindSource::structured(std::move(config));
+    options.keybindSource = GhosttyKeybindSource::structured(std::move(config));
     const GhosttyKeybindProgram firstProgram =
         GhosttyKeybindProgram::compile(options.keybindSource).program;
     QVERIFY(firstProgram.isAvailable());
 
     TerminalWorkspace workspace;
     workspace.setSize(QSizeF(640.0, 360.0));
-    QVERIFY(workspace.initialize(
-        options, TerminalSessionStartMode::Deferred, {}, firstProgram));
+    QVERIFY(workspace.initialize(options, TerminalSessionStartMode::Deferred,
+                                 {}, firstProgram));
     QVERIFY(workspace.keybindProgram().isSameGeneration(firstProgram));
 
     const CurrentTabProbe initial = currentTabProbe(workspace);
@@ -2248,8 +2225,8 @@ void TerminalWorkspaceTest::newerSameProgramWorkspaceUpdateWinsReentry()
         GhosttyKeybindProgram::compile(options.keybindSource).program;
 
     TerminalWorkspace workspace;
-    QVERIFY(workspace.initialize(
-        options, TerminalSessionStartMode::Deferred, {}, program));
+    QVERIFY(workspace.initialize(options, TerminalSessionStartMode::Deferred,
+                                 {}, program));
     workspace.newTab();
     QCOMPARE(workspace.tabCount(), 2);
     QVERIFY(workspace.tabBarVisible());
@@ -2262,8 +2239,8 @@ void TerminalWorkspaceTest::newerSameProgramWorkspaceUpdateWinsReentry()
     newer.windowShowTabBar = WindowShowTabBar::Always;
 
     bool nested = false;
-    connect(&workspace, &TerminalWorkspace::tabBarVisibleChanged,
-            &workspace, [&] {
+    connect(&workspace, &TerminalWorkspace::tabBarVisibleChanged, &workspace,
+            [&] {
                 if (nested) return;
                 nested = true;
                 workspace.applyLaunchOptions(newer, program);
@@ -2322,10 +2299,10 @@ void TerminalWorkspaceTest::distinguishesWindowCloseFromApplicationQuit()
 
     {
         TerminalWorkspace workspace;
-        QSignalSpy windowClose(
-            &workspace, &TerminalWorkspace::windowCloseApproved);
-        QSignalSpy applicationQuit(
-            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QSignalSpy windowClose(&workspace,
+                               &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(&workspace,
+                                   &TerminalWorkspace::applicationQuitApproved);
         QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
 
         workspace.requestWindowClose();
@@ -2338,29 +2315,28 @@ void TerminalWorkspaceTest::distinguishesWindowCloseFromApplicationQuit()
 
     {
         TerminalWorkspace workspace;
-        QSignalSpy windowClose(
-            &workspace, &TerminalWorkspace::windowCloseApproved);
-        QSignalSpy applicationQuit(
-            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QSignalSpy windowClose(&workspace,
+                               &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(&workspace,
+                                   &TerminalWorkspace::applicationQuitApproved);
         QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
         TerminalPane *const pane = workspace.findChild<TerminalPane *>();
         QVERIFY(pane != nullptr);
 
-        QVERIFY(pane->executeConfiguredAction(
-            QStringLiteral("close_window")));
+        QVERIFY(pane->executeConfiguredAction(QStringLiteral("close_window")));
         QTRY_COMPARE_WITH_TIMEOUT(windowClose.count(), 1, 1000);
         QCOMPARE(applicationQuit.count(), 0);
     }
 
     {
         TerminalWorkspace workspace;
-        QSignalSpy windowClose(
-            &workspace, &TerminalWorkspace::windowCloseApproved);
-        QSignalSpy applicationQuit(
-            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QSignalSpy windowClose(&workspace,
+                               &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(&workspace,
+                                   &TerminalWorkspace::applicationQuitApproved);
         QStringList publicationOrder;
-        connect(&workspace, &TerminalWorkspace::windowCloseApproved,
-                &workspace, [&publicationOrder] {
+        connect(&workspace, &TerminalWorkspace::windowCloseApproved, &workspace,
+                [&publicationOrder] {
                     publicationOrder.append(QStringLiteral("window"));
                 });
         connect(&workspace, &TerminalWorkspace::applicationQuitApproved,
@@ -2385,17 +2361,15 @@ void TerminalWorkspaceTest::distinguishesWindowCloseFromApplicationQuit()
     options.confirmCloseMode = ConfirmCloseMode::Always;
     TerminalWorkspace::setDefaultLaunchOptions(options);
     TerminalWorkspace workspace;
-    QSignalSpy confirmation(
-        &workspace, &TerminalWorkspace::closeConfirmationRequested);
-    QSignalSpy windowClose(
-        &workspace, &TerminalWorkspace::windowCloseApproved);
-    QSignalSpy applicationQuit(
-        &workspace, &TerminalWorkspace::applicationQuitApproved);
+    QSignalSpy confirmation(&workspace,
+                            &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy windowClose(&workspace, &TerminalWorkspace::windowCloseApproved);
+    QSignalSpy applicationQuit(&workspace,
+                               &TerminalWorkspace::applicationQuitApproved);
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     TerminalPane *const pane = workspace.findChild<TerminalPane *>();
     QVERIFY(pane != nullptr);
-    QVERIFY(pane->executeConfiguredAction(
-        QStringLiteral("toggle_readonly")));
+    QVERIFY(pane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
 
     workspace.requestApplicationQuitConfirmation(workspace.closeAssessment());
     QCOMPARE(confirmation.count(), 1);
@@ -2414,7 +2388,8 @@ void TerminalWorkspaceTest::distinguishesWindowCloseFromApplicationQuit()
     QTRY_COMPARE_WITH_TIMEOUT(applicationQuit.count(), 1, 1000);
 }
 
-void TerminalWorkspaceTest::configuredCloseChainSurvivesSynchronousWorkspaceDestruction()
+void TerminalWorkspaceTest::
+    configuredCloseChainSurvivesSynchronousWorkspaceDestruction()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
@@ -2440,8 +2415,8 @@ void TerminalWorkspaceTest::configuredCloseChainSurvivesSynchronousWorkspaceDest
                 delete workspace;
             });
 
-    QKeyEvent press(QEvent::KeyPress, Qt::Key_K,
-                    Qt::ControlModifier, QString(QChar(0x0b)));
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_K, Qt::ControlModifier,
+                    QString(QChar(0x0b)));
     QCoreApplication::sendEvent(pane, &press);
 
     // The later action runs before the lifecycle owner commits the close.
@@ -2455,7 +2430,7 @@ void TerminalWorkspaceTest::configuredCloseChainSurvivesSynchronousWorkspaceDest
 }
 
 void TerminalWorkspaceTest::
-configuredSurfaceCloseChainSurvivesSynchronousDestruction_data()
+    configuredSurfaceCloseChainSurvivesSynchronousDestruction_data()
 {
     QTest::addColumn<QString>("action");
 
@@ -2464,7 +2439,7 @@ configuredSurfaceCloseChainSurvivesSynchronousDestruction_data()
 }
 
 void TerminalWorkspaceTest::
-configuredSurfaceCloseChainSurvivesSynchronousDestruction()
+    configuredSurfaceCloseChainSurvivesSynchronousDestruction()
 {
     QFETCH(QString, action);
 
@@ -2492,8 +2467,8 @@ configuredSurfaceCloseChainSurvivesSynchronousDestruction()
     const qreal initialFontSize = pane->fontPointSize();
 
     int approvals = 0;
-    connect(workspace, &TerminalWorkspace::windowCloseApproved,
-            this, [&approvals, workspace] {
+    connect(workspace, &TerminalWorkspace::windowCloseApproved, this,
+            [&approvals, workspace] {
                 ++approvals;
                 delete workspace;
             });
@@ -2516,7 +2491,7 @@ configuredSurfaceCloseChainSurvivesSynchronousDestruction()
 }
 
 void TerminalWorkspaceTest::
-broadCloseChainSurvivesSynchronousSourceDestruction_data()
+    broadCloseChainSurvivesSynchronousSourceDestruction_data()
 {
     QTest::addColumn<bool>("global");
 
@@ -2525,7 +2500,7 @@ broadCloseChainSurvivesSynchronousSourceDestruction_data()
 }
 
 void TerminalWorkspaceTest::
-broadCloseChainSurvivesSynchronousSourceDestruction()
+    broadCloseChainSurvivesSynchronousSourceDestruction()
 {
     QFETCH(bool, global);
 
@@ -2541,16 +2516,15 @@ broadCloseChainSurvivesSynchronousSourceDestruction()
             .unicodeCodepoint = 'k',
             .modifiers = GhosttyKeybindCtrl,
         }},
-        .actions = {
-            QStringLiteral("close_surface"),
-            QStringLiteral("reload_config"),
-        },
-        .flags = global
-            ? GhosttyKeybindFlags{.global = true}
-            : GhosttyKeybindFlags{.all = true},
+        .actions =
+            {
+                QStringLiteral("close_surface"),
+                QStringLiteral("reload_config"),
+            },
+        .flags = global ? GhosttyKeybindFlags{.global = true}
+                        : GhosttyKeybindFlags{.all = true},
     }};
-    options.keybindSource =
-        GhosttyKeybindSource::structured(std::move(config));
+    options.keybindSource = GhosttyKeybindSource::structured(std::move(config));
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     auto *workspace = new TerminalWorkspace;
@@ -2565,12 +2539,11 @@ broadCloseChainSurvivesSynchronousSourceDestruction()
     QVERIFY(controller != nullptr);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
     QSignalSpy reload(
-        &bindings,
-        &GhosttyApplicationKeybindings::applicationActionRequested);
+        &bindings, &GhosttyApplicationKeybindings::applicationActionRequested);
 
     int approvals = 0;
-    connect(workspace, &TerminalWorkspace::windowCloseApproved,
-            this, [&approvals, workspace] {
+    connect(workspace, &TerminalWorkspace::windowCloseApproved, this,
+            [&approvals, workspace] {
                 ++approvals;
                 delete workspace;
             });
@@ -2579,8 +2552,7 @@ broadCloseChainSurvivesSynchronousSourceDestruction()
 
     QVERIFY(guardedWorkspace != nullptr);
     QCOMPARE(reload.count(), 1);
-    QCOMPARE(qvariant_cast<ApplicationAction>(
-                 reload.constFirst().constFirst()),
+    QCOMPARE(qvariant_cast<ApplicationAction>(reload.constFirst().constFirst()),
              ApplicationAction::ReloadConfig);
     QCOMPARE(approvals, 0);
     QCOMPARE(forwarded.count(), 0);
@@ -2606,8 +2578,8 @@ void TerminalWorkspaceTest::allPaneClosePublicationOutlivesFanout()
     QCOMPARE(workspace->findChildren<TerminalPane *>().size(), 3);
 
     int approvals = 0;
-    connect(workspace, &TerminalWorkspace::windowCloseApproved,
-            this, [&approvals, workspace] {
+    connect(workspace, &TerminalWorkspace::windowCloseApproved, this,
+            [&approvals, workspace] {
                 ++approvals;
                 delete workspace;
             });
@@ -2622,8 +2594,7 @@ void TerminalWorkspaceTest::allPaneClosePublicationOutlivesFanout()
     QCOMPARE(approvals, 1);
 }
 
-void TerminalWorkspaceTest::
-broadFanoutSurvivesSynchronousWorkspaceDestruction()
+void TerminalWorkspaceTest::broadFanoutSurvivesSynchronousWorkspaceDestruction()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
@@ -2645,8 +2616,8 @@ broadFanoutSurvivesSynchronousWorkspaceDestruction()
     int destructions = 0;
     for (TerminalPane *pane : panes) {
         guardedPanes.emplace_back(pane);
-        connect(pane, &TerminalPane::fontPointSizeChanged,
-                this, [&, workspace] {
+        connect(pane, &TerminalPane::fontPointSizeChanged, this,
+                [&, workspace] {
                     if (guardedWorkspace == nullptr) return;
                     ++destructions;
                     delete workspace;
@@ -2662,7 +2633,7 @@ broadFanoutSurvivesSynchronousWorkspaceDestruction()
 }
 
 void TerminalWorkspaceTest::
-unexpectedDirectObserverDestructionStopsChainSafely()
+    unexpectedDirectObserverDestructionStopsChainSafely()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
@@ -2673,21 +2644,19 @@ unexpectedDirectObserverDestructionStopsChainSafely()
         QStringLiteral("chain=toggle_readonly"),
     });
 
-    auto *pane = new TerminalPane(
-        options, nullptr, std::nullopt,
-        TerminalSessionStartMode::Deferred);
+    auto *pane = new TerminalPane(options, nullptr, std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
     const QPointer<TerminalPane> guardedPane(pane);
     int readOnlyChanges = 0;
-    connect(pane, &TerminalPane::readOnlyChanged,
-            this, [&readOnlyChanges] { ++readOnlyChanges; });
-    pane->setWorkspaceActionHandler(
-        [pane](WorkspaceActionRequest) {
-            delete pane;
-            return true;
-        });
+    connect(pane, &TerminalPane::readOnlyChanged, this,
+            [&readOnlyChanges] { ++readOnlyChanges; });
+    pane->setWorkspaceActionHandler([pane](WorkspaceActionRequest) {
+        delete pane;
+        return true;
+    });
 
-    QKeyEvent press(QEvent::KeyPress, Qt::Key_K,
-                    Qt::ControlModifier, QString(QChar(0x0b)));
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_K, Qt::ControlModifier,
+                    QString(QChar(0x0b)));
     QCoreApplication::sendEvent(pane, &press);
 
     QVERIFY(guardedPane.isNull());
@@ -2706,14 +2675,14 @@ void TerminalWorkspaceTest::synchronousObserversMayDestroyWorkspace()
         TerminalWorkspace::setDefaultLaunchOptions(options);
         auto *workspace = new TerminalWorkspace;
         const QPointer<TerminalWorkspace> guard(workspace);
-        QSignalSpy confirmation(
-            workspace, &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy confirmation(workspace,
+                                &TerminalWorkspace::closeConfirmationRequested);
         QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
         workspace->requestApplicationQuitConfirmation(
             workspace->closeAssessment());
         QCOMPARE(confirmation.count(), 1);
-        connect(workspace, &TerminalWorkspace::closeConfirmationResolved,
-                this, [workspace] { delete workspace; });
+        connect(workspace, &TerminalWorkspace::closeConfirmationResolved, this,
+                [workspace] { delete workspace; });
 
         workspace->cancelClose(closeConfirmationId(confirmation));
 
@@ -2730,8 +2699,8 @@ void TerminalWorkspaceTest::synchronousObserversMayDestroyWorkspace()
         QVERIFY(pane != nullptr);
         QVERIFY(pane->executeConfiguredAction(
             QStringLiteral("prompt_surface_title")));
-        connect(workspace, &TerminalWorkspace::titlePromptResolved,
-                this, [workspace] { delete workspace; });
+        connect(workspace, &TerminalWorkspace::titlePromptResolved, this,
+                [workspace] { delete workspace; });
 
         workspace->closeCurrentTab();
 
@@ -2745,15 +2714,12 @@ void TerminalWorkspaceTest::synchronousObserversMayDestroyWorkspace()
         TerminalPane *const pane = workspace->findChild<TerminalPane *>();
         QVERIFY(pane != nullptr);
         QSignalSpy confirmation(
-            workspace,
-            &TerminalWorkspace::unsafePasteConfirmationRequested);
-        Q_EMIT pane->unsafePasteRequested(
-            1, QStringLiteral("unsafe\ntext"), pane);
+            workspace, &TerminalWorkspace::unsafePasteConfirmationRequested);
+        Q_EMIT pane->unsafePasteRequested(1, QStringLiteral("unsafe\ntext"),
+                                          pane);
         QCOMPARE(confirmation.count(), 1);
-        connect(
-            workspace,
-            &TerminalWorkspace::unsafePasteConfirmationResolved,
-            this, [workspace] { delete workspace; });
+        connect(workspace, &TerminalWorkspace::unsafePasteConfirmationResolved,
+                this, [workspace] { delete workspace; });
 
         workspace->closeCurrentTab();
 
@@ -2770,15 +2736,14 @@ void TerminalWorkspaceTest::synchronousObserversMayDestroyWorkspace()
         TerminalPane *const pane = workspace->findChild<TerminalPane *>();
         QVERIFY(pane != nullptr);
         int removals = 0;
-        connect(
-            workspace->tabModel(), &QAbstractItemModel::rowsRemoved,
-            this, [&removals, workspace] {
-                ++removals;
-                delete workspace;
-            });
+        connect(workspace->tabModel(), &QAbstractItemModel::rowsRemoved, this,
+                [&removals, workspace] {
+                    ++removals;
+                    delete workspace;
+                });
 
-        QVERIFY(pane->executeConfiguredAction(
-            QStringLiteral("close_tab:other")));
+        QVERIFY(
+            pane->executeConfiguredAction(QStringLiteral("close_tab:other")));
 
         QVERIFY(guard.isNull());
         QCOMPARE(removals, 1);
@@ -3338,16 +3303,15 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
     // after the ordinary close publication has completed.
     {
         TerminalWorkspace workspace;
-        QSignalSpy windowClose(
-            &workspace, &TerminalWorkspace::windowCloseApproved);
-        QSignalSpy applicationQuit(
-            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QSignalSpy windowClose(&workspace,
+                               &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(&workspace,
+                                   &TerminalWorkspace::applicationQuitApproved);
         QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
         TerminalPane *const pane = workspace.findChild<TerminalPane *>();
         QVERIFY(pane != nullptr);
 
-        QVERIFY(pane->executeConfiguredAction(
-            QStringLiteral("close_window")));
+        QVERIFY(pane->executeConfiguredAction(QStringLiteral("close_window")));
         QTRY_COMPARE_WITH_TIMEOUT(windowClose.count(), 1, 1000);
         QCOMPARE(applicationQuit.count(), 0);
         workspace.requestApplicationQuitConfirmation(
@@ -3362,20 +3326,19 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
     // Escalating an already pending window close reuses its one confirmation.
     {
         TerminalWorkspace workspace;
-        QSignalSpy confirmation(
-            &workspace, &TerminalWorkspace::closeConfirmationRequested);
-        QSignalSpy windowClose(
-            &workspace, &TerminalWorkspace::windowCloseApproved);
-        QSignalSpy applicationQuit(
-            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QSignalSpy confirmation(&workspace,
+                                &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy windowClose(&workspace,
+                               &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(&workspace,
+                                   &TerminalWorkspace::applicationQuitApproved);
         QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
         TerminalPane *const pane = workspace.findChild<TerminalPane *>();
         QVERIFY(pane != nullptr);
-        QVERIFY(pane->executeConfiguredAction(
-            QStringLiteral("toggle_readonly")));
+        QVERIFY(
+            pane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
 
-        QVERIFY(pane->executeConfiguredAction(
-            QStringLiteral("close_window")));
+        QVERIFY(pane->executeConfiguredAction(QStringLiteral("close_window")));
         QTRY_COMPARE_WITH_TIMEOUT(confirmation.count(), 1, 1000);
         workspace.requestApplicationQuitConfirmation(
             workspace.closeAssessment());
@@ -3389,22 +3352,21 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
     // swallowed by it. The replacement has a new ID and window-level copy.
     {
         TerminalWorkspace workspace;
-        QSignalSpy confirmation(
-            &workspace, &TerminalWorkspace::closeConfirmationRequested);
-        QSignalSpy resolved(
-            &workspace, &TerminalWorkspace::closeConfirmationResolved);
-        QSignalSpy windowClose(
-            &workspace, &TerminalWorkspace::windowCloseApproved);
-        QSignalSpy applicationQuit(
-            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QSignalSpy confirmation(&workspace,
+                                &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy resolved(&workspace,
+                            &TerminalWorkspace::closeConfirmationResolved);
+        QSignalSpy windowClose(&workspace,
+                               &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(&workspace,
+                                   &TerminalWorkspace::applicationQuitApproved);
         QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
         TerminalPane *const pane = workspace.findChild<TerminalPane *>();
         QVERIFY(pane != nullptr);
-        QVERIFY(pane->executeConfiguredAction(
-            QStringLiteral("toggle_readonly")));
+        QVERIFY(
+            pane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
 
-        QVERIFY(pane->executeConfiguredAction(
-            QStringLiteral("close_surface")));
+        QVERIFY(pane->executeConfiguredAction(QStringLiteral("close_surface")));
         QCOMPARE(confirmation.count(), 1);
         const quint64 paneConfirmation = closeConfirmationId(confirmation);
         workspace.requestApplicationQuitConfirmation(
@@ -3414,9 +3376,10 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
         QCOMPARE(confirmation.count(), 2);
         const quint64 windowConfirmation = closeConfirmationId(confirmation);
         QVERIFY(windowConfirmation != paneConfirmation);
-        QCOMPARE(confirmation.constLast().at(1).toString(),
-                 QStringLiteral(
-                     "A terminal window contains a read-only pane. Quit the application?"));
+        QCOMPARE(
+            confirmation.constLast().at(1).toString(),
+            QStringLiteral(
+                "A terminal window contains a read-only pane. Quit the application?"));
 
         workspace.cancelClose(paneConfirmation);
         QCOMPARE(windowClose.count(), 0);
@@ -3430,19 +3393,19 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
     // intent rather than demoting it to an ordinary close.
     {
         TerminalWorkspace workspace;
-        QSignalSpy confirmation(
-            &workspace, &TerminalWorkspace::closeConfirmationRequested);
-        QSignalSpy resolved(
-            &workspace, &TerminalWorkspace::closeConfirmationResolved);
-        QSignalSpy windowClose(
-            &workspace, &TerminalWorkspace::windowCloseApproved);
-        QSignalSpy applicationQuit(
-            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QSignalSpy confirmation(&workspace,
+                                &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy resolved(&workspace,
+                            &TerminalWorkspace::closeConfirmationResolved);
+        QSignalSpy windowClose(&workspace,
+                               &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(&workspace,
+                                   &TerminalWorkspace::applicationQuitApproved);
         QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
         TerminalPane *const pane = workspace.findChild<TerminalPane *>();
         QVERIFY(pane != nullptr);
-        QVERIFY(pane->executeConfiguredAction(
-            QStringLiteral("toggle_readonly")));
+        QVERIFY(
+            pane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
 
         workspace.requestApplicationQuitConfirmation(
             workspace.closeAssessment());
@@ -3452,8 +3415,7 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
             QVERIFY(pane->executeConfiguredAction(
                 QStringLiteral("toggle_readonly")));
         }
-        QVERIFY(pane->executeConfiguredAction(
-            QStringLiteral("close_surface")));
+        QVERIFY(pane->executeConfiguredAction(QStringLiteral("close_surface")));
         QCOMPARE(workspace.tabCount(), 0);
         QCOMPARE(resolved.count(), 1);
         QTRY_COMPARE_WITH_TIMEOUT(windowClose.count(), 1, 1000);
@@ -3465,23 +3427,22 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
     // cleared when the original cancel call resumes.
     {
         TerminalWorkspace workspace;
-        QSignalSpy confirmation(
-            &workspace, &TerminalWorkspace::closeConfirmationRequested);
-        QSignalSpy windowClose(
-            &workspace, &TerminalWorkspace::windowCloseApproved);
-        QSignalSpy applicationQuit(
-            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QSignalSpy confirmation(&workspace,
+                                &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy windowClose(&workspace,
+                               &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(&workspace,
+                                   &TerminalWorkspace::applicationQuitApproved);
         QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
         TerminalPane *const pane = workspace.findChild<TerminalPane *>();
         QVERIFY(pane != nullptr);
-        QVERIFY(pane->executeConfiguredAction(
-            QStringLiteral("toggle_readonly")));
+        QVERIFY(
+            pane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
 
         workspace.requestApplicationQuitConfirmation(
             workspace.closeAssessment());
         QCOMPARE(confirmation.count(), 1);
-        const quint64 cancelledConfirmation =
-            closeConfirmationId(confirmation);
+        const quint64 cancelledConfirmation = closeConfirmationId(confirmation);
         bool reentrantQuitAccepted = false;
         connect(&workspace, &TerminalWorkspace::closeConfirmationResolved,
                 &workspace, [&](quint64 confirmationId) {
@@ -3508,12 +3469,12 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
     // surviving topology is stable.
     {
         TerminalWorkspace workspace;
-        QSignalSpy confirmation(
-            &workspace, &TerminalWorkspace::closeConfirmationRequested);
-        QSignalSpy windowClose(
-            &workspace, &TerminalWorkspace::windowCloseApproved);
-        QSignalSpy applicationQuit(
-            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QSignalSpy confirmation(&workspace,
+                                &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy windowClose(&workspace,
+                               &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(&workspace,
+                                   &TerminalWorkspace::applicationQuitApproved);
         QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
         const CurrentTabProbe source = splitRightProbe(workspace);
         QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 2);
@@ -3610,40 +3571,38 @@ void TerminalWorkspaceTest::closeSurfaceUsesStableOriginsAndAdjacentFocus()
     // Closing an inactive exact source must not steal focus from the tab's
     // active pane.
     QPointer<TerminalPane> secondPane(second.pane);
-    QVERIFY(second.pane->executeConfiguredAction(
-        QStringLiteral("close_surface")));
-    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId,
-             fourth.paneId);
-    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(),
-                              fourth.pane.data(), 1000);
+    QVERIFY(
+        second.pane->executeConfiguredAction(QStringLiteral("close_surface")));
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, fourth.paneId);
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), fourth.pane.data(),
+                              1000);
     QTRY_VERIFY_WITH_TIMEOUT(secondPane.isNull(), 1000);
     QTRY_COMPARE_WITH_TIMEOUT(splitDividerItems(&workspace).size(), 2, 1000);
 
     bool nestedActionAttempted = false;
     bool nestedActionPerformed = true;
-    const QMetaObject::Connection dataChanged = connect(
-        workspace.tabModel(), &QAbstractItemModel::dataChanged,
-        &workspace, [&] {
-            if (nestedActionAttempted) return;
-            nestedActionAttempted = true;
-            nestedActionPerformed = workspace.dispatchAction({
-                WorkspaceAction::NewTab,
-                {first.tabId, third.paneId, 0},
-            });
-        });
+    const QMetaObject::Connection dataChanged =
+        connect(workspace.tabModel(), &QAbstractItemModel::dataChanged,
+                &workspace, [&] {
+                    if (nestedActionAttempted) return;
+                    nestedActionAttempted = true;
+                    nestedActionPerformed = workspace.dispatchAction({
+                        WorkspaceAction::NewTab,
+                        {first.tabId, third.paneId, 0},
+                    });
+                });
 
     // D is the active rightmost leaf while A remains earlier in the tree.
     // Ghostty chooses adjacent C, not the first surviving leaf A.
     QPointer<TerminalPane> fourthPane(fourth.pane);
-    QVERIFY(fourth.pane->executeConfiguredAction(
-        QStringLiteral("close_surface")));
+    QVERIFY(
+        fourth.pane->executeConfiguredAction(QStringLiteral("close_surface")));
     QVERIFY(nestedActionAttempted);
     QVERIFY(!nestedActionPerformed);
     QCOMPARE(workspace.tabCount(), 1);
-    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId,
-             third.paneId);
-    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(),
-                              third.pane.data(), 1000);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, third.paneId);
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), third.pane.data(),
+                              1000);
     QTRY_VERIFY_WITH_TIMEOUT(fourthPane.isNull(), 1000);
     QTRY_COMPARE_WITH_TIMEOUT(splitDividerItems(&workspace).size(), 1, 1000);
     QObject::disconnect(dataChanged);
@@ -3653,15 +3612,14 @@ void TerminalWorkspaceTest::closeSurfaceUsesStableOriginsAndAdjacentFocus()
         WorkspaceAction::ActivatePane,
         {first.tabId, first.paneId, 0},
     }));
-    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(),
-                              first.pane.data(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), first.pane.data(),
+                              1000);
     QPointer<TerminalPane> firstPane(first.pane);
-    QVERIFY(first.pane->executeConfiguredAction(
-        QStringLiteral("close_surface")));
-    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId,
-             third.paneId);
-    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(),
-                              third.pane.data(), 1000);
+    QVERIFY(
+        first.pane->executeConfiguredAction(QStringLiteral("close_surface")));
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, third.paneId);
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), third.pane.data(),
+                              1000);
     QTRY_VERIFY_WITH_TIMEOUT(firstPane.isNull(), 1000);
     QTRY_COMPARE_WITH_TIMEOUT(splitDividerItems(&workspace).size(), 0, 1000);
     QVERIFY(third.pane);
@@ -3686,8 +3644,8 @@ void TerminalWorkspaceTest::closeSurfaceUsesStableOriginsAndAdjacentFocus()
     // leaves the selected tab unchanged. Closing the final remaining pane
     // then requests shutdown of its containing window exactly once.
     QPointer<TerminalPane> thirdPane(third.pane);
-    QVERIFY(third.pane->executeConfiguredAction(
-        QStringLiteral("close_surface")));
+    QVERIFY(
+        third.pane->executeConfiguredAction(QStringLiteral("close_surface")));
     QCOMPARE(workspace.tabCount(), 1);
     QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
              otherTab.tabId);
@@ -3718,15 +3676,15 @@ void TerminalWorkspaceTest::closeSurfaceConfirmationIsStableAndAtomic()
     const CurrentTabProbe second = splitRightProbe(workspace);
     QVERIFY(first.pane);
     QVERIFY(second.pane);
-    QVERIFY(first.pane->executeConfiguredAction(
-        QStringLiteral("toggle_readonly")));
+    QVERIFY(
+        first.pane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
 
-    QSignalSpy confirmation(
-        &workspace, &TerminalWorkspace::closeConfirmationRequested);
-    QSignalSpy resolved(
-        &workspace, &TerminalWorkspace::closeConfirmationResolved);
-    QVERIFY(first.pane->executeConfiguredAction(
-        QStringLiteral("close_surface")));
+    QSignalSpy confirmation(&workspace,
+                            &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy resolved(&workspace,
+                        &TerminalWorkspace::closeConfirmationResolved);
+    QVERIFY(
+        first.pane->executeConfiguredAction(QStringLiteral("close_surface")));
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(confirmation.constFirst().at(1).toString(),
              QStringLiteral("This pane is read-only. Close it?"));
@@ -3746,20 +3704,20 @@ void TerminalWorkspaceTest::closeSurfaceConfirmationIsStableAndAtomic()
     bool resolvedObserverRan = false;
     bool nestedNewTabPerformed = true;
     bool nestedClosePerformed = true;
-    const QMetaObject::Connection resolution = connect(
-        &workspace, &TerminalWorkspace::closeConfirmationResolved,
-        &workspace, [&](quint64 confirmationId) {
-            if (confirmationId != firstConfirmationId) return;
-            resolvedObserverRan = true;
-            nestedNewTabPerformed = workspace.dispatchAction({
-                WorkspaceAction::NewTab,
-                {second.tabId, second.paneId, 0},
-            });
-            nestedClosePerformed = workspace.dispatchAction({
-                WorkspaceAction::ClosePane,
-                {first.tabId, first.paneId, 0},
-            });
-        });
+    const QMetaObject::Connection resolution =
+        connect(&workspace, &TerminalWorkspace::closeConfirmationResolved,
+                &workspace, [&](quint64 confirmationId) {
+                    if (confirmationId != firstConfirmationId) return;
+                    resolvedObserverRan = true;
+                    nestedNewTabPerformed = workspace.dispatchAction({
+                        WorkspaceAction::NewTab,
+                        {second.tabId, second.paneId, 0},
+                    });
+                    nestedClosePerformed = workspace.dispatchAction({
+                        WorkspaceAction::ClosePane,
+                        {first.tabId, first.paneId, 0},
+                    });
+                });
 
     QPointer<TerminalPane> firstPane(first.pane);
     workspace.confirmClose(firstConfirmationId);
@@ -3769,17 +3727,16 @@ void TerminalWorkspaceTest::closeSurfaceConfirmationIsStableAndAtomic()
     QCOMPARE(resolved.count(), 1);
     QCOMPARE(workspace.tabCount(), 1);
     QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 3);
-    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId,
-             third.paneId);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, third.paneId);
     QTRY_VERIFY_WITH_TIMEOUT(firstPane.isNull(), 1000);
-    QTRY_COMPARE_WITH_TIMEOUT(
-        workspace.findChildren<TerminalPane *>().size(), 2, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.findChildren<TerminalPane *>().size(),
+                              2, 1000);
     QObject::disconnect(resolution);
 
-    QVERIFY(third.pane->executeConfiguredAction(
-        QStringLiteral("toggle_readonly")));
-    QVERIFY(third.pane->executeConfiguredAction(
-        QStringLiteral("close_surface")));
+    QVERIFY(
+        third.pane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
+    QVERIFY(
+        third.pane->executeConfiguredAction(QStringLiteral("close_surface")));
     QCOMPARE(confirmation.count(), 2);
     const quint64 secondConfirmationId = closeConfirmationId(confirmation);
     QVERIFY(secondConfirmationId != 0);
@@ -3802,8 +3759,7 @@ void TerminalWorkspaceTest::closeSurfaceConfirmsRunningProcess()
     QTemporaryDir directory(QDir::current().filePath(
         QStringLiteral("tmp/close-surface-running-XXXXXX")));
     QVERIFY(directory.isValid());
-    const QString readyPath =
-        directory.filePath(QStringLiteral("ready"));
+    const QString readyPath = directory.filePath(QStringLiteral("ready"));
 
     ShellEnvironment shell;
     LaunchOptions options = baseOptions();
@@ -3828,18 +3784,17 @@ void TerminalWorkspaceTest::closeSurfaceConfirmsRunningProcess()
     QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(readyPath), 3000);
     QTRY_VERIFY_WITH_TIMEOUT(controller->activeProcess(), 3000);
 
-    QSignalSpy confirmation(
-        &workspace, &TerminalWorkspace::closeConfirmationRequested);
-    QSignalSpy resolved(
-        &workspace, &TerminalWorkspace::closeConfirmationResolved);
+    QSignalSpy confirmation(&workspace,
+                            &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy resolved(&workspace,
+                        &TerminalWorkspace::closeConfirmationResolved);
     QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
     QPointer<TerminalPane> guardedPane(pane);
-    QVERIFY(pane->executeConfiguredAction(
-        QStringLiteral("close_surface")));
+    QVERIFY(pane->executeConfiguredAction(QStringLiteral("close_surface")));
     QCOMPARE(confirmation.count(), 1);
-    QCOMPARE(confirmation.constFirst().at(1).toString(),
-             QStringLiteral(
-                 "A process is still running in this pane. Close it?"));
+    QCOMPARE(
+        confirmation.constFirst().at(1).toString(),
+        QStringLiteral("A process is still running in this pane. Close it?"));
     QCOMPARE(workspace.tabCount(), 1);
 
     workspace.confirmClose(closeConfirmationId(confirmation));
@@ -3853,10 +3808,8 @@ void TerminalWorkspaceTest::broadCloseSurfaceConvergesOnWorkspaceQuit()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     const auto exercise = [&](GhosttyKeybindFlags flags,
-                              bool protectWithReadOnly,
-                              Qt::Key key,
-                              quint32 codepoint,
-                              QChar controlCharacter) {
+                              bool protectWithReadOnly, Qt::Key key,
+                              quint32 codepoint, QChar controlCharacter) {
         LaunchOptions options = baseOptions();
         options.program = {QStringLiteral("/bin/true")};
         options.hold = true;
@@ -3868,10 +3821,11 @@ void TerminalWorkspaceTest::broadCloseSurfaceConvergesOnWorkspaceQuit()
                 .unicodeCodepoint = codepoint,
                 .modifiers = GhosttyKeybindCtrl,
             }},
-            .actions = {
-                QStringLiteral("close_surface"),
-                QStringLiteral("reload_config"),
-            },
+            .actions =
+                {
+                    QStringLiteral("close_surface"),
+                    QStringLiteral("reload_config"),
+                },
             .flags = flags,
         }};
         options.keybindSource =
@@ -3893,8 +3847,8 @@ void TerminalWorkspaceTest::broadCloseSurfaceConvergesOnWorkspaceQuit()
 
         GhosttyApplicationKeybindings bindings(options, false);
         bindings.registerWorkspace(&workspace);
-        QSignalSpy confirmation(
-            &workspace, &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy confirmation(&workspace,
+                                &TerminalWorkspace::closeConfirmationRequested);
         QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
         QSignalSpy reload(
             &bindings,
@@ -3916,8 +3870,8 @@ void TerminalWorkspaceTest::broadCloseSurfaceConvergesOnWorkspaceQuit()
 
         bool quitObserverRan = false;
         bool nestedActionPerformed = true;
-        connect(&workspace, &TerminalWorkspace::windowCloseApproved,
-                &workspace, [&] {
+        connect(&workspace, &TerminalWorkspace::windowCloseApproved, &workspace,
+                [&] {
                     quitObserverRan = true;
                     nestedActionPerformed = workspace.dispatchAction({
                         WorkspaceAction::NewTab,
@@ -3932,15 +3886,14 @@ void TerminalWorkspaceTest::broadCloseSurfaceConvergesOnWorkspaceQuit()
         QCoreApplication::sendEvent(source.pane, &release);
         QCOMPARE(forwarded.count(), 0);
         QCOMPARE(reload.count(), 1);
-        QCOMPARE(confirmationsAtFirstReload,
-                 protectWithReadOnly ? 1 : 0);
+        QCOMPARE(confirmationsAtFirstReload, protectWithReadOnly ? 1 : 0);
         QCOMPARE(quitsAtFirstReload, 0);
 
         if (protectWithReadOnly) {
             QCOMPARE(confirmation.count(), 1);
-            QCOMPARE(confirmation.constFirst().at(1).toString(),
-                     QStringLiteral(
-                         "This window contains a read-only pane. Quit?"));
+            QCOMPARE(
+                confirmation.constFirst().at(1).toString(),
+                QStringLiteral("This window contains a read-only pane. Quit?"));
             QCOMPARE(quit.count(), 0);
             workspace.confirmClose(closeConfirmationId(confirmation));
         } else {
@@ -3962,12 +3915,10 @@ void TerminalWorkspaceTest::broadCloseSurfaceConvergesOnWorkspaceQuit()
         QCOMPARE(workspace.tabCount(), 2);
     };
 
-    exercise(GhosttyKeybindFlags{.all = true},
-             true,
-             Qt::Key_S, 's', QChar(0x13));
-    exercise(GhosttyKeybindFlags{.global = true},
-             false,
-             Qt::Key_G, 'g', QChar(0x07));
+    exercise(GhosttyKeybindFlags{.all = true}, true, Qt::Key_S, 's',
+             QChar(0x13));
+    exercise(GhosttyKeybindFlags{.global = true}, false, Qt::Key_G, 'g',
+             QChar(0x07));
 
     LaunchOptions options = baseOptions();
     options.program = {QStringLiteral("/bin/true")};
@@ -4032,8 +3983,8 @@ void TerminalWorkspaceTest::submittedCommandPromptsBeforeForegroundPoll()
     QVERIFY(controller != nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(controller->running(), 5000);
     QTRY_VERIFY_WITH_TIMEOUT(!controller->activeProcess(), 5000);
-    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return,
-                    Qt::NoModifier, QStringLiteral("\r"));
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+                    QStringLiteral("\r"));
     QCoreApplication::sendEvent(pane, &enter);
 
     // The UI-side latch closes the polling race: a close requested in the
@@ -4051,7 +4002,8 @@ void TerminalWorkspaceTest::submittedCommandPromptsBeforeForegroundPoll()
     QTRY_COMPARE_WITH_TIMEOUT(quit.count(), 1, 1000);
 }
 
-void TerminalWorkspaceTest::terminalControlSubmissionPromptsBeforeWorkerRoundTrip()
+void TerminalWorkspaceTest::
+    terminalControlSubmissionPromptsBeforeWorkerRoundTrip()
 {
     ShellEnvironment shell;
     LaunchOptions options = baseOptions();
@@ -4066,8 +4018,7 @@ void TerminalWorkspaceTest::terminalControlSubmissionPromptsBeforeWorkerRoundTri
 
     TerminalPane *pane = workspace.findChild<TerminalPane *>();
     QVERIFY(pane != nullptr);
-    TerminalController *controller =
-        pane->findChild<TerminalController *>();
+    TerminalController *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     // Starting the worker and reaching the first idle prompt are independent
     // asynchronous transitions. Wait for both instead of assuming the
@@ -4103,20 +4054,18 @@ void TerminalWorkspaceTest::readOnlyBlocksUiActivityLatchAndProtectsClose()
 
     TerminalPane *pane = workspace.findChild<TerminalPane *>();
     QVERIFY(pane != nullptr);
-    TerminalController *controller =
-        pane->findChild<TerminalController *>();
+    TerminalController *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QTRY_VERIFY_WITH_TIMEOUT(!controller->activeProcess(), 1500);
 
     QSignalSpy readOnlyChanged(pane, &TerminalPane::readOnlyChanged);
-    QVERIFY(pane->executeConfiguredAction(
-        QStringLiteral("toggle_readonly")));
+    QVERIFY(pane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
     QVERIFY(pane->isReadOnly());
     QCOMPARE(readOnlyChanged.count(), 1);
     QVERIFY(workspace.tabModel()->entryAt(0)->readOnly);
 
-    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return,
-                    Qt::NoModifier, QStringLiteral("\r"));
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier,
+                    QStringLiteral("\r"));
     QCoreApplication::sendEvent(pane, &enter);
     QVERIFY(pane->executeConfiguredAction(QStringLiteral(R"(text:\\n)")));
     QVERIFY(!controller->activeProcess());
@@ -4127,8 +4076,7 @@ void TerminalWorkspaceTest::readOnlyBlocksUiActivityLatchAndProtectsClose()
     QCOMPARE(quit.count(), 0);
     workspace.cancelClose(closeConfirmationId(confirmation));
 
-    QVERIFY(pane->executeConfiguredAction(
-        QStringLiteral("toggle_readonly")));
+    QVERIFY(pane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
     QVERIFY(!pane->isReadOnly());
     QCOMPARE(readOnlyChanged.count(), 2);
     QVERIFY(!workspace.tabModel()->entryAt(0)->readOnly);
@@ -4148,11 +4096,9 @@ void TerminalWorkspaceTest::readOnlyStateIsPaneLocalAndBroadFanoutIsStable()
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     QQmlEngine engine;
-    const QString overlayPath =
-        QFINDTESTDATA("../qml/ReadOnlyOverlay.qml");
+    const QString overlayPath = QFINDTESTDATA("../qml/ReadOnlyOverlay.qml");
     QVERIFY(!overlayPath.isEmpty());
-    QQmlComponent overlayComponent(
-        &engine, QUrl::fromLocalFile(overlayPath));
+    QQmlComponent overlayComponent(&engine, QUrl::fromLocalFile(overlayPath));
     QVERIFY2(overlayComponent.isReady(),
              qPrintable(overlayComponent.errorString()));
 
@@ -4173,8 +4119,8 @@ void TerminalWorkspaceTest::readOnlyStateIsPaneLocalAndBroadFanoutIsStable()
         WorkspaceAction::SplitRight,
         {tabId, firstId, 0},
     }));
-    QTRY_COMPARE_WITH_TIMEOUT(
-        workspace.findChildren<TerminalPane *>().size(), 2, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.findChildren<TerminalPane *>().size(),
+                              2, 1000);
     const PaneId secondId = workspace.tabModel()->entryAt(0)->activePaneId;
     QVERIFY(secondId != firstId);
     TerminalPane *secondPane = nullptr;
@@ -4195,11 +4141,9 @@ void TerminalWorkspaceTest::readOnlyStateIsPaneLocalAndBroadFanoutIsStable()
     workspace.setReadOnlyOverlayComponent(&overlayComponent);
 
     auto *firstOverlay = firstPane->findChild<QQuickItem *>(
-        QStringLiteral("terminalReadOnlyOverlay"),
-        Qt::FindDirectChildrenOnly);
+        QStringLiteral("terminalReadOnlyOverlay"), Qt::FindDirectChildrenOnly);
     auto *secondOverlay = secondPane->findChild<QQuickItem *>(
-        QStringLiteral("terminalReadOnlyOverlay"),
-        Qt::FindDirectChildrenOnly);
+        QStringLiteral("terminalReadOnlyOverlay"), Qt::FindDirectChildrenOnly);
     QVERIFY(firstOverlay != nullptr);
     QVERIFY(secondOverlay != nullptr);
     QVERIFY(!firstOverlay->isEnabled());
@@ -4229,14 +4173,13 @@ void TerminalWorkspaceTest::readOnlyStateIsPaneLocalAndBroadFanoutIsStable()
     TerminalController *firstController =
         firstPane->findChild<TerminalController *>();
     QVERIFY(firstController != nullptr);
-    QSignalSpy viewport(firstController,
-                        &TerminalController::scrollRequested);
+    QSignalSpy viewport(firstController, &TerminalController::scrollRequested);
     QSignalSpy reset(firstController,
                      &TerminalController::resetTerminalRequested);
     QSignalSpy search(firstController,
                       &TerminalController::serializedSearchRequested);
-    QVERIFY(firstPane->executeConfiguredAction(
-        QStringLiteral("scroll_to_top")));
+    QVERIFY(
+        firstPane->executeConfiguredAction(QStringLiteral("scroll_to_top")));
     QVERIFY(firstPane->executeConfiguredAction(QStringLiteral("reset")));
     QVERIFY(firstPane->executeConfiguredAction(
         QStringLiteral("search:still-local")));
@@ -4253,8 +4196,8 @@ void TerminalWorkspaceTest::readOnlyStateIsPaneLocalAndBroadFanoutIsStable()
     QTRY_VERIFY_WITH_TIMEOUT(!firstOverlay->isVisible(), 1000);
     QTRY_VERIFY_WITH_TIMEOUT(!secondOverlay->isVisible(), 1000);
 
-    QVERIFY(firstPane->executeConfiguredAction(
-        QStringLiteral("toggle_readonly")));
+    QVERIFY(
+        firstPane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
     QVERIFY(firstPane->isReadOnly());
     QVERIFY(!secondPane->isReadOnly());
 
@@ -4293,8 +4236,8 @@ void TerminalWorkspaceTest::readOnlyStateIsPaneLocalAndBroadFanoutIsStable()
     }));
     QCOMPARE(confirmation.count(), 3);
     QPointer<TerminalPane> removedPane(firstPane);
-    QVERIFY(firstPane->executeConfiguredAction(
-        QStringLiteral("toggle_readonly")));
+    QVERIFY(
+        firstPane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
     QTRY_VERIFY_WITH_TIMEOUT(removedPane.isNull(), 1000);
     // Both explicit cancellations and the auto-completed pane close resolve
     // their distinct confirmation identities.
@@ -4452,19 +4395,18 @@ void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
 
     const auto makeComponent = [&engine](const QString &objectName) {
         auto component = std::make_unique<QQmlComponent>(&engine);
-        const QByteArray source = QStringLiteral(
-            "import QtQuick\n"
-            "import GhosttyQt 1.0\n"
-            "Item {\n"
-            "    required property TerminalPane terminalPane\n"
-            "    objectName: \"%1\"\n"
-            "    enabled: false\n"
-            "}\n")
-                                      .arg(objectName)
-                                      .toUtf8();
+        const QByteArray source =
+            QStringLiteral("import QtQuick\n"
+                           "import GhosttyQt 1.0\n"
+                           "Item {\n"
+                           "    required property TerminalPane terminalPane\n"
+                           "    objectName: \"%1\"\n"
+                           "    enabled: false\n"
+                           "}\n")
+                .arg(objectName)
+                .toUtf8();
         component->setData(
-            source,
-            QUrl(QStringLiteral("inmemory:/%1.qml").arg(objectName)));
+            source, QUrl(QStringLiteral("inmemory:/%1.qml").arg(objectName)));
         return component;
     };
 
@@ -4475,9 +4417,9 @@ void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
         QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
         QSignalSpy changed(&workspace, overlayCase.changed);
 
-        const QString firstName = QStringLiteral("%1OverlayFirst")
-                                      .arg(QString::fromLatin1(
-                                          overlayCase.name));
+        const QString firstName =
+            QStringLiteral("%1OverlayFirst")
+                .arg(QString::fromLatin1(overlayCase.name));
         auto firstComponent = makeComponent(firstName);
         QTRY_VERIFY_WITH_TIMEOUT(
             firstComponent->isReady() || firstComponent->isError(), 1000);
@@ -4487,12 +4429,11 @@ void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
         QCOMPARE((workspace.*overlayCase.getter)(), firstComponent.get());
         QCOMPARE(changed.count(), 1);
 
-        TerminalPane *const initialPane =
-            workspace.findChild<TerminalPane *>();
+        TerminalPane *const initialPane = workspace.findChild<TerminalPane *>();
         QVERIFY(initialPane != nullptr);
         QPointer<QQuickItem> firstOverlay =
-            initialPane->findChild<QQuickItem *>(
-                firstName, Qt::FindDirectChildrenOnly);
+            initialPane->findChild<QQuickItem *>(firstName,
+                                                 Qt::FindDirectChildrenOnly);
         QVERIFY(firstOverlay != nullptr);
         QCOMPARE(firstOverlay->parentItem(), initialPane);
         QCOMPARE(firstOverlay->property("terminalPane").value<TerminalPane *>(),
@@ -4506,9 +4447,9 @@ void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
                      firstName, Qt::FindDirectChildrenOnly),
                  firstOverlay.data());
 
-        const QString secondName = QStringLiteral("%1OverlaySecond")
-                                       .arg(QString::fromLatin1(
-                                           overlayCase.name));
+        const QString secondName =
+            QStringLiteral("%1OverlaySecond")
+                .arg(QString::fromLatin1(overlayCase.name));
         auto secondComponent = makeComponent(secondName);
         QTRY_VERIFY_WITH_TIMEOUT(
             secondComponent->isReady() || secondComponent->isError(), 1000);
@@ -4520,8 +4461,8 @@ void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
         QVERIFY(firstOverlay.isNull());
 
         QPointer<QQuickItem> initialReplacement =
-            initialPane->findChild<QQuickItem *>(
-                secondName, Qt::FindDirectChildrenOnly);
+            initialPane->findChild<QQuickItem *>(secondName,
+                                                 Qt::FindDirectChildrenOnly);
         QVERIFY(initialReplacement != nullptr);
         workspace.splitRight();
         QTRY_COMPARE_WITH_TIMEOUT(
@@ -4544,17 +4485,17 @@ void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
         QVERIFY(initialReplacement.isNull());
         for (TerminalPane *const pane :
              workspace.findChildren<TerminalPane *>()) {
-            QVERIFY(pane->findChild<QQuickItem *>(
-                        secondName, Qt::FindDirectChildrenOnly)
+            QVERIFY(pane->findChild<QQuickItem *>(secondName,
+                                                  Qt::FindDirectChildrenOnly)
                     == nullptr);
         }
 
         (workspace.*overlayCase.setter)(nullptr);
         QCOMPARE(changed.count(), 3);
 
-        const QString thirdName = QStringLiteral("%1OverlayThird")
-                                      .arg(QString::fromLatin1(
-                                          overlayCase.name));
+        const QString thirdName =
+            QStringLiteral("%1OverlayThird")
+                .arg(QString::fromLatin1(overlayCase.name));
         auto thirdComponent = makeComponent(thirdName);
         QTRY_VERIFY_WITH_TIMEOUT(
             thirdComponent->isReady() || thirdComponent->isError(), 1000);
@@ -4567,8 +4508,8 @@ void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
         QCOMPARE((workspace.*overlayCase.getter)(), nullptr);
         for (TerminalPane *const pane :
              workspace.findChildren<TerminalPane *>()) {
-            QVERIFY(pane->findChild<QQuickItem *>(
-                        thirdName, Qt::FindDirectChildrenOnly)
+            QVERIFY(pane->findChild<QQuickItem *>(thirdName,
+                                                  Qt::FindDirectChildrenOnly)
                     == nullptr);
         }
     }
@@ -5699,8 +5640,7 @@ void TerminalWorkspaceTest::pendingPaneReloadsDuringOverlayCompletion()
     TerminalWorkspace workspace;
     workspace.setSize(QSizeF(640.0, 360.0));
     QVERIFY(workspace.initialize(initial));
-    TerminalPane *const initialPane =
-        workspace.findChild<TerminalPane *>();
+    TerminalPane *const initialPane = workspace.findChild<TerminalPane *>();
     QVERIFY(initialPane != nullptr);
     initialPane->setObjectName(QStringLiteral("existing-pane"));
     workspace.setSearchOverlayComponent(&overlay);
@@ -5711,42 +5651,35 @@ void TerminalWorkspaceTest::pendingPaneReloadsDuringOverlayCompletion()
         QStringLiteral("ctrl+b=ignore"),
     });
     GhosttyKeybindProgram pendingProgram =
-        GhosttyKeybindProgram::compile(
-            pendingOptions.keybindSource).program;
+        GhosttyKeybindProgram::compile(pendingOptions.keybindSource).program;
     int reloadCount = 0;
 
-    connect(&workspace, &QQuickItem::childrenChanged,
-            &workspace, [&] {
-                for (TerminalPane *pane :
-                     workspace.findChildren<TerminalPane *>()) {
-                    if (pane->property("_ghosttyQtReloadHook").toBool()) {
-                        continue;
-                    }
-                    pane->setProperty("_ghosttyQtReloadHook", true);
-                    connect(pane, &QObject::objectNameChanged,
-                            &workspace,
-                            [&, paneGuard = QPointer(pane)](
-                                const QString &name) {
-                                if (paneGuard == nullptr
-                                    || name
-                                        != QStringLiteral(
-                                            "reload-during-overlay")) {
-                                    return;
-                                }
-                                ++reloadCount;
-                                workspace.applyLaunchOptions(
-                                    pendingOptions, pendingProgram);
-                            });
-                }
-            });
+    connect(&workspace, &QQuickItem::childrenChanged, &workspace, [&] {
+        for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+            if (pane->property("_ghosttyQtReloadHook").toBool()) {
+                continue;
+            }
+            pane->setProperty("_ghosttyQtReloadHook", true);
+            connect(pane, &QObject::objectNameChanged, &workspace,
+                    [&, paneGuard = QPointer(pane)](const QString &name) {
+                        if (paneGuard == nullptr
+                            || name
+                                != QStringLiteral("reload-during-overlay")) {
+                            return;
+                        }
+                        ++reloadCount;
+                        workspace.applyLaunchOptions(pendingOptions,
+                                                     pendingProgram);
+                    });
+        }
+    });
 
     workspace.newTab();
     QCOMPARE(reloadCount, 1);
     QCOMPARE(workspace.tabCount(), 2);
     QVERIFY(workspace.keybindProgram().isSameGeneration(pendingProgram));
     for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
-        QCOMPARE(pane->fontPointSize(),
-                 pendingOptions.typography.pointSize);
+        QCOMPARE(pane->fontPointSize(), pendingOptions.typography.pointSize);
         QVERIFY(pane->keybindProgram().isSameGeneration(pendingProgram));
         pane->setObjectName(QStringLiteral("existing-pane"));
     }
@@ -5755,16 +5688,15 @@ void TerminalWorkspaceTest::pendingPaneReloadsDuringOverlayCompletion()
     pendingOptions.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("ctrl+c=ignore"),
     });
-    pendingProgram = GhosttyKeybindProgram::compile(
-        pendingOptions.keybindSource).program;
+    pendingProgram =
+        GhosttyKeybindProgram::compile(pendingOptions.keybindSource).program;
     workspace.splitRight();
 
     QCOMPARE(reloadCount, 2);
     QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 3);
     QVERIFY(workspace.keybindProgram().isSameGeneration(pendingProgram));
     for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
-        QCOMPARE(pane->fontPointSize(),
-                 pendingOptions.typography.pointSize);
+        QCOMPARE(pane->fontPointSize(), pendingOptions.typography.pointSize);
         QVERIFY(pane->keybindProgram().isSameGeneration(pendingProgram));
     }
 }
@@ -5783,11 +5715,9 @@ void TerminalWorkspaceTest::resizeOverlayIsPaneLocalAndScalesWithDpr()
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     QQmlEngine engine;
-    const QString overlayPath =
-        QFINDTESTDATA("../qml/ResizeOverlay.qml");
+    const QString overlayPath = QFINDTESTDATA("../qml/ResizeOverlay.qml");
     QVERIFY(!overlayPath.isEmpty());
-    QQmlComponent overlayComponent(
-        &engine, QUrl::fromLocalFile(overlayPath));
+    QQmlComponent overlayComponent(&engine, QUrl::fromLocalFile(overlayPath));
     QVERIFY2(overlayComponent.isReady(),
              qPrintable(overlayComponent.errorString()));
 
@@ -5805,16 +5735,15 @@ void TerminalWorkspaceTest::resizeOverlayIsPaneLocalAndScalesWithDpr()
     QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
 
     const TabId tabId = workspace->tabModel()->idAt(0);
-    const PaneId firstId =
-        workspace->tabModel()->entryAt(0)->activePaneId;
+    const PaneId firstId = workspace->tabModel()->entryAt(0)->activePaneId;
     TerminalPane *firstPane = workspace->findChild<TerminalPane *>();
     QVERIFY(firstPane != nullptr);
     QVERIFY(workspace->dispatchAction({
         WorkspaceAction::SplitRight,
         {tabId, firstId, 0},
     }));
-    QTRY_COMPARE_WITH_TIMEOUT(
-        workspace->findChildren<TerminalPane *>().size(), 2, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->findChildren<TerminalPane *>().size(),
+                              2, 1000);
     TerminalPane *secondPane = nullptr;
     for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
         if (pane != firstPane) secondPane = pane;
@@ -5822,11 +5751,9 @@ void TerminalWorkspaceTest::resizeOverlayIsPaneLocalAndScalesWithDpr()
     QVERIFY(secondPane != nullptr);
 
     auto *firstOverlay = firstPane->findChild<QQuickItem *>(
-        QStringLiteral("terminalResizeOverlay"),
-        Qt::FindDirectChildrenOnly);
+        QStringLiteral("terminalResizeOverlay"), Qt::FindDirectChildrenOnly);
     auto *secondOverlay = secondPane->findChild<QQuickItem *>(
-        QStringLiteral("terminalResizeOverlay"),
-        Qt::FindDirectChildrenOnly);
+        QStringLiteral("terminalResizeOverlay"), Qt::FindDirectChildrenOnly);
     QVERIFY(firstOverlay != nullptr);
     QVERIFY(secondOverlay != nullptr);
     QVERIFY(!firstOverlay->isEnabled());
@@ -5835,10 +5762,9 @@ void TerminalWorkspaceTest::resizeOverlayIsPaneLocalAndScalesWithDpr()
     QCOMPARE(secondOverlay->parentItem(), secondPane);
     QCOMPARE(firstOverlay->size(), QSizeF(120.0, 40.0));
     QCOMPARE(secondOverlay->size(), QSizeF(120.0, 40.0));
-    QTRY_VERIFY_WITH_TIMEOUT(
-        !firstPane->resizeOverlayVisible()
-            && !secondPane->resizeOverlayVisible(),
-        1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!firstPane->resizeOverlayVisible()
+                                 && !secondPane->resizeOverlayVisible(),
+                             1000);
 
     LaunchOptions visibleOptions = options;
     visibleOptions.resizeOverlay.duration = std::chrono::milliseconds(2'000);
@@ -5884,14 +5810,14 @@ void TerminalWorkspaceTest::resizeOverlayIsPaneLocalAndScalesWithDpr()
     QTRY_VERIFY_WITH_TIMEOUT(!firstOverlay->isVisible(), 1000);
 
     workspace->setResizeOverlayComponent(nullptr);
-    QVERIFY(firstPane->findChild<QQuickItem *>(
-                QStringLiteral("terminalResizeOverlay"),
-                Qt::FindDirectChildrenOnly)
-            == nullptr);
-    QVERIFY(secondPane->findChild<QQuickItem *>(
-                QStringLiteral("terminalResizeOverlay"),
-                Qt::FindDirectChildrenOnly)
-            == nullptr);
+    QVERIFY(
+        firstPane->findChild<QQuickItem *>(
+            QStringLiteral("terminalResizeOverlay"), Qt::FindDirectChildrenOnly)
+        == nullptr);
+    QVERIFY(
+        secondPane->findChild<QQuickItem *>(
+            QStringLiteral("terminalResizeOverlay"), Qt::FindDirectChildrenOnly)
+        == nullptr);
     workspace.reset();
     window.close();
 }
@@ -6341,8 +6267,7 @@ void TerminalWorkspaceTest::readOnlyNaturalExitPromptsExactlyOnce()
     QVERIFY(pane != nullptr);
     QSignalSpy ended(pane, &TerminalPane::sessionEnded);
     QPointer<TerminalPane> guardedPane(pane);
-    QVERIFY(pane->executeConfiguredAction(
-        QStringLiteral("toggle_readonly")));
+    QVERIFY(pane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
 
     QTRY_COMPARE_WITH_TIMEOUT(ended.count(), 1, 3000);
     QVERIFY(!guardedPane.isNull());
@@ -6392,11 +6317,10 @@ void TerminalWorkspaceTest::queuesAndCorrelatesUnsafePasteConfirmations()
                               &TerminalController::cancelPasteRequested);
     QSignalSpy secondCancelled(secondController,
                                &TerminalController::cancelPasteRequested);
-    QSignalSpy previews(
-        &workspace,
-        &TerminalWorkspace::unsafePasteConfirmationRequested);
-    QSignalSpy resolved(
-        &workspace, &TerminalWorkspace::unsafePasteConfirmationResolved);
+    QSignalSpy previews(&workspace,
+                        &TerminalWorkspace::unsafePasteConfirmationRequested);
+    QSignalSpy resolved(&workspace,
+                        &TerminalWorkspace::unsafePasteConfirmationResolved);
 
     const QString shared = QStringLiteral("shared\x1b[201~\n");
     Q_EMIT firstPane->unsafePasteRequested(11, shared, firstPane);
@@ -6453,8 +6377,7 @@ void TerminalWorkspaceTest::queuesAndCorrelatesUnsafePasteConfirmations()
     const QString longPaste(241, u'x');
     Q_EMIT firstPane->unsafePasteRequested(13, longPaste, firstPane);
     QCOMPARE(previews.count(), 3);
-    const quint64 longConfirmationId =
-        previews.constLast().at(0).toULongLong();
+    const quint64 longConfirmationId = previews.constLast().at(0).toULongLong();
     QCOMPARE(previews.constLast().at(1).toString(),
              QString(240, u'x') + QStringLiteral("…"));
     workspace.cancelPaste(longConfirmationId);
@@ -6483,10 +6406,10 @@ void TerminalWorkspaceTest::queuesAndCorrelatesUnsafePasteConfirmations()
     // A held pane remains in the tree after its PTY exits. Its dead active
     // request is removed so a queued request for another live pane can be
     // reviewed without user interaction on the stale dialog.
-    Q_EMIT firstPane->unsafePasteRequested(
-        18, QStringLiteral("ended\n"), firstPane);
-    Q_EMIT secondPane->unsafePasteRequested(
-        19, QStringLiteral("survives\n"), secondPane);
+    Q_EMIT firstPane->unsafePasteRequested(18, QStringLiteral("ended\n"),
+                                           firstPane);
+    Q_EMIT secondPane->unsafePasteRequested(19, QStringLiteral("survives\n"),
+                                            secondPane);
     QCOMPARE(previews.count(), 6);
     const quint64 endedConfirmationId =
         previews.constLast().at(0).toULongLong();
@@ -6506,8 +6429,8 @@ void TerminalWorkspaceTest::queuesAndCorrelatesUnsafePasteConfirmations()
 
     // Closing a target pane explicitly cancels its pending worker request and
     // resolves the visible dialog before the pane is destroyed.
-    Q_EMIT secondPane->unsafePasteRequested(
-        16, QStringLiteral("closing\n"), secondPane);
+    Q_EMIT secondPane->unsafePasteRequested(16, QStringLiteral("closing\n"),
+                                            secondPane);
     QCOMPARE(previews.count(), 8);
     const quint64 closingConfirmationId =
         previews.constLast().at(0).toULongLong();
@@ -6523,8 +6446,8 @@ void TerminalWorkspaceTest::queuesAndCorrelatesUnsafePasteConfirmations()
     // A worker rejection queued before removal can still reach the pane
     // during deleteLater teardown. It is cancelled without reopening a dead
     // target dialog.
-    Q_EMIT secondPane->unsafePasteRequested(
-        17, QStringLiteral("late\n"), secondPane);
+    Q_EMIT secondPane->unsafePasteRequested(17, QStringLiteral("late\n"),
+                                            secondPane);
     QCOMPARE(previews.count(), 8);
     QCOMPARE(secondCancelled.count(), 3);
     QCOMPARE(secondCancelled.constLast().constFirst().toULongLong(),
@@ -7003,13 +6926,12 @@ void TerminalWorkspaceTest::performableTabChangeRequiresDifferentTarget()
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     TerminalPane *pane = workspace.findChild<TerminalPane *>();
     QVERIFY(pane != nullptr);
-    TerminalController *controller =
-        pane->findChild<TerminalController *>();
+    TerminalController *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
 
-    QKeyEvent oneTab(QEvent::KeyPress, Qt::Key_Tab,
-                     Qt::ControlModifier, QStringLiteral("\t"));
+    QKeyEvent oneTab(QEvent::KeyPress, Qt::Key_Tab, Qt::ControlModifier,
+                     QStringLiteral("\t"));
     QCoreApplication::sendEvent(pane, &oneTab);
     QCOMPARE(forwarded.count(), 1);
     QCOMPARE(workspace.currentIndex(), 0);
@@ -7030,14 +6952,15 @@ void TerminalWorkspaceTest::performableTabChangeRequiresDifferentTarget()
     QSignalSpy activeForwarded(activeController,
                                &TerminalController::keyRequested);
 
-    QKeyEvent twoTabs(QEvent::KeyPress, Qt::Key_Tab,
-                      Qt::ControlModifier, QStringLiteral("\t"));
+    QKeyEvent twoTabs(QEvent::KeyPress, Qt::Key_Tab, Qt::ControlModifier,
+                      QStringLiteral("\t"));
     QCoreApplication::sendEvent(activePane, &twoTabs);
     QCOMPARE(workspace.currentIndex(), 0);
     QCOMPARE(activeForwarded.count(), 0);
 }
 
-void TerminalWorkspaceTest::relativeTabActionsUseCurrentSelectionAndBroadFanout()
+void TerminalWorkspaceTest::
+    relativeTabActionsUseCurrentSelectionAndBroadFanout()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
@@ -7058,14 +6981,11 @@ void TerminalWorkspaceTest::relativeTabActionsUseCurrentSelectionAndBroadFanout(
     // from that window's current page. An inactive first-tab source must not
     // make this jump relative to the first tab itself.
     workspace.setCurrentIndex(2);
-    QVERIFY(first.pane->executeConfiguredAction(
-        QStringLiteral("next_tab")));
-    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
-             first.tabId);
-    QVERIFY(second.pane->executeConfiguredAction(
-        QStringLiteral("previous_tab")));
-    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
-             third.tabId);
+    QVERIFY(first.pane->executeConfiguredAction(QStringLiteral("next_tab")));
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()), first.tabId);
+    QVERIFY(
+        second.pane->executeConfiguredAction(QStringLiteral("previous_tab")));
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()), third.tabId);
 
     // Broad dispatch applies the relative action once per surface. Four
     // surfaces over three tabs therefore produce a net one-tab movement.
@@ -7147,10 +7067,12 @@ void TerminalWorkspaceTest::multiPaneShutdownGracePeriodsOverlap()
     workspace.reset();
 
     const qint64 shutdownMilliseconds = elapsed.elapsed();
-    QVERIFY2(shutdownMilliseconds >= 1'500,
-             "signal-resistant children did not exercise the shutdown grace period");
-    QVERIFY2(shutdownMilliseconds < 4'500,
-             "pane shutdown grace periods ran serially instead of concurrently");
+    QVERIFY2(
+        shutdownMilliseconds >= 1'500,
+        "signal-resistant children did not exercise the shutdown grace period");
+    QVERIFY2(
+        shutdownMilliseconds < 4'500,
+        "pane shutdown grace periods ran serially instead of concurrently");
 }
 
 void TerminalWorkspaceTest::closeTabModesUseStableOriginsAndPreserveFocus()
@@ -7180,20 +7102,20 @@ void TerminalWorkspaceTest::closeTabModesUseStableOriginsAndPreserveFocus()
         const CurrentTabProbe fourth = currentTabProbe(workspace);
         QVERIFY(first.pane && second.pane && third.pane && fourth.pane);
         QCOMPARE(tabIds(workspace),
-                 QVector<TabId>({first.tabId, second.tabId,
-                                 third.tabId, fourth.tabId}));
+                 QVector<TabId>(
+                     {first.tabId, second.tabId, third.tabId, fourth.tabId}));
 
         workspace.setCurrentIndex(0);
-        QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(),
-                                  first.pane.data(), 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), first.pane.data(),
+                                  1000);
         QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
 
         WorkspaceActionContext mismatched;
         mismatched.tabId = first.tabId;
         mismatched.paneId = second.paneId;
         mismatched.closeTabMode = CloseTabMode::Right;
-        QVERIFY(!workspace.dispatchAction(
-            {WorkspaceAction::CloseTab, mismatched}));
+        QVERIFY(
+            !workspace.dispatchAction({WorkspaceAction::CloseTab, mismatched}));
         QCOMPARE(workspace.tabCount(), 4);
 
         // The source identity survives a row move. Right is evaluated from
@@ -7204,8 +7126,8 @@ void TerminalWorkspaceTest::closeTabModesUseStableOriginsAndPreserveFocus()
             {second.tabId, second.paneId, 1},
         }));
         QCOMPARE(tabIds(workspace),
-                 QVector<TabId>({first.tabId, third.tabId,
-                                 second.tabId, fourth.tabId}));
+                 QVector<TabId>(
+                     {first.tabId, third.tabId, second.tabId, fourth.tabId}));
         QVERIFY(second.pane->executeConfiguredAction(
             QStringLiteral("close_tab:right")));
         QCOMPARE(tabIds(workspace),
@@ -7221,8 +7143,8 @@ void TerminalWorkspaceTest::closeTabModesUseStableOriginsAndPreserveFocus()
         // protected source when its target set is empty.
         QVERIFY(second.pane->executeConfiguredAction(
             QStringLiteral("toggle_readonly")));
-        QSignalSpy confirmation(
-            &workspace, &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy confirmation(&workspace,
+                                &TerminalWorkspace::closeConfirmationRequested);
         QVERIFY(second.pane->executeConfiguredAction(
             QStringLiteral("close_tab:right")));
         QCOMPARE(confirmation.count(), 0);
@@ -7249,15 +7171,14 @@ void TerminalWorkspaceTest::closeTabModesUseStableOriginsAndPreserveFocus()
         QVERIFY(first.pane && second.pane && third.pane && fourth.pane);
 
         workspace.setCurrentIndex(1);
-        QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(),
-                                  second.pane.data(), 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), second.pane.data(),
+                                  1000);
         QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
         QVERIFY(second.pane->executeConfiguredAction(
             QStringLiteral("close_tab:other")));
         QCOMPARE(tabIds(workspace), QVector<TabId>({second.tabId}));
         QCOMPARE(workspace.currentIndex(), 0);
-        QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId,
-                 second.paneId);
+        QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, second.paneId);
         QCOMPARE(window.activeFocusItem(), second.pane.data());
         QTRY_VERIFY_WITH_TIMEOUT(first.pane.isNull(), 1000);
         QTRY_VERIFY_WITH_TIMEOUT(third.pane.isNull(), 1000);
@@ -7268,8 +7189,8 @@ void TerminalWorkspaceTest::closeTabModesUseStableOriginsAndPreserveFocus()
         // the containing-window shutdown path.
         QVERIFY(second.pane->executeConfiguredAction(
             QStringLiteral("toggle_readonly")));
-        QSignalSpy confirmation(
-            &workspace, &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy confirmation(&workspace,
+                                &TerminalWorkspace::closeConfirmationRequested);
         QVERIFY(second.pane->executeConfiguredAction(
             QStringLiteral("close_tab:other")));
         QCOMPARE(confirmation.count(), 0);
@@ -7300,8 +7221,8 @@ void TerminalWorkspaceTest::closeTabBatchConfirmationKeepsStableTargets()
         QVERIFY(first.pane && second.pane && third.pane && fourth.pane);
         workspace.setCurrentIndex(1);
 
-        QSignalSpy confirmation(
-            &workspace, &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy confirmation(&workspace,
+                                &TerminalWorkspace::closeConfirmationRequested);
         QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
 
         QVERIFY(second.pane->executeConfiguredAction(
@@ -7310,8 +7231,8 @@ void TerminalWorkspaceTest::closeTabBatchConfirmationKeepsStableTargets()
         QCOMPARE(workspace.tabCount(), 4);
         workspace.cancelClose(closeConfirmationId(confirmation));
         QCOMPARE(tabIds(workspace),
-                 QVector<TabId>({first.tabId, second.tabId,
-                                 third.tabId, fourth.tabId}));
+                 QVector<TabId>(
+                     {first.tabId, second.tabId, third.tabId, fourth.tabId}));
 
         QVERIFY(second.pane->executeConfiguredAction(
             QStringLiteral("close_tab:right")));
@@ -7335,14 +7256,14 @@ void TerminalWorkspaceTest::closeTabBatchConfirmationKeepsStableTargets()
             {first.tabId, first.paneId, 2},
         }));
         QCOMPARE(tabIds(workspace),
-                 QVector<TabId>({fourth.tabId, second.tabId,
-                                 third.tabId, first.tabId}));
+                 QVector<TabId>(
+                     {fourth.tabId, second.tabId, third.tabId, first.tabId}));
         workspace.newTab();
         const CurrentTabProbe inserted = currentTabProbe(workspace);
         QVERIFY(inserted.pane);
         QCOMPARE(tabIds(workspace),
-                 QVector<TabId>({fourth.tabId, second.tabId,
-                                 inserted.tabId, third.tabId, first.tabId}));
+                 QVector<TabId>({fourth.tabId, second.tabId, inserted.tabId,
+                                 third.tabId, first.tabId}));
 
         workspace.confirmClose(closeConfirmationId(confirmation));
         QCOMPARE(tabIds(workspace),
@@ -7363,10 +7284,10 @@ void TerminalWorkspaceTest::closeTabBatchConfirmationKeepsStableTargets()
         workspace.newTab();
         workspace.setCurrentIndex(0);
 
-        QSignalSpy confirmation(
-            &workspace, &TerminalWorkspace::closeConfirmationRequested);
-        QSignalSpy resolved(
-            &workspace, &TerminalWorkspace::closeConfirmationResolved);
+        QSignalSpy confirmation(&workspace,
+                                &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy resolved(&workspace,
+                            &TerminalWorkspace::closeConfirmationResolved);
         QVERIFY(first.pane->executeConfiguredAction(
             QStringLiteral("close_tab:right")));
         QCOMPARE(confirmation.count(), 1);
@@ -7401,15 +7322,15 @@ void TerminalWorkspaceTest::closeTabResponsesUseStableConfirmationIds()
     QVERIFY(first.pane && second.pane && third.pane && fourth.pane);
     QVERIFY(second.pane->executeConfiguredAction(
         QStringLiteral("toggle_readonly")));
-    QVERIFY(third.pane->executeConfiguredAction(
-        QStringLiteral("toggle_readonly")));
+    QVERIFY(
+        third.pane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
 
-    QSignalSpy confirmation(
-        &workspace, &TerminalWorkspace::closeConfirmationRequested);
-    QSignalSpy resolved(
-        &workspace, &TerminalWorkspace::closeConfirmationResolved);
-    QVERIFY(second.pane->executeConfiguredAction(
-        QStringLiteral("close_tab:this")));
+    QSignalSpy confirmation(&workspace,
+                            &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy resolved(&workspace,
+                        &TerminalWorkspace::closeConfirmationResolved);
+    QVERIFY(
+        second.pane->executeConfiguredAction(QStringLiteral("close_tab:this")));
     QCOMPARE(confirmation.count(), 1);
     const quint64 firstConfirmationId = closeConfirmationId(confirmation);
     QVERIFY(firstConfirmationId != 0);
@@ -7424,8 +7345,8 @@ void TerminalWorkspaceTest::closeTabResponsesUseStableConfirmationIds()
     QCOMPARE(closeConfirmationId(resolved), firstConfirmationId);
     QTRY_VERIFY_WITH_TIMEOUT(second.pane.isNull(), 1000);
 
-    QVERIFY(first.pane->executeConfiguredAction(
-        QStringLiteral("close_tab:right")));
+    QVERIFY(
+        first.pane->executeConfiguredAction(QStringLiteral("close_tab:right")));
     QCOMPARE(confirmation.count(), 2);
     const quint64 secondConfirmationId = closeConfirmationId(confirmation);
     QVERIFY(secondConfirmationId != 0);
@@ -7470,21 +7391,20 @@ void TerminalWorkspaceTest::closeTabBatchRejectsReentrantTopologyChanges()
     int rowsRemovedCount = 0;
     bool selectionStayedCoherent = true;
     bool nestedMoveAccepted = true;
-    connect(workspace.tabModel(), &QAbstractItemModel::rowsRemoved,
-            &workspace,
+    connect(workspace.tabModel(), &QAbstractItemModel::rowsRemoved, &workspace,
             [&](const QModelIndex &, int, int) {
-        ++rowsRemovedCount;
-        const int current = workspace.currentIndex();
-        selectionStayedCoherent = selectionStayedCoherent
-            && current >= 0 && current < workspace.tabModel()->count()
-            && workspace.tabModel()->idAt(current) == second.tabId;
-        if (rowsRemovedCount == 1) {
-            nestedMoveAccepted = workspace.dispatchAction({
-                WorkspaceAction::MoveTab,
-                {second.tabId, second.paneId, 1},
+                ++rowsRemovedCount;
+                const int current = workspace.currentIndex();
+                selectionStayedCoherent = selectionStayedCoherent
+                    && current >= 0 && current < workspace.tabModel()->count()
+                    && workspace.tabModel()->idAt(current) == second.tabId;
+                if (rowsRemovedCount == 1) {
+                    nestedMoveAccepted = workspace.dispatchAction({
+                        WorkspaceAction::MoveTab,
+                        {second.tabId, second.paneId, 1},
+                    });
+                }
             });
-        }
-    });
 
     QVERIFY(second.pane->executeConfiguredAction(
         QStringLiteral("close_tab:other")));
@@ -7516,23 +7436,22 @@ void TerminalWorkspaceTest::pendingCloseTargetsPruneBeforeModelPublication()
     workspace.newTab();
     const CurrentTabProbe third = currentTabProbe(workspace);
     QVERIFY(first.pane && source.pane && third.pane);
-    QVERIFY(first.pane->executeConfiguredAction(
-        QStringLiteral("toggle_readonly")));
-    QVERIFY(third.pane->executeConfiguredAction(
-        QStringLiteral("toggle_readonly")));
+    QVERIFY(
+        first.pane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
+    QVERIFY(
+        third.pane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
 
-    QSignalSpy confirmation(
-        &workspace, &TerminalWorkspace::closeConfirmationRequested);
-    QSignalSpy resolved(
-        &workspace, &TerminalWorkspace::closeConfirmationResolved);
+    QSignalSpy confirmation(&workspace,
+                            &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy resolved(&workspace,
+                        &TerminalWorkspace::closeConfirmationResolved);
     QVERIFY(source.pane->executeConfiguredAction(
         QStringLiteral("close_tab:other")));
     QCOMPARE(confirmation.count(), 1);
     const quint64 confirmationId = closeConfirmationId(confirmation);
 
     bool finalTitlesSawResolution = false;
-    connect(&workspace, &TerminalWorkspace::tabTitlesChanged,
-            &workspace, [&] {
+    connect(&workspace, &TerminalWorkspace::tabTitlesChanged, &workspace, [&] {
         if (workspace.tabCount() == 1) {
             finalTitlesSawResolution = resolved.count() == 1;
         }
@@ -7545,10 +7464,9 @@ void TerminalWorkspaceTest::pendingCloseTargetsPruneBeforeModelPublication()
         QVERIFY(first.pane->executeConfiguredAction(
             QStringLiteral("toggle_readonly")));
     }
-    QVERIFY(first.pane->executeConfiguredAction(
-        QStringLiteral("close_tab:this")));
-    QCOMPARE(tabIds(workspace),
-             QVector<TabId>({source.tabId, third.tabId}));
+    QVERIFY(
+        first.pane->executeConfiguredAction(QStringLiteral("close_tab:this")));
+    QCOMPARE(tabIds(workspace), QVector<TabId>({source.tabId, third.tabId}));
     QCOMPARE(resolved.count(), 0);
 
     {
@@ -7556,8 +7474,8 @@ void TerminalWorkspaceTest::pendingCloseTargetsPruneBeforeModelPublication()
         QVERIFY(third.pane->executeConfiguredAction(
             QStringLiteral("toggle_readonly")));
     }
-    QVERIFY(third.pane->executeConfiguredAction(
-        QStringLiteral("close_tab:this")));
+    QVERIFY(
+        third.pane->executeConfiguredAction(QStringLiteral("close_tab:this")));
     QCOMPARE(tabIds(workspace), QVector<TabId>({source.tabId}));
     QVERIFY(finalTitlesSawResolution);
     QCOMPARE(resolved.count(), 1);
@@ -7584,37 +7502,34 @@ void TerminalWorkspaceTest::closeResponseDefersDuringBatchMutation()
     workspace.newTab();
     const CurrentTabProbe third = currentTabProbe(workspace);
     QVERIFY(first.pane && source.pane && third.pane);
-    QVERIFY(third.pane->executeConfiguredAction(
-        QStringLiteral("toggle_readonly")));
+    QVERIFY(
+        third.pane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
 
-    QSignalSpy confirmation(
-        &workspace, &TerminalWorkspace::closeConfirmationRequested);
-    QSignalSpy resolved(
-        &workspace, &TerminalWorkspace::closeConfirmationResolved);
+    QSignalSpy confirmation(&workspace,
+                            &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy resolved(&workspace,
+                        &TerminalWorkspace::closeConfirmationResolved);
     QVERIFY(source.pane->executeConfiguredAction(
         QStringLiteral("close_tab:other")));
     QCOMPARE(confirmation.count(), 1);
     const quint64 confirmationId = closeConfirmationId(confirmation);
 
     bool responseWasDeferred = false;
-    connect(workspace.tabModel(), &QAbstractItemModel::rowsRemoved,
-            &workspace,
+    connect(workspace.tabModel(), &QAbstractItemModel::rowsRemoved, &workspace,
             [&](const QModelIndex &, int, int) {
-        if (workspace.tabCount() != 2) return;
-        workspace.confirmClose(confirmationId);
-        responseWasDeferred =
-            tabIds(workspace)
-                == QVector<TabId>({source.tabId, third.tabId})
-            && resolved.count() == 0;
-    });
+                if (workspace.tabCount() != 2) return;
+                workspace.confirmClose(confirmationId);
+                responseWasDeferred = tabIds(workspace)
+                        == QVector<TabId>({source.tabId, third.tabId})
+                    && resolved.count() == 0;
+            });
 
     // Removing the safe member emits rowsRemoved while the batch mutation
     // guard is held. A synchronous QML response is queued, not nested.
-    QVERIFY(first.pane->executeConfiguredAction(
-        QStringLiteral("close_tab:this")));
+    QVERIFY(
+        first.pane->executeConfiguredAction(QStringLiteral("close_tab:this")));
     QVERIFY(responseWasDeferred);
-    QCOMPARE(tabIds(workspace),
-             QVector<TabId>({source.tabId, third.tabId}));
+    QCOMPARE(tabIds(workspace), QVector<TabId>({source.tabId, third.tabId}));
     QCOMPARE(resolved.count(), 0);
 
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
@@ -7636,9 +7551,8 @@ void TerminalWorkspaceTest::naturalTabExitPrunesPendingBatchTarget()
     const QString shellPath = directory.filePath(QStringLiteral("long-shell"));
     QFile shellFile(shellPath);
     QVERIFY(shellFile.open(QIODevice::WriteOnly));
-    const QByteArray shellScript = QByteArrayLiteral(
-        "#!/bin/sh\n"
-        "exec /bin/sleep 30\n");
+    const QByteArray shellScript = QByteArrayLiteral("#!/bin/sh\n"
+                                                     "exec /bin/sleep 30\n");
     QCOMPARE(shellFile.write(shellScript), shellScript.size());
     shellFile.close();
     QVERIFY(shellFile.setPermissions(QFileDevice::ReadOwner
@@ -7652,7 +7566,8 @@ void TerminalWorkspaceTest::naturalTabExitPrunesPendingBatchTarget()
     options.program = {
         QStringLiteral("/bin/sh"),
         QStringLiteral("-c"),
-        QStringLiteral(": > \"$1\"; while [ ! -e \"$2\" ]; do sleep 0.01; done"),
+        QStringLiteral(
+            ": > \"$1\"; while [ ! -e \"$2\" ]; do sleep 0.01; done"),
         QStringLiteral("close-tab-waiter"),
         readyPath,
         releasePath,
@@ -7674,13 +7589,13 @@ void TerminalWorkspaceTest::naturalTabExitPrunesPendingBatchTarget()
     workspace.newTab();
     const CurrentTabProbe third = currentTabProbe(workspace);
     QVERIFY(second.pane && third.pane);
-    QVERIFY(third.pane->executeConfiguredAction(
-        QStringLiteral("toggle_readonly")));
+    QVERIFY(
+        third.pane->executeConfiguredAction(QStringLiteral("toggle_readonly")));
 
-    QSignalSpy confirmation(
-        &workspace, &TerminalWorkspace::closeConfirmationRequested);
-    QSignalSpy resolved(
-        &workspace, &TerminalWorkspace::closeConfirmationResolved);
+    QSignalSpy confirmation(&workspace,
+                            &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy resolved(&workspace,
+                        &TerminalWorkspace::closeConfirmationResolved);
     QVERIFY(second.pane->executeConfiguredAction(
         QStringLiteral("close_tab:other")));
     QCOMPARE(confirmation.count(), 1);
@@ -7690,8 +7605,7 @@ void TerminalWorkspaceTest::naturalTabExitPrunesPendingBatchTarget()
     QVERIFY(releaseFile.open(QIODevice::WriteOnly));
     releaseFile.close();
     QTRY_VERIFY_WITH_TIMEOUT(first.pane.isNull(), 3000);
-    QCOMPARE(tabIds(workspace),
-             QVector<TabId>({second.tabId, third.tabId}));
+    QCOMPARE(tabIds(workspace), QVector<TabId>({second.tabId, third.tabId}));
     QCOMPARE(resolved.count(), 0);
 
     workspace.confirmClose(confirmationId);
@@ -7709,10 +7623,8 @@ void TerminalWorkspaceTest::broadCloseTabModesUseFirstStableSource()
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
     options.confirmCloseMode = ConfirmCloseMode::Never;
-    const auto exercise = [&](QStringView action,
-                              GhosttyKeybindFlags flags,
-                              Qt::Key key,
-                              quint32 codepoint,
+    const auto exercise = [&](QStringView action, GhosttyKeybindFlags flags,
+                              Qt::Key key, quint32 codepoint,
                               QChar controlCharacter) {
         LaunchOptions exerciseOptions = options;
         GhosttyKeybindConfig config;
@@ -7746,8 +7658,8 @@ void TerminalWorkspaceTest::broadCloseTabModesUseFirstStableSource()
 
         GhosttyApplicationKeybindings bindings(exerciseOptions, false);
         bindings.registerWorkspace(&workspace);
-        QSignalSpy confirmation(
-            &workspace, &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy confirmation(&workspace,
+                                &TerminalWorkspace::closeConfirmationRequested);
         QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
         TerminalController *const controller =
             third.pane->findChild<TerminalController *>();
@@ -7779,11 +7691,9 @@ void TerminalWorkspaceTest::broadCloseTabModesUseFirstStableSource()
     };
 
     exercise(QStringLiteral("close_tab:other"),
-             GhosttyKeybindFlags{.all = true},
-             Qt::Key_O, 'o', QChar(0x0f));
+             GhosttyKeybindFlags{.all = true}, Qt::Key_O, 'o', QChar(0x0f));
     exercise(QStringLiteral("close_tab:right"),
-             GhosttyKeybindFlags{.global = true},
-             Qt::Key_R, 'r', QChar(0x12));
+             GhosttyKeybindFlags{.global = true}, Qt::Key_R, 'r', QChar(0x12));
 }
 
 void TerminalWorkspaceTest::closeTabBatchShutdownGracePeriodsOverlap()
@@ -7814,8 +7724,8 @@ void TerminalWorkspaceTest::closeTabBatchShutdownGracePeriodsOverlap()
     workspace.setCurrentIndex(0);
     QTRY_COMPARE_WITH_TIMEOUT(resistantShell.readyProcessCount(), 3, 5000);
 
-    QSignalSpy confirmation(
-        &workspace, &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy confirmation(&workspace,
+                            &TerminalWorkspace::closeConfirmationRequested);
     QVERIFY(source.pane->executeConfiguredAction(
         QStringLiteral("close_tab:right")));
     QCOMPARE(confirmation.count(), 1);
@@ -7824,10 +7734,11 @@ void TerminalWorkspaceTest::closeTabBatchShutdownGracePeriodsOverlap()
     elapsed.start();
     workspace.confirmClose(closeConfirmationId(confirmation));
     QCOMPARE(workspace.tabCount(), 1);
-    QTRY_VERIFY_WITH_TIMEOUT(std::ranges::all_of(
-        targets, [](const QPointer<TerminalPane> &pane) {
-            return pane.isNull();
-        }), 6000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        std::ranges::all_of(
+            targets,
+            [](const QPointer<TerminalPane> &pane) { return pane.isNull(); }),
+        6000);
 
     const qint64 shutdownMilliseconds = elapsed.elapsed();
     QVERIFY2(shutdownMilliseconds >= 1'500,
@@ -7891,27 +7802,27 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
     };
     config.tables = {GhosttyKeybindTable{
         .name = QStringLiteral("modal"),
-        .bindings = {
-            GhosttyKeybindDefinition{
-                .sequence = {unicode('r', GhosttyKeybindCtrl)},
-                .actions = {QStringLiteral("new_tab")},
+        .bindings =
+            {
+                GhosttyKeybindDefinition{
+                    .sequence = {unicode('r', GhosttyKeybindCtrl)},
+                    .actions = {QStringLiteral("new_tab")},
+                },
+                GhosttyKeybindDefinition{
+                    .sequence = {unicode('i', GhosttyKeybindCtrl)},
+                    .actions = {QStringLiteral("new_tab")},
+                },
+                GhosttyKeybindDefinition{
+                    .sequence = {unicode('g', GhosttyKeybindCtrl)},
+                    .actions = {QStringLiteral("new_tab")},
+                },
+                GhosttyKeybindDefinition{
+                    .sequence = {unicode('a', GhosttyKeybindCtrl)},
+                    .actions = {QStringLiteral("new_tab")},
+                },
             },
-            GhosttyKeybindDefinition{
-                .sequence = {unicode('i', GhosttyKeybindCtrl)},
-                .actions = {QStringLiteral("new_tab")},
-            },
-            GhosttyKeybindDefinition{
-                .sequence = {unicode('g', GhosttyKeybindCtrl)},
-                .actions = {QStringLiteral("new_tab")},
-            },
-            GhosttyKeybindDefinition{
-                .sequence = {unicode('a', GhosttyKeybindCtrl)},
-                .actions = {QStringLiteral("new_tab")},
-            },
-        },
     }};
-    options.keybindSource =
-        GhosttyKeybindSource::structured(std::move(config));
+    options.keybindSource = GhosttyKeybindSource::structured(std::move(config));
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     TerminalWorkspace workspace;
@@ -7923,8 +7834,7 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     TerminalPane *pane = workspace.findChild<TerminalPane *>();
     QVERIFY(pane != nullptr);
-    TerminalController *controller =
-        pane->findChild<TerminalController *>();
+    TerminalController *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
     const TabListEntry *const entry = workspace.tabModel()->entryAt(0);
@@ -7961,14 +7871,13 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
         return QModelIndex{};
     };
 
-    QKeyEvent activate(QEvent::KeyPress, Qt::Key_M,
-                       Qt::ControlModifier, QString(QChar(0x0d)));
+    QKeyEvent activate(QEvent::KeyPress, Qt::Key_M, Qt::ControlModifier,
+                       QString(QChar(0x0d)));
     QCoreApplication::sendEvent(pane, &activate);
-    QCOMPARE(pane->activeKeyTables(),
-             QStringList({QStringLiteral("modal")}));
+    QCOMPARE(pane->activeKeyTables(), QStringList({QStringLiteral("modal")}));
 
-    QKeyEvent rootApp(QEvent::KeyPress, Qt::Key_R,
-                      Qt::ControlModifier, QString(QChar(0x12)));
+    QKeyEvent rootApp(QEvent::KeyPress, Qt::Key_R, Qt::ControlModifier,
+                      QString(QChar(0x12)));
     QCoreApplication::sendEvent(pane, &rootApp);
     QKeyEvent rootAppRelease(QEvent::KeyRelease, Qt::Key_R,
                              Qt::ControlModifier);
@@ -7976,8 +7885,7 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
     QCOMPARE(reload.count(), 1);
     QCOMPARE(forwarded.count(), 0);
     QCOMPARE(workspace.tabCount(), 1);
-    QCOMPARE(pane->activeKeyTables(),
-             QStringList({QStringLiteral("modal")}));
+    QCOMPARE(pane->activeKeyTables(), QStringList({QStringLiteral("modal")}));
     const QModelIndex rootApplication =
         decisionContaining(QStringLiteral("Root application binding"));
     const QModelIndex rootRelease =
@@ -8005,9 +7913,9 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
                         QString(text));
         QCoreApplication::sendEvent(pane, &press);
         QCOMPARE(reload.count(), expectedActionCount);
-        QCOMPARE(qvariant_cast<ApplicationAction>(
-                     reload.constLast().constFirst()),
-                 ApplicationAction::Ignore);
+        QCOMPARE(
+            qvariant_cast<ApplicationAction>(reload.constLast().constFirst()),
+            ApplicationAction::Ignore);
         QCOMPARE(workspace.tabCount(), 1);
         QCOMPARE(forwarded.count(), beforeForwarded);
 
@@ -8208,8 +8116,7 @@ void TerminalWorkspaceTest::rootBindingsBypassImeAndProjectDeferredComposition()
     QCoreApplication::sendEvent(pane, &reboundRelease);
 }
 
-void TerminalWorkspaceTest::
-    windowNavigationRetainsSurfaceScopeAndBroadFanout()
+void TerminalWorkspaceTest::windowNavigationRetainsSurfaceScopeAndBroadFanout()
 {
     qRegisterMetaType<WindowNavigationAction>();
 
@@ -8228,8 +8135,7 @@ void TerminalWorkspaceTest::
         .actions = {QStringLiteral("goto_window:next")},
         .flags = GhosttyKeybindFlags{.all = true},
     }};
-    options.keybindSource =
-        GhosttyKeybindSource::structured(std::move(config));
+    options.keybindSource = GhosttyKeybindSource::structured(std::move(config));
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     TerminalWorkspace workspace;
@@ -8244,8 +8150,8 @@ void TerminalWorkspaceTest::
     TerminalPane *const source = panes.constFirst();
     QVERIFY(source != nullptr);
 
-    QSignalSpy navigation(
-        &workspace, &TerminalWorkspace::windowNavigationRequested);
+    QSignalSpy navigation(&workspace,
+                          &TerminalWorkspace::windowNavigationRequested);
     QSignalSpy application(
         &applicationBindings,
         &GhosttyApplicationKeybindings::applicationActionRequested);
@@ -8258,28 +8164,23 @@ void TerminalWorkspaceTest::
         QStringLiteral("goto_window:previous")));
     QCOMPARE(navigation.count(), 1);
     QCOMPARE(
-        qvariant_cast<WindowNavigationAction>(
-            navigation.constFirst().at(0)),
+        qvariant_cast<WindowNavigationAction>(navigation.constFirst().at(0)),
         WindowNavigationAction::Previous);
-    QVERIFY(
-        qvariant_cast<PaneId>(navigation.constFirst().at(1)).isValid());
+    QVERIFY(qvariant_cast<PaneId>(navigation.constFirst().at(1)).isValid());
     navigation.clear();
 
     QKeyEvent press(QEvent::KeyPress, Qt::Key_N, Qt::ControlModifier,
                     QString(QChar(0x0e)));
     QCoreApplication::sendEvent(source, &press);
-    QKeyEvent release(
-        QEvent::KeyRelease, Qt::Key_N, Qt::ControlModifier);
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_N, Qt::ControlModifier);
     QCoreApplication::sendEvent(source, &release);
 
     QCOMPARE(navigation.count(), panes.size());
     QSet<PaneId> sources;
     for (const QList<QVariant> &arguments : navigation) {
-        QCOMPARE(
-            qvariant_cast<WindowNavigationAction>(arguments.at(0)),
-            WindowNavigationAction::Next);
-        const PaneId paneId =
-            qvariant_cast<PaneId>(arguments.at(1));
+        QCOMPARE(qvariant_cast<WindowNavigationAction>(arguments.at(0)),
+                 WindowNavigationAction::Next);
+        const PaneId paneId = qvariant_cast<PaneId>(arguments.at(1));
         QVERIFY(paneId.isValid());
         sources.insert(paneId);
     }
@@ -8307,11 +8208,12 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
         GhosttyKeybindDefinition{
             .sequence = {unicode('g', GhosttyKeybindCtrl)},
             .actions = {QStringLiteral("increase_font_size:2")},
-            .flags = GhosttyKeybindFlags{
-                .consumed = false,
-                .global = true,
-                .performable = true,
-            },
+            .flags =
+                GhosttyKeybindFlags{
+                    .consumed = false,
+                    .global = true,
+                    .performable = true,
+                },
         },
         GhosttyKeybindDefinition{
             .sequence = {unicode('r', GhosttyKeybindCtrl)},
@@ -8321,19 +8223,19 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
         GhosttyKeybindDefinition{
             .sequence = {unicode('p', GhosttyKeybindCtrl)},
             .actions = {QStringLiteral("copy_to_clipboard")},
-            .flags = GhosttyKeybindFlags{
-                .consumed = false,
-                .all = true,
-                .performable = true,
-            },
+            .flags =
+                GhosttyKeybindFlags{
+                    .consumed = false,
+                    .all = true,
+                    .performable = true,
+                },
         },
         GhosttyKeybindDefinition{
             .sequence = {unicode('x', GhosttyKeybindCtrl), unicode('n')},
             .actions = {QStringLiteral("new_tab")},
         },
     };
-    options.keybindSource =
-        GhosttyKeybindSource::structured(std::move(config));
+    options.keybindSource = GhosttyKeybindSource::structured(std::move(config));
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     TerminalWorkspace workspace;
@@ -8349,8 +8251,10 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
     TerminalPane *activePane = nullptr;
     TerminalPane *inactivePane = nullptr;
     for (TerminalPane *pane : panes) {
-        if (pane->isVisible()) activePane = pane;
-        else inactivePane = pane;
+        if (pane->isVisible())
+            activePane = pane;
+        else
+            inactivePane = pane;
     }
     QVERIFY(activePane != nullptr);
     QVERIFY(inactivePane != nullptr);
@@ -8367,17 +8271,16 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
         controller, &TerminalController::sequenceResolutionRequested);
     QSignalSpy inactiveSequenceResolution(
         inactiveController, &TerminalController::sequenceResolutionRequested);
-    QSignalSpy activeCopy(
-        controller, &TerminalController::copyActionRequested);
-    QSignalSpy inactiveCopy(
-        inactiveController, &TerminalController::copyActionRequested);
+    QSignalSpy activeCopy(controller, &TerminalController::copyActionRequested);
+    QSignalSpy inactiveCopy(inactiveController,
+                            &TerminalController::copyActionRequested);
 
     // An external all/global action can end sequences staged in panes that no
     // longer have focus. It must reset both the matcher and worker token.
-    QKeyEvent activeLeader(QEvent::KeyPress, Qt::Key_X,
-                           Qt::ControlModifier, QString(QChar(0x18)));
-    QKeyEvent inactiveLeader(QEvent::KeyPress, Qt::Key_X,
-                             Qt::ControlModifier, QString(QChar(0x18)));
+    QKeyEvent activeLeader(QEvent::KeyPress, Qt::Key_X, Qt::ControlModifier,
+                           QString(QChar(0x18)));
+    QKeyEvent inactiveLeader(QEvent::KeyPress, Qt::Key_X, Qt::ControlModifier,
+                             QString(QChar(0x18)));
     QCoreApplication::sendEvent(activePane, &activeLeader);
     QCoreApplication::sendEvent(inactivePane, &inactiveLeader);
     QCOMPARE(activeSequenceResolution.count(), 0);
@@ -8395,11 +8298,10 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
 
     // global implies all. The local unconsumed/performable flags have no
     // effect, and the inactive tab's surface receives the action too.
-    QKeyEvent global(QEvent::KeyPress, Qt::Key_G,
-                     Qt::ControlModifier, QString(QChar(0x07)));
+    QKeyEvent global(QEvent::KeyPress, Qt::Key_G, Qt::ControlModifier,
+                     QString(QChar(0x07)));
     QCoreApplication::sendEvent(activePane, &global);
-    QKeyEvent globalRelease(QEvent::KeyRelease, Qt::Key_G,
-                            Qt::ControlModifier);
+    QKeyEvent globalRelease(QEvent::KeyRelease, Qt::Key_G, Qt::ControlModifier);
     QCoreApplication::sendEvent(activePane, &globalRelease);
     QCOMPARE(activePane->fontPointSize(), 14.0);
     QCOMPARE(inactivePane->fontPointSize(), 14.0);
@@ -8410,15 +8312,14 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
     QSignalSpy reload(
         &applicationBindings,
         &GhosttyApplicationKeybindings::applicationActionRequested);
-    QKeyEvent allReload(QEvent::KeyPress, Qt::Key_R,
-                        Qt::ControlModifier, QString(QChar(0x12)));
+    QKeyEvent allReload(QEvent::KeyPress, Qt::Key_R, Qt::ControlModifier,
+                        QString(QChar(0x12)));
     QCoreApplication::sendEvent(activePane, &allReload);
     QKeyEvent allReloadRelease(QEvent::KeyRelease, Qt::Key_R,
                                Qt::ControlModifier);
     QCoreApplication::sendEvent(activePane, &allReloadRelease);
     QCOMPARE(reload.count(), 1);
-    QCOMPARE(qvariant_cast<ApplicationAction>(
-                 reload.constFirst().constFirst()),
+    QCOMPARE(qvariant_cast<ApplicationAction>(reload.constFirst().constFirst()),
              ApplicationAction::ReloadConfig);
     QCOMPARE(forwarded.count(), 0);
 
@@ -8426,8 +8327,8 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
     // when no target has the dynamic state required to execute the action.
     // Each worker is still asked: its correlated result, rather than the
     // GUI's eventually-consistent selection cache, decides performability.
-    QKeyEvent unavailableCopy(QEvent::KeyPress, Qt::Key_P,
-                              Qt::ControlModifier, QString(QChar(0x10)));
+    QKeyEvent unavailableCopy(QEvent::KeyPress, Qt::Key_P, Qt::ControlModifier,
+                              QString(QChar(0x10)));
     QCoreApplication::sendEvent(activePane, &unavailableCopy);
     QKeyEvent unavailableCopyRelease(QEvent::KeyRelease, Qt::Key_P,
                                      Qt::ControlModifier);
@@ -8439,21 +8340,17 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
     QCOMPARE(forwarded.count(), 0);
 
     // Application-scoped broad actions execute once, not once per pane.
-    applicationBindings.dispatchBroadActions(
-        {QStringLiteral("new_window")});
+    applicationBindings.dispatchBroadActions({QStringLiteral("new_window")});
     QTRY_COMPARE_WITH_TIMEOUT(reload.count(), 2, 1000);
-    QCOMPARE(qvariant_cast<ApplicationAction>(
-                 reload.constLast().constFirst()),
+    QCOMPARE(qvariant_cast<ApplicationAction>(reload.constLast().constFirst()),
              ApplicationAction::NewWindow);
     QVERIFY(!workspace.executeSurfaceActionOnAllPanes(
         QStringLiteral("new_window")));
     QCOMPARE(reload.count(), 2);
 
-    applicationBindings.dispatchBroadActions(
-        {QStringLiteral("open_config")});
+    applicationBindings.dispatchBroadActions({QStringLiteral("open_config")});
     QTRY_COMPARE_WITH_TIMEOUT(reload.count(), 3, 1000);
-    QCOMPARE(qvariant_cast<ApplicationAction>(
-                 reload.constLast().constFirst()),
+    QCOMPARE(qvariant_cast<ApplicationAction>(reload.constLast().constFirst()),
              ApplicationAction::OpenConfig);
     QVERIFY(!workspace.executeSurfaceActionOnAllPanes(
         QStringLiteral("open_config")));
@@ -8503,8 +8400,7 @@ void TerminalWorkspaceTest::broadPasteActionsReachEveryPane()
 
     clipboard->setText(QStringLiteral("standard broad paste"),
                        QClipboard::Clipboard);
-    bindings.dispatchBroadActions(
-        {QStringLiteral("paste_from_clipboard")});
+    bindings.dispatchBroadActions({QStringLiteral("paste_from_clipboard")});
     for (const auto &spy : pasted) {
         QCOMPARE(spy->count(), 1);
         QCOMPARE(spy->constLast().constFirst().toString(),
@@ -8517,8 +8413,7 @@ void TerminalWorkspaceTest::broadPasteActionsReachEveryPane()
         clipboard->setText(QStringLiteral("primary broad paste"),
                            QClipboard::Selection);
     }
-    bindings.dispatchBroadActions(
-        {QStringLiteral("paste_from_selection")});
+    bindings.dispatchBroadActions({QStringLiteral("paste_from_selection")});
     for (const auto &spy : pasted) {
         const int expectedCount = clipboard->supportsSelection() ? 2 : 1;
         QCOMPARE(spy->count(), expectedCount);
@@ -8729,26 +8624,24 @@ void TerminalWorkspaceTest::
 
     openedPerPane.resize(panes.size());
     for (qsizetype index = 0; index < panes.size(); ++index) {
-        panes.at(index)->setUrlOpener(
-            [&, index](const QUrl &url) {
-                openedPerPane[index].append(url);
-                if (url.isLocalFile()) {
-                    artifactDirectories.insert(
-                        QFileInfo(url.toLocalFile()).absolutePath());
-                }
-                return true;
-            });
+        panes.at(index)->setUrlOpener([&, index](const QUrl &url) {
+            openedPerPane[index].append(url);
+            if (url.isLocalFile()) {
+                artifactDirectories.insert(
+                    QFileInfo(url.toLocalFile()).absolutePath());
+            }
+            return true;
+        });
     }
 
     GhosttyApplicationKeybindings bindings(options, false);
     bindings.registerWorkspace(&workspace);
-    bindings.dispatchBroadActions(
-        {QStringLiteral("write_screen_file:open")});
+    bindings.dispatchBroadActions({QStringLiteral("write_screen_file:open")});
 
     const auto everyPaneOpenedOnce = [&openedPerPane] {
-        return std::ranges::all_of(
-            openedPerPane,
-            [](const QList<QUrl> &urls) { return urls.size() == 1; });
+        return std::ranges::all_of(openedPerPane, [](const QList<QUrl> &urls) {
+            return urls.size() == 1;
+        });
     };
     QTRY_VERIFY_WITH_TIMEOUT(everyPaneOpenedOnce(), 5000);
 
@@ -8773,8 +8666,7 @@ void TerminalWorkspaceTest::
     QCOMPARE(artifactDirectories.size(), panes.size());
 }
 
-void TerminalWorkspaceTest::
-    broadTerminalBarrierOrdersCommitsAndDefersInputs()
+void TerminalWorkspaceTest::broadTerminalBarrierOrdersCommitsAndDefersInputs()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
@@ -8791,8 +8683,7 @@ void TerminalWorkspaceTest::
         .actions = {QStringLiteral("increase_font_size:4")},
         .flags = GhosttyKeybindFlags{.global = true},
     }};
-    options.keybindSource =
-        GhosttyKeybindSource::structured(std::move(config));
+    options.keybindSource = GhosttyKeybindSource::structured(std::move(config));
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     constexpr qsizetype targetCount = 3;
@@ -8811,13 +8702,12 @@ void TerminalWorkspaceTest::
             std::make_unique<TerminalWorkspace>();
         TerminalWorkspace *const workspace =
             workspaces[static_cast<std::size_t>(index)].get();
-        QVERIFY(workspace->initialize(
-            options, TerminalSessionStartMode::Deferred));
+        QVERIFY(
+            workspace->initialize(options, TerminalSessionStartMode::Deferred));
         QCOMPARE(workspace->tabCount(), 1);
         bindings.registerWorkspace(workspace);
 
-        TerminalPane *const pane =
-            workspace->findChild<TerminalPane *>();
+        TerminalPane *const pane = workspace->findChild<TerminalPane *>();
         QVERIFY(pane != nullptr);
         TerminalController *const controller =
             pane->findChild<TerminalController *>();
@@ -8826,28 +8716,20 @@ void TerminalWorkspaceTest::
         controllers.append(controller);
         initialFontSizes.append(pane->fontPointSize());
 
-        pane->setUrlOpener(
-            [&, index](const QUrl &url) {
-                openedPaths[index] = url.toLocalFile();
-                openOrder.append(index);
-                return true;
-            });
-        connect(
-            pane, &TerminalPane::fontPointSizeChanged, this,
-            [&, index] {
-                fontSizes[index].append(
-                    panes.at(index)->fontPointSize());
-            });
-        connect(
-            controller,
-            &TerminalController::writeTerminalFileRequested,
-            this,
-            [&, index](
-                quint64 requestId,
-                const TerminalWriteFileAction &) {
-                QCOMPARE(requestIds.at(index), quint64(0));
-                requestIds[index] = requestId;
-            });
+        pane->setUrlOpener([&, index](const QUrl &url) {
+            openedPaths[index] = url.toLocalFile();
+            openOrder.append(index);
+            return true;
+        });
+        connect(pane, &TerminalPane::fontPointSizeChanged, this, [&, index] {
+            fontSizes[index].append(panes.at(index)->fontPointSize());
+        });
+        connect(controller, &TerminalController::writeTerminalFileRequested,
+                this,
+                [&, index](quint64 requestId, const TerminalWriteFileAction &) {
+                    QCOMPARE(requestIds.at(index), quint64(0));
+                    requestIds[index] = requestId;
+                });
     }
 
     bindings.dispatchBroadActions({
@@ -8861,8 +8743,7 @@ void TerminalWorkspaceTest::
         requestIds, [](quint64 requestId) { return requestId != 0; }));
     QVERIFY(openOrder.isEmpty());
     for (qsizetype index = 0; index < targetCount; ++index) {
-        QCOMPARE(panes.at(index)->fontPointSize(),
-                 initialFontSizes.at(index));
+        QCOMPARE(panes.at(index)->fontPointSize(), initialFontSizes.at(index));
         QVERIFY(fontSizes.at(index).isEmpty());
     }
 
@@ -8871,16 +8752,13 @@ void TerminalWorkspaceTest::
     bindings.dispatchBroadActions({
         QStringLiteral("increase_font_size:2"),
     });
-    QKeyEvent keyPress(
-        QEvent::KeyPress, Qt::Key_G, Qt::ControlModifier,
-        QString(QChar(0x07)));
+    QKeyEvent keyPress(QEvent::KeyPress, Qt::Key_G, Qt::ControlModifier,
+                       QString(QChar(0x07)));
     QCoreApplication::sendEvent(panes.constFirst(), &keyPress);
-    QKeyEvent keyRelease(
-        QEvent::KeyRelease, Qt::Key_G, Qt::ControlModifier);
+    QKeyEvent keyRelease(QEvent::KeyRelease, Qt::Key_G, Qt::ControlModifier);
     QCoreApplication::sendEvent(panes.constFirst(), &keyRelease);
     for (qsizetype index = 0; index < targetCount; ++index) {
-        QCOMPARE(panes.at(index)->fontPointSize(),
-                 initialFontSizes.at(index));
+        QCOMPARE(panes.at(index)->fontPointSize(), initialFontSizes.at(index));
     }
 
     // Resolve the targets in reverse creation order. Partial completion must
@@ -8890,15 +8768,12 @@ void TerminalWorkspaceTest::
         Q_EMIT controllers.at(index)->terminalActionReady(
             successfulOpenFileResult(
                 requestIds.at(index),
-                QStringLiteral("/tmp/ghostty-qt-barrier-%1.txt")
-                    .arg(index)));
+                QStringLiteral("/tmp/ghostty-qt-barrier-%1.txt").arg(index)));
         QCoreApplication::processEvents();
         QVERIFY(openOrder.isEmpty());
-        for (qsizetype fontIndex = 0;
-             fontIndex < targetCount; ++fontIndex) {
-            QCOMPARE(
-                panes.at(fontIndex)->fontPointSize(),
-                initialFontSizes.at(fontIndex));
+        for (qsizetype fontIndex = 0; fontIndex < targetCount; ++fontIndex) {
+            QCOMPARE(panes.at(fontIndex)->fontPointSize(),
+                     initialFontSizes.at(fontIndex));
         }
     }
     Q_EMIT controllers.constFirst()->terminalActionReady(
@@ -8910,15 +8785,10 @@ void TerminalWorkspaceTest::
     QCOMPARE(openOrder, QVector<qsizetype>({0, 1, 2}));
     for (qsizetype index = 0; index < targetCount; ++index) {
         const qreal initial = initialFontSizes.at(index);
-        QCOMPARE(
-            openedPaths.at(index),
-            QStringLiteral("/tmp/ghostty-qt-barrier-%1.txt")
-                .arg(index));
-        QCOMPARE(
-            fontSizes.at(index),
-            QVector<qreal>({initial + 1.0,
-                            initial + 3.0,
-                            initial + 7.0}));
+        QCOMPARE(openedPaths.at(index),
+                 QStringLiteral("/tmp/ghostty-qt-barrier-%1.txt").arg(index));
+        QCOMPARE(fontSizes.at(index),
+                 QVector<qreal>({initial + 1.0, initial + 3.0, initial + 7.0}));
         QCOMPARE(panes.at(index)->fontPointSize(), initial + 7.0);
     }
 }
@@ -8952,66 +8822,48 @@ void TerminalWorkspaceTest::broadSelectionBarriersOrderEffects()
             options, TerminalSessionStartMode::Deferred));
         bindings.registerWorkspace(workspaces[slot].get());
 
-        panes[slot] =
-            workspaces[slot]->findChild<TerminalPane *>();
+        panes[slot] = workspaces[slot]->findChild<TerminalPane *>();
         QVERIFY(panes[slot] != nullptr);
-        controllers[slot] =
-            panes[slot]->findChild<TerminalController *>();
+        controllers[slot] = panes[slot]->findChild<TerminalController *>();
         QVERIFY(controllers[slot] != nullptr);
         initialFontSizes[slot] = panes[slot]->fontPointSize();
 
-        connect(
-            controllers[slot],
-            &TerminalController::selectionAdjustmentActionRequested,
-            this,
-            [&, index, slot](
-                quint64 requestId,
-                TerminalSelectionAdjustment adjustment) {
-                QCOMPARE(adjustmentIds[slot], quint64(0));
-                QCOMPARE(adjustment,
-                         TerminalSelectionAdjustment::Right);
-                adjustmentIds[slot] = requestId;
-                requestOrder.append(
-                    QStringLiteral("adjust:%1").arg(index));
-            });
-        connect(
-            controllers[slot],
-            &TerminalController::scrollToSelectionActionRequested,
-            this,
-            [&, index, slot](quint64 requestId) {
-                QCOMPARE(scrollIds[slot], quint64(0));
-                scrollIds[slot] = requestId;
-                requestOrder.append(
-                    QStringLiteral("scroll:%1").arg(index));
-            });
-        connect(
-            controllers[slot],
-            &TerminalController::searchSelectionActionRequested,
-            this,
-            [&, index, slot](quint64 requestId) {
-                QCOMPARE(searchIds[slot], quint64(0));
-                searchIds[slot] = requestId;
-                requestOrder.append(
-                    QStringLiteral("search:%1").arg(index));
-            });
-        connect(
-            controllers[slot],
-            &TerminalController::copyActionRequested,
-            this,
-            [&, index, slot](quint64 requestId) {
-                QCOMPARE(copyIds[slot], quint64(0));
-                copyIds[slot] = requestId;
-                requestOrder.append(
-                    QStringLiteral("copy:%1").arg(index));
-                effectOrder.append(
-                    QStringLiteral("copy-request:%1").arg(index));
-            });
-        connect(
-            panes[slot], &TerminalPane::searchUiFocusRequested,
-            this, [&, index] {
-                effectOrder.append(
-                    QStringLiteral("search-effect:%1").arg(index));
-            });
+        connect(controllers[slot],
+                &TerminalController::selectionAdjustmentActionRequested, this,
+                [&, index, slot](quint64 requestId,
+                                 TerminalSelectionAdjustment adjustment) {
+                    QCOMPARE(adjustmentIds[slot], quint64(0));
+                    QCOMPARE(adjustment, TerminalSelectionAdjustment::Right);
+                    adjustmentIds[slot] = requestId;
+                    requestOrder.append(QStringLiteral("adjust:%1").arg(index));
+                });
+        connect(controllers[slot],
+                &TerminalController::scrollToSelectionActionRequested, this,
+                [&, index, slot](quint64 requestId) {
+                    QCOMPARE(scrollIds[slot], quint64(0));
+                    scrollIds[slot] = requestId;
+                    requestOrder.append(QStringLiteral("scroll:%1").arg(index));
+                });
+        connect(controllers[slot],
+                &TerminalController::searchSelectionActionRequested, this,
+                [&, index, slot](quint64 requestId) {
+                    QCOMPARE(searchIds[slot], quint64(0));
+                    searchIds[slot] = requestId;
+                    requestOrder.append(QStringLiteral("search:%1").arg(index));
+                });
+        connect(controllers[slot], &TerminalController::copyActionRequested,
+                this, [&, index, slot](quint64 requestId) {
+                    QCOMPARE(copyIds[slot], quint64(0));
+                    copyIds[slot] = requestId;
+                    requestOrder.append(QStringLiteral("copy:%1").arg(index));
+                    effectOrder.append(
+                        QStringLiteral("copy-request:%1").arg(index));
+                });
+        connect(panes[slot], &TerminalPane::searchUiFocusRequested, this,
+                [&, index] {
+                    effectOrder.append(
+                        QStringLiteral("search-effect:%1").arg(index));
+                });
     }
 
     bindings.dispatchBroadActions({
@@ -9024,11 +8876,9 @@ void TerminalWorkspaceTest::broadSelectionBarriersOrderEffects()
 
     QCOMPARE(
         requestOrder,
-        QStringList({QStringLiteral("adjust:0"),
-                     QStringLiteral("adjust:1")}));
+        QStringList({QStringLiteral("adjust:0"), QStringLiteral("adjust:1")}));
     QVERIFY(std::ranges::all_of(
-        adjustmentIds,
-        [](quint64 requestId) { return requestId != 0; }));
+        adjustmentIds, [](quint64 requestId) { return requestId != 0; }));
     QVERIFY(std::ranges::all_of(
         scrollIds, [](quint64 requestId) { return requestId == 0; }));
 
@@ -9041,10 +8891,8 @@ void TerminalWorkspaceTest::broadSelectionBarriersOrderEffects()
     QCoreApplication::sendPostedEvents(panes[0], QEvent::MetaCall);
     QCOMPARE(
         requestOrder,
-        QStringList({QStringLiteral("adjust:0"),
-                     QStringLiteral("adjust:1"),
-                     QStringLiteral("scroll:0"),
-                     QStringLiteral("scroll:1")}));
+        QStringList({QStringLiteral("adjust:0"), QStringLiteral("adjust:1"),
+                     QStringLiteral("scroll:0"), QStringLiteral("scroll:1")}));
 
     Q_EMIT controllers[1]->terminalActionReady(
         successfulTerminalActionResult(scrollIds[1]));
@@ -9055,52 +8903,39 @@ void TerminalWorkspaceTest::broadSelectionBarriersOrderEffects()
     QCoreApplication::sendPostedEvents(panes[0], QEvent::MetaCall);
     QCOMPARE(
         requestOrder,
-        QStringList({QStringLiteral("adjust:0"),
-                     QStringLiteral("adjust:1"),
-                     QStringLiteral("scroll:0"),
-                     QStringLiteral("scroll:1"),
-                     QStringLiteral("search:0"),
-                     QStringLiteral("search:1")}));
+        QStringList({QStringLiteral("adjust:0"), QStringLiteral("adjust:1"),
+                     QStringLiteral("scroll:0"), QStringLiteral("scroll:1"),
+                     QStringLiteral("search:0"), QStringLiteral("search:1")}));
 
-    Q_EMIT controllers[1]->terminalActionReady(
-        successfulTerminalActionResult(
-            searchIds[1], TerminalActionEffect::StartSearch,
-            QStringLiteral("selected one")));
+    Q_EMIT controllers[1]->terminalActionReady(successfulTerminalActionResult(
+        searchIds[1], TerminalActionEffect::StartSearch,
+        QStringLiteral("selected one")));
     QCoreApplication::sendPostedEvents(panes[1], QEvent::MetaCall);
     QVERIFY(effectOrder.isEmpty());
     QCOMPARE(requestOrder.size(), 6);
-    Q_EMIT controllers[0]->terminalActionReady(
-        successfulTerminalActionResult(
-            searchIds[0], TerminalActionEffect::StartSearch,
-            QStringLiteral("selected zero")));
+    Q_EMIT controllers[0]->terminalActionReady(successfulTerminalActionResult(
+        searchIds[0], TerminalActionEffect::StartSearch,
+        QStringLiteral("selected zero")));
     QCoreApplication::sendPostedEvents(panes[0], QEvent::MetaCall);
 
-    QCOMPARE(
-        effectOrder,
-        QStringList({QStringLiteral("search-effect:0"),
-                     QStringLiteral("search-effect:1"),
-                     QStringLiteral("copy-request:0"),
-                     QStringLiteral("copy-request:1")}));
+    QCOMPARE(effectOrder,
+             QStringList({QStringLiteral("search-effect:0"),
+                          QStringLiteral("search-effect:1"),
+                          QStringLiteral("copy-request:0"),
+                          QStringLiteral("copy-request:1")}));
     QCOMPARE(
         requestOrder,
-        QStringList({QStringLiteral("adjust:0"),
-                     QStringLiteral("adjust:1"),
-                     QStringLiteral("scroll:0"),
-                     QStringLiteral("scroll:1"),
-                     QStringLiteral("search:0"),
-                     QStringLiteral("search:1"),
-                     QStringLiteral("copy:0"),
-                     QStringLiteral("copy:1")}));
+        QStringList({QStringLiteral("adjust:0"), QStringLiteral("adjust:1"),
+                     QStringLiteral("scroll:0"), QStringLiteral("scroll:1"),
+                     QStringLiteral("search:0"), QStringLiteral("search:1"),
+                     QStringLiteral("copy:0"), QStringLiteral("copy:1")}));
     QVERIFY(panes[0]->searchUiActive());
     QVERIFY(panes[1]->searchUiActive());
-    QCOMPARE(panes[0]->searchUiText(),
-             QStringLiteral("selected zero"));
-    QCOMPARE(panes[1]->searchUiText(),
-             QStringLiteral("selected one"));
+    QCOMPARE(panes[0]->searchUiText(), QStringLiteral("selected zero"));
+    QCOMPARE(panes[1]->searchUiText(), QStringLiteral("selected one"));
     for (qsizetype index = 0; index < targetCount; ++index) {
         const std::size_t slot = static_cast<std::size_t>(index);
-        QCOMPARE(panes[slot]->fontPointSize(),
-                 initialFontSizes[slot]);
+        QCOMPARE(panes[slot]->fontPointSize(), initialFontSizes[slot]);
     }
 
     Q_EMIT controllers[1]->terminalActionReady(
@@ -9108,21 +8943,18 @@ void TerminalWorkspaceTest::broadSelectionBarriersOrderEffects()
     QCoreApplication::sendPostedEvents(panes[1], QEvent::MetaCall);
     for (qsizetype index = 0; index < targetCount; ++index) {
         const std::size_t slot = static_cast<std::size_t>(index);
-        QCOMPARE(panes[slot]->fontPointSize(),
-                 initialFontSizes[slot]);
+        QCOMPARE(panes[slot]->fontPointSize(), initialFontSizes[slot]);
     }
     Q_EMIT controllers[0]->terminalActionReady(
         successfulTerminalActionResult(copyIds[0]));
     QCoreApplication::sendPostedEvents(panes[0], QEvent::MetaCall);
     for (qsizetype index = 0; index < targetCount; ++index) {
         const std::size_t slot = static_cast<std::size_t>(index);
-        QCOMPARE(panes[slot]->fontPointSize(),
-                 initialFontSizes[slot] + 1.0);
+        QCOMPARE(panes[slot]->fontPointSize(), initialFontSizes[slot] + 1.0);
     }
 }
 
-void TerminalWorkspaceTest::
-    broadRetainedSearchResultExpiresOnSessionExit()
+void TerminalWorkspaceTest::broadRetainedSearchResultExpiresOnSessionExit()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
@@ -9145,38 +8977,25 @@ void TerminalWorkspaceTest::
             options, TerminalSessionStartMode::Deferred));
         bindings.registerWorkspace(workspaces[slot].get());
 
-        panes[slot] =
-            workspaces[slot]->findChild<TerminalPane *>();
+        panes[slot] = workspaces[slot]->findChild<TerminalPane *>();
         QVERIFY(panes[slot] != nullptr);
-        controllers[slot] =
-            panes[slot]->findChild<TerminalController *>();
+        controllers[slot] = panes[slot]->findChild<TerminalController *>();
         QVERIFY(controllers[slot] != nullptr);
-        connect(
-            controllers[slot],
-            &TerminalController::searchSelectionActionRequested,
-            this,
-            [&, slot](quint64 requestId) {
-                requestIds[slot] = requestId;
-            });
+        connect(controllers[slot],
+                &TerminalController::searchSelectionActionRequested, this,
+                [&, slot](quint64 requestId) { requestIds[slot] = requestId; });
     }
 
-    QSignalSpy staleActive(
-        panes[0], &TerminalPane::searchUiActiveChanged);
-    QSignalSpy staleText(
-        panes[0], &TerminalPane::searchUiTextChanged);
-    QSignalSpy staleFocus(
-        panes[0], &TerminalPane::searchUiFocusRequested);
-    QSignalSpy staleSearch(
-        controllers[0], &TerminalController::searchRequested);
-    QSignalSpy survivorActive(
-        panes[1], &TerminalPane::searchUiActiveChanged);
-    QSignalSpy survivorText(
-        panes[1], &TerminalPane::searchUiTextChanged);
-    QSignalSpy survivorFocus(
-        panes[1], &TerminalPane::searchUiFocusRequested);
+    QSignalSpy staleActive(panes[0], &TerminalPane::searchUiActiveChanged);
+    QSignalSpy staleText(panes[0], &TerminalPane::searchUiTextChanged);
+    QSignalSpy staleFocus(panes[0], &TerminalPane::searchUiFocusRequested);
+    QSignalSpy staleSearch(controllers[0],
+                           &TerminalController::searchRequested);
+    QSignalSpy survivorActive(panes[1], &TerminalPane::searchUiActiveChanged);
+    QSignalSpy survivorText(panes[1], &TerminalPane::searchUiTextChanged);
+    QSignalSpy survivorFocus(panes[1], &TerminalPane::searchUiFocusRequested);
     QSignalSpy applicationActions(
-        &bindings,
-        &GhosttyApplicationKeybindings::applicationActionRequested);
+        &bindings, &GhosttyApplicationKeybindings::applicationActionRequested);
 
     bindings.dispatchBroadActions({
         QStringLiteral("search_selection"),
@@ -9187,10 +9006,9 @@ void TerminalWorkspaceTest::
 
     // The pane consumes this completion and hands the stamped result to the
     // process barrier. Publication remains blocked on target one.
-    Q_EMIT controllers[0]->terminalActionReady(
-        successfulTerminalActionResult(
-            requestIds[0], TerminalActionEffect::StartSearch,
-            QStringLiteral("expired selection")));
+    Q_EMIT controllers[0]->terminalActionReady(successfulTerminalActionResult(
+        requestIds[0], TerminalActionEffect::StartSearch,
+        QStringLiteral("expired selection")));
     QCoreApplication::sendPostedEvents(panes[0], QEvent::MetaCall);
     QVERIFY(!panes[0]->searchUiActive());
     QCOMPARE(staleActive.count(), 0);
@@ -9209,10 +9027,9 @@ void TerminalWorkspaceTest::
     QCOMPARE(staleSearch.count(), 0);
     QCOMPARE(applicationActions.count(), 0);
 
-    Q_EMIT controllers[1]->terminalActionReady(
-        successfulTerminalActionResult(
-            requestIds[1], TerminalActionEffect::StartSearch,
-            QStringLiteral("current selection")));
+    Q_EMIT controllers[1]->terminalActionReady(successfulTerminalActionResult(
+        requestIds[1], TerminalActionEffect::StartSearch,
+        QStringLiteral("current selection")));
     QCoreApplication::sendPostedEvents(panes[1], QEvent::MetaCall);
 
     // Target zero's stale effect is rejected at publication. The live target
@@ -9225,16 +9042,14 @@ void TerminalWorkspaceTest::
     QCOMPARE(staleFocus.count(), 0);
     QCOMPARE(staleSearch.count(), 0);
     QVERIFY(panes[1]->searchUiActive());
-    QCOMPARE(panes[1]->searchUiText(),
-             QStringLiteral("current selection"));
+    QCOMPARE(panes[1]->searchUiText(), QStringLiteral("current selection"));
     QCOMPARE(survivorActive.count(), 1);
     QCOMPARE(survivorText.count(), 1);
     QCOMPARE(survivorFocus.count(), 1);
     QCOMPARE(applicationActions.count(), 1);
-    QCOMPARE(
-        qvariant_cast<ApplicationAction>(
-            applicationActions.constFirst().constFirst()),
-        ApplicationAction::ReloadConfig);
+    QCOMPARE(qvariant_cast<ApplicationAction>(
+                 applicationActions.constFirst().constFirst()),
+             ApplicationAction::ReloadConfig);
 
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents();
@@ -9248,8 +9063,7 @@ void TerminalWorkspaceTest::
     QCOMPARE(applicationActions.count(), 1);
 }
 
-void TerminalWorkspaceTest::
-    searchEffectDestructionDefersBroadContinuation()
+void TerminalWorkspaceTest::searchEffectDestructionDefersBroadContinuation()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
@@ -9279,55 +9093,39 @@ void TerminalWorkspaceTest::
         QVERIFY(workspaces[slot]->initialize(
             options, TerminalSessionStartMode::Deferred));
         bindings.registerWorkspace(workspaces[slot].get());
-        panes[slot] =
-            workspaces[slot]->findChild<TerminalPane *>();
+        panes[slot] = workspaces[slot]->findChild<TerminalPane *>();
         QVERIFY(panes[slot] != nullptr);
-        controllers[slot] =
-            panes[slot]->findChild<TerminalController *>();
+        controllers[slot] = panes[slot]->findChild<TerminalController *>();
         QVERIFY(controllers[slot] != nullptr);
-        connect(
-            controllers[slot],
-            &TerminalController::searchSelectionActionRequested,
-            this,
-            [&, slot](quint64 requestId) {
-                searchIds[slot] = requestId;
-            });
+        connect(controllers[slot],
+                &TerminalController::searchSelectionActionRequested, this,
+                [&, slot](quint64 requestId) { searchIds[slot] = requestId; });
     }
 
-    connect(
-        panes[0], &TerminalPane::searchUiActiveChanged,
-        this, [&] {
-            ++firstSearchEffects;
-            deletingFirstWorkspace = true;
-            workspaces[0].reset();
-            deletingFirstWorkspace = false;
-        });
-    connect(
-        panes[1], &TerminalPane::searchUiFocusRequested,
-        this, [&] {
-            ++survivorSearchEffects;
-            survivorEffectDuringDestruction |=
-                deletingFirstWorkspace;
-        });
-    connect(
-        controllers[0], &TerminalController::copyActionRequested,
-        this, [&](quint64 requestId) {
-            ++firstCopyRequests;
-            copyIds[0] = requestId;
-            copyStartedDuringDestruction |=
-                deletingFirstWorkspace;
-        });
-    connect(
-        controllers[1], &TerminalController::copyActionRequested,
-        this, [&](quint64 requestId) {
-            ++survivorCopyRequests;
-            copyIds[1] = requestId;
-            copyStartedDuringDestruction |=
-                deletingFirstWorkspace;
-        });
+    connect(panes[0], &TerminalPane::searchUiActiveChanged, this, [&] {
+        ++firstSearchEffects;
+        deletingFirstWorkspace = true;
+        workspaces[0].reset();
+        deletingFirstWorkspace = false;
+    });
+    connect(panes[1], &TerminalPane::searchUiFocusRequested, this, [&] {
+        ++survivorSearchEffects;
+        survivorEffectDuringDestruction |= deletingFirstWorkspace;
+    });
+    connect(controllers[0], &TerminalController::copyActionRequested, this,
+            [&](quint64 requestId) {
+                ++firstCopyRequests;
+                copyIds[0] = requestId;
+                copyStartedDuringDestruction |= deletingFirstWorkspace;
+            });
+    connect(controllers[1], &TerminalController::copyActionRequested, this,
+            [&](quint64 requestId) {
+                ++survivorCopyRequests;
+                copyIds[1] = requestId;
+                copyStartedDuringDestruction |= deletingFirstWorkspace;
+            });
     QSignalSpy applicationActions(
-        &bindings,
-        &GhosttyApplicationKeybindings::applicationActionRequested);
+        &bindings, &GhosttyApplicationKeybindings::applicationActionRequested);
 
     bindings.dispatchBroadActions({
         QStringLiteral("search_selection"),
@@ -9340,18 +9138,16 @@ void TerminalWorkspaceTest::
     // Prepare the first snapshot entry without completing the barrier. The
     // survivor emits the final result so deleting target zero during its
     // StartSearch publication cannot invalidate the signal sender.
-    Q_EMIT controllers[0]->terminalActionReady(
-        successfulTerminalActionResult(
-            searchIds[0], TerminalActionEffect::StartSearch,
-            QStringLiteral("destroy me")));
+    Q_EMIT controllers[0]->terminalActionReady(successfulTerminalActionResult(
+        searchIds[0], TerminalActionEffect::StartSearch,
+        QStringLiteral("destroy me")));
     QCoreApplication::sendPostedEvents(panes[0], QEvent::MetaCall);
     QCOMPARE(firstSearchEffects, 0);
     QCOMPARE(survivorSearchEffects, 0);
 
-    Q_EMIT controllers[1]->terminalActionReady(
-        successfulTerminalActionResult(
-            searchIds[1], TerminalActionEffect::StartSearch,
-            QStringLiteral("survivor")));
+    Q_EMIT controllers[1]->terminalActionReady(successfulTerminalActionResult(
+        searchIds[1], TerminalActionEffect::StartSearch,
+        QStringLiteral("survivor")));
     QCoreApplication::sendPostedEvents(panes[1], QEvent::MetaCall);
 
     QVERIFY(workspaces[0] == nullptr);
@@ -9378,23 +9174,20 @@ void TerminalWorkspaceTest::
     QVERIFY(!survivorEffectDuringDestruction);
     QVERIFY(!copyStartedDuringDestruction);
     QVERIFY(panes[1]->searchUiActive());
-    QCOMPARE(panes[1]->searchUiText(),
-             QStringLiteral("survivor"));
+    QCOMPARE(panes[1]->searchUiText(), QStringLiteral("survivor"));
 
     Q_EMIT controllers[1]->terminalActionReady(
         successfulTerminalActionResult(copyIds[1]));
     QCoreApplication::sendPostedEvents(panes[1], QEvent::MetaCall);
     QCOMPARE(applicationActions.count(), 1);
-    QCOMPARE(
-        qvariant_cast<ApplicationAction>(
-            applicationActions.constFirst().constFirst()),
-        ApplicationAction::ReloadConfig);
+    QCOMPARE(qvariant_cast<ApplicationAction>(
+                 applicationActions.constFirst().constFirst()),
+             ApplicationAction::ReloadConfig);
     QCOMPARE(firstSearchEffects, 1);
     QCOMPARE(survivorSearchEffects, 1);
 }
 
-void TerminalWorkspaceTest::
-    broadDeferredInputFifoSurvivesReplayReentrancy()
+void TerminalWorkspaceTest::broadDeferredInputFifoSurvivesReplayReentrancy()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
@@ -9404,10 +9197,8 @@ void TerminalWorkspaceTest::
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     TerminalWorkspace workspace;
-    QVERIFY(workspace.initialize(
-        options, TerminalSessionStartMode::Deferred));
-    TerminalPane *const pane =
-        workspace.findChild<TerminalPane *>();
+    QVERIFY(workspace.initialize(options, TerminalSessionStartMode::Deferred));
+    TerminalPane *const pane = workspace.findChild<TerminalPane *>();
     QVERIFY(pane != nullptr);
     TerminalController *const controller =
         pane->findChild<TerminalController *>();
@@ -9417,64 +9208,52 @@ void TerminalWorkspaceTest::
     GhosttyApplicationKeybindings bindings(options, false);
     bindings.registerWorkspace(&workspace);
     quint64 requestId = 0;
-    connect(
-        controller,
-        &TerminalController::writeTerminalFileRequested,
-        this,
-        [&requestId](
-            quint64 emittedRequestId,
-            const TerminalWriteFileAction &) {
-            requestId = emittedRequestId;
-        });
+    connect(controller, &TerminalController::writeTerminalFileRequested, this,
+            [&requestId](quint64 emittedRequestId,
+                         const TerminalWriteFileAction &) {
+                requestId = emittedRequestId;
+            });
 
     QStringList order;
     bool injected = false;
     std::optional<TerminalKeyInput> replayedC;
     std::optional<TerminalKeyInput> replayedCRelease;
-    connect(
-        controller, &TerminalController::keyRequested, pane,
-        [&](const TerminalKeyInput &input) {
-            order.append(QStringLiteral("%1-%2")
-                             .arg(QChar(input.key))
-                             .arg(input.pressed ? QStringLiteral("press")
-                                                : QStringLiteral("release")));
-            if (input.key == Qt::Key_C && input.pressed) replayedC = input;
-            if (input.key == Qt::Key_C && !input.pressed) {
-                replayedCRelease = input;
-            }
-            if (injected || input.key != Qt::Key_C
-                || !input.pressed) {
-                return;
-            }
-            injected = true;
-            QKeyEvent nested(
-                QEvent::KeyPress, Qt::Key_E, Qt::NoModifier,
-                QStringLiteral("e"));
-            QCoreApplication::sendEvent(pane, &nested);
-            QInputMethodEvent nestedInput;
-            nestedInput.setCommitString(
-                QStringLiteral("new-ime"));
-            QCoreApplication::sendEvent(pane, &nestedInput);
-            bindings.dispatchBroadActions(
-                {QStringLiteral("increase_font_size:1")});
-        });
-    connect(
-        controller, &TerminalController::inputMethodRequested, pane,
-        [&order](const TerminalInputMethodInput &input) {
-            order.append(
-                QStringLiteral("ime:%1").arg(input.commitText));
-        });
-    connect(
-        pane, &TerminalPane::fontPointSizeChanged, pane,
-        [&order] { order.append(QStringLiteral("font")); });
+    connect(controller, &TerminalController::keyRequested, pane,
+            [&](const TerminalKeyInput &input) {
+                order.append(QStringLiteral("%1-%2")
+                                 .arg(QChar(input.key))
+                                 .arg(input.pressed
+                                          ? QStringLiteral("press")
+                                          : QStringLiteral("release")));
+                if (input.key == Qt::Key_C && input.pressed) replayedC = input;
+                if (input.key == Qt::Key_C && !input.pressed) {
+                    replayedCRelease = input;
+                }
+                if (injected || input.key != Qt::Key_C || !input.pressed) {
+                    return;
+                }
+                injected = true;
+                QKeyEvent nested(QEvent::KeyPress, Qt::Key_E, Qt::NoModifier,
+                                 QStringLiteral("e"));
+                QCoreApplication::sendEvent(pane, &nested);
+                QInputMethodEvent nestedInput;
+                nestedInput.setCommitString(QStringLiteral("new-ime"));
+                QCoreApplication::sendEvent(pane, &nestedInput);
+                bindings.dispatchBroadActions(
+                    {QStringLiteral("increase_font_size:1")});
+            });
+    connect(controller, &TerminalController::inputMethodRequested, pane,
+            [&order](const TerminalInputMethodInput &input) {
+                order.append(QStringLiteral("ime:%1").arg(input.commitText));
+            });
+    connect(pane, &TerminalPane::fontPointSizeChanged, pane,
+            [&order] { order.append(QStringLiteral("font")); });
 
-    bindings.dispatchBroadActions(
-        {QStringLiteral("write_screen_file:open")});
+    bindings.dispatchBroadActions({QStringLiteral("write_screen_file:open")});
     QVERIFY(requestId != 0);
 
-    QKeyEvent cPress(
-        QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
-        QStringLiteral("c"));
+    QKeyEvent cPress(QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
+                     QStringLiteral("c"));
     {
         const ScopedKeyboardLayoutTranslation scope(
             cPress,
@@ -9492,8 +9271,7 @@ void TerminalWorkspaceTest::
     QInputMethodEvent oldInput;
     oldInput.setCommitString(QStringLiteral("old-ime"));
     QCoreApplication::sendEvent(pane, &oldInput);
-    QKeyEvent cRelease(
-        QEvent::KeyRelease, Qt::Key_C, Qt::NoModifier);
+    QKeyEvent cRelease(QEvent::KeyRelease, Qt::Key_C, Qt::NoModifier);
     {
         const ScopedKeyboardLayoutTranslation releaseScope(
             cRelease,
@@ -9503,16 +9281,13 @@ void TerminalWorkspaceTest::
             });
         QCoreApplication::sendEvent(pane, &cRelease);
     }
-    QKeyEvent dPress(
-        QEvent::KeyPress, Qt::Key_D, Qt::NoModifier,
-        QStringLiteral("d"));
+    QKeyEvent dPress(QEvent::KeyPress, Qt::Key_D, Qt::NoModifier,
+                     QStringLiteral("d"));
     QCoreApplication::sendEvent(pane, &dPress);
     QVERIFY(order.isEmpty());
 
-    Q_EMIT controller->terminalActionReady(
-        successfulOpenFileResult(
-            requestId,
-            QStringLiteral("/tmp/global-reentrant-input-fifo.txt")));
+    Q_EMIT controller->terminalActionReady(successfulOpenFileResult(
+        requestId, QStringLiteral("/tmp/global-reentrant-input-fifo.txt")));
     QCoreApplication::processEvents();
 
     QVERIFY(injected);
@@ -9526,21 +9301,19 @@ void TerminalWorkspaceTest::
     QVERIFY(replayedC->capsLock);
     QVERIFY(replayedC->numLock);
     QVERIFY(replayedC->consumedCapsLock);
-    QCOMPARE(
-        order,
-        QStringList({
-            QStringLiteral("C-press"),
-            QStringLiteral("ime:old-ime"),
-            QStringLiteral("C-release"),
-            QStringLiteral("D-press"),
-            QStringLiteral("E-press"),
-            QStringLiteral("ime:new-ime"),
-            QStringLiteral("font"),
-        }));
+    QCOMPARE(order,
+             QStringList({
+                 QStringLiteral("C-press"),
+                 QStringLiteral("ime:old-ime"),
+                 QStringLiteral("C-release"),
+                 QStringLiteral("D-press"),
+                 QStringLiteral("E-press"),
+                 QStringLiteral("ime:new-ime"),
+                 QStringLiteral("font"),
+             }));
 }
 
-void TerminalWorkspaceTest::
-    broadTerminalBarrierSkipsDestroyedTargets()
+void TerminalWorkspaceTest::broadTerminalBarrierSkipsDestroyedTargets()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
@@ -9563,12 +9336,11 @@ void TerminalWorkspaceTest::
 
     GhosttyApplicationKeybindings bindings(options, false);
     for (qsizetype index = 0; index < targetCount; ++index) {
-        workspaces[static_cast<std::size_t>(index)] =
-            new TerminalWorkspace;
+        workspaces[static_cast<std::size_t>(index)] = new TerminalWorkspace;
         TerminalWorkspace *const workspace =
             workspaces[static_cast<std::size_t>(index)].data();
-        QVERIFY(workspace->initialize(
-            options, TerminalSessionStartMode::Deferred));
+        QVERIFY(
+            workspace->initialize(options, TerminalSessionStartMode::Deferred));
         bindings.registerWorkspace(workspace);
 
         panes[static_cast<std::size_t>(index)] =
@@ -9577,50 +9349,37 @@ void TerminalWorkspaceTest::
         controllers[static_cast<std::size_t>(index)] =
             panes[static_cast<std::size_t>(index)]
                 ->findChild<TerminalController *>();
-        QVERIFY(controllers[static_cast<std::size_t>(index)]
-                != nullptr);
+        QVERIFY(controllers[static_cast<std::size_t>(index)] != nullptr);
 
         panes[static_cast<std::size_t>(index)]->setUrlOpener(
             [&, index](const QUrl &) {
                 openOrder.append(index);
                 return true;
             });
-        connect(
-            controllers[static_cast<std::size_t>(index)],
-            &TerminalController::writeTerminalFileRequested,
-            this,
-            [&, index](
-                quint64 requestId,
-                const TerminalWriteFileAction &) {
-                requestIds[index] = requestId;
-            });
+        connect(controllers[static_cast<std::size_t>(index)],
+                &TerminalController::writeTerminalFileRequested, this,
+                [&, index](quint64 requestId, const TerminalWriteFileAction &) {
+                    requestIds[index] = requestId;
+                });
     }
 
     QSignalSpy applicationActions(
-        &bindings,
-        &GhosttyApplicationKeybindings::applicationActionRequested);
+        &bindings, &GhosttyApplicationKeybindings::applicationActionRequested);
     bool resumedInsideEarlierDestroyedObserver = false;
-    connect(
-        workspaces[1], &QObject::destroyed, this,
-        [&] {
-            // This observer predates the broad snapshot's destruction
-            // connection. A nested event turn can therefore deliver the
-            // remaining results before the coordinator's destroyed slot.
-            Q_EMIT controllers[2]->terminalActionReady(
-                successfulOpenFileResult(
-                    requestIds.at(2),
-                    QStringLiteral(
-                        "/tmp/ghostty-qt-survivor-2.txt")));
-            Q_EMIT controllers[0]->terminalActionReady(
-                successfulOpenFileResult(
-                    requestIds.at(0),
-                    QStringLiteral(
-                        "/tmp/ghostty-qt-survivor-0.txt")));
-            QCoreApplication::processEvents();
-            resumedInsideEarlierDestroyedObserver =
-                !openOrder.isEmpty()
-                || applicationActions.count() != 0;
-        });
+    connect(workspaces[1], &QObject::destroyed, this, [&] {
+        // This observer predates the broad snapshot's destruction
+        // connection. A nested event turn can therefore deliver the
+        // remaining results before the coordinator's destroyed slot.
+        Q_EMIT controllers[2]->terminalActionReady(successfulOpenFileResult(
+            requestIds.at(2),
+            QStringLiteral("/tmp/ghostty-qt-survivor-2.txt")));
+        Q_EMIT controllers[0]->terminalActionReady(successfulOpenFileResult(
+            requestIds.at(0),
+            QStringLiteral("/tmp/ghostty-qt-survivor-0.txt")));
+        QCoreApplication::processEvents();
+        resumedInsideEarlierDestroyedObserver =
+            !openOrder.isEmpty() || applicationActions.count() != 0;
+    });
     bindings.dispatchBroadActions({
         QStringLiteral("write_screen_file:open"),
         QStringLiteral("reload_config"),
@@ -9632,10 +9391,8 @@ void TerminalWorkspaceTest::
     // A prepared result remains buffered until the whole barrier resolves.
     // Destroying that target afterward must retain destruction observation,
     // skip its effect, and keep waiting for both live targets.
-    Q_EMIT controllers[1]->terminalActionReady(
-        successfulOpenFileResult(
-            requestIds.at(1),
-            QStringLiteral("/tmp/ghostty-qt-dead-target.txt")));
+    Q_EMIT controllers[1]->terminalActionReady(successfulOpenFileResult(
+        requestIds.at(1), QStringLiteral("/tmp/ghostty-qt-dead-target.txt")));
     QCoreApplication::processEvents();
     QVERIFY(openOrder.isEmpty());
 
@@ -9648,16 +9405,14 @@ void TerminalWorkspaceTest::
     QCOMPARE(applicationActions.count(), 0);
     QCoreApplication::processEvents();
 
-    QTRY_COMPARE(
-        openOrder, QVector<qsizetype>({0, 2}));
+    QTRY_COMPARE(openOrder, QVector<qsizetype>({0, 2}));
     QCOMPARE(applicationActions.count(), 1);
     QCOMPARE(qvariant_cast<ApplicationAction>(
                  applicationActions.constFirst().constFirst()),
              ApplicationAction::ReloadConfig);
 }
 
-void TerminalWorkspaceTest::
-    finalBroadTargetDestructionDefersKeyReplay()
+void TerminalWorkspaceTest::finalBroadTargetDestructionDefersKeyReplay()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
@@ -9674,15 +9429,13 @@ void TerminalWorkspaceTest::
         .actions = {QStringLiteral("increase_font_size:1")},
         .flags = GhosttyKeybindFlags{.global = true},
     }};
-    options.keybindSource =
-        GhosttyKeybindSource::structured(std::move(config));
+    options.keybindSource = GhosttyKeybindSource::structured(std::move(config));
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     GhosttyApplicationKeybindings bindings(options, false);
-    QPointer<TerminalWorkspace> barrierWorkspace =
-        new TerminalWorkspace;
-    QVERIFY(barrierWorkspace->initialize(
-        options, TerminalSessionStartMode::Deferred));
+    QPointer<TerminalWorkspace> barrierWorkspace = new TerminalWorkspace;
+    QVERIFY(barrierWorkspace->initialize(options,
+                                         TerminalSessionStartMode::Deferred));
     bindings.registerWorkspace(barrierWorkspace);
 
     TerminalController *const barrierController =
@@ -9697,44 +9450,33 @@ void TerminalWorkspaceTest::
     bool deletingWorkspace = false;
     bool replayedBeforeDispatchReturned = false;
     bool replayedDuringDestruction = false;
-    const auto cleanup = qScopeGuard([&survivor] {
-        delete survivor.data();
-    });
+    const auto cleanup = qScopeGuard([&survivor] { delete survivor.data(); });
     connect(
-        barrierController,
-        &TerminalController::writeTerminalFileRequested,
-        this,
-        [&](
-            quint64 emittedRequestId,
-            const TerminalWriteFileAction &) {
+        barrierController, &TerminalController::writeTerminalFileRequested,
+        this, [&](quint64 emittedRequestId, const TerminalWriteFileAction &) {
             requestId = emittedRequestId;
             // This workspace is registered after the current entry's target
             // snapshot. Its key events join the active process FIFO.
             survivor = new TerminalWorkspace;
-            QVERIFY(survivor->initialize(
-                options, TerminalSessionStartMode::Deferred));
+            QVERIFY(survivor->initialize(options,
+                                         TerminalSessionStartMode::Deferred));
             bindings.registerWorkspace(survivor);
             survivorPane = survivor->findChild<TerminalPane *>();
             QVERIFY(survivorPane != nullptr);
             initialFontSize = survivorPane->fontPointSize();
             connect(
-                survivorPane, &TerminalPane::fontPointSizeChanged,
-                this, [&] {
-                    replayedBeforeDispatchReturned |=
-                        dispatchingBroadAction;
+                survivorPane, &TerminalPane::fontPointSizeChanged, this, [&] {
+                    replayedBeforeDispatchReturned |= dispatchingBroadAction;
                     replayedDuringDestruction |= deletingWorkspace;
                 });
 
-            QKeyEvent keyPress(
-                QEvent::KeyPress, Qt::Key_G, Qt::ControlModifier,
-                QString(QChar(0x07)));
+            QKeyEvent keyPress(QEvent::KeyPress, Qt::Key_G, Qt::ControlModifier,
+                               QString(QChar(0x07)));
             QCoreApplication::sendEvent(survivorPane, &keyPress);
-            QKeyEvent keyRelease(
-                QEvent::KeyRelease, Qt::Key_G,
-                Qt::ControlModifier);
+            QKeyEvent keyRelease(QEvent::KeyRelease, Qt::Key_G,
+                                 Qt::ControlModifier);
             QCoreApplication::sendEvent(survivorPane, &keyRelease);
-            QCOMPARE(
-                survivorPane->fontPointSize(), initialFontSize);
+            QCOMPARE(survivorPane->fontPointSize(), initialFontSize);
 
             // Resolve the sole target while request dispatch is still
             // unwinding. The continuation must remember that destruction
@@ -9746,8 +9488,7 @@ void TerminalWorkspaceTest::
         });
 
     dispatchingBroadAction = true;
-    bindings.dispatchBroadActions(
-        {QStringLiteral("write_screen_file:open")});
+    bindings.dispatchBroadActions({QStringLiteral("write_screen_file:open")});
     dispatchingBroadAction = false;
 
     QVERIFY(requestId != 0);
@@ -9764,8 +9505,7 @@ void TerminalWorkspaceTest::
     QCOMPARE(survivorPane->fontPointSize(), initialFontSize + 1.0);
 }
 
-void TerminalWorkspaceTest::
-    destroyedDeferredReleaseClearsGlobalConsumption()
+void TerminalWorkspaceTest::destroyedDeferredReleaseClearsGlobalConsumption()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
@@ -9782,14 +9522,12 @@ void TerminalWorkspaceTest::
         .actions = {QStringLiteral("write_screen_file:open")},
         .flags = GhosttyKeybindFlags{.global = true},
     }};
-    options.keybindSource =
-        GhosttyKeybindSource::structured(std::move(config));
+    options.keybindSource = GhosttyKeybindSource::structured(std::move(config));
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     GhosttyApplicationKeybindings bindings(options, false);
     QPointer<TerminalWorkspace> workspace = new TerminalWorkspace;
-    QVERIFY(workspace->initialize(
-        options, TerminalSessionStartMode::Deferred));
+    QVERIFY(workspace->initialize(options, TerminalSessionStartMode::Deferred));
     bindings.registerWorkspace(workspace);
     TerminalPane *const pane = workspace->findChild<TerminalPane *>();
     QVERIFY(pane != nullptr);
@@ -9797,25 +9535,20 @@ void TerminalWorkspaceTest::
         pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     quint64 requestId = 0;
-    connect(
-        controller,
-        &TerminalController::writeTerminalFileRequested,
-        this,
-        [&requestId](
-            quint64 emittedRequestId,
-            const TerminalWriteFileAction &) {
-            requestId = emittedRequestId;
-        });
+    connect(controller, &TerminalController::writeTerminalFileRequested, this,
+            [&requestId](quint64 emittedRequestId,
+                         const TerminalWriteFileAction &) {
+                requestId = emittedRequestId;
+            });
 
     // The global press is consumed and starts a terminal barrier. Its
     // matching release is then deferred with the originating pane target.
-    QKeyEvent keyPress(
-        QEvent::KeyPress, Qt::Key_G, Qt::ControlModifier,
-        QString(QChar(0x07)));
+    QKeyEvent keyPress(QEvent::KeyPress, Qt::Key_G, Qt::ControlModifier,
+                       QString(QChar(0x07)));
     QCoreApplication::sendEvent(pane, &keyPress);
     QVERIFY(requestId != 0);
-    QKeyEvent deferredRelease(
-        QEvent::KeyRelease, Qt::Key_G, Qt::ControlModifier);
+    QKeyEvent deferredRelease(QEvent::KeyRelease, Qt::Key_G,
+                              Qt::ControlModifier);
     QCoreApplication::sendEvent(pane, &deferredRelease);
 
     delete workspace.data();
@@ -9826,8 +9559,7 @@ void TerminalWorkspaceTest::
     // unrelated receiver's later release with the same logical key is eaten
     // by the process-level application filter.
     KeyReleaseReceiver receiver;
-    QKeyEvent laterRelease(
-        QEvent::KeyRelease, Qt::Key_G, Qt::ControlModifier);
+    QKeyEvent laterRelease(QEvent::KeyRelease, Qt::Key_G, Qt::ControlModifier);
     QCoreApplication::sendEvent(&receiver, &laterRelease);
     QCOMPARE(receiver.releaseCount(), 1);
 }
@@ -9891,29 +9623,24 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
             controller, &TerminalController::scrollRequested));
         selectAllSpies.emplace_back(std::make_unique<QSignalSpy>(
             controller, &TerminalController::selectAllActionRequested));
-        adjustmentActionSpies.emplace_back(
-            std::make_unique<QSignalSpy>(
-                controller,
-                &TerminalController::selectionAdjustmentActionRequested));
-        scrollToSelectionSpies.emplace_back(
-            std::make_unique<QSignalSpy>(
-                controller,
-                &TerminalController::scrollToSelectionActionRequested));
-        searchSelectionSpies.emplace_back(
-            std::make_unique<QSignalSpy>(
-                controller,
-                &TerminalController::searchSelectionActionRequested));
+        adjustmentActionSpies.emplace_back(std::make_unique<QSignalSpy>(
+            controller,
+            &TerminalController::selectionAdjustmentActionRequested));
+        scrollToSelectionSpies.emplace_back(std::make_unique<QSignalSpy>(
+            controller, &TerminalController::scrollToSelectionActionRequested));
+        searchSelectionSpies.emplace_back(std::make_unique<QSignalSpy>(
+            controller, &TerminalController::searchSelectionActionRequested));
         csiSpies.emplace_back(std::make_unique<QSignalSpy>(
             controller, &TerminalController::csiRequested));
         resetSpies.emplace_back(std::make_unique<QSignalSpy>(
             controller, &TerminalController::resetTerminalRequested));
-        connect(controller, &TerminalController::csiRequested,
-                this, [&controlFanoutOrder, paneIndex](const QByteArray &) {
+        connect(controller, &TerminalController::csiRequested, this,
+                [&controlFanoutOrder, paneIndex](const QByteArray &) {
                     controlFanoutOrder.append(
                         QStringLiteral("csi:%1").arg(paneIndex));
                 });
-        connect(controller, &TerminalController::resetTerminalRequested,
-                this, [&controlFanoutOrder, paneIndex] {
+        connect(controller, &TerminalController::resetTerminalRequested, this,
+                [&controlFanoutOrder, paneIndex] {
                     controlFanoutOrder.append(
                         QStringLiteral("reset:%1").arg(paneIndex));
                 });
@@ -9923,50 +9650,48 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
     QVector<PaneId> activePaneIds;
     activePaneIds.reserve(workspace.tabCount());
     for (int index = 0; index < workspace.tabCount(); ++index) {
-        activePaneIds.append(workspace.tabModel()->entryAt(index)->activePaneId);
+        activePaneIds.append(
+            workspace.tabModel()->entryAt(index)->activePaneId);
     }
-    QCOMPARE(std::ranges::count_if(
-                 controllers,
-                 [](const TerminalController *controller) {
-                     return controller->mouseReportingEnabled();
-                 }),
-             1);
+    QCOMPARE(
+        std::ranges::count_if(controllers,
+                              [](const TerminalController *controller) {
+                                  return controller->mouseReportingEnabled();
+                              }),
+        1);
     QVERIFY(configuredSourceController->mouseReportingEnabled());
 
     LaunchOptions enabledOptions = options;
     enabledOptions.mouseReporting = true;
     workspace.applyLaunchOptions(enabledOptions);
-    QVERIFY(std::ranges::all_of(
-        controllers,
-        [](const TerminalController *controller) {
-            return controller->mouseReportingEnabled();
-        }));
+    QVERIFY(std::ranges::all_of(controllers,
+                                [](const TerminalController *controller) {
+                                    return controller->mouseReportingEnabled();
+                                }));
 
     // Existing panes remain independent until a reload. Reapplying the same
     // configured value still removes a local override.
     QVERIFY(configuredSource->executeConfiguredAction(
         QStringLiteral("toggle_mouse_reporting")));
     QVERIFY(!configuredSourceController->mouseReportingEnabled());
-    QCOMPARE(std::ranges::count_if(
-                 controllers,
-                 [](const TerminalController *controller) {
-                     return controller->mouseReportingEnabled();
-                 }),
-             2);
+    QCOMPARE(
+        std::ranges::count_if(controllers,
+                              [](const TerminalController *controller) {
+                                  return controller->mouseReportingEnabled();
+                              }),
+        2);
     workspace.applyLaunchOptions(enabledOptions);
-    QVERIFY(std::ranges::all_of(
-        controllers,
-        [](const TerminalController *controller) {
-            return controller->mouseReportingEnabled();
-        }));
+    QVERIFY(std::ranges::all_of(controllers,
+                                [](const TerminalController *controller) {
+                                    return controller->mouseReportingEnabled();
+                                }));
 
     QVERIFY(workspace.executeSurfaceActionOnAllPanes(
         QStringLiteral("toggle_mouse_reporting")));
-    QVERIFY(std::ranges::none_of(
-        controllers,
-        [](const TerminalController *controller) {
-            return controller->mouseReportingEnabled();
-        }));
+    QVERIFY(std::ranges::none_of(controllers,
+                                 [](const TerminalController *controller) {
+                                     return controller->mouseReportingEnabled();
+                                 }));
     QCOMPARE(workspace.currentIndex(), currentIndex);
     for (int index = 0; index < workspace.tabCount(); ++index) {
         QCOMPARE(workspace.tabModel()->entryAt(index)->activePaneId,
@@ -9974,11 +9699,10 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
     }
     QVERIFY(workspace.executeSurfaceActionOnAllPanes(
         QStringLiteral("toggle_mouse_reporting")));
-    QVERIFY(std::ranges::all_of(
-        controllers,
-        [](const TerminalController *controller) {
-            return controller->mouseReportingEnabled();
-        }));
+    QVERIFY(std::ranges::all_of(controllers,
+                                [](const TerminalController *controller) {
+                                    return controller->mouseReportingEnabled();
+                                }));
     QVERIFY(!workspace.executeSurfaceActionOnAllPanes(
         QStringLiteral("toggle_mouse_reporting:")));
 
@@ -9996,10 +9720,9 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
             adjustmentActionSpies.at(static_cast<std::size_t>(i));
         QCOMPARE(adjustment->count(), 1);
         QVERIFY(adjustment->constFirst().at(0).toULongLong() != 0);
-        QCOMPARE(
-            qvariant_cast<TerminalSelectionAdjustment>(
-                adjustment->constFirst().at(1)),
-            TerminalSelectionAdjustment::Left);
+        QCOMPARE(qvariant_cast<TerminalSelectionAdjustment>(
+                     adjustment->constFirst().at(1)),
+                 TerminalSelectionAdjustment::Left);
 
         const auto &scroll =
             scrollToSelectionSpies.at(static_cast<std::size_t>(i));
@@ -10022,8 +9745,8 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
         QCOMPARE(request.delta, 3);
     }
 
-    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
-        QStringLiteral("select_all")));
+    QVERIFY(
+        workspace.executeSurfaceActionOnAllPanes(QStringLiteral("select_all")));
     for (const std::unique_ptr<QSignalSpy> &spy : selectAllSpies) {
         QCOMPARE(spy->count(), 1);
     }
@@ -10039,13 +9762,15 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
     applicationBindings.dispatchBroadActions(rawBroadActions);
     QCOMPARE(controlFanoutOrder.size(), 2 * panes.size());
     for (qsizetype index = 0; index < panes.size(); ++index) {
-        QVERIFY(controlFanoutOrder.at(index).startsWith(
-            QLatin1StringView("csi:")));
-        QVERIFY(controlFanoutOrder.at(index + panes.size()).startsWith(
-            QLatin1StringView("reset:")));
+        QVERIFY(
+            controlFanoutOrder.at(index).startsWith(QLatin1StringView("csi:")));
+        QVERIFY(controlFanoutOrder.at(index + panes.size())
+                    .startsWith(QLatin1StringView("reset:")));
         QCOMPARE(csiSpies.at(static_cast<std::size_t>(index))->count(), 1);
         QCOMPARE(csiSpies.at(static_cast<std::size_t>(index))
-                     ->constFirst().constFirst().toByteArray(),
+                     ->constFirst()
+                     .constFirst()
+                     .toByteArray(),
                  QByteArrayLiteral("9:detail"));
         QCOMPARE(resetSpies.at(static_cast<std::size_t>(index))->count(), 1);
     }
@@ -10069,19 +9794,16 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
     QCOMPARE(controlFanoutOrder.size(),
              passCount * actionsPerPass * panes.size());
     for (qsizetype pass = 0; pass < passCount; ++pass) {
-        const qsizetype passOffset =
-            pass * actionsPerPass * panes.size();
+        const qsizetype passOffset = pass * actionsPerPass * panes.size();
         for (qsizetype index = 0; index < panes.size(); ++index) {
-            QVERIFY(controlFanoutOrder.at(passOffset + index).startsWith(
-                QLatin1StringView("csi:")));
-            QVERIFY(controlFanoutOrder.at(
-                passOffset + panes.size() + index).startsWith(
-                    QLatin1StringView("reset:")));
+            QVERIFY(controlFanoutOrder.at(passOffset + index)
+                        .startsWith(QLatin1StringView("csi:")));
+            QVERIFY(controlFanoutOrder.at(passOffset + panes.size() + index)
+                        .startsWith(QLatin1StringView("reset:")));
         }
     }
     for (qsizetype index = 0; index < panes.size(); ++index) {
-        const auto &csiSpy =
-            csiSpies.at(static_cast<std::size_t>(index));
+        const auto &csiSpy = csiSpies.at(static_cast<std::size_t>(index));
         QCOMPARE(csiSpy->count(), 2);
         for (const QList<QVariant> &arguments : *csiSpy) {
             QCOMPARE(arguments.constFirst().toByteArray(),
@@ -10104,11 +9826,9 @@ void TerminalWorkspaceTest::routesWindowStateActionsToHostWindows()
     {
         TerminalWorkspace emptyWorkspace;
         QSignalSpy emptyFullscreenRequested(
-            &emptyWorkspace,
-            &TerminalWorkspace::toggleFullscreenRequested);
+            &emptyWorkspace, &TerminalWorkspace::toggleFullscreenRequested);
         QSignalSpy emptyMaximizeRequested(
-            &emptyWorkspace,
-            &TerminalWorkspace::toggleMaximizeRequested);
+            &emptyWorkspace, &TerminalWorkspace::toggleMaximizeRequested);
         QSignalSpy emptyDecorationChanged(
             &emptyWorkspace, &TerminalWorkspace::windowDecorationChanged);
         QVERIFY(!emptyWorkspace.executeSurfaceActionOnAllPanes(
@@ -10134,8 +9854,7 @@ void TerminalWorkspaceTest::routesWindowStateActionsToHostWindows()
             &unattachedWorkspace,
             &TerminalWorkspace::toggleFullscreenRequested);
         QSignalSpy unattachedMaximizeRequested(
-            &unattachedWorkspace,
-            &TerminalWorkspace::toggleMaximizeRequested);
+            &unattachedWorkspace, &TerminalWorkspace::toggleMaximizeRequested);
         QSignalSpy unattachedDecorationChanged(
             &unattachedWorkspace, &TerminalWorkspace::windowDecorationChanged);
         QVERIFY(!unattachedWorkspace.dispatchAction({
@@ -10175,8 +9894,8 @@ void TerminalWorkspaceTest::routesWindowStateActionsToHostWindows()
 
     QSignalSpy fullscreenRequested(
         workspace.get(), &TerminalWorkspace::toggleFullscreenRequested);
-    QSignalSpy maximizeRequested(
-        workspace.get(), &TerminalWorkspace::toggleMaximizeRequested);
+    QSignalSpy maximizeRequested(workspace.get(),
+                                 &TerminalWorkspace::toggleMaximizeRequested);
     QSignalSpy decorationChanged(workspace.get(),
                                  &TerminalWorkspace::windowDecorationChanged);
     QVERIFY(workspace->dispatchAction({
@@ -10307,11 +10026,9 @@ void TerminalWorkspaceTest::routesWindowStateActionsToHostWindows()
     QTRY_COMPARE_WITH_TIMEOUT(secondWorkspace->tabCount(), 1, 1000);
 
     QSignalSpy secondFullscreenRequested(
-        secondWorkspace.get(),
-        &TerminalWorkspace::toggleFullscreenRequested);
+        secondWorkspace.get(), &TerminalWorkspace::toggleFullscreenRequested);
     QSignalSpy secondMaximizeRequested(
-        secondWorkspace.get(),
-        &TerminalWorkspace::toggleMaximizeRequested);
+        secondWorkspace.get(), &TerminalWorkspace::toggleMaximizeRequested);
     QSignalSpy secondDecorationChanged(
         secondWorkspace.get(), &TerminalWorkspace::windowDecorationChanged);
     GhosttyApplicationKeybindings applicationBindings(options, false);
@@ -10352,33 +10069,24 @@ void TerminalWorkspaceTest::splitDirectionsPlaceAndFocusNewPane_data()
     const QSizeF wide(902.0, 602.0);
     const QSizeF tall(602.0, 902.0);
     const QSizeF square(602.0, 602.0);
-    QTest::newRow("left")
-        << QStringLiteral("new_split:left") << wide
-        << Qt::Horizontal << true;
-    QTest::newRow("right")
-        << QStringLiteral("new_split:right") << wide
-        << Qt::Horizontal << false;
-    QTest::newRow("up")
-        << QStringLiteral("new_split:up") << tall
-        << Qt::Vertical << true;
-    QTest::newRow("down")
-        << QStringLiteral("new_split:down") << tall
-        << Qt::Vertical << false;
+    QTest::newRow("left") << QStringLiteral("new_split:left") << wide
+                          << Qt::Horizontal << true;
+    QTest::newRow("right") << QStringLiteral("new_split:right") << wide
+                           << Qt::Horizontal << false;
+    QTest::newRow("up") << QStringLiteral("new_split:up") << tall
+                        << Qt::Vertical << true;
+    QTest::newRow("down") << QStringLiteral("new_split:down") << tall
+                          << Qt::Vertical << false;
     QTest::newRow("explicit-auto-wide")
-        << QStringLiteral("new_split:auto") << wide
-        << Qt::Horizontal << false;
+        << QStringLiteral("new_split:auto") << wide << Qt::Horizontal << false;
     QTest::newRow("explicit-auto-tall")
-        << QStringLiteral("new_split:auto") << tall
-        << Qt::Vertical << false;
+        << QStringLiteral("new_split:auto") << tall << Qt::Vertical << false;
     QTest::newRow("explicit-auto-square")
-        << QStringLiteral("new_split:auto") << square
-        << Qt::Vertical << false;
+        << QStringLiteral("new_split:auto") << square << Qt::Vertical << false;
     QTest::newRow("default-auto-wide")
-        << QStringLiteral("new_split") << wide
-        << Qt::Horizontal << false;
+        << QStringLiteral("new_split") << wide << Qt::Horizontal << false;
     QTest::newRow("default-auto-square")
-        << QStringLiteral("new_split") << square
-        << Qt::Vertical << false;
+        << QStringLiteral("new_split") << square << Qt::Vertical << false;
 }
 
 void TerminalWorkspaceTest::splitDirectionsPlaceAndFocusNewPane()
@@ -10407,9 +10115,8 @@ void TerminalWorkspaceTest::splitDirectionsPlaceAndFocusNewPane()
     const QList<TerminalPane *> panes =
         workspace.findChildren<TerminalPane *>();
     QCOMPARE(panes.size(), 2);
-    TerminalPane *newPane = panes.at(0) == originalPane
-        ? panes.at(1)
-        : panes.at(0);
+    TerminalPane *newPane =
+        panes.at(0) == originalPane ? panes.at(1) : panes.at(0);
     QVERIFY(newPane != nullptr);
 
     const TabListEntry *after = workspace.tabModel()->entryAt(0);
@@ -10419,16 +10126,14 @@ void TerminalWorkspaceTest::splitDirectionsPlaceAndFocusNewPane()
         QVERIFY(qAbs(originalPane->height() - newPane->height()) <= 1.0);
         QVERIFY(qAbs(originalPane->width() - newPane->width()) <= 1.0);
         QCOMPARE(qRound(originalPane->y()), qRound(newPane->y()));
-        QVERIFY(placeNewPaneFirst
-                    ? newPane->x() < originalPane->x()
-                    : newPane->x() > originalPane->x());
+        QVERIFY(placeNewPaneFirst ? newPane->x() < originalPane->x()
+                                  : newPane->x() > originalPane->x());
     } else {
         QVERIFY(qAbs(originalPane->width() - newPane->width()) <= 1.0);
         QVERIFY(qAbs(originalPane->height() - newPane->height()) <= 1.0);
         QCOMPARE(qRound(originalPane->x()), qRound(newPane->x()));
-        QVERIFY(placeNewPaneFirst
-                    ? newPane->y() < originalPane->y()
-                    : newPane->y() > originalPane->y());
+        QVERIFY(placeNewPaneFirst ? newPane->y() < originalPane->y()
+                                  : newPane->y() > originalPane->y());
     }
 }
 
@@ -10450,9 +10155,8 @@ void TerminalWorkspaceTest::automaticSplitUsesOriginatingPaneAspect()
     QVERIFY(leftPane->executeConfiguredAction(QStringLiteral("new_split")));
     QList<TerminalPane *> panes = workspace.findChildren<TerminalPane *>();
     QCOMPARE(panes.size(), 2);
-    TerminalPane *rightPane = panes.at(0) == leftPane
-        ? panes.at(1)
-        : panes.at(0);
+    TerminalPane *rightPane =
+        panes.at(0) == leftPane ? panes.at(1) : panes.at(0);
     QVERIFY(rightPane->x() > leftPane->x());
     QVERIFY(rightPane->width() < rightPane->height());
 
@@ -10720,12 +10424,10 @@ void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
     QTRY_COMPARE_WITH_TIMEOUT(workspace.window(), &window, 1000);
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     const TabId tabId = workspace.tabModel()->idAt(0);
-    const PaneId firstPaneId =
-        workspace.tabModel()->entryAt(0)->activePaneId;
+    const PaneId firstPaneId = workspace.tabModel()->entryAt(0)->activePaneId;
     TerminalPane *firstPane = workspace.findChild<TerminalPane *>();
     QVERIFY(firstPane != nullptr);
-    auto *firstController =
-        firstPane->findChild<TerminalController *>();
+    auto *firstController = firstPane->findChild<TerminalController *>();
     QVERIFY(firstController != nullptr);
     QVERIFY(firstController->hasTitle());
     QCOMPARE(firstController->title(), QStringLiteral("/bin/sh"));
@@ -10740,8 +10442,8 @@ void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
     QVERIFY(workspace.tabModel()->entryAt(0)->title.isEmpty());
     QVERIFY(workspace.currentTitle().isEmpty());
 
-    QVERIFY(firstPane->executeConfiguredAction(QStringLiteral(
-        R"(set_surface_title:\xf0\x9f\x91\xbb base:first)")));
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral(R"(set_surface_title:\xf0\x9f\x91\xbb base:first)")));
     QCOMPARE(firstPane->title(), QStringLiteral("👻 base:first"));
     QCOMPARE(workspace.currentTitle(), QStringLiteral("👻 base:first"));
 
@@ -10769,8 +10471,8 @@ void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
     QTRY_COMPARE_WITH_TIMEOUT(firstPane->title(),
                               QStringLiteral("cached-title"), 3000);
     QCOMPARE(workspace.currentTitle(), QStringLiteral("tab mask"));
-    QVERIFY(firstPane->executeConfiguredAction(
-        QStringLiteral("set_tab_title:")));
+    QVERIFY(
+        firstPane->executeConfiguredAction(QStringLiteral("set_tab_title:")));
     QCOMPARE(workspace.currentTitle(), QStringLiteral("cached-title"));
 
     // OSC 0 with an empty payload is still a present base-title update. It
@@ -10786,8 +10488,7 @@ void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
         WorkspaceAction::SplitRight,
         {tabId, firstPaneId, 0},
     }));
-    const PaneId secondPaneId =
-        workspace.tabModel()->entryAt(0)->activePaneId;
+    const PaneId secondPaneId = workspace.tabModel()->entryAt(0)->activePaneId;
     QVERIFY(secondPaneId.isValid());
     QVERIFY(secondPaneId != firstPaneId);
     TerminalPane *secondPane = nullptr;
@@ -10795,8 +10496,7 @@ void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
         if (pane != firstPane) secondPane = pane;
     }
     QVERIFY(secondPane != nullptr);
-    auto *secondController =
-        secondPane->findChild<TerminalController *>();
+    auto *secondController = secondPane->findChild<TerminalController *>();
     QVERIFY(secondController != nullptr);
     const QString activeTitle = workspace.currentTitle();
 
@@ -10820,8 +10520,7 @@ void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
     }));
     QCOMPARE(firstPane->title(), QStringLiteral("inactive source"));
 
-    QVERIFY(firstPane->executeConfiguredAction(
-        QStringLiteral("select_all")));
+    QVERIFY(firstPane->executeConfiguredAction(QStringLiteral("select_all")));
     QTRY_VERIFY_WITH_TIMEOUT(firstController->selectionAvailable(), 1000);
     secondPane->forceActiveFocus();
     QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), secondPane, 1000);
@@ -10834,8 +10533,8 @@ void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
     QQuickItem *const focusedItem = window.activeFocusItem();
     GhosttyApplicationKeybindings applicationBindings({}, false);
     applicationBindings.registerWorkspace(&workspace);
-    applicationBindings.dispatchBroadActions({QStringLiteral(
-        R"(set_surface_title:\xf0\x9f\x8c\x90 broad)")});
+    applicationBindings.dispatchBroadActions(
+        {QStringLiteral(R"(set_surface_title:\xf0\x9f\x8c\x90 broad)")});
     QCOMPARE(firstTitleChanges.count(), 1);
     QCOMPARE(secondTitleChanges.count(), 1);
     QCOMPARE(firstPane->title(), QStringLiteral("🌐 broad"));
@@ -10866,8 +10565,7 @@ void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
         clipboard, &QClipboard::changed, &workspace,
         [&clipboardWrites, clipboard](QClipboard::Mode mode) {
             if (mode == QClipboard::Clipboard) {
-                clipboardWrites.append(
-                    clipboard->text(QClipboard::Clipboard));
+                clipboardWrites.append(clipboard->text(QClipboard::Clipboard));
             }
         });
     const auto resetClipboards = [&] {
@@ -10879,8 +10577,7 @@ void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
     };
     const auto verifyInteractionState = [&] {
         QCOMPARE(workspace.currentIndex(), selectedIndex);
-        QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId,
-                 secondPaneId);
+        QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, secondPaneId);
         QCOMPARE(firstController->selectionAvailable(), firstSelection);
         QCOMPARE(secondController->selectionAvailable(), secondSelection);
         QCOMPARE(window.activeFocusItem(), focusedItem);
@@ -10910,8 +10607,7 @@ void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
     resetClipboards();
     QVERIFY(workspace.executeSurfaceActionOnAllPanes(copyAction));
     QTRY_COMPARE(clipboard->text(QClipboard::Clipboard), secondCopyTitle);
-    QCOMPARE(clipboardWrites,
-             QStringList({firstCopyTitle, secondCopyTitle}));
+    QCOMPARE(clipboardWrites, QStringList({firstCopyTitle, secondCopyTitle}));
     verifyInteractionState();
 
     secondPane->setSurfaceTitleOverride(std::nullopt);
@@ -10967,8 +10663,7 @@ void TerminalWorkspaceTest::tabTitleOverridesFollowStableSourcesAndReset()
     workspace.setSize(QSizeF(902.0, 602.0));
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     const TabId firstTabId = workspace.tabModel()->idAt(0);
-    const PaneId firstPaneId =
-        workspace.tabModel()->entryAt(0)->activePaneId;
+    const PaneId firstPaneId = workspace.tabModel()->entryAt(0)->activePaneId;
     TerminalPane *firstPane = workspace.findChild<TerminalPane *>();
     QVERIFY(firstPane != nullptr);
 
@@ -10986,16 +10681,14 @@ void TerminalWorkspaceTest::tabTitleOverridesFollowStableSourcesAndReset()
             .toString();
     };
 
-    QSignalSpy currentTitleChanged(
-        &workspace, &TerminalWorkspace::currentTitleChanged);
-    QVERIFY(firstPane->executeConfiguredAction(QStringLiteral(
-        R"(set_tab_title:\xf0\x9f\x91\xbb project:first)")));
+    QSignalSpy currentTitleChanged(&workspace,
+                                   &TerminalWorkspace::currentTitleChanged);
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral(R"(set_tab_title:\xf0\x9f\x91\xbb project:first)")));
     QCOMPARE(entry(firstTabId)->titleOverride,
              QStringLiteral("👻 project:first"));
-    QCOMPARE(displayedTitle(firstTabId),
-             QStringLiteral("👻 project:first"));
-    QCOMPARE(workspace.currentTitle(),
-             QStringLiteral("👻 project:first"));
+    QCOMPARE(displayedTitle(firstTabId), QStringLiteral("👻 project:first"));
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("👻 project:first"));
     QCOMPARE(currentTitleChanged.count(), 1);
 
     // Terminal-originated title changes continue updating the base title
@@ -11004,8 +10697,7 @@ void TerminalWorkspaceTest::tabTitleOverridesFollowStableSourcesAndReset()
                               QStringLiteral("underlying-title"), 3000);
     QTRY_COMPARE_WITH_TIMEOUT(entry(firstTabId)->title,
                               QStringLiteral("underlying-title"), 3000);
-    QCOMPARE(displayedTitle(firstTabId),
-             QStringLiteral("👻 project:first"));
+    QCOMPARE(displayedTitle(firstTabId), QStringLiteral("👻 project:first"));
 
     QVERIFY(workspace.dispatchAction({
         WorkspaceAction::SplitRight,
@@ -11022,8 +10714,7 @@ void TerminalWorkspaceTest::tabTitleOverridesFollowStableSourcesAndReset()
     QCOMPARE(entry(firstTabId)->titleOverride,
              QStringLiteral("👻 project:first"));
     QCOMPARE(entry(firstTabId)->title, secondPane->title());
-    QCOMPARE(displayedTitle(firstTabId),
-             QStringLiteral("👻 project:first"));
+    QCOMPARE(displayedTitle(firstTabId), QStringLiteral("👻 project:first"));
 
     workspace.newTab();
     QCOMPARE(workspace.tabCount(), 2);
@@ -11031,8 +10722,7 @@ void TerminalWorkspaceTest::tabTitleOverridesFollowStableSourcesAndReset()
         workspace.tabModel()->idAt(workspace.currentIndex());
     QVERIFY(secondTabId != firstTabId);
     const QString secondTabTitleBefore = workspace.currentTitle();
-    const int currentSignalsBeforeInactiveUpdate =
-        currentTitleChanged.count();
+    const int currentSignalsBeforeInactiveUpdate = currentTitleChanged.count();
 
     // The originating pane owns the target context even while its tab is
     // inactive. The selected tab and its window title do not drift.
@@ -11042,8 +10732,7 @@ void TerminalWorkspaceTest::tabTitleOverridesFollowStableSourcesAndReset()
              QStringLiteral("inactive source"));
     QVERIFY(entry(secondTabId)->titleOverride.isEmpty());
     QCOMPARE(workspace.currentTitle(), secondTabTitleBefore);
-    QCOMPARE(currentTitleChanged.count(),
-             currentSignalsBeforeInactiveUpdate);
+    QCOMPARE(currentTitleChanged.count(), currentSignalsBeforeInactiveUpdate);
 
     QVERIFY(!workspace.dispatchAction({
         WorkspaceAction::SetTabTitle,
@@ -11062,11 +10751,10 @@ void TerminalWorkspaceTest::tabTitleOverridesFollowStableSourcesAndReset()
     QCOMPARE(workspace.tabModel()->idAt(1), firstTabId);
     QCOMPARE(entry(firstTabId)->titleOverride,
              QStringLiteral("inactive source"));
-    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
-             secondTabId);
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()), secondTabId);
 
-    QVERIFY(firstPane->executeConfiguredAction(
-        QStringLiteral("set_tab_title:")));
+    QVERIFY(
+        firstPane->executeConfiguredAction(QStringLiteral("set_tab_title:")));
     QVERIFY(entry(firstTabId)->titleOverride.isEmpty());
     QCOMPARE(displayedTitle(firstTabId), entry(firstTabId)->title);
     QCOMPARE(workspace.currentTitle(), secondTabTitleBefore);
@@ -11075,8 +10763,8 @@ void TerminalWorkspaceTest::tabTitleOverridesFollowStableSourcesAndReset()
     applicationBindings.registerWorkspace(&workspace);
     const TabId selectedBeforeBroad =
         workspace.tabModel()->idAt(workspace.currentIndex());
-    applicationBindings.dispatchBroadActions({QStringLiteral(
-        R"(set_tab_title:\xf0\x9f\x8c\x90 broad)")});
+    applicationBindings.dispatchBroadActions(
+        {QStringLiteral(R"(set_tab_title:\xf0\x9f\x8c\x90 broad)")});
     for (int index = 0; index < workspace.tabCount(); ++index) {
         QCOMPARE(workspace.tabModel()->entryAt(index)->titleOverride,
                  QStringLiteral("🌐 broad"));
@@ -11373,11 +11061,10 @@ void TerminalWorkspaceTest::surfaceTitlePromptsPreserveStableTargetsAndLayers()
     options.program = {
         QStringLiteral("/bin/sh"),
         QStringLiteral("-c"),
-        QStringLiteral(
-            "while [ ! -e \"$1\" ]; do sleep 0.02; done; "
-            "printf '\\033]0;base-a\\007'; "
-            "while [ ! -e \"$2\" ]; do sleep 0.02; done; "
-            "printf '\\033]0;base-a\\007'; sleep 30"),
+        QStringLiteral("while [ ! -e \"$1\" ]; do sleep 0.02; done; "
+                       "printf '\\033]0;base-a\\007'; "
+                       "while [ ! -e \"$2\" ]; do sleep 0.02; done; "
+                       "printf '\\033]0;base-a\\007'; sleep 30"),
         QStringLiteral("surface-prompt-test"),
         firstRelease,
         secondRelease,
@@ -11389,17 +11076,14 @@ void TerminalWorkspaceTest::surfaceTitlePromptsPreserveStableTargetsAndLayers()
     TerminalWorkspace workspace;
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     const TabId firstTabId = workspace.tabModel()->idAt(0);
-    const PaneId firstPaneId =
-        workspace.tabModel()->entryAt(0)->activePaneId;
+    const PaneId firstPaneId = workspace.tabModel()->entryAt(0)->activePaneId;
     TerminalPane *firstPane = workspace.findChild<TerminalPane *>();
     QVERIFY(firstPane != nullptr);
     auto *controller = firstPane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
 
-    QSignalSpy requested(
-        &workspace, &TerminalWorkspace::titlePromptRequested);
-    QSignalSpy resolved(
-        &workspace, &TerminalWorkspace::titlePromptResolved);
+    QSignalSpy requested(&workspace, &TerminalWorkspace::titlePromptRequested);
+    QSignalSpy resolved(&workspace, &TerminalWorkspace::titlePromptResolved);
 
     // The exact direct argv[0] is the initial base-title layer. A containing
     // tab override masks presentation without changing the surface prompt.
@@ -11412,8 +11096,7 @@ void TerminalWorkspaceTest::surfaceTitlePromptsPreserveStableTargetsAndLayers()
     QCOMPARE(requested.at(0).at(1).toString(),
              QStringLiteral("Change Terminal Title"));
     QCOMPARE(requested.at(0).at(2).toString(), QStringLiteral("/bin/sh"));
-    const quint64 absentPromptId =
-        requested.at(0).at(0).toULongLong();
+    const quint64 absentPromptId = requested.at(0).at(0).toULongLong();
     workspace.cancelTitlePrompt(absentPromptId);
     QCOMPARE(resolved.count(), 1);
 
@@ -11430,8 +11113,7 @@ void TerminalWorkspaceTest::surfaceTitlePromptsPreserveStableTargetsAndLayers()
     QCOMPARE(requested.count(), 2);
     QCOMPARE(requested.at(1).at(2).toString(), QStringLiteral("base-a"));
     const QString override = QStringLiteral("  override 👻  ");
-    const quint64 overridePromptId =
-        requested.at(1).at(0).toULongLong();
+    const quint64 overridePromptId = requested.at(1).at(0).toULongLong();
     workspace.confirmTitlePrompt(overridePromptId, override);
     QCOMPARE(firstPane->surfaceTitleOverride(),
              std::optional<QString>{override});
@@ -11444,8 +11126,8 @@ void TerminalWorkspaceTest::surfaceTitlePromptsPreserveStableTargetsAndLayers()
                                &TerminalController::terminalUpdated);
     const int updatesBeforeReset = terminalUpdates.count();
     QVERIFY(firstPane->executeConfiguredAction(QStringLiteral("reset")));
-    QTRY_VERIFY_WITH_TIMEOUT(
-        terminalUpdates.count() > updatesBeforeReset, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(terminalUpdates.count() > updatesBeforeReset,
+                             1000);
     QCOMPARE(controller->title(), QStringLiteral("base-a"));
     QCOMPARE(firstPane->surfaceTitleOverride(),
              std::optional<QString>{override});
@@ -11470,20 +11152,18 @@ void TerminalWorkspaceTest::surfaceTitlePromptsPreserveStableTargetsAndLayers()
         QStringLiteral("prompt_surface_title")));
     QCOMPARE(requested.count(), 3);
     QCOMPARE(requested.at(2).at(2).toString(), override);
-    const quint64 cancelPromptId =
-        requested.at(2).at(0).toULongLong();
+    const quint64 cancelPromptId = requested.at(2).at(0).toULongLong();
     workspace.cancelTitlePrompt(cancelPromptId);
     QCOMPARE(firstPane->surfaceTitleOverride(),
              std::optional<QString>{override});
 
-    QVERIFY(firstPane->executeConfiguredAction(
-        QStringLiteral("set_tab_title:")));
+    QVERIFY(
+        firstPane->executeConfiguredAction(QStringLiteral("set_tab_title:")));
     QCOMPARE(workspace.currentTitle(), override);
     QVERIFY(firstPane->executeConfiguredAction(
         QStringLiteral("prompt_surface_title")));
     QCOMPARE(requested.count(), 4);
-    const quint64 clearPromptId =
-        requested.at(3).at(0).toULongLong();
+    const quint64 clearPromptId = requested.at(3).at(0).toULongLong();
     workspace.confirmTitlePrompt(clearPromptId, QString{});
     QVERIFY(!firstPane->surfaceTitleOverride().has_value());
     QCOMPARE(firstPane->title(), QStringLiteral("base-c"));
@@ -11498,8 +11178,7 @@ void TerminalWorkspaceTest::surfaceTitlePromptsPreserveStableTargetsAndLayers()
         QStringLiteral("prompt_surface_title")));
     QCOMPARE(requested.count(), 5);
     QVERIFY(requested.at(4).at(2).toString().isEmpty());
-    workspace.cancelTitlePrompt(
-        requested.at(4).at(0).toULongLong());
+    workspace.cancelTitlePrompt(requested.at(4).at(0).toULongLong());
 
     QVERIFY(!workspace.dispatchAction({
         WorkspaceAction::PromptSurfaceTitle,
@@ -11518,10 +11197,9 @@ void TerminalWorkspaceTest::surfaceTitlePromptsPreserveStableTargetsAndLayers()
     QVERIFY(firstPane->executeConfiguredAction(
         QStringLiteral("prompt_surface_title")));
     QCOMPARE(requested.count(), 6);
-    const quint64 stablePromptId =
-        requested.at(5).at(0).toULongLong();
-    QVERIFY(firstPane->executeConfiguredAction(
-        QStringLiteral("prompt_tab_title")));
+    const quint64 stablePromptId = requested.at(5).at(0).toULongLong();
+    QVERIFY(
+        firstPane->executeConfiguredAction(QStringLiteral("prompt_tab_title")));
     QCOMPARE(requested.count(), 6);
 
     workspace.newTab();
@@ -11534,8 +11212,7 @@ void TerminalWorkspaceTest::surfaceTitlePromptsPreserveStableTargetsAndLayers()
         WorkspaceAction::MoveTab,
         {firstTabId, firstPaneId, 1},
     }));
-    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
-             secondTabId);
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()), secondTabId);
 
     const QString stableOverride = QStringLiteral("inactive override");
     workspace.confirmTitlePrompt(stablePromptId, stableOverride);
@@ -11545,8 +11222,7 @@ void TerminalWorkspaceTest::surfaceTitlePromptsPreserveStableTargetsAndLayers()
     QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 7, 1000);
     QCOMPARE(requested.at(6).at(1).toString(),
              QStringLiteral("Change Tab Title"));
-    QCOMPARE(requested.at(6).at(2).toString(),
-             QStringLiteral("stable base"));
+    QCOMPARE(requested.at(6).at(2).toString(), QStringLiteral("stable base"));
     const quint64 tabPromptId = requested.at(6).at(0).toULongLong();
     workspace.cancelTitlePrompt(tabPromptId);
 
@@ -11559,8 +11235,7 @@ void TerminalWorkspaceTest::surfaceTitlePromptsPreserveStableTargetsAndLayers()
     QVERIFY(firstPane->executeConfiguredAction(
         QStringLiteral("prompt_surface_title")));
     QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 8, 1000);
-    const quint64 removedPromptId =
-        requested.at(7).at(0).toULongLong();
+    const quint64 removedPromptId = requested.at(7).at(0).toULongLong();
     QPointer<TerminalPane> removedPane(firstPane);
     QVERIFY(workspace.dispatchAction({
         WorkspaceAction::ClosePane,
@@ -11568,19 +11243,18 @@ void TerminalWorkspaceTest::surfaceTitlePromptsPreserveStableTargetsAndLayers()
     }));
     QTRY_VERIFY_WITH_TIMEOUT(removedPane.isNull(), 1000);
     QCOMPARE(resolved.count(), 8);
-    workspace.confirmTitlePrompt(removedPromptId,
-                                 QStringLiteral("stale"));
+    workspace.confirmTitlePrompt(removedPromptId, QStringLiteral("stale"));
     QCOMPARE(workspace.currentTitle(), secondTitle);
 }
 
-void TerminalWorkspaceTest::broadSurfaceTitlePromptsShareFifoAndPruneRemovedPanes()
+void TerminalWorkspaceTest::
+    broadSurfaceTitlePromptsShareFifoAndPruneRemovedPanes()
 {
     QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
     QTemporaryDir directory(QDir::current().filePath(
         QStringLiteral("tmp/broad-surface-title-prompt-XXXXXX")));
     QVERIFY(directory.isValid());
-    const QString releasePath =
-        directory.filePath(QStringLiteral("release"));
+    const QString releasePath = directory.filePath(QStringLiteral("release"));
 
     ShellEnvironment shell(QByteArrayLiteral("/bin/sh"));
     LaunchOptions options = baseOptions();
@@ -11588,10 +11262,9 @@ void TerminalWorkspaceTest::broadSurfaceTitlePromptsShareFifoAndPruneRemovedPane
     options.program = {
         QStringLiteral("/bin/sh"),
         QStringLiteral("-c"),
-        QStringLiteral(
-            "while [ ! -e \"$1\" ]; do sleep 0.02; done; "
-            "printf 'broad-selection-marker\\r\\n"
-            "\\033]0;broad-ready\\007'; sleep 30"),
+        QStringLiteral("while [ ! -e \"$1\" ]; do sleep 0.02; done; "
+                       "printf 'broad-selection-marker\\r\\n"
+                       "\\033]0;broad-ready\\007'; sleep 30"),
         QStringLiteral("broad-surface-prompt-test"),
         releasePath,
     };
@@ -11609,20 +11282,17 @@ void TerminalWorkspaceTest::broadSurfaceTitlePromptsShareFifoAndPruneRemovedPane
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
 
     const TabId firstTabId = workspace.tabModel()->idAt(0);
-    const PaneId firstPaneId =
-        workspace.tabModel()->entryAt(0)->activePaneId;
+    const PaneId firstPaneId = workspace.tabModel()->entryAt(0)->activePaneId;
     TerminalPane *firstPane = workspace.findChild<TerminalPane *>();
     QVERIFY(firstPane != nullptr);
-    auto *firstController =
-        firstPane->findChild<TerminalController *>();
+    auto *firstController = firstPane->findChild<TerminalController *>();
     QVERIFY(firstController != nullptr);
 
     QVERIFY(workspace.dispatchAction({
         WorkspaceAction::SplitRight,
         {firstTabId, firstPaneId, 0},
     }));
-    const PaneId secondPaneId =
-        workspace.tabModel()->entryAt(0)->activePaneId;
+    const PaneId secondPaneId = workspace.tabModel()->entryAt(0)->activePaneId;
     TerminalPane *secondPane = nullptr;
     for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
         if (pane != firstPane) secondPane = pane;
@@ -11666,25 +11336,21 @@ void TerminalWorkspaceTest::broadSurfaceTitlePromptsShareFifoAndPruneRemovedPane
     const int selectedIndex = workspace.currentIndex();
     const PaneId selectedPaneId =
         workspace.tabModel()->entryAt(selectedIndex)->activePaneId;
-    QSignalSpy requested(
-        &workspace, &TerminalWorkspace::titlePromptRequested);
-    QSignalSpy resolved(
-        &workspace, &TerminalWorkspace::titlePromptResolved);
+    QSignalSpy requested(&workspace, &TerminalWorkspace::titlePromptRequested);
+    QSignalSpy resolved(&workspace, &TerminalWorkspace::titlePromptResolved);
     QVERIFY(workspace.executeSurfaceActionOnAllPanes(
         QStringLiteral("prompt_surface_title")));
     QCOMPARE(requested.count(), 1);
     QCOMPARE(requested.at(0).at(1).toString(),
              QStringLiteral("Change Terminal Title"));
-    QCOMPARE(requested.at(0).at(2).toString(),
-             QStringLiteral("first seed"));
+    QCOMPARE(requested.at(0).at(2).toString(), QStringLiteral("first seed"));
     QCOMPARE(workspace.currentIndex(), selectedIndex);
     QCOMPARE(workspace.tabModel()->entryAt(selectedIndex)->activePaneId,
              selectedPaneId);
     QCOMPARE(window.activeFocusItem(), thirdPane);
     QVERIFY(firstController->selectionAvailable());
 
-    const quint64 firstPromptId =
-        requested.at(0).at(0).toULongLong();
+    const quint64 firstPromptId = requested.at(0).at(0).toULongLong();
     workspace.confirmTitlePrompt(firstPromptId,
                                  QStringLiteral("first override"));
     QCOMPARE(firstPane->surfaceTitleOverride(),
@@ -11692,13 +11358,12 @@ void TerminalWorkspaceTest::broadSurfaceTitlePromptsShareFifoAndPruneRemovedPane
     QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 2, 1000);
     QCOMPARE(requested.at(1).at(2).toString(),
              QStringLiteral("second override"));
-    workspace.cancelTitlePrompt(
-        requested.at(1).at(0).toULongLong());
+    workspace.cancelTitlePrompt(requested.at(1).at(0).toULongLong());
     QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 3, 1000);
     QCOMPARE(requested.at(2).at(2).toString(),
              QStringLiteral("third override"));
-    workspace.confirmTitlePrompt(
-        requested.at(2).at(0).toULongLong(), QString{});
+    workspace.confirmTitlePrompt(requested.at(2).at(0).toULongLong(),
+                                 QString{});
     QCOMPARE(resolved.count(), 3);
     QVERIFY(!thirdPane->surfaceTitleOverride().has_value());
     QCOMPARE(workspace.currentIndex(), selectedIndex);
@@ -11709,10 +11374,9 @@ void TerminalWorkspaceTest::broadSurfaceTitlePromptsShareFifoAndPruneRemovedPane
     QVERIFY(firstPane->executeConfiguredAction(
         QStringLiteral("prompt_surface_title")));
     QCOMPARE(requested.count(), 4);
-    const quint64 mixedSurfacePromptId =
-        requested.at(3).at(0).toULongLong();
-    QVERIFY(firstPane->executeConfiguredAction(
-        QStringLiteral("prompt_tab_title")));
+    const quint64 mixedSurfacePromptId = requested.at(3).at(0).toULongLong();
+    QVERIFY(
+        firstPane->executeConfiguredAction(QStringLiteral("prompt_tab_title")));
     QCOMPARE(requested.count(), 4);
     workspace.confirmTitlePrompt(mixedSurfacePromptId,
                                  QStringLiteral("mixed surface"));
@@ -11721,8 +11385,7 @@ void TerminalWorkspaceTest::broadSurfaceTitlePromptsShareFifoAndPruneRemovedPane
              QStringLiteral("Change Tab Title"));
     QCOMPARE(requested.at(4).at(2).toString(),
              QStringLiteral("🔍 second override"));
-    workspace.cancelTitlePrompt(
-        requested.at(4).at(0).toULongLong());
+    workspace.cancelTitlePrompt(requested.at(4).at(0).toULongLong());
 
     // Add a fourth pane after the zoom assertion so removing its queued
     // request can exercise exact-pane pruning while the tab remains alive.
@@ -11749,8 +11412,7 @@ void TerminalWorkspaceTest::broadSurfaceTitlePromptsShareFifoAndPruneRemovedPane
     QVERIFY(firstPane->executeConfiguredAction(
         QStringLiteral("prompt_surface_title")));
     QCOMPARE(requested.count(), 6);
-    const quint64 removedPromptId =
-        requested.at(5).at(0).toULongLong();
+    const quint64 removedPromptId = requested.at(5).at(0).toULongLong();
     QVERIFY(secondPane->executeConfiguredAction(
         QStringLiteral("prompt_surface_title")));
     QVERIFY(queuedPane->executeConfiguredAction(
@@ -11776,8 +11438,7 @@ void TerminalWorkspaceTest::broadSurfaceTitlePromptsShareFifoAndPruneRemovedPane
     QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 7, 1000);
     QCOMPARE(requested.at(6).at(2).toString(),
              QStringLiteral("second override"));
-    workspace.confirmTitlePrompt(removedPromptId,
-                                 QStringLiteral("stale"));
+    workspace.confirmTitlePrompt(removedPromptId, QStringLiteral("stale"));
     QCOMPARE(secondPane->surfaceTitleOverride(),
              std::optional<QString>{QStringLiteral("second override")});
 
@@ -11786,13 +11447,11 @@ void TerminalWorkspaceTest::broadSurfaceTitlePromptsShareFifoAndPruneRemovedPane
         {secondTabId, thirdPaneId, 0},
     }));
     QCOMPARE(workspace.tabCount(), 1);
-    workspace.cancelTitlePrompt(
-        requested.at(6).at(0).toULongLong());
+    workspace.cancelTitlePrompt(requested.at(6).at(0).toULongLong());
     QCoreApplication::processEvents();
     QCOMPARE(requested.count(), 7);
     QCOMPARE(resolved.count(), 7);
-    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId,
-             secondPaneId);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, secondPaneId);
 }
 
 void TerminalWorkspaceTest::tabTitlePromptsPreserveStableTargetsAndReset()
@@ -11807,29 +11466,24 @@ void TerminalWorkspaceTest::tabTitlePromptsPreserveStableTargetsAndReset()
     TerminalWorkspace workspace;
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     const TabId firstTabId = workspace.tabModel()->idAt(0);
-    const PaneId firstPaneId =
-        workspace.tabModel()->entryAt(0)->activePaneId;
+    const PaneId firstPaneId = workspace.tabModel()->entryAt(0)->activePaneId;
     TerminalPane *firstPane = workspace.findChild<TerminalPane *>();
     QVERIFY(firstPane != nullptr);
 
     const auto entry = [&workspace](TabId id) {
-        return workspace.tabModel()->entryAt(
-            workspace.tabModel()->indexOf(id));
+        return workspace.tabModel()->entryAt(workspace.tabModel()->indexOf(id));
     };
     QVERIFY(firstPane->executeConfiguredAction(
         QStringLiteral("set_tab_title:existing title")));
     QCOMPARE(entry(firstTabId)->titleOverride,
              QStringLiteral("existing title"));
 
-    QSignalSpy requested(
-        &workspace, &TerminalWorkspace::titlePromptRequested);
-    QSignalSpy resolved(
-        &workspace, &TerminalWorkspace::titlePromptResolved);
-    QVERIFY(firstPane->executeConfiguredAction(
-        QStringLiteral("prompt_tab_title")));
+    QSignalSpy requested(&workspace, &TerminalWorkspace::titlePromptRequested);
+    QSignalSpy resolved(&workspace, &TerminalWorkspace::titlePromptResolved);
+    QVERIFY(
+        firstPane->executeConfiguredAction(QStringLiteral("prompt_tab_title")));
     QCOMPARE(requested.count(), 1);
-    const quint64 firstPromptId =
-        requested.at(0).at(0).toULongLong();
+    const quint64 firstPromptId = requested.at(0).at(0).toULongLong();
     QVERIFY(firstPromptId != 0);
     QCOMPARE(requested.at(0).at(1).toString(),
              QStringLiteral("Change Tab Title"));
@@ -11847,8 +11501,7 @@ void TerminalWorkspaceTest::tabTitlePromptsPreserveStableTargetsAndReset()
         {firstTabId, firstPaneId, 1},
     }));
     QCOMPARE(workspace.tabModel()->idAt(1), firstTabId);
-    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
-             secondTabId);
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()), secondTabId);
 
     const QString renamed = QStringLiteral("  renamed 👻  ");
     workspace.confirmTitlePrompt(firstPromptId, renamed);
@@ -11863,32 +11516,28 @@ void TerminalWorkspaceTest::tabTitlePromptsPreserveStableTargetsAndReset()
     QCOMPARE(entry(firstTabId)->titleOverride, renamed);
     QVERIFY(entry(secondTabId)->titleOverride.isEmpty());
 
-    QVERIFY(firstPane->executeConfiguredAction(
-        QStringLiteral("prompt_tab_title")));
+    QVERIFY(
+        firstPane->executeConfiguredAction(QStringLiteral("prompt_tab_title")));
     QCOMPARE(requested.count(), 2);
-    const quint64 cancelPromptId =
-        requested.at(1).at(0).toULongLong();
+    const quint64 cancelPromptId = requested.at(1).at(0).toULongLong();
     QCOMPARE(requested.at(1).at(2).toString(), renamed);
     workspace.cancelTitlePrompt(cancelPromptId);
     QCOMPARE(resolved.count(), 2);
     QCOMPARE(entry(firstTabId)->titleOverride, renamed);
 
-    QVERIFY(firstPane->executeConfiguredAction(
-        QStringLiteral("prompt_tab_title")));
+    QVERIFY(
+        firstPane->executeConfiguredAction(QStringLiteral("prompt_tab_title")));
     QCOMPARE(requested.count(), 3);
-    const quint64 clearPromptId =
-        requested.at(2).at(0).toULongLong();
+    const quint64 clearPromptId = requested.at(2).at(0).toULongLong();
     workspace.confirmTitlePrompt(clearPromptId, QString{});
     QCOMPARE(resolved.count(), 3);
     QVERIFY(entry(firstTabId)->titleOverride.isEmpty());
 
-    QVERIFY(firstPane->executeConfiguredAction(
-        QStringLiteral("prompt_tab_title")));
+    QVERIFY(
+        firstPane->executeConfiguredAction(QStringLiteral("prompt_tab_title")));
     QCOMPARE(requested.count(), 4);
-    const quint64 basePromptId =
-        requested.at(3).at(0).toULongLong();
-    QCOMPARE(requested.at(3).at(2).toString(),
-             entry(firstTabId)->title);
+    const quint64 basePromptId = requested.at(3).at(0).toULongLong();
+    QCOMPARE(requested.at(3).at(2).toString(), entry(firstTabId)->title);
     workspace.cancelTitlePrompt(basePromptId);
 
     QVERIFY(!workspace.dispatchAction({
@@ -11922,25 +11571,24 @@ void TerminalWorkspaceTest::windowTitleActionsMaskTabsAndPrompt()
     workspace.newTab();
     QCOMPARE(workspace.currentTitle(), QStringLiteral("whole window"));
 
-    QSignalSpy requested(&workspace,
-                         &TerminalWorkspace::titlePromptRequested);
-    QVERIFY(pane->executeConfiguredAction(
-        QStringLiteral("prompt_window_title")));
+    QSignalSpy requested(&workspace, &TerminalWorkspace::titlePromptRequested);
+    QVERIFY(
+        pane->executeConfiguredAction(QStringLiteral("prompt_window_title")));
     QCOMPARE(requested.count(), 1);
     QCOMPARE(requested.constFirst().at(1).toString(),
              QStringLiteral("Change Window Title"));
     QCOMPARE(requested.constFirst().at(2).toString(),
              QStringLiteral("whole window"));
 
-    const quint64 promptId =
-        requested.constFirst().constFirst().toULongLong();
+    const quint64 promptId = requested.constFirst().constFirst().toULongLong();
     const int titleChangesBeforeClear = titleChanged.count();
     workspace.confirmTitlePrompt(promptId, QString{});
     QVERIFY(workspace.currentTitle() != QStringLiteral("whole window"));
     QCOMPARE(titleChanged.count(), titleChangesBeforeClear + 1);
 }
 
-void TerminalWorkspaceTest::broadTabTitlePromptsQueueEverySurfaceAndSurviveRemoval()
+void TerminalWorkspaceTest::
+    broadTabTitlePromptsQueueEverySurfaceAndSurviveRemoval()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
@@ -11952,14 +11600,12 @@ void TerminalWorkspaceTest::broadTabTitlePromptsQueueEverySurfaceAndSurviveRemov
     TerminalWorkspace workspace;
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     const TabId firstTabId = workspace.tabModel()->idAt(0);
-    const PaneId firstPaneId =
-        workspace.tabModel()->entryAt(0)->activePaneId;
+    const PaneId firstPaneId = workspace.tabModel()->entryAt(0)->activePaneId;
     QVERIFY(workspace.dispatchAction({
         WorkspaceAction::SplitRight,
         {firstTabId, firstPaneId, 0},
     }));
-    const PaneId secondPaneId =
-        workspace.tabModel()->entryAt(0)->activePaneId;
+    const PaneId secondPaneId = workspace.tabModel()->entryAt(0)->activePaneId;
     QVERIFY(secondPaneId.isValid());
     QVERIFY(secondPaneId != firstPaneId);
     QVERIFY(workspace.dispatchAction({
@@ -11972,26 +11618,24 @@ void TerminalWorkspaceTest::broadTabTitlePromptsQueueEverySurfaceAndSurviveRemov
     const TabId secondTabId =
         workspace.tabModel()->idAt(workspace.currentIndex());
     QVERIFY(secondTabId != firstTabId);
-    const QString firstPromptInitial =
-        QStringLiteral("🔍 ")
+    const QString firstPromptInitial = QStringLiteral("🔍 ")
         + workspace.tabModel()
-              ->entryAt(workspace.tabModel()->indexOf(firstTabId))->title;
+              ->entryAt(workspace.tabModel()->indexOf(firstTabId))
+              ->title;
     const QString secondPromptInitial =
         workspace.tabModel()
-            ->entryAt(workspace.tabModel()->indexOf(secondTabId))->title;
+            ->entryAt(workspace.tabModel()->indexOf(secondTabId))
+            ->title;
 
-    QSignalSpy requested(
-        &workspace, &TerminalWorkspace::titlePromptRequested);
-    QSignalSpy resolved(
-        &workspace, &TerminalWorkspace::titlePromptResolved);
+    QSignalSpy requested(&workspace, &TerminalWorkspace::titlePromptRequested);
+    QSignalSpy resolved(&workspace, &TerminalWorkspace::titlePromptResolved);
     QVERIFY(workspace.executeSurfaceActionOnAllPanes(
         QStringLiteral("prompt_tab_title")));
     QCOMPARE(requested.count(), 1);
     QCOMPARE(requested.at(0).at(1).toString(),
              QStringLiteral("Change Tab Title"));
     QCOMPARE(requested.at(0).at(2).toString(), firstPromptInitial);
-    const quint64 firstPromptId =
-        requested.at(0).at(0).toULongLong();
+    const quint64 firstPromptId = requested.at(0).at(0).toULongLong();
 
     // Removing the originating split leaf does not cancel a prompt whose
     // stable containing tab still exists.
@@ -12000,8 +11644,7 @@ void TerminalWorkspaceTest::broadTabTitlePromptsQueueEverySurfaceAndSurviveRemov
         {firstTabId, firstPaneId, 0},
     }));
     QCOMPARE(workspace.tabCount(), 2);
-    workspace.confirmTitlePrompt(firstPromptId,
-                                 QStringLiteral("first tab"));
+    workspace.confirmTitlePrompt(firstPromptId, QStringLiteral("first tab"));
     QCOMPARE(workspace.tabModel()
                  ->entryAt(workspace.tabModel()->indexOf(firstTabId))
                  ->titleOverride,
@@ -12012,8 +11655,7 @@ void TerminalWorkspaceTest::broadTabTitlePromptsQueueEverySurfaceAndSurviveRemov
     // first prompt was accepted.
     QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 2, 1000);
     QCOMPARE(requested.at(1).at(2).toString(), firstPromptInitial);
-    const quint64 removedPromptId =
-        requested.at(1).at(0).toULongLong();
+    const quint64 removedPromptId = requested.at(1).at(0).toULongLong();
 
     QVERIFY(workspace.dispatchAction({
         WorkspaceAction::CloseTab,
@@ -12026,14 +11668,11 @@ void TerminalWorkspaceTest::broadTabTitlePromptsQueueEverySurfaceAndSurviveRemov
     // request for the next stable tab. A stale callback is harmless.
     QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 3, 1000);
     QCOMPARE(requested.at(2).at(2).toString(), secondPromptInitial);
-    const quint64 finalPromptId =
-        requested.at(2).at(0).toULongLong();
-    workspace.confirmTitlePrompt(removedPromptId,
-                                 QStringLiteral("stale"));
+    const quint64 finalPromptId = requested.at(2).at(0).toULongLong();
+    workspace.confirmTitlePrompt(removedPromptId, QStringLiteral("stale"));
     QVERIFY(workspace.tabModel()->entryAt(0)->titleOverride.isEmpty());
 
-    workspace.confirmTitlePrompt(finalPromptId,
-                                 QStringLiteral("second tab"));
+    workspace.confirmTitlePrompt(finalPromptId, QStringLiteral("second tab"));
     QCOMPARE(resolved.count(), 3);
     QCOMPARE(workspace.tabModel()->entryAt(0)->id, secondTabId);
     QCOMPARE(workspace.tabModel()->entryAt(0)->titleOverride,
@@ -12065,7 +11704,10 @@ void TerminalWorkspaceTest::newTabPositionReloadsAndKeepsBroadOrder()
         workspace.newTab();
         QCOMPARE(tabIds(workspace),
                  QVector<TabId>({
-                     TabId(1), TabId(4), TabId(2), TabId(3),
+                     TabId(1),
+                     TabId(4),
+                     TabId(2),
+                     TabId(3),
                  }));
         QCOMPARE(workspace.currentIndex(), 1);
 
@@ -12082,11 +11724,18 @@ void TerminalWorkspaceTest::newTabPositionReloadsAndKeepsBroadOrder()
         }));
         QCOMPARE(beforeEndInsert,
                  QVector<TabId>({
-                     TabId(1), TabId(4), TabId(2), TabId(3),
+                     TabId(1),
+                     TabId(4),
+                     TabId(2),
+                     TabId(3),
                  }));
         QCOMPARE(tabIds(workspace),
                  QVector<TabId>({
-                     TabId(1), TabId(4), TabId(2), TabId(3), TabId(5),
+                     TabId(1),
+                     TabId(4),
+                     TabId(2),
+                     TabId(3),
+                     TabId(5),
                  }));
         QCOMPARE(workspace.currentIndex(), 4);
 
@@ -12094,7 +11743,11 @@ void TerminalWorkspaceTest::newTabPositionReloadsAndKeepsBroadOrder()
         workspace.applyLaunchOptions(reloadedOptions);
         QCOMPARE(tabIds(workspace),
                  QVector<TabId>({
-                     TabId(1), TabId(4), TabId(2), TabId(3), TabId(5),
+                     TabId(1),
+                     TabId(4),
+                     TabId(2),
+                     TabId(3),
+                     TabId(5),
                  }));
         workspace.setCurrentIndex(1);
         QVERIFY(workspace.dispatchAction({
@@ -12103,7 +11756,11 @@ void TerminalWorkspaceTest::newTabPositionReloadsAndKeepsBroadOrder()
         }));
         QCOMPARE(tabIds(workspace),
                  QVector<TabId>({
-                     TabId(1), TabId(4), TabId(6), TabId(2), TabId(3),
+                     TabId(1),
+                     TabId(4),
+                     TabId(6),
+                     TabId(2),
+                     TabId(3),
                      TabId(5),
                  }));
         QCOMPARE(workspace.currentIndex(), 2);
@@ -12123,7 +11780,11 @@ void TerminalWorkspaceTest::newTabPositionReloadsAndKeepsBroadOrder()
             QStringLiteral("new_tab")));
         QCOMPARE(tabIds(workspace),
                  QVector<TabId>({
-                     TabId(1), TabId(2), TabId(4), TabId(5), TabId(6),
+                     TabId(1),
+                     TabId(2),
+                     TabId(4),
+                     TabId(5),
+                     TabId(6),
                      TabId(3),
                  }));
         QCOMPARE(workspace.currentIndex(), 4);
@@ -12146,7 +11807,11 @@ void TerminalWorkspaceTest::newTabPositionReloadsAndKeepsBroadOrder()
             QStringLiteral("new_tab")));
         QCOMPARE(tabIds(workspace),
                  QVector<TabId>({
-                     TabId(1), TabId(2), TabId(3), TabId(4), TabId(5),
+                     TabId(1),
+                     TabId(2),
+                     TabId(3),
+                     TabId(4),
+                     TabId(5),
                      TabId(6),
                  }));
         QCOMPARE(workspace.currentIndex(), 5);
@@ -12166,8 +11831,8 @@ void TerminalWorkspaceTest::tabBarVisibilityTracksPolicyAndCount()
     TerminalWorkspace workspace;
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     QVERIFY(!workspace.tabBarVisible());
-    QSignalSpy visibilityChanged(
-        &workspace, &TerminalWorkspace::tabBarVisibleChanged);
+    QSignalSpy visibilityChanged(&workspace,
+                                 &TerminalWorkspace::tabBarVisibleChanged);
 
     workspace.newTab();
     QCOMPARE(workspace.tabCount(), 2);
@@ -12213,8 +11878,8 @@ void TerminalWorkspaceTest::tabBarVisibilityTracksPolicyAndCount()
     reloadedOptions.confirmCloseMode = ConfirmCloseMode::Always;
     workspace.applyLaunchOptions(reloadedOptions);
     QCOMPARE(visibilityChanged.count(), 5);
-    QSignalSpy confirmation(
-        &workspace, &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy confirmation(&workspace,
+                            &TerminalWorkspace::closeConfirmationRequested);
     workspace.closeCurrentTab();
     QCOMPARE(workspace.tabCount(), 2);
     QCOMPARE(confirmation.count(), 1);
@@ -12360,7 +12025,8 @@ void TerminalWorkspaceTest::splitNavigationWrapsInTreeAndSpatialOrder()
     QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, third);
 }
 
-void TerminalWorkspaceTest::relativeSplitNavigationUsesExplicitSourceAndTreeOrder()
+void TerminalWorkspaceTest::
+    relativeSplitNavigationUsesExplicitSourceAndTreeOrder()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
@@ -12608,19 +12274,16 @@ void TerminalWorkspaceTest::dragsExactNestedSplitDividerAndPreservesFocus()
     QSignalSpy secondActivated(secondPane, &TerminalPane::activated);
     QSignalSpy thirdActivated(thirdPane, &TerminalPane::activated);
     const QPoint horizontalStart = windowPoint(
-        workspace.get(), QPointF(nestedEdge + 1.0,
-                                 workspace->height() / 2.0));
+        workspace.get(), QPointF(nestedEdge + 1.0, workspace->height() / 2.0));
     const QPoint horizontalEnd = horizontalStart + QPoint(60, 0);
     QTest::mouseMove(&window, horizontalStart);
     QTRY_COMPARE_WITH_TIMEOUT(window.cursor().shape(), Qt::SplitHCursor, 1000);
-    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier,
-                      horizontalStart);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, horizontalStart);
     QVERIFY(window.mouseGrabberItem() != nullptr);
     QCOMPARE(window.mouseGrabberItem()->objectName(),
              QStringLiteral("_ghosttyQtSplitDivider"));
     QTest::mouseMove(&window, horizontalEnd);
-    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier,
-                        horizontalEnd);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, horizontalEnd);
     QVERIFY(window.mouseGrabberItem() == nullptr);
 
     QCOMPARE(firstPane->size(), firstSize);
@@ -12670,8 +12333,7 @@ void TerminalWorkspaceTest::dragsExactNestedSplitDividerAndPreservesFocus()
     // on QObject creation or stacking order: the nested horizontal handle
     // ends where the vertical handle's subtree begins.
     const QPoint horizontalSide = windowPoint(
-        workspace.get(), QPointF(thirdPane->x() - 1.0,
-                                 verticalEdge + 1.0));
+        workspace.get(), QPointF(thirdPane->x() - 1.0, verticalEdge + 1.0));
     const QPoint verticalSide = windowPoint(
         workspace.get(), QPointF(thirdPane->x(), verticalEdge + 1.0));
     QTest::mouseMove(&window, horizontalSide);
@@ -12680,8 +12342,8 @@ void TerminalWorkspaceTest::dragsExactNestedSplitDividerAndPreservesFocus()
     QTRY_COMPARE_WITH_TIMEOUT(window.cursor().shape(), Qt::SplitVCursor, 1000);
 
     const QPoint verticalStart = windowPoint(
-        workspace.get(), QPointF(thirdPane->x() + thirdPane->width() / 2.0,
-                                 verticalEdge + 1.0));
+        workspace.get(),
+        QPointF(thirdPane->x() + thirdPane->width() / 2.0, verticalEdge + 1.0));
     const QPoint verticalEnd = verticalStart + QPoint(0, 60);
     QTest::mouseMove(&window, verticalStart);
     QTRY_COMPARE_WITH_TIMEOUT(window.cursor().shape(), Qt::SplitVCursor, 1000);
@@ -12777,8 +12439,7 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
     QCOMPARE(window.activeFocusItem(), secondPane);
     QCOMPARE(secondActivated.count(), 0);
     QTRY_VERIFY_WITH_TIMEOUT(
-        dividerPaintsExactColor(&window, rootDivider, firstColor),
-        2000);
+        dividerPaintsExactColor(&window, rootDivider, firstColor), 2000);
 
     // A divider created after reload inherits the same workspace-owned color.
     QVERIFY(workspace->dispatchAction({
@@ -12799,8 +12460,7 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
     QCOMPARE(dividers.size(), 2);
     for (QQuickItem *divider : std::as_const(dividers)) {
         QTRY_VERIFY_WITH_TIMEOUT(
-            dividerPaintsExactColor(&window, divider, firstColor),
-            2000);
+            dividerPaintsExactColor(&window, divider, firstColor), 2000);
     }
 
     struct DividerState {
@@ -12822,8 +12482,7 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
     std::vector<std::pair<TerminalPane *, QRectF>> paneStates;
     paneStates.reserve(static_cast<std::size_t>(panes.size()));
     for (TerminalPane *pane : panes) {
-        paneStates.emplace_back(
-            pane, QRectF(pane->position(), pane->size()));
+        paneStates.emplace_back(pane, QRectF(pane->position(), pane->size()));
     }
     QSignalSpy thirdActivated(thirdPane, &TerminalPane::activated);
 
@@ -12838,8 +12497,7 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
         QCOMPARE(state.item->acceptedMouseButtons(), Qt::LeftButton);
         QCOMPARE(state.item->focusPolicy(), Qt::NoFocus);
         QTRY_VERIFY_WITH_TIMEOUT(
-            dividerPaintsExactColor(&window, state.item, secondColor),
-            2000);
+            dividerPaintsExactColor(&window, state.item, secondColor), 2000);
     }
     for (const auto &[pane, geometry] : paneStates) {
         QCOMPARE(QRectF(pane->position(), pane->size()), geometry);
@@ -12857,8 +12515,7 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
         QCOMPARE(QRectF(state.item->position(), state.item->size()),
                  state.geometry);
         QTRY_VERIFY_WITH_TIMEOUT(
-            dividerPaintsExactColor(
-                &window, state.item, defaultColor, false),
+            dividerPaintsExactColor(&window, state.item, defaultColor, false),
             2000);
     }
     QCOMPARE(window.activeFocusItem(), thirdPane);
@@ -12881,8 +12538,7 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
     QCOMPARE(dividers.size(), 2);
     for (QQuickItem *divider : std::as_const(dividers)) {
         QTRY_VERIFY_WITH_TIMEOUT(
-            dividerPaintsExactColor(&window, divider, secondColor),
-            2000);
+            dividerPaintsExactColor(&window, divider, secondColor), 2000);
     }
     QCOMPARE(workspace->tabModel()->entryAt(0)->activePaneId, thirdId);
     QCOMPARE(window.activeFocusItem(), thirdPane);
@@ -12898,8 +12554,7 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
     QCOMPARE(dividers.size(), 2);
     for (QQuickItem *divider : std::as_const(dividers)) {
         QTRY_VERIFY_WITH_TIMEOUT(
-            dividerPaintsExactColor(&window, divider, secondColor),
-            2000);
+            dividerPaintsExactColor(&window, divider, secondColor), 2000);
     }
 
     QQuickWindow secondWindow;
@@ -12913,8 +12568,7 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
     QCOMPARE(dividers.size(), 2);
     for (QQuickItem *divider : std::as_const(dividers)) {
         QTRY_VERIFY_WITH_TIMEOUT(
-            dividerPaintsExactColor(&secondWindow, divider, secondColor),
-            2000);
+            dividerPaintsExactColor(&secondWindow, divider, secondColor), 2000);
     }
 
     workspace.reset();
@@ -12950,8 +12604,8 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     workspace->setSize(window.size());
     auto *focusSink = new QQuickItem(window.contentItem());
     focusSink->setSize(QSizeF(1.0, 1.0));
-    focusSink->setPosition(QPointF(window.width() - 1.0,
-                                   window.height() - 1.0));
+    focusSink->setPosition(
+        QPointF(window.width() - 1.0, window.height() - 1.0));
     focusSink->setFocusPolicy(Qt::StrongFocus);
     focusSink->setZ(2.0);
 
@@ -12965,8 +12619,7 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
 
     const TabId splitTabId = workspace->tabModel()->idAt(0);
-    const PaneId firstId =
-        workspace->tabModel()->entryAt(0)->activePaneId;
+    const PaneId firstId = workspace->tabModel()->entryAt(0)->activePaneId;
     TerminalPane *firstPane = workspace->findChild<TerminalPane *>();
     QVERIFY(firstPane != nullptr);
     auto *firstController = firstPane->findChild<TerminalController *>();
@@ -12976,15 +12629,14 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     focusSink->forceActiveFocus();
     QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), focusSink, 1000);
     QVERIFY(!window.grabWindow().isNull());
-    QVERIFY(terminalPaneRenderProbe(firstPane)
-                .unfocusedSplitOverlayRect.isEmpty());
+    QVERIFY(
+        terminalPaneRenderProbe(firstPane).unfocusedSplitOverlayRect.isEmpty());
 
     QVERIFY(workspace->dispatchAction({
         WorkspaceAction::SplitRight,
         {splitTabId, firstId, 0},
     }));
-    const PaneId secondId =
-        workspace->tabModel()->entryAt(0)->activePaneId;
+    const PaneId secondId = workspace->tabModel()->entryAt(0)->activePaneId;
     TerminalPane *secondPane = nullptr;
     for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
         if (pane != firstPane) {
@@ -13000,8 +12652,7 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
         terminalPaneRenderProbe(firstPane);
     const TerminalPaneRenderProbeSnapshot secondFocused =
         terminalPaneRenderProbe(secondPane);
-    QCOMPARE(firstDimmed.unfocusedSplitOverlayRect,
-             firstPane->boundingRect());
+    QCOMPARE(firstDimmed.unfocusedSplitOverlayRect, firstPane->boundingRect());
     QVERIFY(secondFocused.unfocusedSplitOverlayRect.isEmpty());
     QColor firstOverlay = firstFill;
     firstOverlay.setAlphaF(0.5);
@@ -13009,48 +12660,51 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     const qreal quietY = firstPane->height() / 2.0;
     const QPointF firstLeft(20.0, quietY);
     const QPointF secondLeft(1.0, quietY);
-    QTRY_VERIFY_WITH_TIMEOUT([&] {
-        const QImage image = window.grabWindow();
-        if (image.isNull()) {
-            return false;
-        }
-        const QColor activePixel = itemPixel(
-            window, *secondPane, image, secondLeft);
-        const QColor expectedDimmed = sourceOver(
-            activePixel, firstFill, 0.5);
-        const qreal xScale = static_cast<qreal>(image.width())
-            / window.width();
-        const qreal yScale = static_cast<qreal>(image.height())
-            / window.height();
-        const qreal firstRightScene = firstPane->mapToScene(
-            QPointF(firstPane->width(), quietY)).x();
-        const qreal secondLeftScene = secondPane->mapToScene(
-            QPointF(0.0, quietY)).x();
-        const qreal sampleYScene = firstPane->mapToScene(
-            QPointF(0.0, quietY)).y();
-        const int firstLastPixel = std::clamp(
-            static_cast<int>(std::ceil(firstRightScene * xScale)) - 1,
-            0, image.width() - 1);
-        const int secondFirstPixel = std::clamp(
-            static_cast<int>(std::floor(secondLeftScene * xScale)),
-            0, image.width() - 1);
-        const int sampleY = std::clamp(
-            static_cast<int>(std::floor(sampleYScene * yScale)),
-            0, image.height() - 1);
-        return approximatelyEqual(
-                itemPixel(window, *firstPane, image, firstLeft),
-                expectedDimmed)
-            && approximatelyEqual(
-                image.pixelColor(firstLastPixel, sampleY), expectedDimmed)
-            && approximatelyEqual(
-                image.pixelColor(secondFirstPixel, sampleY), activePixel);
-    }(), 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        [&] {
+            const QImage image = window.grabWindow();
+            if (image.isNull()) {
+                return false;
+            }
+            const QColor activePixel =
+                itemPixel(window, *secondPane, image, secondLeft);
+            const QColor expectedDimmed =
+                sourceOver(activePixel, firstFill, 0.5);
+            const qreal xScale =
+                static_cast<qreal>(image.width()) / window.width();
+            const qreal yScale =
+                static_cast<qreal>(image.height()) / window.height();
+            const qreal firstRightScene =
+                firstPane->mapToScene(QPointF(firstPane->width(), quietY)).x();
+            const qreal secondLeftScene =
+                secondPane->mapToScene(QPointF(0.0, quietY)).x();
+            const qreal sampleYScene =
+                firstPane->mapToScene(QPointF(0.0, quietY)).y();
+            const int firstLastPixel = std::clamp(
+                static_cast<int>(std::ceil(firstRightScene * xScale)) - 1, 0,
+                image.width() - 1);
+            const int secondFirstPixel = std::clamp(
+                static_cast<int>(std::floor(secondLeftScene * xScale)), 0,
+                image.width() - 1);
+            const int sampleY =
+                std::clamp(static_cast<int>(std::floor(sampleYScene * yScale)),
+                           0, image.height() - 1);
+            return approximatelyEqual(
+                       itemPixel(window, *firstPane, image, firstLeft),
+                       expectedDimmed)
+                && approximatelyEqual(image.pixelColor(firstLastPixel, sampleY),
+                                      expectedDimmed)
+                && approximatelyEqual(
+                       image.pixelColor(secondFirstPixel, sampleY),
+                       activePixel);
+        }(),
+        2000);
     const QList<QQuickItem *> initialDividers =
         splitDividerItems(workspace.get());
     QCOMPARE(initialDividers.size(), 1);
     QTRY_VERIFY_WITH_TIMEOUT(
-        dividerPaintsExactColor(
-            &window, initialDividers.constFirst(), dividerColor),
+        dividerPaintsExactColor(&window, initialDividers.constFirst(),
+                                dividerColor),
         2000);
 
     const QRectF firstGeometry(firstPane->position(), firstPane->size());
@@ -13061,10 +12715,9 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     firstPane->forceActiveFocus();
     QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), firstPane, 1000);
     QVERIFY(!window.grabWindow().isNull());
-    QVERIFY(terminalPaneRenderProbe(firstPane)
-                .unfocusedSplitOverlayRect.isEmpty());
-    QCOMPARE(terminalPaneRenderProbe(secondPane)
-                 .unfocusedSplitOverlayRect,
+    QVERIFY(
+        terminalPaneRenderProbe(firstPane).unfocusedSplitOverlayRect.isEmpty());
+    QCOMPARE(terminalPaneRenderProbe(secondPane).unfocusedSplitOverlayRect,
              secondPane->boundingRect());
 
     // Logical active-pane identity is deliberately insufficient: moving
@@ -13072,29 +12725,25 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     focusSink->forceActiveFocus();
     QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), focusSink, 1000);
     QVERIFY(!window.grabWindow().isNull());
-    QCOMPARE(terminalPaneRenderProbe(firstPane)
-                 .unfocusedSplitOverlayRect,
+    QCOMPARE(terminalPaneRenderProbe(firstPane).unfocusedSplitOverlayRect,
              firstPane->boundingRect());
-    QCOMPARE(terminalPaneRenderProbe(secondPane)
-                 .unfocusedSplitOverlayRect,
+    QCOMPARE(terminalPaneRenderProbe(secondPane).unfocusedSplitOverlayRect,
              secondPane->boundingRect());
 
     // Search suppression is pane-local and applies even with an empty query.
     QVERIFY(firstPane->executeConfiguredAction(QStringLiteral("start_search")));
     QVERIFY(firstPane->searchUiActive());
     QVERIFY(!window.grabWindow().isNull());
-    QVERIFY(terminalPaneRenderProbe(firstPane)
-                .unfocusedSplitOverlayRect.isEmpty());
-    QCOMPARE(terminalPaneRenderProbe(secondPane)
-                 .unfocusedSplitOverlayRect,
+    QVERIFY(
+        terminalPaneRenderProbe(firstPane).unfocusedSplitOverlayRect.isEmpty());
+    QCOMPARE(terminalPaneRenderProbe(secondPane).unfocusedSplitOverlayRect,
              secondPane->boundingRect());
     firstPane->endSearchUi();
     QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), firstPane, 1000);
     QVERIFY(!window.grabWindow().isNull());
-    QVERIFY(terminalPaneRenderProbe(firstPane)
-                .unfocusedSplitOverlayRect.isEmpty());
-    QCOMPARE(terminalPaneRenderProbe(secondPane)
-                 .unfocusedSplitOverlayRect,
+    QVERIFY(
+        terminalPaneRenderProbe(firstPane).unfocusedSplitOverlayRect.isEmpty());
+    QCOMPARE(terminalPaneRenderProbe(secondPane).unfocusedSplitOverlayRect,
              secondPane->boundingRect());
 
     const TerminalPaneRenderProbeSnapshot beforeReload =
@@ -13117,7 +12766,8 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     secondOverlay.setAlphaF(0.8);
     QCOMPARE(afterReload.unfocusedSplitOverlayColor, secondOverlay);
     QCOMPARE(QRectF(firstPane->position(), firstPane->size()), firstGeometry);
-    QCOMPARE(QRectF(secondPane->position(), secondPane->size()), secondGeometry);
+    QCOMPARE(QRectF(secondPane->position(), secondPane->size()),
+             secondGeometry);
     QCOMPARE(QRectF(initialDividers.constFirst()->position(),
                     initialDividers.constFirst()->size()),
              dividerGeometry);
@@ -13130,8 +12780,7 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
         WorkspaceAction::SplitDown,
         {splitTabId, firstId, 0},
     }));
-    const PaneId thirdId =
-        workspace->tabModel()->entryAt(0)->activePaneId;
+    const PaneId thirdId = workspace->tabModel()->entryAt(0)->activePaneId;
     TerminalPane *thirdPane = nullptr;
     for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
         if (pane != firstPane && pane != secondPane) {
@@ -13143,12 +12792,11 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), thirdPane, 1000);
     QVERIFY(!window.grabWindow().isNull());
     for (TerminalPane *pane : {firstPane, secondPane}) {
-        QCOMPARE(terminalPaneRenderProbe(pane)
-                     .unfocusedSplitOverlayColor,
+        QCOMPARE(terminalPaneRenderProbe(pane).unfocusedSplitOverlayColor,
                  secondOverlay);
     }
-    QVERIFY(terminalPaneRenderProbe(thirdPane)
-                .unfocusedSplitOverlayRect.isEmpty());
+    QVERIFY(
+        terminalPaneRenderProbe(thirdPane).unfocusedSplitOverlayRect.isEmpty());
 
     firstPane->forceActiveFocus();
     QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), firstPane, 1000);
@@ -13187,10 +12835,9 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     }));
     QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), firstPane, 1000);
     QVERIFY(!window.grabWindow().isNull());
-    QVERIFY(terminalPaneRenderProbe(firstPane)
-                .unfocusedSplitOverlayRect.isEmpty());
-    QCOMPARE(terminalPaneRenderProbe(secondPane)
-                 .unfocusedSplitOverlayRect,
+    QVERIFY(
+        terminalPaneRenderProbe(firstPane).unfocusedSplitOverlayRect.isEmpty());
+    QCOMPARE(terminalPaneRenderProbe(secondPane).unfocusedSplitOverlayRect,
              secondPane->boundingRect());
 
     // Zoom changes presentation but not structural split membership.
@@ -13204,8 +12851,7 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     focusSink->forceActiveFocus();
     QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), focusSink, 1000);
     QVERIFY(!window.grabWindow().isNull());
-    QCOMPARE(terminalPaneRenderProbe(firstPane)
-                 .unfocusedSplitOverlayRect,
+    QCOMPARE(terminalPaneRenderProbe(firstPane).unfocusedSplitOverlayRect,
              firstPane->boundingRect());
     QVERIFY(workspace->dispatchAction({
         WorkspaceAction::ToggleSplitZoom,
@@ -13214,11 +12860,9 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     QVERIFY(firstPane->isVisible());
     QVERIFY(secondPane->isVisible());
     QVERIFY(!window.grabWindow().isNull());
-    QCOMPARE(terminalPaneRenderProbe(firstPane)
-                 .unfocusedSplitOverlayRect,
+    QCOMPARE(terminalPaneRenderProbe(firstPane).unfocusedSplitOverlayRect,
              firstPane->boundingRect());
-    QCOMPARE(terminalPaneRenderProbe(secondPane)
-                 .unfocusedSplitOverlayRect,
+    QCOMPARE(terminalPaneRenderProbe(secondPane).unfocusedSplitOverlayRect,
              secondPane->boundingRect());
     firstPane->forceActiveFocus();
     QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), firstPane, 1000);
@@ -13234,20 +12878,17 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     QTRY_VERIFY_WITH_TIMEOUT(secondWindow.isActive(), 1000);
     QTRY_VERIFY_WITH_TIMEOUT(!window.isActive(), 1000);
     QVERIFY(!window.grabWindow().isNull());
-    QCOMPARE(terminalPaneRenderProbe(firstPane)
-                 .unfocusedSplitOverlayRect,
+    QCOMPARE(terminalPaneRenderProbe(firstPane).unfocusedSplitOverlayRect,
              firstPane->boundingRect());
-    QCOMPARE(terminalPaneRenderProbe(secondPane)
-                 .unfocusedSplitOverlayRect,
+    QCOMPARE(terminalPaneRenderProbe(secondPane).unfocusedSplitOverlayRect,
              secondPane->boundingRect());
 
     window.requestActivate();
     QTRY_VERIFY_WITH_TIMEOUT(window.isActive(), 1000);
     QVERIFY(!window.grabWindow().isNull());
-    QVERIFY(terminalPaneRenderProbe(firstPane)
-                .unfocusedSplitOverlayRect.isEmpty());
-    QCOMPARE(terminalPaneRenderProbe(secondPane)
-                 .unfocusedSplitOverlayRect,
+    QVERIFY(
+        terminalPaneRenderProbe(firstPane).unfocusedSplitOverlayRect.isEmpty());
+    QCOMPARE(terminalPaneRenderProbe(secondPane).unfocusedSplitOverlayRect,
              secondPane->boundingRect());
 
     const quint64 firstRootBeforeSceneMove =
@@ -13269,8 +12910,7 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     QVERIFY(movedFirst.rootSerial != firstRootBeforeSceneMove);
     QVERIFY(movedSecond.rootSerial != secondRootBeforeSceneMove);
     QVERIFY(movedFirst.unfocusedSplitOverlayRect.isEmpty());
-    QCOMPARE(movedSecond.unfocusedSplitOverlayRect,
-             secondPane->boundingRect());
+    QCOMPARE(movedSecond.unfocusedSplitOverlayRect, secondPane->boundingRect());
     const QImage oldWindowImage = window.grabWindow();
     QVERIFY(!oldWindowImage.isNull());
     QVERIFY(approximatelyEqual(
@@ -13294,8 +12934,8 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     QTRY_COMPARE_WITH_TIMEOUT(secondWindow.activeFocusItem(), secondFocusSink,
                               1000);
     QVERIFY(!secondWindow.grabWindow().isNull());
-    QVERIFY(terminalPaneRenderProbe(firstPane)
-                .unfocusedSplitOverlayRect.isEmpty());
+    QVERIFY(
+        terminalPaneRenderProbe(firstPane).unfocusedSplitOverlayRect.isEmpty());
     QVERIFY(splitDividerItems(workspace.get()).isEmpty());
 
     workspace.reset();
@@ -13356,7 +12996,8 @@ void TerminalWorkspaceTest::
     QCOMPARE(inheritedControllerCount(), 2);
 }
 
-void TerminalWorkspaceTest::splitWorkingDirectoryPolicyReloadsForFutureNestedSplits()
+void TerminalWorkspaceTest::
+    splitWorkingDirectoryPolicyReloadsForFutureNestedSplits()
 {
     QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
     QTemporaryDir directory(QDir::current().filePath(
@@ -13371,7 +13012,9 @@ void TerminalWorkspaceTest::splitWorkingDirectoryPolicyReloadsForFutureNestedSpl
     const QString reloadedFallback =
         root.filePath(QStringLiteral("reloaded fallback"));
     for (const QString &path : {
-             baseDirectory, sourceDirectory, configuredFallback,
+             baseDirectory,
+             sourceDirectory,
+             configuredFallback,
              reloadedFallback,
          }) {
         QVERIFY(QDir().mkpath(path));
@@ -13385,10 +13028,10 @@ void TerminalWorkspaceTest::splitWorkingDirectoryPolicyReloadsForFutureNestedSpl
                 + QFile::encodeName(childLog)
                 + QByteArrayLiteral("\"\nexec /bin/sleep 5\n"));
     shell.close();
-    QVERIFY(QFile::setPermissions(
-        shellPath,
-        QFileDevice::ReadOwner | QFileDevice::WriteOwner
-            | QFileDevice::ExeOwner));
+    QVERIFY(QFile::setPermissions(shellPath,
+                                  QFileDevice::ReadOwner
+                                      | QFileDevice::WriteOwner
+                                      | QFileDevice::ExeOwner));
     ShellEnvironment shellEnvironment(QFile::encodeName(shellPath));
 
     LaunchOptions options = baseOptions();
@@ -13411,19 +13054,17 @@ void TerminalWorkspaceTest::splitWorkingDirectoryPolicyReloadsForFutureNestedSpl
     TerminalWorkspace workspace;
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     const TabId tabId = workspace.tabModel()->idAt(0);
-    const PaneId sourceId =
-        workspace.tabModel()->entryAt(0)->activePaneId;
+    const PaneId sourceId = workspace.tabModel()->entryAt(0)->activePaneId;
     TerminalPane *sourcePane = workspace.findChild<TerminalPane *>();
     QVERIFY(sourcePane != nullptr);
-    auto *sourceController =
-        sourcePane->findChild<TerminalController *>();
+    auto *sourceController = sourcePane->findChild<TerminalController *>();
     QVERIFY(sourceController != nullptr);
-    QTRY_COMPARE_WITH_TIMEOUT(sourcePane->currentDirectory(),
-                              sourceDirectory, 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(sourcePane->currentDirectory(), sourceDirectory,
+                              3000);
     sourcePane->zoomIn();
     QCOMPARE(sourcePane->fontPointSize(), 13.0);
-    QSignalSpy sourceRuntime(
-        sourceController, &TerminalController::runtimeOptionsRequested);
+    QSignalSpy sourceRuntime(sourceController,
+                             &TerminalController::runtimeOptionsRequested);
 
     const auto recordedDirectories = [&] {
         QFile log(childLog);
@@ -13460,11 +13101,10 @@ void TerminalWorkspaceTest::splitWorkingDirectoryPolicyReloadsForFutureNestedSpl
     QCOMPARE(recordedDirectories().constFirst(), configuredFallback);
     QCOMPARE(fallbackChild->currentDirectory(), configuredFallback);
     QCOMPARE(fallbackChild->fontPointSize(), 13.0);
-    auto *fallbackController =
-        fallbackChild->findChild<TerminalController *>();
+    auto *fallbackController = fallbackChild->findChild<TerminalController *>();
     QVERIFY(fallbackController != nullptr);
-    QSignalSpy fallbackRuntime(
-        fallbackController, &TerminalController::runtimeOptionsRequested);
+    QSignalSpy fallbackRuntime(fallbackController,
+                               &TerminalController::runtimeOptionsRequested);
 
     reloadedOptions.workingDirectory = reloadedFallback;
     reloadedOptions.splitInheritWorkingDirectory = true;
@@ -13508,11 +13148,12 @@ void TerminalWorkspaceTest::splitWorkingDirectoryPolicyReloadsForFutureNestedSpl
     QCOMPARE(sourcePane->findChild<TerminalController *>(), sourceController);
 }
 
-void TerminalWorkspaceTest::newTabInheritanceUsesStableSourceAndReloadedPolicies()
+void TerminalWorkspaceTest::
+    newTabInheritanceUsesStableSourceAndReloadedPolicies()
 {
     QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
-    QTemporaryDir directory(QDir::current().filePath(
-        QStringLiteral("tmp/tab-inheritance-XXXXXX")));
+    QTemporaryDir directory(
+        QDir::current().filePath(QStringLiteral("tmp/tab-inheritance-XXXXXX")));
     QVERIFY(directory.isValid());
     const QDir root(directory.path());
     const QString baseDirectory = root.filePath(QStringLiteral("base"));
@@ -13525,8 +13166,11 @@ void TerminalWorkspaceTest::newTabInheritanceUsesStableSourceAndReloadedPolicies
     const QString reloadedFallback =
         root.filePath(QStringLiteral("reloaded fallback"));
     for (const QString &path : {
-             baseDirectory, sourceDirectory, childReportedDirectory,
-             disabledFallback, reloadedFallback,
+             baseDirectory,
+             sourceDirectory,
+             childReportedDirectory,
+             disabledFallback,
+             reloadedFallback,
          }) {
         QVERIFY(QDir().mkpath(path));
     }
@@ -13545,10 +13189,10 @@ void TerminalWorkspaceTest::newTabInheritanceUsesStableSourceAndReloadedPolicies
                 + childReportedUrl.toEncoded()
                 + QByteArrayLiteral("'\nexec /bin/sleep 5\n"));
     shell.close();
-    QVERIFY(QFile::setPermissions(
-        shellPath,
-        QFileDevice::ReadOwner | QFileDevice::WriteOwner
-            | QFileDevice::ExeOwner));
+    QVERIFY(QFile::setPermissions(shellPath,
+                                  QFileDevice::ReadOwner
+                                      | QFileDevice::WriteOwner
+                                      | QFileDevice::ExeOwner));
     ShellEnvironment shellEnvironment(QFile::encodeName(shellPath));
 
     QUrl sourceUrl;
@@ -13571,12 +13215,11 @@ void TerminalWorkspaceTest::newTabInheritanceUsesStableSourceAndReloadedPolicies
     TerminalWorkspace workspace;
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     const TabId sourceTabId = workspace.tabModel()->idAt(0);
-    const PaneId sourcePaneId =
-        workspace.tabModel()->entryAt(0)->activePaneId;
+    const PaneId sourcePaneId = workspace.tabModel()->entryAt(0)->activePaneId;
     TerminalPane *sourcePane = workspace.findChild<TerminalPane *>();
     QVERIFY(sourcePane != nullptr);
-    QTRY_COMPARE_WITH_TIMEOUT(sourcePane->currentDirectory(),
-                              sourceDirectory, 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(sourcePane->currentDirectory(), sourceDirectory,
+                              3000);
     sourcePane->zoomIn();
     QCOMPARE(sourcePane->fontPointSize(), 13.0);
 
@@ -13629,8 +13272,7 @@ void TerminalWorkspaceTest::newTabInheritanceUsesStableSourceAndReloadedPolicies
         WorkspaceAction::SplitRight,
         {sourceTabId, sourcePaneId, 0},
     }));
-    const PaneId splitPaneId =
-        workspace.tabModel()->entryAt(0)->activePaneId;
+    const PaneId splitPaneId = workspace.tabModel()->entryAt(0)->activePaneId;
     QVERIFY(splitPaneId != sourcePaneId);
     TerminalPane *splitPane = nullptr;
     for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
@@ -13649,13 +13291,14 @@ void TerminalWorkspaceTest::newTabInheritanceUsesStableSourceAndReloadedPolicies
     QVERIFY(clearLog.open(QIODevice::WriteOnly | QIODevice::Truncate));
     clearLog.close();
 
-    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
-        QStringLiteral("new_tab")));
+    QVERIFY(
+        workspace.executeSurfaceActionOnAllPanes(QStringLiteral("new_tab")));
     QCOMPARE(workspace.tabCount(), 3);
     QTRY_COMPARE_WITH_TIMEOUT(recordedDirectories().size(), 2, 3000);
     QStringList broadDirectories = recordedDirectories();
     QStringList expectedBroadDirectories{
-        sourceDirectory, childReportedDirectory,
+        sourceDirectory,
+        childReportedDirectory,
     };
     broadDirectories.sort();
     expectedBroadDirectories.sort();
@@ -13727,13 +13370,13 @@ void TerminalWorkspaceTest::newTabInheritanceUsesStableSourceAndReloadedPolicies
     // The built-in binding emits a signal rather than a typed action. Send it
     // to the non-active source pane and prove its identity is not discarded.
     workspace.setCurrentIndex(0);
-    QKeyEvent newTabPress(
-        QEvent::KeyPress, Qt::Key_T,
-        Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("T"));
+    QKeyEvent newTabPress(QEvent::KeyPress, Qt::Key_T,
+                          Qt::ControlModifier | Qt::ShiftModifier,
+                          QStringLiteral("T"));
     QCoreApplication::sendEvent(sourcePane, &newTabPress);
-    QKeyEvent newTabRelease(
-        QEvent::KeyRelease, Qt::Key_T,
-        Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("T"));
+    QKeyEvent newTabRelease(QEvent::KeyRelease, Qt::Key_T,
+                            Qt::ControlModifier | Qt::ShiftModifier,
+                            QStringLiteral("T"));
     QCoreApplication::sendEvent(sourcePane, &newTabRelease);
     QCOMPARE(workspace.tabCount(), 7);
     QTRY_COMPARE_WITH_TIMEOUT(recordedDirectories().size(), 6, 3000);
@@ -13783,12 +13426,12 @@ void TerminalWorkspaceTest::splitDividerHitRegionPreservesTerminalInputAndZoom()
     QVERIFY(secondController != nullptr);
     QSignalSpy firstSelectionBegun(
         firstController, &TerminalController::beginSelectionRequested);
-    QSignalSpy firstSelectionEnded(
-        firstController, &TerminalController::endSelectionRequested);
+    QSignalSpy firstSelectionEnded(firstController,
+                                   &TerminalController::endSelectionRequested);
     QSignalSpy secondSelectionBegun(
         secondController, &TerminalController::beginSelectionRequested);
-    QSignalSpy secondSelectionEnded(
-        secondController, &TerminalController::endSelectionRequested);
+    QSignalSpy secondSelectionEnded(secondController,
+                                    &TerminalController::endSelectionRequested);
 
     const qreal dividerEdge = firstPane->x() + firstPane->width();
     QCOMPARE(secondPane->x(), dividerEdge + 2.0);
@@ -13800,8 +13443,8 @@ void TerminalWorkspaceTest::splitDividerHitRegionPreservesTerminalInputAndZoom()
     QCOMPARE(divider->z(), 1.0);
 
     const qreal pointerY = workspace->height() / 3.0;
-    const QPoint gapPoint = windowPoint(
-        workspace.get(), QPointF(dividerEdge + 1.0, pointerY));
+    const QPoint gapPoint =
+        windowPoint(workspace.get(), QPointF(dividerEdge + 1.0, pointerY));
     QTest::mouseMove(&window, gapPoint);
     QTRY_COMPARE_WITH_TIMEOUT(window.cursor().shape(), Qt::SplitHCursor, 1000);
     QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, gapPoint);
@@ -13812,22 +13455,20 @@ void TerminalWorkspaceTest::splitDividerHitRegionPreservesTerminalInputAndZoom()
     QCOMPARE(secondSelectionBegun.count(), 0);
     QCOMPARE(secondSelectionEnded.count(), 0);
 
-    const QPoint firstCellPoint = windowPoint(
-        workspace.get(), QPointF(dividerEdge - 1.0, pointerY));
+    const QPoint firstCellPoint =
+        windowPoint(workspace.get(), QPointF(dividerEdge - 1.0, pointerY));
     QTest::mouseMove(&window, firstCellPoint);
-    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier,
-                      firstCellPoint);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, firstCellPoint);
     QVERIFY(window.mouseGrabberItem() == firstPane);
     QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier,
                         firstCellPoint);
     QCOMPARE(firstSelectionBegun.count(), 1);
     QCOMPARE(firstSelectionEnded.count(), 1);
 
-    const QPoint secondCellPoint = windowPoint(
-        workspace.get(), QPointF(secondPane->x() + 1.0, pointerY));
+    const QPoint secondCellPoint =
+        windowPoint(workspace.get(), QPointF(secondPane->x() + 1.0, pointerY));
     QTest::mouseMove(&window, secondCellPoint);
-    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier,
-                      secondCellPoint);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, secondCellPoint);
     QVERIFY(window.mouseGrabberItem() == secondPane);
     QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier,
                         secondCellPoint);
@@ -13879,8 +13520,8 @@ void TerminalWorkspaceTest::splitDividerHitRegionPreservesTerminalInputAndZoom()
     const QSizeF firstBeforeReparent = firstPane->size();
     const QSizeF secondBeforeReparent = secondPane->size();
     const qreal reparentEdge = firstPane->x() + firstPane->width();
-    const QPoint oldSceneStart = windowPoint(
-        workspace.get(), QPointF(reparentEdge + 1.0, pointerY));
+    const QPoint oldSceneStart =
+        windowPoint(workspace.get(), QPointF(reparentEdge + 1.0, pointerY));
     QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, oldSceneStart);
     QVERIFY(window.mouseGrabberItem() != nullptr);
     workspace->setParentItem(secondWindow.contentItem());
@@ -13896,8 +13537,8 @@ void TerminalWorkspaceTest::splitDividerHitRegionPreservesTerminalInputAndZoom()
     QCOMPARE(secondPane->size(), secondBeforeReparent);
 
     QCOMPARE(splitDividerItems(workspace.get()).size(), 1);
-    const QPoint newSceneStart = windowPoint(
-        workspace.get(), QPointF(reparentEdge + 1.0, pointerY));
+    const QPoint newSceneStart =
+        windowPoint(workspace.get(), QPointF(reparentEdge + 1.0, pointerY));
     const QPoint newSceneEnd = newSceneStart + QPoint(60, 0);
     QTest::mousePress(&secondWindow, Qt::LeftButton, Qt::NoModifier,
                       newSceneStart);
@@ -13905,10 +13546,10 @@ void TerminalWorkspaceTest::splitDividerHitRegionPreservesTerminalInputAndZoom()
     QTest::mouseMove(&secondWindow, newSceneEnd);
     QTest::mouseRelease(&secondWindow, Qt::LeftButton, Qt::NoModifier,
                         newSceneEnd);
-    QVERIFY(qAbs(firstPane->width()
-                 - (firstBeforeReparent.width() + 60.0)) <= 1.0);
-    QVERIFY(qAbs(secondPane->width()
-                 - (secondBeforeReparent.width() - 60.0)) <= 1.0);
+    QVERIFY(qAbs(firstPane->width() - (firstBeforeReparent.width() + 60.0))
+            <= 1.0);
+    QVERIFY(qAbs(secondPane->width() - (secondBeforeReparent.width() - 60.0))
+            <= 1.0);
 
     workspace.reset();
     secondWindow.close();
@@ -13949,10 +13590,9 @@ void TerminalWorkspaceTest::splitDividerDragClampsPersistsAndCancels()
     QCOMPARE(splitDividerItems(workspace.get()).size(), 1);
 
     const auto dividerPoint = [&] {
-        return windowPoint(
-            workspace.get(),
-            QPointF(workspace->width() / 2.0,
-                    topPane->y() + topPane->height() + 1.0));
+        return windowPoint(workspace.get(),
+                           QPointF(workspace->width() / 2.0,
+                                   topPane->y() + topPane->height() + 1.0));
     };
 
     // A press/release without pointer movement must preserve the fractional
@@ -14007,8 +13647,7 @@ void TerminalWorkspaceTest::splitDividerDragClampsPersistsAndCancels()
     QVERIFY(window.mouseGrabberItem() == nullptr);
     const QPoint canceledMove = start + QPoint(0, 120);
     QTest::mouseMove(&window, canceledMove);
-    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier,
-                        canceledMove);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, canceledMove);
     QCOMPARE(topPane->size(), equalTopSize);
     QCOMPARE(bottomPane->size(), equalBottomSize);
 
@@ -14034,8 +13673,8 @@ void TerminalWorkspaceTest::splitDividerDragClampsPersistsAndCancels()
     // Both endpoints are legal and the edge handle remains available to
     // recover a collapsed child.
     start = dividerPoint();
-    const QPoint topEdge = windowPoint(
-        workspace.get(), QPointF(workspace->width() / 2.0, 0.0));
+    const QPoint topEdge =
+        windowPoint(workspace.get(), QPointF(workspace->width() / 2.0, 0.0));
     QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, start);
     QTest::mouseMove(&window, topEdge);
     QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, topEdge);
@@ -14064,8 +13703,8 @@ void TerminalWorkspaceTest::splitDividerDragClampsPersistsAndCancels()
 
     workspace->setHeight(2.0);
     QVERIFY(splitDividerItems(workspace.get()).isEmpty());
-    const QPoint zeroExtent = windowPoint(
-        workspace.get(), QPointF(workspace->width() / 2.0, 1.0));
+    const QPoint zeroExtent =
+        windowPoint(workspace.get(), QPointF(workspace->width() / 2.0, 1.0));
     QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, zeroExtent);
     QVERIFY(window.mouseGrabberItem() == nullptr);
     QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, zeroExtent);
@@ -14098,7 +13737,8 @@ void TerminalWorkspaceTest::splitDividerDragClampsPersistsAndCancels()
     window.close();
 }
 
-void TerminalWorkspaceTest::splitZoomPreservesLayoutAndResetsOnNavigationAndSplit()
+void TerminalWorkspaceTest::
+    splitZoomPreservesLayoutAndResetsOnNavigationAndSplit()
 {
     // Keep later split/tab shells alive while the explicitly held /bin/true
     // source becomes a stopped pane that can be closed without confirmation.
@@ -14239,8 +13879,7 @@ void TerminalWorkspaceTest::splitZoomPreservesLayoutAndResetsOnNavigationAndSpli
     }));
     QCOMPARE(confirmation.count(), 0);
     QTRY_COMPARE_WITH_TIMEOUT(workspace.findChildren<TerminalPane *>().size(),
-                              paneCountBeforeClose - 1,
-                              1000);
+                              paneCountBeforeClose - 1, 1000);
     QTRY_VERIFY_WITH_TIMEOUT(closedPane.isNull(), 1000);
     QCOMPARE(workspace.tabCount(), 2);
     QCOMPARE(workspace.tabModel()->count(), 2);
@@ -14441,8 +14080,8 @@ void TerminalWorkspaceTest::broadContainerActionsResolveFromActivePane()
 
     const qreal thirdWidthBeforeAuto = thirdPane->width();
     const qreal thirdHeightBeforeAuto = thirdPane->height();
-    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
-        QStringLiteral("new_split")));
+    QVERIFY(
+        workspace.executeSurfaceActionOnAllPanes(QStringLiteral("new_split")));
     QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 6);
     // The first snapshot source is wider than tall, so its auto direction is
     // right even though placement is redirected to the active third pane.

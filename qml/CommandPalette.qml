@@ -17,43 +17,42 @@ Popup {
     modal: true
     focus: visible
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-    visible: uiController !== null
-             && uiController.commandPaletteVisible
+    visible: uiController !== null && uiController.commandPaletteVisible
     padding: 12
 
     function resetAndFocus() {
         if (!visible || uiController === null)
-            return
-        searchField.text = ""
-        uiController.commandPaletteModel.filter = ""
-        Qt.callLater(function() {
+            return;
+        searchField.text = "";
+        uiController.commandPaletteModel.filter = "";
+        Qt.callLater(function () {
             if (root.visible)
-                searchField.forceActiveFocus()
-        })
+                searchField.forceActiveFocus();
+        });
     }
 
     function dismiss() {
         if (uiController !== null)
-            uiController.closeModal()
+            uiController.closeModal();
     }
 
     function activateSelected() {
         if (uiController === null)
-            return
+            return;
         if (uiController.commandPaletteModel.selectedIndex < 0)
-            return
-        dismiss()
+            return;
+        dismiss();
         // Popup teardown and focus restoration complete before C++ resolves
         // the captured typed command.
-        Qt.callLater(function() {
+        Qt.callLater(function () {
             if (root.uiController !== null)
-                root.uiController.activateSelectedCommand()
-        })
+                root.uiController.activateSelectedCommand();
+        });
     }
 
     onClosed: {
         if (uiController !== null && uiController.commandPaletteVisible)
-            uiController.closeModal()
+            uiController.closeModal();
     }
 
     contentItem: ColumnLayout {
@@ -69,31 +68,30 @@ Popup {
 
             onTextEdited: {
                 if (root.uiController !== null)
-                    root.uiController.commandPaletteModel.filter = text
+                    root.uiController.commandPaletteModel.filter = text;
             }
 
-            Keys.onPressed: function(event) {
+            Keys.onPressed: function (event) {
                 if (root.uiController === null)
-                    return
+                    return;
                 if (event.key === Qt.Key_Down) {
-                    root.uiController.commandPaletteModel.selectRelative(1)
-                    event.accepted = true
+                    root.uiController.commandPaletteModel.selectRelative(1);
+                    event.accepted = true;
                 } else if (event.key === Qt.Key_Up) {
-                    root.uiController.commandPaletteModel.selectRelative(-1)
-                    event.accepted = true
+                    root.uiController.commandPaletteModel.selectRelative(-1);
+                    event.accepted = true;
                 } else if (event.key === Qt.Key_PageDown) {
-                    root.uiController.commandPaletteModel.selectRelative(8)
-                    event.accepted = true
+                    root.uiController.commandPaletteModel.selectRelative(8);
+                    event.accepted = true;
                 } else if (event.key === Qt.Key_PageUp) {
-                    root.uiController.commandPaletteModel.selectRelative(-8)
-                    event.accepted = true
-                } else if (event.key === Qt.Key_Return
-                           || event.key === Qt.Key_Enter) {
-                    root.activateSelected()
-                    event.accepted = true
+                    root.uiController.commandPaletteModel.selectRelative(-8);
+                    event.accepted = true;
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                    root.activateSelected();
+                    event.accepted = true;
                 } else if (event.key === Qt.Key_Escape) {
-                    root.dismiss()
-                    event.accepted = true
+                    root.dismiss();
+                    event.accepted = true;
                 }
             }
         }
@@ -106,12 +104,8 @@ Popup {
             clip: true
             spacing: 2
             focus: false
-            model: root.uiController !== null
-                   ? root.uiController.commandPaletteModel
-                   : null
-            currentIndex: root.uiController !== null
-                          ? root.uiController.commandPaletteModel.selectedIndex
-                          : -1
+            model: root.uiController !== null ? root.uiController.commandPaletteModel : null
+            currentIndex: root.uiController !== null ? root.uiController.commandPaletteModel.selectedIndex : -1
 
             delegate: ItemDelegate {
                 id: commandDelegate
@@ -145,8 +139,8 @@ Popup {
                 }
 
                 onClicked: {
-                    root.uiController.commandPaletteModel.selectedIndex = index
-                    root.activateSelected()
+                    root.uiController.commandPaletteModel.selectedIndex = index;
+                    root.activateSelected();
                 }
             }
 
@@ -163,6 +157,6 @@ Popup {
 
     onVisibleChanged: {
         if (visible)
-            resetAndFocus()
+            resetAndFocus();
     }
 }

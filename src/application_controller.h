@@ -9,8 +9,8 @@
 #include "workspace_action.h"
 #include "workspace_ids.h"
 
-#include <QObject>
 #include <QHash>
+#include <QObject>
 #include <QPointer>
 #include <QSet>
 #include <QVector>
@@ -93,9 +93,8 @@ public:
     // Ghostty application actions carry no in-process source pointer. Stable
     // surface IDs route new-tab; decoded launch overrides apply only to the
     // newly created tab or window's first surface.
-    [[nodiscard]] bool
-    activateNewTab(GhosttyNewTabTransportRequest request,
-                   DesktopActivationContext activation = {});
+    [[nodiscard]] bool activateNewTab(GhosttyNewTabTransportRequest request,
+                                      DesktopActivationContext activation = {});
     [[nodiscard]] bool
     activateNewWindow(GhosttyNewWindowTransportOverrides overrides,
                       DesktopActivationContext activation = {});

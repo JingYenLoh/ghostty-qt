@@ -122,8 +122,7 @@ QColor terminalLinearizedColor(const QColor &color)
         terminalSrgbToLinear(static_cast<float>(rgb.blueF())), rgb.alphaF());
 }
 
-QColor terminalRenderingColor(const QColor &color,
-                              TerminalAlphaBlending mode)
+QColor terminalRenderingColor(const QColor &color, TerminalAlphaBlending mode)
 {
     return terminalUsesLinearBlending(mode) ? terminalLinearizedColor(color)
                                             : color;
@@ -140,8 +139,8 @@ const TerminalCustomShaderStage &terminalAlphaEncodeShaderStage()
             .sourcePath = QStringLiteral("builtin:alpha-blending"),
             .qsbPath = path,
             .cacheKey = QByteArrayLiteral("ghostty-qt-alpha-encode-v1"),
-            .serializedShader = file.open(QIODevice::ReadOnly) ? file.readAll()
-                                                                : QByteArray{},
+            .serializedShader =
+                file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray{},
         };
     }();
     return stage;

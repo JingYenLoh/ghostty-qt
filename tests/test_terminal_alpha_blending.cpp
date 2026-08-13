@@ -97,8 +97,7 @@ void TerminalAlphaBlendingTest::
     }
 }
 
-void TerminalAlphaBlendingTest::
-    convertsRenderingColorsWithoutChangingAlpha()
+void TerminalAlphaBlendingTest::convertsRenderingColorsWithoutChangingAlpha()
 {
     const QColor source = QColor::fromRgbF(0.5, 0.25, 0.75, 0.375);
     QCOMPARE(terminalRenderingColor(source, TerminalAlphaBlending::Native),
@@ -106,13 +105,12 @@ void TerminalAlphaBlendingTest::
     const QColor linear =
         terminalRenderingColor(source, TerminalAlphaBlending::Linear);
     QVERIFY(std::abs(linear.redF() - terminalSrgbToLinear(0.5F)) < 0.0001F);
-    QVERIFY(std::abs(linear.greenF() - terminalSrgbToLinear(0.25F))
-            < 0.0001F);
+    QVERIFY(std::abs(linear.greenF() - terminalSrgbToLinear(0.25F)) < 0.0001F);
     QVERIFY(std::abs(linear.blueF() - terminalSrgbToLinear(0.75F)) < 0.0001F);
     QVERIFY(std::abs(linear.alphaF() - source.alphaF()) < 0.0001F);
-    QCOMPARE(terminalRenderingColor(
-                 source, TerminalAlphaBlending::LinearCorrected),
-             linear);
+    QCOMPARE(
+        terminalRenderingColor(source, TerminalAlphaBlending::LinearCorrected),
+        linear);
 }
 
 void TerminalAlphaBlendingTest::embedsFinalEncodeShaderWithSharedAbi()

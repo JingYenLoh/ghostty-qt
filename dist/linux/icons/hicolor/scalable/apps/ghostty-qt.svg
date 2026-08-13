@@ -1,42 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg"
-     width="512"
-     height="512"
-     viewBox="0 0 512 512"
-     shape-rendering="geometricPrecision"
-     role="img"
-     aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" shape-rendering="geometricPrecision" role="img" aria-labelledby="title description">
   <title id="title">Ghostty Qt</title>
   <desc id="description">A terminal ghost in a blue Q-shaped screen with a teal tail</desc>
-
   <!-- Shift the terminal tile up-left; the Q tail restores optical balance. -->
-  <rect x="32" y="32" width="416" height="416" rx="112"
-        fill="#0a1024"/>
-
+  <rect x="32" y="32" width="416" height="416" rx="112" fill="#0a1024"/>
   <!-- The tail sits between the frame and screen so it emerges as part of the
        terminal silhouette without borrowing Qt's official Q glyph. -->
-  <path d="M346 346 455 455" fill="none" stroke="#58e0c1"
-        stroke-width="46" stroke-linecap="round"/>
-  <rect x="58" y="58" width="364" height="364" rx="86"
-        fill="#153dc7"/>
-
+  <path d="M346 346 455 455" fill="none" stroke="#58e0c1" stroke-width="46" stroke-linecap="round"/>
+  <rect x="58" y="58" width="364" height="364" rx="86" fill="#153dc7"/>
   <!-- Four broad lobes and a path-only prompt remain distinct at 16 px. -->
-  <path d="M240 108
-           C172.6 108 118 162.6 118 230
-           V330
-           C118 358 149 371 174 350
-           C192 370 222 370 240 350
-           C258 370 288 370 306 350
-           C331 371 362 358 362 330
-           V230
-           C362 162.6 307.4 108 240 108 Z"
-        fill="#f7faff"/>
-
+  <path d="M240 108            C172.6 108 118 162.6 118 230            V330            C118 358 149 371 174 350            C192 370 222 370 240 350            C258 370 288 370 306 350            C331 371 362 358 362 330            V230            C362 162.6 307.4 108 240 108 Z" fill="#f7faff"/>
   <!-- Path-only prompt: no font dependency in the installed SVG. -->
-  <path d="M164 211 216 254 164 297"
-        fill="none" stroke="#0c1635" stroke-width="28"
-        stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M244 297 H316"
-        fill="none" stroke="#0c1635" stroke-width="28"
-        stroke-linecap="round"/>
+  <path d="M164 211 216 254 164 297" fill="none" stroke="#0c1635" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M244 297 H316" fill="none" stroke="#0c1635" stroke-width="28" stroke-linecap="round"/>
 </svg>

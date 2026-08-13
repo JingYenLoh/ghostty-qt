@@ -110,8 +110,7 @@ private:
     };
 
     void clearCpuTexture();
-    void setBase(std::size_t index, const QRectF &rect,
-                 const QColor &color);
+    void setBase(std::size_t index, const QRectF &rect, const QColor &color);
     void clearBases(const QColor &color);
     void setSolidBase(const QRectF &viewport, const QColor &color);
 

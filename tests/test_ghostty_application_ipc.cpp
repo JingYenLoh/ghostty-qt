@@ -26,15 +26,13 @@ using namespace std::chrono_literals;
 
 namespace {
 
-constexpr auto DefaultApplicationId =
-    "io.github.JingYenLoh.ghostty_qt";
+constexpr auto DefaultApplicationId = "io.github.JingYenLoh.ghostty_qt";
 
 class LocalTemporaryDirectory final {
 public:
     LocalTemporaryDirectory()
     {
-        const QString root =
-            QDir::current().filePath(QStringLiteral("tmp"));
+        const QString root = QDir::current().filePath(QStringLiteral("tmp"));
         valid_ = QDir().mkpath(root);
         if (valid_) {
             directory_ = std::make_unique<QTemporaryDir>(
@@ -88,10 +86,7 @@ public:
         }
     }
 
-    [[nodiscard]] std::span<char *const> span() noexcept
-    {
-        return pointers_;
-    }
+    [[nodiscard]] std::span<char *const> span() noexcept { return pointers_; }
 
 private:
     std::vector<std::string> storage_;
@@ -100,9 +95,8 @@ private:
 
 QString uniqueServiceName()
 {
-    QString suffix = QUuid::createUuid()
-                         .toString(QUuid::WithoutBraces)
-                         .remove(u'-');
+    QString suffix =
+        QUuid::createUuid().toString(QUuid::WithoutBraces).remove(u'-');
     return QStringLiteral("io.github.JingYenLoh.ghostty_qt.IpcTest.t%1")
         .arg(suffix);
 }
@@ -162,7 +156,8 @@ void GhosttyApplicationIpcTest::newTabTargetsExplicitOrEnvironmentSurface()
     auto parsed = parseGhosttyApplicationIpcRequest(
         GhosttyApplicationIpcAction::NewTab,
         QList<QByteArray>{
-            QByteArrayLiteral("ghostty"), QByteArrayLiteral("+new-tab"),
+            QByteArrayLiteral("ghostty"),
+            QByteArrayLiteral("+new-tab"),
             QByteArrayLiteral("--surface-id= 0x1234 "),
             QByteArrayLiteral("--shell-integration=fish"),
             QByteArrayLiteral("--title=remote"),
@@ -204,21 +199,18 @@ void GhosttyApplicationIpcTest::
 {
     LocalTemporaryDirectory temporary;
     QVERIFY(temporary.isValid());
-    const QString canonical =
-        QFileInfo(temporary.path()).canonicalFilePath();
+    const QString canonical = QFileInfo(temporary.path()).canonicalFilePath();
 
     const auto parsed = parseGhosttyApplicationIpcRequest(
         GhosttyApplicationIpcAction::NewWindow,
         QList<QByteArray>{QByteArrayLiteral("ghostty"),
                           QByteArrayLiteral("--title=before"),
-                          QByteArrayLiteral("+new-window"),
-                          QByteArray{},
+                          QByteArrayLiteral("+new-window"), QByteArray{},
                           QByteArrayLiteral("--unknown=value")},
         contextFor(temporary.path()));
     QVERIFY2(parsed.has_value(),
              parsed ? "" : qPrintable(parsed.error().diagnostic));
-    QCOMPARE(parsed->applicationId,
-             QString::fromLatin1(DefaultApplicationId));
+    QCOMPARE(parsed->applicationId, QString::fromLatin1(DefaultApplicationId));
     QCOMPARE(parsed->objectPath,
              QStringLiteral("/io/github/JingYenLoh/ghostty_qt"));
     QCOMPARE(parsed->actionName, QStringLiteral("new-window-command"));
@@ -246,17 +238,14 @@ void GhosttyApplicationIpcTest::
             QByteArrayLiteral("ghostty"),
             QByteArrayLiteral("--class=  org.example-Ghostty.Test \t"),
             QByteArrayLiteral("+new-window"),
-            QByteArrayLiteral(
-                "--working-directory= target/../target \t"),
+            QByteArrayLiteral("--working-directory= target/../target \t"),
             QByteArrayLiteral("--title=kept"),
         },
         contextFor(temporary.path()));
     QVERIFY2(parsed.has_value(),
              parsed ? "" : qPrintable(parsed.error().diagnostic));
-    QCOMPARE(parsed->applicationId,
-             QStringLiteral("org.example-Ghostty.Test"));
-    QCOMPARE(parsed->objectPath,
-             QStringLiteral("/org/example_Ghostty/Test"));
+    QCOMPARE(parsed->applicationId, QStringLiteral("org.example-Ghostty.Test"));
+    QCOMPARE(parsed->objectPath, QStringLiteral("/org/example_Ghostty/Test"));
     QCOMPARE(payload(*parsed),
              QStringList({
                  QStringLiteral("--working-directory=%1")
@@ -271,8 +260,7 @@ void GhosttyApplicationIpcTest::expandsHomeForConcreteDirectory()
     QVERIFY(temporary.isValid());
     const QString home =
         QDir(temporary.path()).filePath(QStringLiteral("home"));
-    const QString project =
-        QDir(home).filePath(QStringLiteral("project"));
+    const QString project = QDir(home).filePath(QStringLiteral("project"));
     QVERIFY(QDir().mkpath(project));
 
     const auto parsed = parseGhosttyApplicationIpcRequest(
@@ -292,15 +280,13 @@ void GhosttyApplicationIpcTest::expandsHomeForConcreteDirectory()
              }));
 }
 
-void GhosttyApplicationIpcTest::
-    homeAndInheritDoNotSuppressCallerDirectory()
+void GhosttyApplicationIpcTest::homeAndInheritDoNotSuppressCallerDirectory()
 {
     LocalTemporaryDirectory temporary;
     QVERIFY(temporary.isValid());
-    QVERIFY(QDir().mkpath(
-        QDir(temporary.path()).filePath(QStringLiteral("home"))));
-    const QString canonical =
-        QFileInfo(temporary.path()).canonicalFilePath();
+    QVERIFY(
+        QDir().mkpath(QDir(temporary.path()).filePath(QStringLiteral("home"))));
+    const QString canonical = QFileInfo(temporary.path()).canonicalFilePath();
 
     const auto parsed = parseGhosttyApplicationIpcRequest(
         GhosttyApplicationIpcAction::NewWindow,
@@ -321,13 +307,11 @@ void GhosttyApplicationIpcTest::
              }));
 }
 
-void GhosttyApplicationIpcTest::
-    executeBoundaryMakesRemainingArgumentsOpaque()
+void GhosttyApplicationIpcTest::executeBoundaryMakesRemainingArgumentsOpaque()
 {
     LocalTemporaryDirectory temporary;
     QVERIFY(temporary.isValid());
-    const QString canonical =
-        QFileInfo(temporary.path()).canonicalFilePath();
+    const QString canonical = QFileInfo(temporary.path()).canonicalFilePath();
 
     const auto parsed = parseGhosttyApplicationIpcRequest(
         GhosttyApplicationIpcAction::NewWindow,
@@ -392,8 +376,7 @@ void GhosttyApplicationIpcTest::rejectsInvalidInput()
     QVERIFY(!parsed.has_value());
 }
 
-void GhosttyApplicationIpcTest::
-    toggleUsesDefaultTargetAndIgnoresExtras()
+void GhosttyApplicationIpcTest::toggleUsesDefaultTargetAndIgnoresExtras()
 {
     auto context = contextFor(QStringLiteral("/definitely/missing"));
     const auto parsed = parseGhosttyApplicationIpcRequest(
@@ -408,39 +391,32 @@ void GhosttyApplicationIpcTest::
         context);
     QVERIFY2(parsed.has_value(),
              parsed ? "" : qPrintable(parsed.error().diagnostic));
-    QCOMPARE(parsed->applicationId,
-             QString::fromLatin1(DefaultApplicationId));
+    QCOMPARE(parsed->applicationId, QString::fromLatin1(DefaultApplicationId));
     QCOMPARE(parsed->objectPath,
              QStringLiteral("/io/github/JingYenLoh/ghostty_qt"));
-    QCOMPARE(parsed->actionName,
-             QStringLiteral("toggle-quick-terminal"));
+    QCOMPARE(parsed->actionName, QStringLiteral("toggle-quick-terminal"));
     QVERIFY(!parsed->stringArrayParameter.has_value());
 }
 
-void GhosttyApplicationIpcTest::
-    rawArgumentOverloadPreservesEmptyValues()
+void GhosttyApplicationIpcTest::rawArgumentOverloadPreservesEmptyValues()
 {
     LocalTemporaryDirectory temporary;
     QVERIFY(temporary.isValid());
     RawArguments arguments{
-        "ghostty", "+new-window", "-e", "printf", "", "tail",
-        "+new-window",
+        "ghostty", "+new-window", "-e", "printf", "", "tail", "+new-window",
     };
     const auto parsed = parseGhosttyApplicationIpcRequest(
         GhosttyApplicationIpcAction::NewWindow, arguments.span(),
         contextFor(temporary.path()));
     QVERIFY2(parsed.has_value(),
              parsed ? "" : qPrintable(parsed.error().diagnostic));
-    QCOMPARE(payload(*parsed).sliced(1),
-             QStringList({QStringLiteral("-e"),
-                          QStringLiteral("printf"),
-                          QString{},
-                          QStringLiteral("tail"),
-                          QStringLiteral("+new-window")}));
+    QCOMPARE(
+        payload(*parsed).sliced(1),
+        QStringList({QStringLiteral("-e"), QStringLiteral("printf"), QString{},
+                     QStringLiteral("tail"), QStringLiteral("+new-window")}));
 }
 
-void GhosttyApplicationIpcTest::
-    decodesKnownOverridesWithLastValueWinning()
+void GhosttyApplicationIpcTest::decodesKnownOverridesWithLastValueWinning()
 {
     const auto decoded = decodeGhosttyNewWindowArguments({
         QStringLiteral("--title= first \t"),
@@ -461,8 +437,7 @@ void GhosttyApplicationIpcTest::
     QCOMPARE(*decoded->workingDirectory, QStringLiteral("inherit"));
     QVERIFY(decoded->command.has_value());
     QCOMPARE(decoded->command->kind, TerminalCommandKind::Shell);
-    QCOMPARE(decoded->command->shellCommand,
-             QByteArrayLiteral("echo second"));
+    QCOMPARE(decoded->command->shellCommand, QByteArrayLiteral("echo second"));
     QVERIFY(!decoded->command->defaultShell);
     QCOMPARE(decoded->shellIntegration,
              std::optional{GhosttyShellIntegrationMode::Fish});
@@ -477,8 +452,7 @@ void GhosttyApplicationIpcTest::decodesGhosttyCommandGrammar()
     QVERIFY(decoded->command.has_value());
     QCOMPARE(decoded->command->kind, TerminalCommandKind::Direct);
     QCOMPARE(decoded->command->directArguments,
-             QVector<QByteArray>({QByteArrayLiteral("echo"),
-                                  QByteArray{},
+             QVector<QByteArray>({QByteArrayLiteral("echo"), QByteArray{},
                                   QByteArrayLiteral("hello")}));
 
     decoded = decodeGhosttyNewWindowArguments({
@@ -499,8 +473,7 @@ void GhosttyApplicationIpcTest::decodesGhosttyCommandGrammar()
              QByteArrayLiteral("unknown:value"));
 }
 
-void GhosttyApplicationIpcTest::
-    executeArgumentsOverrideOnlyWhenNonEmpty()
+void GhosttyApplicationIpcTest::executeArgumentsOverrideOnlyWhenNonEmpty()
 {
     auto decoded = decodeGhosttyNewWindowArguments({
         QStringLiteral("--command=before"),
@@ -519,10 +492,10 @@ void GhosttyApplicationIpcTest::
     });
     QVERIFY(decoded.has_value());
     QCOMPARE(decoded->command->kind, TerminalCommandKind::Direct);
-    QCOMPARE(decoded->command->directArguments,
-             QVector<QByteArray>({QByteArray{},
-                                  QByteArrayLiteral("--title=opaque"),
-                                  QByteArrayLiteral("-e")}));
+    QCOMPARE(
+        decoded->command->directArguments,
+        QVector<QByteArray>({QByteArray{}, QByteArrayLiteral("--title=opaque"),
+                             QByteArrayLiteral("-e")}));
     QVERIFY(!decoded->titleOverride.has_value());
 }
 
@@ -543,15 +516,15 @@ void GhosttyApplicationIpcTest::receiverRejectsImpossibleStrings()
 
 void GhosttyApplicationIpcTest::sendsExactGtkActionsPayload()
 {
-    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon")).isEmpty()) {
+    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon"))
+            .isEmpty()) {
         QSKIP("dbus-daemon is unavailable");
     }
     PrivateSessionBus bus;
     QVERIFY2(bus.start(), qPrintable(bus.errorString()));
     const QString service = uniqueServiceName();
     const QString path = QStringLiteral("/")
-                             + QString(service).replace(u'.', u'/')
-                                   .replace(u'-', u'_');
+        + QString(service).replace(u'.', u'/').replace(u'-', u'_');
     ActionsEndpoint endpoint;
     QVERIFY(bus.server().registerService(service));
     QVERIFY(bus.server().registerObject(
@@ -561,21 +534,17 @@ void GhosttyApplicationIpcTest::sendsExactGtkActionsPayload()
         .applicationId = service,
         .objectPath = path,
         .actionName = QStringLiteral("new-window-command"),
-        .stringArrayParameter =
-            QStringList({QStringLiteral("--working-directory=/work"),
-                         QStringLiteral("-e"),
-                         QStringLiteral("printf"),
-                         QString{}}),
+        .stringArrayParameter = QStringList(
+            {QStringLiteral("--working-directory=/work"), QStringLiteral("-e"),
+             QStringLiteral("printf"), QString{}}),
     };
     auto future = std::async(std::launch::async, [&] {
         return sendGhosttyApplicationIpcRequest(request, bus.client(), 2s);
     });
-    QTRY_VERIFY_WITH_TIMEOUT(future.wait_for(0ms)
-                                 == std::future_status::ready,
+    QTRY_VERIFY_WITH_TIMEOUT(future.wait_for(0ms) == std::future_status::ready,
                              3000);
     const auto sent = future.get();
-    QVERIFY2(sent.has_value(),
-             sent ? "" : qPrintable(sent.error().diagnostic));
+    QVERIFY2(sent.has_value(), sent ? "" : qPrintable(sent.error().diagnostic));
     QCOMPARE(endpoint.calls, 1);
     QCOMPARE(endpoint.actionName, QStringLiteral("new-window-command"));
     QCOMPARE(endpoint.parameters.size(), 1);
@@ -587,20 +556,21 @@ void GhosttyApplicationIpcTest::sendsExactGtkActionsPayload()
         .applicationId = service,
         .objectPath = path,
         .actionName = QStringLiteral("new-tab"),
-        .newTabParameter = GhosttyNewTabIpcParameter{
-            .surfaceId = 0x1234,
-            .arguments = {
-                QStringLiteral("--working-directory=/tab"),
-                QStringLiteral("--shell-integration=zsh"),
+        .newTabParameter =
+            GhosttyNewTabIpcParameter{
+                .surfaceId = 0x1234,
+                .arguments =
+                    {
+                        QStringLiteral("--working-directory=/tab"),
+                        QStringLiteral("--shell-integration=zsh"),
+                    },
             },
-        },
     };
     auto tabFuture = std::async(std::launch::async, [&] {
         return sendGhosttyApplicationIpcRequest(newTab, bus.client(), 2s);
     });
-    QTRY_VERIFY_WITH_TIMEOUT(tabFuture.wait_for(0ms)
-                                 == std::future_status::ready,
-                             3000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        tabFuture.wait_for(0ms) == std::future_status::ready, 3000);
     const auto tabSent = tabFuture.get();
     QVERIFY2(tabSent.has_value(),
              tabSent ? "" : qPrintable(tabSent.error().diagnostic));
@@ -626,23 +596,21 @@ void GhosttyApplicationIpcTest::sendsExactGtkActionsPayload()
     auto toggleFuture = std::async(std::launch::async, [&] {
         return sendGhosttyApplicationIpcRequest(toggle, bus.client(), 2s);
     });
-    QTRY_VERIFY_WITH_TIMEOUT(toggleFuture.wait_for(0ms)
-                                 == std::future_status::ready,
-                             3000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        toggleFuture.wait_for(0ms) == std::future_status::ready, 3000);
     const auto toggleSent = toggleFuture.get();
     QVERIFY2(toggleSent.has_value(),
-             toggleSent ? ""
-                        : qPrintable(toggleSent.error().diagnostic));
+             toggleSent ? "" : qPrintable(toggleSent.error().diagnostic));
     QCOMPARE(endpoint.calls, 3);
-    QCOMPARE(endpoint.actionName,
-             QStringLiteral("toggle-quick-terminal"));
+    QCOMPARE(endpoint.actionName, QStringLiteral("toggle-quick-terminal"));
     QVERIFY(endpoint.parameters.isEmpty());
     QVERIFY(endpoint.platformData.isEmpty());
 }
 
 void GhosttyApplicationIpcTest::reportsDbusFailureWithoutFallback()
 {
-    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon")).isEmpty()) {
+    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon"))
+            .isEmpty()) {
         QSKIP("dbus-daemon is unavailable");
     }
     PrivateSessionBus bus;

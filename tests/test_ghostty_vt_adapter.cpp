@@ -138,8 +138,8 @@ QVector<QPoint> hyperlinkCandidates(const TerminalFrame &frame)
     QVector<QPoint> candidates;
     for (int index = 0; index < frame.cells.size(); ++index) {
         if (frame.cells.at(index).hasHyperlink()) {
-            candidates.append(QPoint(index % frame.columns,
-                                     index / frame.columns));
+            candidates.append(
+                QPoint(index % frame.columns, index / frame.columns));
         }
     }
     return candidates;
@@ -217,16 +217,15 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     options.appearance.foregroundColor = QColor(QStringLiteral("#cad3f5"));
     options.appearance.backgroundColor = QColor(QStringLiteral("#24273a"));
     auto adapter = GhosttyVtAdapter::create(
-        options, {.writePty = [&ptyWrites](QByteArrayView data) {
-            ptyWrites += data;
-        }});
+        options,
+        {.writePty = [&ptyWrites](QByteArrayView data) { ptyWrites += data; }});
     QVERIFY(adapter != nullptr);
 
-    adapter->writeVt(
-        QByteArrayLiteral("\033]2;adapter-title\007"
-                          "\033]7;file://localhost/tmp\007"
-                          "\007A\033[31mB\033[c"));
-    const GhosttyVtAdapter::DeferredEffects effects = adapter->takeDeferredEffects();
+    adapter->writeVt(QByteArrayLiteral("\033]2;adapter-title\007"
+                                       "\033]7;file://localhost/tmp\007"
+                                       "\007A\033[31mB\033[c"));
+    const GhosttyVtAdapter::DeferredEffects effects =
+        adapter->takeDeferredEffects();
     QCOMPARE(effects.title, QStringLiteral("adapter-title"));
     QCOMPARE(effects.currentDirectory, QByteArrayLiteral("/tmp"));
     QVERIFY(effects.bell);
@@ -238,8 +237,8 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
         adapter->takeDeferredEffects();
     QVERIFY(remoteEffects.currentDirectory.isNull());
 
-    adapter->writeVt(QByteArrayLiteral(
-        "\033]7;file://LOCALHOST/case-mismatch\007"));
+    adapter->writeVt(
+        QByteArrayLiteral("\033]7;file://LOCALHOST/case-mismatch\007"));
     QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
 
     adapter->writeVt(QByteArrayLiteral(
@@ -264,8 +263,7 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
              QByteArrayLiteral("8_0"),
              QByteArrayLiteral("-0"),
          }) {
-        adapter->writeVt(QByteArrayLiteral("\033]7;file://localhost:")
-                         + port
+        adapter->writeVt(QByteArrayLiteral("\033]7;file://localhost:") + port
                          + QByteArrayLiteral("/tmp/zig-port\007"));
         QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
                  QStringLiteral("/tmp/zig-port"));
@@ -275,8 +273,7 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
              QByteArrayLiteral("-1"),
              QByteArrayLiteral("65536"),
          }) {
-        adapter->writeVt(QByteArrayLiteral("\033]7;file://localhost:")
-                         + port
+        adapter->writeVt(QByteArrayLiteral("\033]7;file://localhost:") + port
                          + QByteArrayLiteral("/tmp/invalid-port\007"));
         QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
     }
@@ -287,8 +284,7 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     machineUrl.setScheme(QStringLiteral("file"));
     machineUrl.setHost(machineHost);
     machineUrl.setPath(QStringLiteral("/tmp/machine-host"));
-    adapter->writeVt(QByteArrayLiteral("\033]7;")
-                     + machineUrl.toEncoded()
+    adapter->writeVt(QByteArrayLiteral("\033]7;") + machineUrl.toEncoded()
                      + QByteArrayLiteral("\007"));
     QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
              QStringLiteral("/tmp/machine-host"));
@@ -298,12 +294,10 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
              QStringLiteral("/tmp/literal%20 raw??#fragment"));
 
-    adapter->writeVt(
-        QByteArrayLiteral("\033]7;file:///missing-host\007"));
+    adapter->writeVt(QByteArrayLiteral("\033]7;file:///missing-host\007"));
     QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
 
-    adapter->writeVt(
-        QByteArrayLiteral("\033]7;file://localhost\007"));
+    adapter->writeVt(QByteArrayLiteral("\033]7;file://localhost\007"));
     const QByteArray emptyPath =
         adapter->takeDeferredEffects().currentDirectory;
     QVERIFY(!emptyPath.isNull());
@@ -313,23 +307,23 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
         QByteArrayLiteral("\033]7;https://localhost/not-a-file\007"));
     QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
 
-    adapter->writeVt(QByteArrayLiteral(
-        "\033]7;file://localhost/tmp/batched-local\007"
-        "\033]7;file://remote.invalid/ignored\007"));
+    adapter->writeVt(
+        QByteArrayLiteral("\033]7;file://localhost/tmp/batched-local\007"
+                          "\033]7;file://remote.invalid/ignored\007"));
     QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
              QStringLiteral("/tmp/batched-local"));
 
-    adapter->writeVt(QByteArrayLiteral(
-        "\033]7;\007"
-        "\033]7;file://remote.invalid/ignored\007"));
+    adapter->writeVt(
+        QByteArrayLiteral("\033]7;\007"
+                          "\033]7;file://remote.invalid/ignored\007"));
     const QByteArray batchedClear =
         adapter->takeDeferredEffects().currentDirectory;
     QVERIFY(!batchedClear.isNull());
     QVERIFY(batchedClear.isEmpty());
 
-    adapter->writeVt(QByteArrayLiteral(
-        "\033]7;file://remote.invalid/ignored\007"
-        "\033]7;file://localhost/tmp/final-local\007"));
+    adapter->writeVt(
+        QByteArrayLiteral("\033]7;file://remote.invalid/ignored\007"
+                          "\033]7;file://localhost/tmp/final-local\007"));
     QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
              QStringLiteral("/tmp/final-local"));
 
@@ -340,7 +334,8 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     QVERIFY(clearedEffects.currentDirectory.isEmpty());
 
     GhosttyVtAdapter::RenderSnapshot snapshot;
-    QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(snapshot.update.fullFrame);
     QCOMPARE(snapshot.colorStateQueries, quint64{1});
     QVERIFY(snapshot.update.colorsChanged);
@@ -360,7 +355,8 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     QVERIFY(redCell.red() > redCell.green());
     QVERIFY(redCell.red() > redCell.blue());
 
-    QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
     QCOMPARE(snapshot.colorStateQueries, quint64{0});
     QVERIFY(!snapshot.update.hasChanges());
     QVERIFY(!snapshot.update.colorsChanged);
@@ -376,7 +372,8 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
         TerminalColorValue::fromColor(reloadedCursor);
     const QColor *const paletteBeforeReload = frame.palette.constData();
     QVERIFY(adapter->setAppearance(reloadedAppearance));
-    QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
     QCOMPARE(snapshot.colorStateQueries, quint64{1});
     QVERIFY(snapshot.update.colorsChanged);
     QCOMPARE(snapshot.update.palette.size(), 256);
@@ -389,7 +386,8 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     QCOMPARE(frame.palette.constData(), paletteBeforeReload);
 
     adapter->writeVt(QByteArrayLiteral("\rZ"));
-    QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(!snapshot.update.fullFrame);
     QCOMPARE(snapshot.colorStateQueries, quint64{0});
     QCOMPARE(snapshot.update.dirtyRows.size(), 1);
@@ -404,7 +402,8 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     resized.columns = 10;
     resized.rows = 4;
     QVERIFY(adapter->resize(resized));
-    QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(snapshot.update.fullFrame);
     QCOMPARE(snapshot.colorStateQueries, quint64{1});
     QVERIFY(snapshot.update.colorsChanged);
@@ -818,9 +817,8 @@ void GhosttyVtAdapterTest::publishesMpvShapedKittyFrames()
         .cellHeightPixels = 20,
     };
     auto adapter = GhosttyVtAdapter::create(
-        options, {.writePty = [&ptyWrites](QByteArrayView data) {
-            ptyWrites += data;
-        }});
+        options,
+        {.writePty = [&ptyWrites](QByteArrayView data) { ptyWrites += data; }});
     QVERIFY(adapter != nullptr);
 
     TerminalFrame frame;
@@ -1210,14 +1208,14 @@ void GhosttyVtAdapterTest::appliesConstructionPoliciesToPublicTerminal()
     adapter->writeVt(QByteArrayLiteral("\033[?2027h\033c\033[?2027$p"));
     QCOMPARE(writes.takeFirst(), QByteArrayLiteral("\033[?2027;2$y"));
 
-    adapter->writeVt(
-        QByteArrayLiteral("\033]2;reported title\033\\\033[21t"));
+    adapter->writeVt(QByteArrayLiteral("\033]2;reported title\033\\\033[21t"));
     QCOMPARE(writes.takeFirst(),
              QByteArrayLiteral("\033]lreported title\033\\"));
 
     adapter->writeVt(QByteArrayLiteral("\033P+q544E\033\\"));
-    QCOMPARE(writes.takeFirst(),
-             QByteArrayLiteral("\033P1+r544E=636F6E666967757265642D7465726D\033\\"));
+    QCOMPARE(
+        writes.takeFirst(),
+        QByteArrayLiteral("\033P1+r544E=636F6E666967757265642D7465726D\033\\"));
     QVERIFY(writes.isEmpty());
 
     GhosttyVtAdapter::Options secure;
@@ -1473,8 +1471,8 @@ void GhosttyVtAdapterTest::validatesDynamicAndMacShapedOsc7Hostnames()
         {}, {.queryMachineHostName = [&machineHost] { return machineHost; }});
     QVERIFY(adapter != nullptr);
 
-    adapter->writeVt(QByteArrayLiteral(
-        "\033]7;file://00:12:34:56:78:90/tmp/mac-host\007"));
+    adapter->writeVt(
+        QByteArrayLiteral("\033]7;file://00:12:34:56:78:90/tmp/mac-host\007"));
     QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
              QStringLiteral("/tmp/mac-host"));
 
@@ -1505,12 +1503,12 @@ void GhosttyVtAdapterTest::validatesDynamicAndMacShapedOsc7Hostnames()
              QStringLiteral("/tmp/first-userinfo-separator"));
 
     machineHost = QByteArray(1, static_cast<char>(0x81));
-    adapter->writeVt(QByteArrayLiteral(
-        "\033]7;file://%80/tmp/distinct-non-utf8-host\007"));
+    adapter->writeVt(
+        QByteArrayLiteral("\033]7;file://%80/tmp/distinct-non-utf8-host\007"));
     QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
     machineHost = QByteArray(1, static_cast<char>(0x80));
-    adapter->writeVt(QByteArrayLiteral(
-        "\033]7;file://%80/tmp/exact-non-utf8-host\007"));
+    adapter->writeVt(
+        QByteArrayLiteral("\033]7;file://%80/tmp/exact-non-utf8-host\007"));
     QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
              QStringLiteral("/tmp/exact-non-utf8-host"));
 
@@ -1526,8 +1524,8 @@ void GhosttyVtAdapterTest::validatesDynamicAndMacShapedOsc7Hostnames()
              QStringLiteral("/tmp/raw-invalid-host"));
 
     machineHost = QByteArrayLiteral("[::1]");
-    adapter->writeVt(QByteArrayLiteral(
-        "\033]7;file://[::1]/tmp/bracketed-host\007"));
+    adapter->writeVt(
+        QByteArrayLiteral("\033]7;file://[::1]/tmp/bracketed-host\007"));
     QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
              QStringLiteral("/tmp/bracketed-host"));
 
@@ -1537,8 +1535,8 @@ void GhosttyVtAdapterTest::validatesDynamicAndMacShapedOsc7Hostnames()
              QStringLiteral("/tmp/bracket-trailing-text"));
 
     machineHost = QByteArrayLiteral("::1");
-    adapter->writeVt(QByteArrayLiteral(
-        "\033]7;file://[::1]/tmp/unbracketed-mismatch\007"));
+    adapter->writeVt(
+        QByteArrayLiteral("\033]7;file://[::1]/tmp/unbracketed-mismatch\007"));
     QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
 
     machineHost = QByteArrayLiteral("ab:cd:ef:ab:cd:ef");
@@ -1597,8 +1595,8 @@ void GhosttyVtAdapterTest::resolvesOsc8HyperlinksAcrossViewportState()
     QVector<QPoint> candidates;
     for (int index = 0; index < frame.cells.size(); ++index) {
         if (frame.cells.at(index).hasHyperlink()) {
-            candidates.append(QPoint(index % frame.columns,
-                                     index / frame.columns));
+            candidates.append(
+                QPoint(index % frame.columns, index / frame.columns));
         }
     }
     QCOMPARE(candidates.size(), 4);
@@ -1625,8 +1623,8 @@ void GhosttyVtAdapterTest::resolvesOsc8HyperlinksAcrossViewportState()
     candidates.clear();
     for (int index = 0; index < frame.cells.size(); ++index) {
         if (frame.cells.at(index).hasHyperlink()) {
-            candidates.append(QPoint(index % frame.columns,
-                                     index / frame.columns));
+            candidates.append(
+                QPoint(index % frame.columns, index / frame.columns));
         }
     }
     QVERIFY(!candidates.isEmpty());
@@ -1648,8 +1646,8 @@ void GhosttyVtAdapterTest::resolvesOsc8HyperlinksAcrossViewportState()
     QVector<QPoint> alternateCandidates;
     for (int index = 0; index < frame.cells.size(); ++index) {
         if (frame.cells.at(index).hasHyperlink()) {
-            alternateCandidates.append(QPoint(index % frame.columns,
-                                              index / frame.columns));
+            alternateCandidates.append(
+                QPoint(index % frame.columns, index / frame.columns));
         }
     }
     QCOMPARE(alternateCandidates.size(), 3);
@@ -1697,7 +1695,8 @@ void GhosttyVtAdapterTest::tracksOsc8HyperlinksAcrossOutputAndReflow()
     auto adapter = GhosttyVtAdapter::create(options);
     QVERIFY(adapter != nullptr);
 
-    const QByteArray uri = QByteArrayLiteral("https://example.test/tracked-reflow");
+    const QByteArray uri =
+        QByteArrayLiteral("https://example.test/tracked-reflow");
     QByteArray output = QByteArrayLiteral("12345678\033]8;id=reflow;");
     output += uri;
     output += QByteArrayLiteral("\033\\ABCDEFGH\033]8;;\033\\");
@@ -1751,8 +1750,8 @@ void GhosttyVtAdapterTest::tracksOsc8HyperlinksAcrossOutputAndReflow()
     QCOMPARE(match->cells, reflowedCandidates);
 
     GhosttyVtAdapter::TrackedHyperlink moved = std::move(*tracked);
-    QVERIFY(!adapter->resolveHyperlink(
-        *tracked, reflowedCandidates).has_value());
+    QVERIFY(
+        !adapter->resolveHyperlink(*tracked, reflowedCandidates).has_value());
     match = adapter->resolveHyperlink(moved, reflowedCandidates);
     QVERIFY(match.has_value());
     QCOMPARE(match->targetCell, QPoint(5, 1));
@@ -1760,8 +1759,8 @@ void GhosttyVtAdapterTest::tracksOsc8HyperlinksAcrossOutputAndReflow()
     auto foreignAdapter = GhosttyVtAdapter::create(options);
     QVERIFY(foreignAdapter != nullptr);
     QVERIFY(!foreignAdapter->trackedHyperlinkValid(moved));
-    QVERIFY(!foreignAdapter->resolveHyperlink(
-        moved, reflowedCandidates).has_value());
+    QVERIFY(!foreignAdapter->resolveHyperlink(moved, reflowedCandidates)
+                 .has_value());
 }
 
 void GhosttyVtAdapterTest::tracksOsc8HyperlinksAcrossViewportAndScreenChanges()
@@ -1772,8 +1771,8 @@ void GhosttyVtAdapterTest::tracksOsc8HyperlinksAcrossViewportAndScreenChanges()
     auto adapter = GhosttyVtAdapter::create(options);
     QVERIFY(adapter != nullptr);
 
-    const QByteArray primaryUri = QByteArrayLiteral(
-        "https://example.test/tracked-primary");
+    const QByteArray primaryUri =
+        QByteArrayLiteral("https://example.test/tracked-primary");
     QByteArray primary = QByteArrayLiteral("\033]8;id=primary;");
     primary += primaryUri;
     primary += QByteArrayLiteral("\033\\PRIMARY\033]8;;\033\\");
@@ -1783,8 +1782,8 @@ void GhosttyVtAdapterTest::tracksOsc8HyperlinksAcrossViewportAndScreenChanges()
     renderInto(adapter.get(), &frame);
     auto primaryTracked = adapter->trackHyperlinkAt(2, 0);
     QVERIFY(primaryTracked.has_value());
-    auto match = adapter->resolveHyperlink(
-        *primaryTracked, hyperlinkCandidates(frame));
+    auto match =
+        adapter->resolveHyperlink(*primaryTracked, hyperlinkCandidates(frame));
     QVERIFY(match.has_value());
     QCOMPARE(match->targetCell, QPoint(2, 0));
 
@@ -1792,15 +1791,16 @@ void GhosttyVtAdapterTest::tracksOsc8HyperlinksAcrossViewportAndScreenChanges()
     // viewport, then becomes representable again when history is displayed.
     adapter->writeVt(QByteArrayLiteral("\r\nrow-2\r\nrow-3"));
     renderInto(adapter.get(), &frame);
-    QVERIFY(!adapter->resolveHyperlink(
-        *primaryTracked, hyperlinkCandidates(frame)).has_value());
+    QVERIFY(
+        !adapter->resolveHyperlink(*primaryTracked, hyperlinkCandidates(frame))
+             .has_value());
     QVERIFY(adapter->trackedHyperlinkValid(*primaryTracked));
     QVERIFY(adapter->scrollViewport({
         .kind = TerminalViewportRequest::Kind::Top,
     }));
     renderInto(adapter.get(), &frame);
-    match = adapter->resolveHyperlink(
-        *primaryTracked, hyperlinkCandidates(frame));
+    match =
+        adapter->resolveHyperlink(*primaryTracked, hyperlinkCandidates(frame));
     QVERIFY(match.has_value());
     QCOMPARE(match->uri, primaryUri);
     QVERIFY(match->cells.contains(match->targetCell));
@@ -1810,15 +1810,16 @@ void GhosttyVtAdapterTest::tracksOsc8HyperlinksAcrossViewportAndScreenChanges()
     // active-screen check so a primary link cannot appear over alternate
     // screen content at the same viewport coordinates.
     adapter->writeVt(QByteArrayLiteral("\033[?1049h"));
-    const QByteArray alternateUri = QByteArrayLiteral(
-        "https://example.test/tracked-alternate");
+    const QByteArray alternateUri =
+        QByteArrayLiteral("https://example.test/tracked-alternate");
     QByteArray alternate = QByteArrayLiteral("\033]8;id=alternate;");
     alternate += alternateUri;
     alternate += QByteArrayLiteral("\033\\ALT\033]8;;\033\\");
     adapter->writeVt(alternate);
     renderInto(adapter.get(), &frame);
-    QVERIFY(!adapter->resolveHyperlink(
-        *primaryTracked, hyperlinkCandidates(frame)).has_value());
+    QVERIFY(
+        !adapter->resolveHyperlink(*primaryTracked, hyperlinkCandidates(frame))
+             .has_value());
     QVERIFY(adapter->trackedHyperlinkValid(*primaryTracked));
 
     adapter->writeVt(QByteArrayLiteral("\033[?1049l"));
@@ -1826,14 +1827,15 @@ void GhosttyVtAdapterTest::tracksOsc8HyperlinksAcrossViewportAndScreenChanges()
         .kind = TerminalViewportRequest::Kind::Top,
     }));
     renderInto(adapter.get(), &frame);
-    match = adapter->resolveHyperlink(
-        *primaryTracked, hyperlinkCandidates(frame));
+    match =
+        adapter->resolveHyperlink(*primaryTracked, hyperlinkCandidates(frame));
     QVERIFY(match.has_value());
     QCOMPARE(match->uri, primaryUri);
     QVERIFY(match->cells.contains(match->targetCell));
 }
 
-void GhosttyVtAdapterTest::invalidatesTrackedOsc8HyperlinksAfterReplacementAndReset()
+void GhosttyVtAdapterTest::
+    invalidatesTrackedOsc8HyperlinksAfterReplacementAndReset()
 {
     GhosttyVtAdapter::Options options;
     options.geometry.columns = 8;
@@ -1841,8 +1843,8 @@ void GhosttyVtAdapterTest::invalidatesTrackedOsc8HyperlinksAfterReplacementAndRe
     auto adapter = GhosttyVtAdapter::create(options);
     QVERIFY(adapter != nullptr);
 
-    const QByteArray originalUri = QByteArrayLiteral(
-        "https://example.test/original");
+    const QByteArray originalUri =
+        QByteArrayLiteral("https://example.test/original");
     QByteArray original = QByteArrayLiteral("\033]8;;");
     original += originalUri;
     original += QByteArrayLiteral("\033\\X\033]8;;\033\\");
@@ -1854,26 +1856,30 @@ void GhosttyVtAdapterTest::invalidatesTrackedOsc8HyperlinksAfterReplacementAndRe
 
     // Replacing the tracked cell with a different destination must not turn
     // a pending click on the original link into activation of the new one.
-    const QByteArray replacementUri = QByteArrayLiteral(
-        "https://example.test/replacement");
+    const QByteArray replacementUri =
+        QByteArrayLiteral("https://example.test/replacement");
     QByteArray replacement = QByteArrayLiteral("\033[1;1H\033]8;;");
     replacement += replacementUri;
     replacement += QByteArrayLiteral("\033\\Y\033]8;;\033\\");
     adapter->writeVt(replacement);
     renderInto(adapter.get(), &frame);
-    QVERIFY(!adapter->resolveHyperlink(
-        *tracked, hyperlinkCandidates(frame)).has_value());
+    QVERIFY(!adapter->resolveHyperlink(*tracked, hyperlinkCandidates(frame))
+                 .has_value());
     QVERIFY(!adapter->trackedHyperlinkValid(*tracked));
 
     auto replacementTracked = adapter->trackHyperlinkAt(0, 0);
     QVERIFY(replacementTracked.has_value());
-    QVERIFY(adapter->resolveHyperlink(
-        *replacementTracked, hyperlinkCandidates(frame)).has_value());
+    QVERIFY(
+        adapter
+            ->resolveHyperlink(*replacementTracked, hyperlinkCandidates(frame))
+            .has_value());
 
     adapter->writeVt(QByteArrayLiteral("\033[1;1H "));
     renderInto(adapter.get(), &frame);
-    QVERIFY(!adapter->resolveHyperlink(
-        *replacementTracked, hyperlinkCandidates(frame)).has_value());
+    QVERIFY(
+        !adapter
+             ->resolveHyperlink(*replacementTracked, hyperlinkCandidates(frame))
+             .has_value());
     QVERIFY(!adapter->trackedHyperlinkValid(*replacementTracked));
 
     adapter->writeVt(original);
@@ -1882,12 +1888,14 @@ void GhosttyVtAdapterTest::invalidatesTrackedOsc8HyperlinksAfterReplacementAndRe
     QVERIFY(resetTracked.has_value());
     adapter->reset();
     renderInto(adapter.get(), &frame);
-    QVERIFY(!adapter->resolveHyperlink(
-        *resetTracked, hyperlinkCandidates(frame)).has_value());
+    QVERIFY(
+        !adapter->resolveHyperlink(*resetTracked, hyperlinkCandidates(frame))
+             .has_value());
     QVERIFY(!adapter->trackedHyperlinkValid(*resetTracked));
 }
 
-void GhosttyVtAdapterTest::invalidatesTrackedOsc8HyperlinksAfterScrollbackPruning()
+void GhosttyVtAdapterTest::
+    invalidatesTrackedOsc8HyperlinksAfterScrollbackPruning()
 {
     GhosttyVtAdapter::Options options;
     options.geometry.columns = 8;
@@ -1919,8 +1927,8 @@ void GhosttyVtAdapterTest::invalidatesTrackedOsc8HyperlinksAfterScrollbackPrunin
         .kind = TerminalViewportRequest::Kind::Top,
     }));
     renderInto(adapter.get(), &frame);
-    QVERIFY(!adapter->resolveHyperlink(
-        *tracked, hyperlinkCandidates(frame)).has_value());
+    QVERIFY(!adapter->resolveHyperlink(*tracked, hyperlinkCandidates(frame))
+                 .has_value());
     QVERIFY(!adapter->trackedHyperlinkValid(*tracked));
 }
 
@@ -1961,7 +1969,8 @@ void GhosttyVtAdapterTest::
     QVERIFY(!adapter->trackedHyperlinkValid(*tracked));
 }
 
-void GhosttyVtAdapterTest::snapshotsLogicalLineBytesAcrossGraphemesAndWideWraps()
+void GhosttyVtAdapterTest::
+    snapshotsLogicalLineBytesAcrossGraphemesAndWideWraps()
 {
     GhosttyVtAdapter::Options options;
     options.geometry.columns = 8;
@@ -1972,8 +1981,7 @@ void GhosttyVtAdapterTest::snapshotsLogicalLineBytesAcrossGraphemesAndWideWraps(
     // The combining mark remains part of e's grapheme. The wide character
     // cannot fit in the final column, so libghostty inserts a spacer head and
     // soft-wraps it onto the next physical row.
-    const QByteArray line = QStringLiteral(
-        "abcde\u0301fg\u754c/path").toUtf8();
+    const QByteArray line = QStringLiteral("abcde\u0301fg\u754c/path").toUtf8();
     const QByteArray wide = QStringLiteral("\u754c").toUtf8();
     const qsizetype wideBegin = line.indexOf(wide);
     QVERIFY(wideBegin >= 0);
@@ -1983,8 +1991,8 @@ void GhosttyVtAdapterTest::snapshotsLogicalLineBytesAcrossGraphemesAndWideWraps(
     QVERIFY(snapshot.has_value());
     QCOMPARE(snapshot->text(), line);
     QCOMPARE(snapshot->targetByteOffset(), wideBegin);
-    QVERIFY(snapshot->byteRangeContainsTarget(wideBegin,
-                                              wideBegin + wide.size()));
+    QVERIFY(
+        snapshot->byteRangeContainsTarget(wideBegin, wideBegin + wide.size()));
     QVERIFY(!snapshot->byteRangeContainsTarget(0, wideBegin));
     QVERIFY(!snapshot->byteRangeContainsTarget(wideBegin, wideBegin));
 
@@ -1996,10 +2004,9 @@ void GhosttyVtAdapterTest::snapshotsLogicalLineBytesAcrossGraphemesAndWideWraps(
     QCOMPARE(spacerSnapshot->text(), line);
     QCOMPARE(spacerSnapshot->targetByteOffset(), qsizetype(-1));
     QVERIFY(spacerSnapshot->byteRangeContainsTarget(0, line.size()));
-    QVERIFY(!spacerSnapshot->byteRangeContainsTarget(
-        wideBegin, line.size()));
-    auto spacerTracked = adapter->trackTextRange(
-        *spacerSnapshot, 0, line.size());
+    QVERIFY(!spacerSnapshot->byteRangeContainsTarget(wideBegin, line.size()));
+    auto spacerTracked =
+        adapter->trackTextRange(*spacerSnapshot, 0, line.size());
     QVERIFY(spacerTracked.has_value());
     auto spacerMatch = adapter->resolveTextRange(*spacerTracked);
     QVERIFY(spacerMatch.has_value());
@@ -2007,8 +2014,7 @@ void GhosttyVtAdapterTest::snapshotsLogicalLineBytesAcrossGraphemesAndWideWraps(
     QCOMPARE(spacerMatch->targetCell, QPoint(7, 0));
     QVERIFY(spacerMatch->cells.contains(QPoint(7, 0)));
 
-    auto tracked = adapter->trackTextRange(
-        *snapshot, wideBegin, line.size());
+    auto tracked = adapter->trackTextRange(*snapshot, wideBegin, line.size());
     QVERIFY(tracked.has_value());
     auto match = adapter->resolveTextRange(*tracked);
     QVERIFY(match.has_value());
@@ -2028,8 +2034,8 @@ void GhosttyVtAdapterTest::snapshotsLogicalLineBytesAcrossGraphemesAndWideWraps(
     QCOMPARE(combiningBegin, qsizetype(5));
     auto combiningSnapshot = adapter->snapshotLogicalLineAt(4, 0);
     QVERIFY(combiningSnapshot.has_value());
-    QVERIFY(combiningSnapshot->byteRangeContainsTarget(
-        combiningBegin, combiningBegin + 2));
+    QVERIFY(combiningSnapshot->byteRangeContainsTarget(combiningBegin,
+                                                       combiningBegin + 2));
     auto combiningTracked = adapter->trackTextRange(
         *combiningSnapshot, combiningBegin, combiningBegin + 2);
     QVERIFY(combiningTracked.has_value());
@@ -2070,12 +2076,11 @@ void GhosttyVtAdapterTest::snapshotsPhysicalSearchRowsAcrossHistoryAndScreens()
     auto adapter = GhosttyVtAdapter::create(options);
     QVERIFY(adapter != nullptr);
 
-    const QByteArray wrappedLine = QStringLiteral(
-        "abcde\u0301fg\u754c/path").toUtf8();
+    const QByteArray wrappedLine =
+        QStringLiteral("abcde\u0301fg\u754c/path").toUtf8();
     QByteArray output = QByteArrayLiteral("A\033[4GB  \r\n");
     output += wrappedLine;
-    output += QByteArrayLiteral(
-        "\r\ntail-0\r\ntail-1\r\ntail-2\r\ntail-3");
+    output += QByteArrayLiteral("\r\ntail-0\r\ntail-1\r\ntail-2\r\ntail-3");
     adapter->writeVt(output);
 
     const std::optional<GhosttyVtAdapter::SearchExtent> extent =
@@ -2083,8 +2088,7 @@ void GhosttyVtAdapterTest::snapshotsPhysicalSearchRowsAcrossHistoryAndScreens()
     QVERIFY(extent.has_value());
     QCOMPARE(extent->columns, 8);
     QVERIFY(extent->totalRows > static_cast<quint32>(options.geometry.rows));
-    QCOMPARE(extent->activeScreen,
-             GhosttyVtAdapter::SearchScreen::Primary);
+    QCOMPARE(extent->activeScreen, GhosttyVtAdapter::SearchScreen::Primary);
     QVERIFY(!adapter->snapshotSearchRow(extent->totalRows).has_value());
 
     std::optional<GhosttyVtAdapter::SearchRowSnapshot> gapRow;
@@ -2188,7 +2192,8 @@ void GhosttyVtAdapterTest::searchSnapshotsFollowLiveDeccolmDimensions()
     QCOMPARE(row->byteColumns.size(), row->text.size());
 }
 
-void GhosttyVtAdapterTest::tracksTextRangesAcrossReflowViewportAndScreenChanges()
+void GhosttyVtAdapterTest::
+    tracksTextRangesAcrossReflowViewportAndScreenChanges()
 {
     GhosttyVtAdapter::Options options;
     options.geometry.columns = 8;
@@ -2196,16 +2201,14 @@ void GhosttyVtAdapterTest::tracksTextRangesAcrossReflowViewportAndScreenChanges(
     auto adapter = GhosttyVtAdapter::create(options);
     QVERIFY(adapter != nullptr);
 
-    const QByteArray line = QStringLiteral(
-        "abcde\u0301fg\u754c/path").toUtf8();
-    const qsizetype matchBegin = line.indexOf(
-        QStringLiteral("\u754c").toUtf8());
+    const QByteArray line = QStringLiteral("abcde\u0301fg\u754c/path").toUtf8();
+    const qsizetype matchBegin =
+        line.indexOf(QStringLiteral("\u754c").toUtf8());
     QVERIFY(matchBegin >= 0);
     adapter->writeVt(line);
     auto snapshot = adapter->snapshotLogicalLineAt(1, 1);
     QVERIFY(snapshot.has_value());
-    auto tracked = adapter->trackTextRange(
-        *snapshot, matchBegin, line.size());
+    auto tracked = adapter->trackTextRange(*snapshot, matchBegin, line.size());
     QVERIFY(tracked.has_value());
 
     // Mutating an unrelated row invalidates ordinary grid refs, but all three
@@ -2232,8 +2235,8 @@ void GhosttyVtAdapterTest::tracksTextRangesAcrossReflowViewportAndScreenChanges(
     QCOMPARE(match->cells, reflowedCells);
     QCOMPARE(match->logicalLineRows, QVector<int>({0, 1, 2}));
 
-    adapter->writeVt(QByteArrayLiteral(
-        "\r\none\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix"));
+    adapter->writeVt(
+        QByteArrayLiteral("\r\none\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix"));
     QVERIFY(adapter->trackedTextRangeValid(*tracked));
     QVERIFY(!adapter->resolveTextRange(*tracked).has_value());
     QVERIFY(adapter->scrollViewport({
@@ -2262,7 +2265,8 @@ void GhosttyVtAdapterTest::tracksTextRangesAcrossReflowViewportAndScreenChanges(
     QVERIFY(!foreignAdapter->resolveTextRange(moved).has_value());
 }
 
-void GhosttyVtAdapterTest::invalidatesTrackedTextRangesAfterCoveredTextMutation()
+void GhosttyVtAdapterTest::
+    invalidatesTrackedTextRangesAfterCoveredTextMutation()
 {
     GhosttyVtAdapter::Options options;
     options.geometry.columns = 20;
@@ -2275,8 +2279,8 @@ void GhosttyVtAdapterTest::invalidatesTrackedTextRangesAfterCoveredTextMutation(
     auto snapshot = adapter->snapshotLogicalLineAt(9, 0);
     QVERIFY(snapshot.has_value());
     const qsizetype begin = line.indexOf(QByteArrayLiteral("/path"));
-    auto tracked = adapter->trackTextRange(
-        *snapshot, begin, begin + qsizetype(5));
+    auto tracked =
+        adapter->trackTextRange(*snapshot, begin, begin + qsizetype(5));
     QVERIFY(tracked.has_value());
     QVERIFY(adapter->trackedTextRangeValid(*tracked));
 
@@ -2346,34 +2350,35 @@ void GhosttyVtAdapterTest::translatesCellStylesAndAppearanceMetadata()
     options.appearance.backgroundColor = globalBackground;
     options.appearance.palette.resize(256);
     for (int index = 0; index < options.appearance.palette.size(); ++index) {
-        options.appearance.palette[index] = QColor::fromRgb(index, index, index);
+        options.appearance.palette[index] =
+            QColor::fromRgb(index, index, index);
     }
     options.appearance.palette[1] = QColor(QStringLiteral("#aa1122"));
-    options.appearance.cursorColor = TerminalColorValue::fromColor(
-        QColor(QStringLiteral("#123456")));
+    options.appearance.cursorColor =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#123456")));
 
     auto adapter = GhosttyVtAdapter::create(options);
     QVERIFY(adapter != nullptr);
-    adapter->writeVt(QByteArrayLiteral(
-        "\033[31;1mP"
-        "\033[0;38;2;12;34;56;2mR"
-        "\033[0;3;5mD"
-        "\033[0;7mI"
-        "\033[0;8mX"
-        "\033[0;4;58;2;1;2;3mS"
-        "\033[0;4:2m2"
-        "\033[0;4:3mC"
-        "\033[0;4:4mO"
-        "\033[0;4:5mH"
-        "\033[0;9;53mK"
-        "\033[0;48;2;30;34;42mB"
-        "\033[0mD"
-        "\033[48;2;1;2;3m\033[K"
-        "\033[2;1H\033[41m\033[K"
-        "\033[0m"));
+    adapter->writeVt(QByteArrayLiteral("\033[31;1mP"
+                                       "\033[0;38;2;12;34;56;2mR"
+                                       "\033[0;3;5mD"
+                                       "\033[0;7mI"
+                                       "\033[0;8mX"
+                                       "\033[0;4;58;2;1;2;3mS"
+                                       "\033[0;4:2m2"
+                                       "\033[0;4:3mC"
+                                       "\033[0;4:4mO"
+                                       "\033[0;4:5mH"
+                                       "\033[0;9;53mK"
+                                       "\033[0;48;2;30;34;42mB"
+                                       "\033[0mD"
+                                       "\033[48;2;1;2;3m\033[K"
+                                       "\033[2;1H\033[41m\033[K"
+                                       "\033[0m"));
 
     GhosttyVtAdapter::RenderSnapshot snapshot;
-    QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(snapshot.update.fullFrame);
     QVERIFY(snapshot.update.colorsChanged);
     QCOMPARE(snapshot.update.palette.size(), 256);
@@ -2554,18 +2559,20 @@ void GhosttyVtAdapterTest::preservesTerminalAppearanceOverrides()
     GhosttyVtAdapter::Options options;
     options.appearance.palette.resize(256);
     for (int index = 0; index < options.appearance.palette.size(); ++index) {
-        options.appearance.palette[index] = QColor::fromRgb(index, index, index);
+        options.appearance.palette[index] =
+            QColor::fromRgb(index, index, index);
     }
     options.appearance.palette[1] = QColor(QStringLiteral("#aa0000"));
-    options.appearance.cursorColor = TerminalColorValue::fromColor(
-        QColor(QStringLiteral("#123456")));
+    options.appearance.cursorColor =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#123456")));
     options.appearance.cursorStyle = TerminalCursorStyle::Bar;
     options.appearance.cursorBlink = false;
 
     auto adapter = GhosttyVtAdapter::create(options);
     QVERIFY(adapter != nullptr);
     GhosttyVtAdapter::RenderSnapshot snapshot;
-    QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
     TerminalFrame frame = applyUpdate(snapshot.update);
     QCOMPARE(frame.palette.at(1), QColor(QStringLiteral("#aa0000")));
     QCOMPARE(frame.cursorColor, QColor(QStringLiteral("#123456")));
@@ -2574,22 +2581,23 @@ void GhosttyVtAdapterTest::preservesTerminalAppearanceOverrides()
     QVERIFY(!frame.cursorBlinking);
 
     // Terminal OSC overrides take precedence over embedder defaults.
-    adapter->writeVt(QByteArrayLiteral(
-        "\033]4;1;#00bb00\007"
-        "\033]12;#abcdef\007"));
-    QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
+    adapter->writeVt(QByteArrayLiteral("\033]4;1;#00bb00\007"
+                                       "\033]12;#abcdef\007"));
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.palette.at(1), QColor(QStringLiteral("#00bb00")));
     QCOMPARE(frame.cursorColor, QColor(QStringLiteral("#abcdef")));
 
     TerminalAppearance reloaded = options.appearance;
     reloaded.palette[1] = QColor(QStringLiteral("#0000cc"));
-    reloaded.cursorColor = TerminalColorValue::fromColor(
-        QColor(QStringLiteral("#fedcba")));
+    reloaded.cursorColor =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#fedcba")));
     reloaded.cursorStyle = TerminalCursorStyle::Underline;
     reloaded.cursorBlink = true;
     QVERIFY(adapter->setAppearance(reloaded));
-    QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.palette.at(1), QColor(QStringLiteral("#00bb00")));
     QCOMPARE(frame.cursorColor, QColor(QStringLiteral("#abcdef")));
@@ -2599,7 +2607,8 @@ void GhosttyVtAdapterTest::preservesTerminalAppearanceOverrides()
     // Reset sequences reveal the newest configured defaults, not the defaults
     // that were active when the application override was installed.
     adapter->writeVt(QByteArrayLiteral("\033]104;1\007\033]112\007"));
-    QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.palette.at(1), QColor(QStringLiteral("#0000cc")));
     QCOMPARE(frame.cursorColor, QColor(QStringLiteral("#fedcba")));
@@ -2607,17 +2616,20 @@ void GhosttyVtAdapterTest::preservesTerminalAppearanceOverrides()
     // An explicit DECSCUSR request remains active across config reloads; CSI
     // 0 q returns to the latest configured style and blink state.
     adapter->writeVt(QByteArrayLiteral("\033[2 q"));
-    QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.cursorStyle, 1);
     QVERIFY(!frame.cursorBlinking);
     reloaded.cursorStyle = TerminalCursorStyle::Bar;
     QVERIFY(adapter->setAppearance(reloaded));
-    QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.cursorStyle, 1);
     adapter->writeVt(QByteArrayLiteral("\033[0 q"));
-    QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.cursorStyle, 0);
     QVERIFY(frame.cursorBlinking);
@@ -3302,30 +3314,30 @@ void GhosttyVtAdapterTest::preparesPasteUsingExactSafetyPolicy()
     auto adapter = GhosttyVtAdapter::create({});
     QVERIFY(adapter != nullptr);
 
-    const auto prepare = [&adapter](const QString &text,
-                                    bool protection = true,
+    const auto prepare = [&adapter](const QString &text, bool protection = true,
                                     bool bracketedSafe = true,
                                     bool confirmed = false) {
-        return adapter->preparePaste(text, {
-            .protection = protection,
-            .bracketedSafe = bracketedSafe,
-            .authorization = confirmed
-                ? GhosttyVtAdapter::PasteAuthorization::Confirmed
-                : GhosttyVtAdapter::PasteAuthorization::Initial,
-        });
+        return adapter->preparePaste(
+            text,
+            {
+                .protection = protection,
+                .bracketedSafe = bracketedSafe,
+                .authorization = confirmed
+                    ? GhosttyVtAdapter::PasteAuthorization::Confirmed
+                    : GhosttyVtAdapter::PasteAuthorization::Initial,
+            });
     };
     const auto expectReady = [](const GhosttyVtAdapter::PreparedPaste &paste,
                                 const QByteArray &bytes) {
-        QCOMPARE(paste.disposition,
-                 GhosttyVtAdapter::PasteDisposition::Ready);
+        QCOMPARE(paste.disposition, GhosttyVtAdapter::PasteDisposition::Ready);
         QCOMPARE(paste.bytes, bytes);
     };
-    const auto expectConfirmation = [](
-        const GhosttyVtAdapter::PreparedPaste &paste) {
-        QCOMPARE(paste.disposition,
-                 GhosttyVtAdapter::PasteDisposition::ConfirmationRequired);
-        QVERIFY(paste.bytes.isEmpty());
-    };
+    const auto expectConfirmation =
+        [](const GhosttyVtAdapter::PreparedPaste &paste) {
+            QCOMPARE(paste.disposition,
+                     GhosttyVtAdapter::PasteDisposition::ConfirmationRequired);
+            QVERIFY(paste.bytes.isEmpty());
+        };
 
     expectReady(prepare(QString{}), {});
     expectReady(prepare(QStringLiteral("plain")), QByteArrayLiteral("plain"));
@@ -3404,12 +3416,12 @@ void GhosttyVtAdapterTest::resetsAllTerminalStateAndPublishesFullFrame()
         }});
     QVERIFY(adapter != nullptr);
 
-    adapter->writeVt(QByteArrayLiteral(
-        "primary-0\r\nprimary-1\r\nprimary-2\r\nprimary-3\r\n"
-        "primary-4\r\nprimary-5\033[?1049halternate"
-        "\033[?1003h\033[?2004h\033[?1004h"
-        "\033]0;reset-title\a"
-        "\033]7;file://localhost/tmp/reset-cwd\a\033[c"));
+    adapter->writeVt(
+        QByteArrayLiteral("primary-0\r\nprimary-1\r\nprimary-2\r\nprimary-3\r\n"
+                          "primary-4\r\nprimary-5\033[?1049halternate"
+                          "\033[?1003h\033[?2004h\033[?1004h"
+                          "\033]0;reset-title\a"
+                          "\033]7;file://localhost/tmp/reset-cwd\a\033[c"));
     adapter->synchronizeInputModes();
     QVERIFY(adapter->selectAll());
     QVERIFY(adapter->hasSelection());
@@ -3428,8 +3440,7 @@ void GhosttyVtAdapterTest::resetsAllTerminalStateAndPublishesFullFrame()
     const GhosttyVtAdapter::DeferredEffects beforeEffects =
         adapter->takeDeferredEffects();
     QCOMPARE(beforeEffects.title, QStringLiteral("reset-title"));
-    QCOMPARE(beforeEffects.currentDirectory,
-             QStringLiteral("/tmp/reset-cwd"));
+    QCOMPARE(beforeEffects.currentDirectory, QStringLiteral("/tmp/reset-cwd"));
 
     // Reset is a local emulator mutation: it must neither synthesize input
     // for the child nor leave refs and mode caches tied to the old grids.
@@ -3478,9 +3489,8 @@ void GhosttyVtAdapterTest::selectsAndNavigatesViewportAtomically()
     auto adapter = GhosttyVtAdapter::create(options);
     QVERIFY(adapter != nullptr);
 
-    adapter->writeVt(QByteArrayLiteral(
-        "row-0\r\nrow-1\r\nrow-2\r\nrow-3\r\n"
-        "row-4\r\nrow-5\r\nrow-6\r\nrow-7"));
+    adapter->writeVt(QByteArrayLiteral("row-0\r\nrow-1\r\nrow-2\r\nrow-3\r\n"
+                                       "row-4\r\nrow-5\r\nrow-6\r\nrow-7"));
     TerminalFrame frame;
     renderInto(adapter.get(), &frame);
     QCOMPARE(frame.scrollLength, quint64{3});
@@ -3561,9 +3571,8 @@ void GhosttyVtAdapterTest::mapsAndRevealsSearchRanges()
     options.geometry.rows = 3;
     auto adapter = GhosttyVtAdapter::create(options);
     QVERIFY(adapter != nullptr);
-    adapter->writeVt(QByteArrayLiteral(
-        "row-0\r\nrow-1\r\nrow-2\r\nrow-3\r\n"
-        "row-4\r\nrow-5\r\nrow-6\r\nrow-7"));
+    adapter->writeVt(QByteArrayLiteral("row-0\r\nrow-1\r\nrow-2\r\nrow-3\r\n"
+                                       "row-4\r\nrow-5\r\nrow-6\r\nrow-7"));
 
     const auto extent = adapter->searchExtent();
     QVERIFY(extent.has_value());
@@ -4220,36 +4229,34 @@ void GhosttyVtAdapterTest::snapshotsPlainWriteFileRanges()
         adapter->snapshotPlainFile(TerminalFileLocation::Screen);
     QCOMPARE(emptyScreen.status, Status::Ready);
     QCOMPARE(emptyScreen.bytes, QByteArray{});
-    QCOMPARE(adapter->snapshotPlainFile(
-                 TerminalFileLocation::Scrollback).status,
-             Status::Unavailable);
-    QCOMPARE(adapter->snapshotPlainFile(
-                 TerminalFileLocation::Selection).status,
+    QCOMPARE(
+        adapter->snapshotPlainFile(TerminalFileLocation::Scrollback).status,
+        Status::Unavailable);
+    QCOMPARE(adapter->snapshotPlainFile(TerminalFileLocation::Selection).status,
              Status::Unavailable);
 
-    adapter->writeVt(QByteArrayLiteral(
-        "history-0  \r\n"
-        "history-1\r\n"
-        "screen-0  \r\n"
-        "screen-1\r\n"
-        "screen-2  "));
+    adapter->writeVt(QByteArrayLiteral("history-0  \r\n"
+                                       "history-1\r\n"
+                                       "screen-0  \r\n"
+                                       "screen-1\r\n"
+                                       "screen-2  "));
 
     const auto screen =
         adapter->snapshotPlainFile(TerminalFileLocation::Screen);
     QCOMPARE(screen.status, Status::Ready);
-    QCOMPARE(screen.bytes, QByteArrayLiteral(
-        "history-0  \n"
-        "history-1\n"
-        "screen-0  \n"
-        "screen-1\n"
-        "screen-2  "));
+    QCOMPARE(screen.bytes,
+             QByteArrayLiteral("history-0  \n"
+                               "history-1\n"
+                               "screen-0  \n"
+                               "screen-1\n"
+                               "screen-2  "));
 
     const auto scrollback =
         adapter->snapshotPlainFile(TerminalFileLocation::Scrollback);
     QCOMPARE(scrollback.status, Status::Ready);
-    QCOMPARE(scrollback.bytes, QByteArrayLiteral(
-        "history-0  \n"
-        "history-1"));
+    QCOMPARE(scrollback.bytes,
+             QByteArrayLiteral("history-0  \n"
+                               "history-1"));
 
     adapter->beginSelection(selectionPress(options.geometry, 0, 2));
     QVERIFY(adapter->updateSelection(selectionDrag(options.geometry, 8, 2)));
@@ -4260,8 +4267,7 @@ void GhosttyVtAdapterTest::snapshotsPlainWriteFileRanges()
     QCOMPARE(selection.bytes, QByteArrayLiteral("screen-2"));
 
     adapter->clearSelection();
-    QCOMPARE(adapter->snapshotPlainFile(
-                 TerminalFileLocation::Selection).status,
+    QCOMPARE(adapter->snapshotPlainFile(TerminalFileLocation::Selection).status,
              Status::Unavailable);
 
     GhosttyVtAdapter::Options rectangleOptions;
@@ -4269,9 +4275,8 @@ void GhosttyVtAdapterTest::snapshotsPlainWriteFileRanges()
     rectangleOptions.geometry.rows = 3;
     auto rectangle = GhosttyVtAdapter::create(rectangleOptions);
     QVERIFY(rectangle != nullptr);
-    rectangle->writeVt(QByteArrayLiteral(
-        "abcdef\r\n"
-        "uvwxyz"));
+    rectangle->writeVt(QByteArrayLiteral("abcdef\r\n"
+                                         "uvwxyz"));
     rectangle->beginSelection(selectionPress(rectangleOptions.geometry, 1, 0));
     QVERIFY(rectangle->updateSelection(
         selectionDrag(rectangleOptions.geometry, 4, 1, true)));
@@ -4279,13 +4284,12 @@ void GhosttyVtAdapterTest::snapshotsPlainWriteFileRanges()
     const auto rectangularSelection =
         rectangle->snapshotPlainFile(TerminalFileLocation::Selection);
     QCOMPARE(rectangularSelection.status, Status::Ready);
-    QCOMPARE(rectangularSelection.bytes, QByteArrayLiteral(
-        "bcd\n"
-        "vwx"));
+    QCOMPARE(rectangularSelection.bytes,
+             QByteArrayLiteral("bcd\n"
+                               "vwx"));
 }
 
-void GhosttyVtAdapterTest::
-    snapshotsPlainWriteFileFormattingAndAlternateScreen()
+void GhosttyVtAdapterTest::snapshotsPlainWriteFileFormattingAndAlternateScreen()
 {
     using Status = GhosttyVtAdapter::PlainFileSnapshotStatus;
 
@@ -4294,53 +4298,49 @@ void GhosttyVtAdapterTest::
     formattingOptions.geometry.rows = 4;
     auto formatting = GhosttyVtAdapter::create(formattingOptions);
     QVERIFY(formatting != nullptr);
-    formatting->writeVt(QByteArrayLiteral(
-        "abc  \r\n"
-        "ABCDEFGHI\r\n"
-        "last"));
+    formatting->writeVt(QByteArrayLiteral("abc  \r\n"
+                                          "ABCDEFGHI\r\n"
+                                          "last"));
 
     const auto formatted =
         formatting->snapshotPlainFile(TerminalFileLocation::Screen);
     QCOMPARE(formatted.status, Status::Ready);
-    QCOMPARE(formatted.bytes, QByteArrayLiteral(
-        "abc  \n"
-        "ABCDEFGHI\n"
-        "last"));
+    QCOMPARE(formatted.bytes,
+             QByteArrayLiteral("abc  \n"
+                               "ABCDEFGHI\n"
+                               "last"));
 
     GhosttyVtAdapter::Options screenOptions;
     screenOptions.geometry.columns = 12;
     screenOptions.geometry.rows = 3;
     auto screen = GhosttyVtAdapter::create(screenOptions);
     QVERIFY(screen != nullptr);
-    screen->writeVt(QByteArrayLiteral(
-        "primary-0\r\n"
-        "primary-1\r\n"
-        "primary-2\r\n"
-        "primary-3"));
+    screen->writeVt(QByteArrayLiteral("primary-0\r\n"
+                                      "primary-1\r\n"
+                                      "primary-2\r\n"
+                                      "primary-3"));
 
     const auto primary =
         screen->snapshotPlainFile(TerminalFileLocation::Screen);
     QCOMPARE(primary.status, Status::Ready);
-    QCOMPARE(primary.bytes, QByteArrayLiteral(
-        "primary-0\n"
-        "primary-1\n"
-        "primary-2\n"
-        "primary-3"));
+    QCOMPARE(primary.bytes,
+             QByteArrayLiteral("primary-0\n"
+                               "primary-1\n"
+                               "primary-2\n"
+                               "primary-3"));
     const auto primaryScrollback =
         screen->snapshotPlainFile(TerminalFileLocation::Scrollback);
     QCOMPARE(primaryScrollback.status, Status::Ready);
     QCOMPARE(primaryScrollback.bytes, QByteArrayLiteral("primary-0"));
 
-    screen->writeVt(QByteArrayLiteral(
-        "\033[?1049h"
-        "\033[H\033[2J"
-        "alternate"));
+    screen->writeVt(QByteArrayLiteral("\033[?1049h"
+                                      "\033[H\033[2J"
+                                      "alternate"));
     const auto alternate =
         screen->snapshotPlainFile(TerminalFileLocation::Screen);
     QCOMPARE(alternate.status, Status::Ready);
     QCOMPARE(alternate.bytes, QByteArrayLiteral("alternate"));
-    QCOMPARE(screen->snapshotPlainFile(
-                 TerminalFileLocation::Scrollback).status,
+    QCOMPARE(screen->snapshotPlainFile(TerminalFileLocation::Scrollback).status,
              Status::Unavailable);
 
     screen->writeVt(QByteArrayLiteral("\033[?1049l"));
@@ -4361,9 +4361,8 @@ void GhosttyVtAdapterTest::adjustsSelectionAndScrollsLogicalEndpointIntoView()
     options.geometry.rows = 3;
     auto adapter = GhosttyVtAdapter::create(options);
     QVERIFY(adapter != nullptr);
-    adapter->writeVt(QByteArrayLiteral(
-        "row-0\r\nrow-1\r\nrow-2\r\nrow-3\r\n"
-        "row-4\r\nrow-5\r\nrow-6\r\nrow-7"));
+    adapter->writeVt(QByteArrayLiteral("row-0\r\nrow-1\r\nrow-2\r\nrow-3\r\n"
+                                       "row-4\r\nrow-5\r\nrow-6\r\nrow-7"));
 
     QVERIFY(!adapter->adjustSelection(TerminalSelectionAdjustment::Left));
     QVERIFY(adapter->selectAll());
@@ -4392,7 +4391,6 @@ void GhosttyVtAdapterTest::adjustsSelectionAndScrollsLogicalEndpointIntoView()
     QVERIFY(adapter->adjustSelection(TerminalSelectionAdjustment::Left));
     renderInto(adapter.get(), &frame);
     QCOMPARE(frame.scrollOffset, quint64{0});
-
 }
 
 void GhosttyVtAdapterTest::mapsEverySelectionAdjustment()
@@ -4428,7 +4426,8 @@ void GhosttyVtAdapterTest::mapsEverySelectionAdjustment()
         adapter->endSelection(2, 1);
         QCOMPARE(adapter->selectedText(), QStringLiteral("fg"));
         QVERIFY(adapter->adjustSelection(testCase.adjustment));
-        QCOMPARE(adapter->selectedText(), QString::fromLatin1(testCase.expected));
+        QCOMPARE(adapter->selectedText(),
+                 QString::fromLatin1(testCase.expected));
     }
 
     // With scrollback on both sides of the endpoint, page movement must stay
@@ -4440,9 +4439,9 @@ void GhosttyVtAdapterTest::mapsEverySelectionAdjustment()
         options.geometry.rows = 2;
         auto adapter = GhosttyVtAdapter::create(options);
         if (adapter == nullptr) return std::optional<QString>{};
-        adapter->writeVt(QByteArrayLiteral(
-            "row-0\r\nrow-1\r\nrow-2\r\nrow-3\r\nrow-4\r\n"
-            "row-5\r\nrow-6\r\nrow-7\r\nrow-8\r\nrow-9"));
+        adapter->writeVt(
+            QByteArrayLiteral("row-0\r\nrow-1\r\nrow-2\r\nrow-3\r\nrow-4\r\n"
+                              "row-5\r\nrow-6\r\nrow-7\r\nrow-8\r\nrow-9"));
         TerminalFrame frame;
         renderInto(adapter.get(), &frame);
         if (!adapter->scrollViewport({
@@ -4484,8 +4483,8 @@ void GhosttyVtAdapterTest::mapsEverySelectionAdjustment()
     QCOMPARE(*pageUp, QStringLiteral("ow-1\nrow-2\nr"));
     QCOMPARE(*home, QStringLiteral("row-0\nrow-1\nrow-2\nr"));
     QCOMPARE(*pageDown, QStringLiteral("row-3\nrow-4\nro"));
-    QCOMPARE(*end, QStringLiteral(
-        "row-3\nrow-4\nrow-5\nrow-6\nrow-7\nrow-8\nrow-9"));
+    QCOMPARE(*end,
+             QStringLiteral("row-3\nrow-4\nrow-5\nrow-6\nrow-7\nrow-8\nrow-9"));
 }
 
 QTEST_GUILESS_MAIN(GhosttyVtAdapterTest)

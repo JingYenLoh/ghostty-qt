@@ -14,14 +14,9 @@ Item {
 
     required property TerminalPane terminalPane
 
-    readonly property var inspectorModel: terminalPane !== null
-                                          ? terminalPane.inspectorModel : null
-    readonly property var snapshot: inspectorModel !== null
-                                    && inspectorModel.snapshot !== undefined
-                                    ? inspectorModel.snapshot : ({})
-    readonly property var eventModel: inspectorModel !== null
-                                      && inspectorModel.eventModel !== undefined
-                                      ? inspectorModel.eventModel : null
+    readonly property var inspectorModel: terminalPane !== null ? terminalPane.inspectorModel : null
+    readonly property var snapshot: inspectorModel !== null && inspectorModel.snapshot !== undefined ? inspectorModel.snapshot : ({})
+    readonly property var eventModel: inspectorModel !== null && inspectorModel.eventModel !== undefined ? inspectorModel.eventModel : null
     readonly property var surface: snapshot.surface || ({})
     readonly property var terminal: snapshot.terminal || ({})
     readonly property var keyboard: snapshot.keyboard || ({})
@@ -34,82 +29,81 @@ Item {
     visible: false
 
     function display(value, emptyText) {
-        const fallback = emptyText === undefined ? "\u2014" : emptyText
+        const fallback = emptyText === undefined ? "\u2014" : emptyText;
         if (value === undefined || value === null || value === "")
-            return fallback
+            return fallback;
         if (typeof value === "boolean")
-            return value ? qsTr("Yes") : qsTr("No")
+            return value ? qsTr("Yes") : qsTr("No");
         if (value.join !== undefined)
-            return value.length > 0 ? value.join(", ") : fallback
-        return String(value)
+            return value.length > 0 ? value.join(", ") : fallback;
+        return String(value);
     }
 
     function dimensions(width, height, unit) {
         if (width === undefined || height === undefined)
-            return "\u2014"
-        return width + " \u00d7 " + height + (unit ? " " + unit : "")
+            return "\u2014";
+        return width + " \u00d7 " + height + (unit ? " " + unit : "");
     }
 
     function position(column, row) {
-        if (column === undefined || row === undefined
-                || column < 0 || row < 0)
-            return qsTr("Outside grid")
-        return column + ", " + row
+        if (column === undefined || row === undefined || column < 0 || row < 0)
+            return qsTr("Outside grid");
+        return column + ", " + row;
     }
 
     function bytes(value) {
         if (value === undefined || value === null || value < 0)
-            return "\u2014"
+            return "\u2014";
         if (value < 1024)
-            return value + " B"
+            return value + " B";
         if (value < 1024 * 1024)
-            return (value / 1024).toFixed(1) + " KiB"
+            return (value / 1024).toFixed(1) + " KiB";
         if (value < 1024 * 1024 * 1024)
-            return (value / (1024 * 1024)).toFixed(1) + " MiB"
-        return (value / (1024 * 1024 * 1024)).toFixed(1) + " GiB"
+            return (value / (1024 * 1024)).toFixed(1) + " MiB";
+        return (value / (1024 * 1024 * 1024)).toFixed(1) + " GiB";
     }
 
     function modeCode(mode) {
         if (mode === undefined || mode === null)
-            return ""
-        return (mode.ansi ? "" : "?") + mode.number
+            return "";
+        return (mode.ansi ? "" : "?") + mode.number;
     }
 
     function hexByte(value) {
         if (value === undefined || value === null)
-            return "\u2014"
-        return "0x" + Number(value).toString(16).padStart(2, "0")
+            return "\u2014";
+        return "0x" + Number(value).toString(16).padStart(2, "0");
     }
 
     function authoritativeDisplay(value, emptyText) {
         if (!terminal.authoritativeAvailable)
-            return display(terminal.authoritativeStatus)
-        return display(value, emptyText)
+            return display(terminal.authoritativeStatus);
+        return display(value, emptyText);
     }
 
     function cellDisplay(value, emptyText) {
         if (cell.available !== true)
-            return "\u2014"
-        return display(value, emptyText)
+            return "\u2014";
+        return display(value, emptyText);
     }
 
     function refresh() {
         if (inspectorModel !== null)
-            inspectorModel.refresh()
+            inspectorModel.refresh();
     }
 
     function closeInspector() {
         if (inspectorModel !== null)
-            inspectorModel.close()
+            inspectorModel.close();
     }
 
     function toggleCellPick() {
         if (inspectorModel === null)
-            return
+            return;
         if (cell.picking)
-            inspectorModel.cancelCellPick()
+            inspectorModel.cancelCellPick();
         else
-            inspectorModel.beginCellPick()
+            inspectorModel.beginCellPick();
     }
 
     component InspectorRow: RowLayout {
@@ -131,8 +125,7 @@ Item {
             Layout.fillWidth: true
             text: parent.value
             wrapMode: Text.WrapAnywhere
-            font.family: parent.monospace ? "monospace"
-                                          : inspectorWindow.font.family
+            font.family: parent.monospace ? "monospace" : inspectorWindow.font.family
         }
     }
 
@@ -173,26 +166,23 @@ Item {
         height: 600
         minimumWidth: 520
         minimumHeight: 360
-        visible: host.terminalPane !== null
-                 && host.terminalPane.inspectorVisible
+        visible: host.terminalPane !== null && host.terminalPane.inspectorVisible
         title: {
-            const paneTitle = host.display(host.snapshot.title, "")
-            return paneTitle.length > 0
-                    ? qsTr("Terminal Inspector \u2014 %1").arg(paneTitle)
-                    : qsTr("Terminal Inspector")
+            const paneTitle = host.display(host.snapshot.title, "");
+            return paneTitle.length > 0 ? qsTr("Terminal Inspector \u2014 %1").arg(paneTitle) : qsTr("Terminal Inspector");
         }
 
         onVisibleChanged: {
             if (visible)
-                host.refresh()
+                host.refresh();
         }
 
         // The C++ model is authoritative for visibility. Rejecting the native
         // close first preserves that binding; close() then hides the window by
         // changing TerminalPane::inspectorVisible.
-        onClosing: function(close) {
-            close.accepted = false
-            host.closeInspector()
+        onClosing: function (close) {
+            close.accepted = false;
+            host.closeInspector();
         }
 
         header: ToolBar {
@@ -214,8 +204,7 @@ Item {
 
                     Label {
                         Layout.fillWidth: true
-                        text: host.display(host.surface.currentDirectory,
-                                           qsTr("No working directory"))
+                        text: host.display(host.surface.currentDirectory, qsTr("No working directory"))
                         opacity: 0.68
                         elide: Text.ElideMiddle
                     }
@@ -226,12 +215,10 @@ Item {
                     icon.name: "crosshairs"
                     icon.source: Qt.resolvedUrl("icons/cell-pick.svg")
                     highlighted: host.cell.picking === true
-                    accessibleName: host.cell.picking
-                                    ? qsTr("Cancel Cell Picking")
-                                    : qsTr("Pick Terminal Cell")
+                    accessibleName: host.cell.picking ? qsTr("Cancel Cell Picking") : qsTr("Pick Terminal Cell")
                     onClicked: {
-                        inspectorTabs.currentIndex = 1
-                        host.toggleCellPick()
+                        inspectorTabs.currentIndex = 1;
+                        host.toggleCellPick();
                     }
                 }
 
@@ -263,15 +250,25 @@ Item {
                 objectName: "terminalInspectorTabs"
                 Layout.fillWidth: true
 
-                TabButton { text: qsTr("Surface") }
-                TabButton { text: qsTr("Cell") }
-                TabButton { text: qsTr("Terminal") }
-                TabButton { text: qsTr("Keyboard") }
+                TabButton {
+                    text: qsTr("Surface")
+                }
+                TabButton {
+                    text: qsTr("Cell")
+                }
+                TabButton {
+                    text: qsTr("Terminal")
+                }
+                TabButton {
+                    text: qsTr("Keyboard")
+                }
                 TabButton {
                     objectName: "terminalInspectorEventsTab"
                     text: qsTr("Events")
                 }
-                TabButton { text: qsTr("Renderer") }
+                TabButton {
+                    text: qsTr("Renderer")
+                }
             }
 
             StackLayout {
@@ -280,12 +277,12 @@ Item {
                 currentIndex: inspectorTabs.currentIndex
 
                 InspectorPage {
-                    SectionHeading { text: qsTr("Geometry") }
+                    SectionHeading {
+                        text: qsTr("Geometry")
+                    }
                     InspectorRow {
                         name: qsTr("Pane size")
-                        value: host.dimensions(host.surface.width,
-                                               host.surface.height,
-                                               qsTr("logical px"))
+                        value: host.dimensions(host.surface.width, host.surface.height, qsTr("logical px"))
                     }
                     InspectorRow {
                         name: qsTr("Device pixel ratio")
@@ -293,23 +290,20 @@ Item {
                     }
                     InspectorRow {
                         name: qsTr("Terminal grid")
-                        value: host.dimensions(host.surface.gridColumns,
-                                               host.surface.gridRows,
-                                               qsTr("cells"))
+                        value: host.dimensions(host.surface.gridColumns, host.surface.gridRows, qsTr("cells"))
                     }
                     InspectorRow {
                         name: qsTr("Cell size")
-                        value: host.dimensions(host.surface.cellWidth,
-                                               host.surface.cellHeight,
-                                               qsTr("logical px"))
+                        value: host.dimensions(host.surface.cellWidth, host.surface.cellHeight, qsTr("logical px"))
                     }
                     InspectorRow {
                         name: qsTr("Pointer cell")
-                        value: host.position(host.surface.hoverColumn,
-                                             host.surface.hoverRow)
+                        value: host.position(host.surface.hoverColumn, host.surface.hoverRow)
                     }
 
-                    SectionHeading { text: qsTr("Font") }
+                    SectionHeading {
+                        text: qsTr("Font")
+                    }
                     InspectorRow {
                         name: qsTr("Family")
                         value: host.display(host.surface.fontFamily)
@@ -323,7 +317,9 @@ Item {
                         value: host.display(host.surface.fontPointSize)
                     }
 
-                    SectionHeading { text: qsTr("Surface state") }
+                    SectionHeading {
+                        text: qsTr("Surface state")
+                    }
                     InspectorRow {
                         name: qsTr("Focused")
                         value: host.display(host.surface.focused)
@@ -340,15 +336,16 @@ Item {
                 }
 
                 InspectorPage {
-                    SectionHeading { text: qsTr("Cell picker") }
+                    SectionHeading {
+                        text: qsTr("Cell picker")
+                    }
                     InspectorRow {
                         name: qsTr("Status")
                         value: host.display(host.cell.status)
                     }
                     InspectorRow {
                         name: qsTr("Viewport position")
-                        value: host.position(host.cell.viewportColumn,
-                                             host.cell.viewportRow)
+                        value: host.position(host.cell.viewportColumn, host.cell.viewportRow)
                     }
                     InspectorRow {
                         name: qsTr("Content revision")
@@ -360,36 +357,29 @@ Item {
                     }
 
                     Button {
-                        text: host.cell.picking ? qsTr("Cancel picking")
-                                                : qsTr("Pick cell")
-                        icon.name: host.cell.picking ? "dialog-cancel"
-                                                    : "crosshairs"
+                        text: host.cell.picking ? qsTr("Cancel picking") : qsTr("Pick cell")
+                        icon.name: host.cell.picking ? "dialog-cancel" : "crosshairs"
                         onClicked: host.toggleCellPick()
                     }
 
                     Label {
                         Layout.fillWidth: true
-                        text: host.cell.picking
-                              ? qsTr("Click a cell in the terminal. Right-click or press Escape to cancel.")
-                              : qsTr("Cell queries are one-shot and use the exact displayed viewport revision.")
+                        text: host.cell.picking ? qsTr("Click a cell in the terminal. Right-click or press Escape to cancel.") : qsTr("Cell queries are one-shot and use the exact displayed viewport revision.")
                         wrapMode: Text.WordWrap
                         opacity: 0.68
                     }
 
-                    SectionHeading { text: qsTr("Content") }
+                    SectionHeading {
+                        text: qsTr("Content")
+                    }
                     InspectorRow {
                         name: qsTr("Text")
-                        value: host.cell.available
-                               ? (host.cell.hasText
-                                  ? "\u201c" + host.cell.text + "\u201d"
-                                  : qsTr("Empty"))
-                               : "\u2014"
+                        value: host.cell.available ? (host.cell.hasText ? "\u201c" + host.cell.text + "\u201d" : qsTr("Empty")) : "\u2014"
                         monospace: true
                     }
                     InspectorRow {
                         name: qsTr("Codepoints")
-                        value: host.cellDisplay(host.cell.codepoints,
-                                                qsTr("None"))
+                        value: host.cellDisplay(host.cell.codepoints, qsTr("None"))
                         monospace: true
                     }
                     InspectorRow {
@@ -410,8 +400,7 @@ Item {
                     }
                     InspectorRow {
                         name: qsTr("Hyperlink")
-                        value: host.cellDisplay(host.cell.hyperlinkUri,
-                                                qsTr("None"))
+                        value: host.cellDisplay(host.cell.hyperlinkUri, qsTr("None"))
                         monospace: true
                     }
                     InspectorRow {
@@ -420,15 +409,16 @@ Item {
                         monospace: true
                     }
 
-                    SectionHeading { text: qsTr("Raw style") }
+                    SectionHeading {
+                        text: qsTr("Raw style")
+                    }
                     InspectorRow {
                         name: qsTr("Style ID")
                         value: host.cellDisplay(host.cell.styleId)
                     }
                     InspectorRow {
                         name: qsTr("Attributes")
-                        value: host.cellDisplay(host.cell.styleAttributes,
-                                                qsTr("None"))
+                        value: host.cellDisplay(host.cell.styleAttributes, qsTr("None"))
                     }
                     InspectorRow {
                         name: qsTr("Foreground source")
@@ -450,7 +440,9 @@ Item {
                         monospace: true
                     }
 
-                    SectionHeading { text: qsTr("Row") }
+                    SectionHeading {
+                        text: qsTr("Row")
+                    }
                     InspectorRow {
                         name: qsTr("Soft wrapped")
                         value: host.cellDisplay(host.cell.rowWrapped)
@@ -466,7 +458,9 @@ Item {
                 }
 
                 InspectorPage {
-                    SectionHeading { text: qsTr("Process") }
+                    SectionHeading {
+                        text: qsTr("Process")
+                    }
                     InspectorRow {
                         name: qsTr("Running")
                         value: host.display(host.terminal.running)
@@ -489,7 +483,9 @@ Item {
                         value: host.display(host.terminal.readOnly)
                     }
 
-                    SectionHeading { text: qsTr("Authoritative VT state") }
+                    SectionHeading {
+                        text: qsTr("Authoritative VT state")
+                    }
                     InspectorRow {
                         name: qsTr("Snapshot")
                         value: host.display(host.terminal.authoritativeStatus)
@@ -500,22 +496,20 @@ Item {
                     }
                     InspectorRow {
                         name: qsTr("Terminal grid")
-                        value: host.dimensions(host.terminal.vtColumns,
-                                               host.terminal.vtRows,
-                                               qsTr("cells"))
+                        value: host.dimensions(host.terminal.vtColumns, host.terminal.vtRows, qsTr("cells"))
                     }
                     InspectorRow {
                         name: qsTr("Terminal pixels")
-                        value: host.dimensions(host.terminal.vtWidthPixels,
-                                               host.terminal.vtHeightPixels,
-                                               qsTr("px"))
+                        value: host.dimensions(host.terminal.vtWidthPixels, host.terminal.vtHeightPixels, qsTr("px"))
                     }
                     InspectorRow {
                         name: qsTr("Worker content revision")
                         value: host.display(host.terminal.workerContentRevision)
                     }
 
-                    SectionHeading { text: qsTr("Cursor") }
+                    SectionHeading {
+                        text: qsTr("Cursor")
+                    }
                     InspectorRow {
                         name: qsTr("Rendered visible")
                         value: host.display(host.terminal.cursorVisible)
@@ -530,13 +524,11 @@ Item {
                     }
                     InspectorRow {
                         name: qsTr("Rendered position")
-                        value: host.position(host.terminal.cursorColumn,
-                                             host.terminal.cursorRow)
+                        value: host.position(host.terminal.cursorColumn, host.terminal.cursorRow)
                     }
                     InspectorRow {
                         name: qsTr("VT position")
-                        value: host.position(host.terminal.vtCursorColumn,
-                                             host.terminal.vtCursorRow)
+                        value: host.position(host.terminal.vtCursorColumn, host.terminal.vtCursorRow)
                     }
                     InspectorRow {
                         name: qsTr("Pending wrap")
@@ -551,7 +543,9 @@ Item {
                         value: host.display(host.terminal.cursorColumnSpan)
                     }
 
-                    SectionHeading { text: qsTr("Viewport") }
+                    SectionHeading {
+                        text: qsTr("Viewport")
+                    }
                     InspectorRow {
                         name: qsTr("Pinned to active area")
                         value: host.display(host.terminal.viewportActive)
@@ -581,7 +575,9 @@ Item {
                         value: host.display(host.terminal.contentRevision)
                     }
 
-                    SectionHeading { text: qsTr("Mouse modes") }
+                    SectionHeading {
+                        text: qsTr("Mouse modes")
+                    }
                     InspectorRow {
                         name: qsTr("Tracking")
                         value: host.display(host.terminal.mouseTracking)
@@ -595,24 +591,26 @@ Item {
                         value: host.display(host.terminal.mouseReportingEnabled)
                     }
 
-                    SectionHeading { text: qsTr("ANSI and DEC modes") }
+                    SectionHeading {
+                        text: qsTr("ANSI and DEC modes")
+                    }
                     Repeater {
                         model: host.terminal.modes || []
 
                         delegate: InspectorRow {
                             required property var modelData
 
-                            name: host.modeCode(modelData) + "  "
-                                  + modelData.name
-                            value: modelData.enabled ? qsTr("Set")
-                                                     : qsTr("Reset")
+                            name: host.modeCode(modelData) + "  " + modelData.name
+                            value: modelData.enabled ? qsTr("Set") : qsTr("Reset")
                             monospace: true
                         }
                     }
                 }
 
                 InspectorPage {
-                    SectionHeading { text: qsTr("Keyboard protocol") }
+                    SectionHeading {
+                        text: qsTr("Keyboard protocol")
+                    }
                     InspectorRow {
                         name: qsTr("Action mode")
                         value: host.display(host.terminal.keyboardActionMode)
@@ -623,39 +621,32 @@ Item {
                     }
                     InspectorRow {
                         name: qsTr("Kitty flags")
-                        value: host.terminal.authoritativeAvailable
-                               ? host.hexByte(host.keyboard.kittyFlagsValue)
-                                 + "  "
-                                 + host.display(host.keyboard.kittyFlags,
-                                                qsTr("Disabled"))
-                               : host.authoritativeDisplay(undefined)
+                        value: host.terminal.authoritativeAvailable ? host.hexByte(host.keyboard.kittyFlagsValue) + "  " + host.display(host.keyboard.kittyFlags, qsTr("Disabled")) : host.authoritativeDisplay(undefined)
                         monospace: true
                     }
                     InspectorRow {
                         name: qsTr("Held modifiers")
-                        value: host.display(host.keyboard.modifiers,
-                                            qsTr("None"))
+                        value: host.display(host.keyboard.modifiers, qsTr("None"))
                     }
                     InspectorRow {
                         name: qsTr("Preedit")
-                        value: host.display(host.keyboard.preedit,
-                                            qsTr("None"))
+                        value: host.display(host.keyboard.preedit, qsTr("None"))
                     }
                     InspectorRow {
                         name: qsTr("Deferred input events")
                         value: host.display(host.keyboard.deferredInputCount)
                     }
 
-                    SectionHeading { text: qsTr("Keybindings") }
+                    SectionHeading {
+                        text: qsTr("Keybindings")
+                    }
                     InspectorRow {
                         name: qsTr("Active tables")
-                        value: host.display(host.keyboard.activeTables,
-                                            qsTr("None"))
+                        value: host.display(host.keyboard.activeTables, qsTr("None"))
                     }
                     InspectorRow {
                         name: qsTr("Pending sequence")
-                        value: host.display(host.keyboard.pendingSequence,
-                                            qsTr("None"))
+                        value: host.display(host.keyboard.pendingSequence, qsTr("None"))
                         monospace: true
                     }
 
@@ -680,23 +671,21 @@ Item {
                     objectName: "terminalInspectorEventsPage"
 
                     function clearEventSelection() {
-                        eventSelected = false
-                        selectedSequence = ""
-                        selectedTrace = ""
-                        selectedSummary = ""
-                        selectedDetails = ""
-                        eventList.currentIndex = -1
+                        eventSelected = false;
+                        selectedSequence = "";
+                        selectedTrace = "";
+                        selectedSummary = "";
+                        selectedDetails = "";
+                        eventList.currentIndex = -1;
                     }
 
                     function emptyMessage() {
                         if (host.eventModel === null)
-                            return qsTr("Event capture is unavailable")
+                            return qsTr("Event capture is unavailable");
                         if (host.eventModel.retainedCount === 0) {
-                            return host.eventModel.paused
-                                    ? qsTr("Capture is paused")
-                                    : qsTr("Waiting for events…")
+                            return host.eventModel.paused ? qsTr("Capture is paused") : qsTr("Waiting for events…");
                         }
-                        return qsTr("No matching events")
+                        return qsTr("No matching events");
                     }
 
                     ColumnLayout {
@@ -717,18 +706,28 @@ Item {
                                 textRole: "text"
                                 valueRole: "value"
                                 model: [
-                                    { "text": qsTr("All events"), "value": -1 },
-                                    { "text": qsTr("Input"), "value": 0 },
-                                    { "text": qsTr("Terminal"), "value": 1 },
-                                    { "text": qsTr("State"), "value": 2 }
+                                    {
+                                        "text": qsTr("All events"),
+                                        "value": -1
+                                    },
+                                    {
+                                        "text": qsTr("Input"),
+                                        "value": 0
+                                    },
+                                    {
+                                        "text": qsTr("Terminal"),
+                                        "value": 1
+                                    },
+                                    {
+                                        "text": qsTr("State"),
+                                        "value": 2
+                                    }
                                 ]
-                                currentIndex: host.eventModel !== null
-                                              ? host.eventModel.categoryFilter + 1
-                                              : 0
+                                currentIndex: host.eventModel !== null ? host.eventModel.categoryFilter + 1 : 0
                                 Accessible.name: qsTr("Event category")
                                 onActivated: {
                                     if (host.eventModel !== null)
-                                        host.eventModel.setCategoryFilter(currentValue)
+                                        host.eventModel.setCategoryFilter(currentValue);
                                 }
                             }
 
@@ -738,15 +737,14 @@ Item {
                                 objectName: "terminalInspectorEventSearch"
                                 Layout.fillWidth: true
                                 enabled: host.eventModel !== null
-                                text: host.eventModel !== null
-                                      ? host.eventModel.filterText : ""
+                                text: host.eventModel !== null ? host.eventModel.filterText : ""
                                 placeholderText: qsTr("Filter retained events")
                                 maximumLength: 128
                                 selectByMouse: true
                                 Accessible.name: placeholderText
                                 onTextEdited: {
                                     if (host.eventModel !== null)
-                                        host.eventModel.setFilterText(text)
+                                        host.eventModel.setFilterText(text);
                                 }
                             }
                         }
@@ -761,21 +759,18 @@ Item {
                                 objectName: "terminalInspectorEventPause"
                                 enabled: host.eventModel !== null
                                 checkable: true
-                                checked: host.eventModel !== null
-                                         && host.eventModel.paused
-                                text: checked ? qsTr("Resume capture")
-                                              : qsTr("Pause capture")
+                                checked: host.eventModel !== null && host.eventModel.paused
+                                text: checked ? qsTr("Resume capture") : qsTr("Pause capture")
                                 Accessible.name: text
                                 onToggled: {
                                     if (host.eventModel !== null)
-                                        host.eventModel.setPaused(checked)
+                                        host.eventModel.setPaused(checked);
                                 }
                             }
 
                             Button {
                                 objectName: "terminalInspectorEventClear"
-                                enabled: host.eventModel !== null
-                                         && host.eventModel.retainedCount > 0
+                                enabled: host.eventModel !== null && host.eventModel.retainedCount > 0
                                 text: qsTr("Clear")
                                 Accessible.name: qsTr("Clear retained events")
                                 onClicked: host.eventModel.clear()
@@ -789,22 +784,17 @@ Item {
                                 opacity: 0.72
                                 text: {
                                     if (host.eventModel === null)
-                                        return qsTr("Unavailable")
-                                    let status = qsTr("%1 shown · %2/%3 retained")
-                                        .arg(host.eventModel.count)
-                                        .arg(host.eventModel.retainedCount)
-                                        .arg(host.eventModel.capacity)
+                                        return qsTr("Unavailable");
+                                    let status = qsTr("%1 shown · %2/%3 retained").arg(host.eventModel.count).arg(host.eventModel.retainedCount).arg(host.eventModel.capacity);
                                     if (host.eventModel.evictedCount > 0) {
-                                        status += qsTr(" · %1 evicted")
-                                            .arg(host.eventModel.evictedCount)
+                                        status += qsTr(" · %1 evicted").arg(host.eventModel.evictedCount);
                                     }
                                     if (host.eventModel.skippedWhilePaused > 0) {
-                                        status += qsTr(" · %1 skipped")
-                                            .arg(host.eventModel.skippedWhilePaused)
+                                        status += qsTr(" · %1 skipped").arg(host.eventModel.skippedWhilePaused);
                                     }
                                     if (host.eventModel.paused)
-                                        status += qsTr(" · Paused")
-                                    return status
+                                        status += qsTr(" · Paused");
+                                    return status;
                                 }
                             }
                         }
@@ -858,13 +848,12 @@ Item {
                                     Accessible.name: summary
                                     Accessible.description: details
                                     onClicked: {
-                                        eventList.currentIndex = index
-                                        eventsPage.eventSelected = true
-                                        eventsPage.selectedSequence = String(sequence)
-                                        eventsPage.selectedTrace = traceId !== 0
-                                                ? String(traceId) : ""
-                                        eventsPage.selectedSummary = summary
-                                        eventsPage.selectedDetails = details
+                                        eventList.currentIndex = index;
+                                        eventsPage.eventSelected = true;
+                                        eventsPage.selectedSequence = String(sequence);
+                                        eventsPage.selectedTrace = traceId !== 0 ? String(traceId) : "";
+                                        eventsPage.selectedSummary = summary;
+                                        eventsPage.selectedDetails = details;
                                     }
 
                                     contentItem: ColumnLayout {
@@ -936,13 +925,11 @@ Item {
                                     Layout.fillWidth: true
                                     text: {
                                         if (!eventsPage.eventSelected)
-                                            return ""
-                                        let heading = qsTr("Event #%1 details")
-                                            .arg(eventsPage.selectedSequence)
+                                            return "";
+                                        let heading = qsTr("Event #%1 details").arg(eventsPage.selectedSequence);
                                         if (eventsPage.selectedTrace.length > 0)
-                                            heading += qsTr(" · key trace #%1")
-                                                .arg(eventsPage.selectedTrace)
-                                        return heading
+                                            heading += qsTr(" · key trace #%1").arg(eventsPage.selectedTrace);
+                                        return heading;
                                     }
                                     font.bold: true
                                     elide: Text.ElideRight
@@ -960,12 +947,10 @@ Item {
                                         wrapMode: TextEdit.WrapAnywhere
                                         text: {
                                             if (!eventsPage.eventSelected)
-                                                return ""
+                                                return "";
                                             if (eventsPage.selectedDetails.length === 0)
-                                                return eventsPage.selectedSummary
-                                            return eventsPage.selectedSummary
-                                                    + "\n\n"
-                                                    + eventsPage.selectedDetails
+                                                return eventsPage.selectedSummary;
+                                            return eventsPage.selectedSummary + "\n\n" + eventsPage.selectedDetails;
                                         }
                                     }
                                 }
@@ -977,16 +962,16 @@ Item {
                         target: host.eventModel
 
                         function onModelReset() {
-                            eventsPage.clearEventSelection()
+                            eventsPage.clearEventSelection();
                         }
 
                         function onCleared() {
-                            eventsPage.clearEventSelection()
+                            eventsPage.clearEventSelection();
                         }
 
                         function onEventEvicted(sequence) {
                             if (eventsPage.selectedSequence === String(sequence))
-                                eventsPage.clearEventSelection()
+                                eventsPage.clearEventSelection();
                         }
                     }
 
@@ -994,13 +979,15 @@ Item {
                         target: host
 
                         function onEventModelChanged() {
-                            eventsPage.clearEventSelection()
+                            eventsPage.clearEventSelection();
                         }
                     }
                 }
 
                 InspectorPage {
-                    SectionHeading { text: qsTr("Scene graph") }
+                    SectionHeading {
+                        text: qsTr("Scene graph")
+                    }
                     InspectorRow {
                         name: qsTr("Graphics API")
                         value: host.display(host.renderer.graphicsApi)
@@ -1011,12 +998,13 @@ Item {
                     }
                     InspectorRow {
                         name: qsTr("Shader diagnostic")
-                        value: host.display(host.renderer.customShaderDiagnostic,
-                                            qsTr("None"))
+                        value: host.display(host.renderer.customShaderDiagnostic, qsTr("None"))
                         monospace: true
                     }
 
-                    SectionHeading { text: qsTr("Kitty graphics") }
+                    SectionHeading {
+                        text: qsTr("Kitty graphics")
+                    }
                     InspectorRow {
                         name: qsTr("Placements")
                         value: host.display(host.renderer.kittyPlacements)
@@ -1058,7 +1046,9 @@ Item {
                         value: host.display(host.renderer.kittySharedMemoryMedium)
                     }
 
-                    SectionHeading { text: qsTr("Terminal colors") }
+                    SectionHeading {
+                        text: qsTr("Terminal colors")
+                    }
                     InspectorRow {
                         name: qsTr("Rendered foreground")
                         value: host.display(host.terminal.foreground)
@@ -1076,51 +1066,37 @@ Item {
                     }
                     InspectorRow {
                         name: qsTr("Effective foreground")
-                        value: host.authoritativeDisplay(
-                                   host.terminal.effectiveForeground,
-                                   qsTr("Unset"))
+                        value: host.authoritativeDisplay(host.terminal.effectiveForeground, qsTr("Unset"))
                         monospace: true
                     }
                     InspectorRow {
                         name: qsTr("Default foreground")
-                        value: host.authoritativeDisplay(
-                                   host.terminal.defaultForeground,
-                                   qsTr("Unset"))
+                        value: host.authoritativeDisplay(host.terminal.defaultForeground, qsTr("Unset"))
                         monospace: true
                     }
                     InspectorRow {
                         name: qsTr("Effective background")
-                        value: host.authoritativeDisplay(
-                                   host.terminal.effectiveBackground,
-                                   qsTr("Unset"))
+                        value: host.authoritativeDisplay(host.terminal.effectiveBackground, qsTr("Unset"))
                         monospace: true
                     }
                     InspectorRow {
                         name: qsTr("Default background")
-                        value: host.authoritativeDisplay(
-                                   host.terminal.defaultBackground,
-                                   qsTr("Unset"))
+                        value: host.authoritativeDisplay(host.terminal.defaultBackground, qsTr("Unset"))
                         monospace: true
                     }
                     InspectorRow {
                         name: qsTr("Effective cursor")
-                        value: host.authoritativeDisplay(
-                                   host.terminal.effectiveCursor,
-                                   qsTr("Unset"))
+                        value: host.authoritativeDisplay(host.terminal.effectiveCursor, qsTr("Unset"))
                         monospace: true
                     }
                     InspectorRow {
                         name: qsTr("Default cursor")
-                        value: host.authoritativeDisplay(
-                                   host.terminal.defaultCursor,
-                                   qsTr("Unset"))
+                        value: host.authoritativeDisplay(host.terminal.defaultCursor, qsTr("Unset"))
                         monospace: true
                     }
                     InspectorRow {
                         name: qsTr("Palette entries differing from default")
-                        value: host.authoritativeDisplay(
-                                   host.terminal.paletteDifferences,
-                                   qsTr("None"))
+                        value: host.authoritativeDisplay(host.terminal.paletteDifferences, qsTr("None"))
                         monospace: true
                     }
 
@@ -1152,9 +1128,7 @@ Item {
                                     color: paletteDelegate.modelData
                                     border.width: 1
                                     border.color: inspectorWindow.palette.mid
-                                    Accessible.name: qsTr("Palette color %1: %2")
-                                                     .arg(paletteDelegate.index)
-                                                     .arg(paletteDelegate.modelData)
+                                    Accessible.name: qsTr("Palette color %1: %2").arg(paletteDelegate.index).arg(paletteDelegate.modelData)
                                 }
 
                                 Label {
@@ -1183,11 +1157,10 @@ Item {
             enabled: inspectorWindow.visible
             onActivated: {
                 if (host.cell.picking)
-                    host.toggleCellPick()
+                    host.toggleCellPick();
                 else
-                    host.closeInspector()
+                    host.closeInspector();
             }
         }
     }
-
 }

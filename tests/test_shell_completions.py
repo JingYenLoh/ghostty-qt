@@ -4,14 +4,13 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import re
 import shlex
 import shutil
 import subprocess
 import sys
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPLETION_DIRECTORY = ROOT / "dist" / "shell-completions"
@@ -46,9 +45,7 @@ def bash_completions(words: list[str]) -> list[str]:
 
 def pinned_action_option_fields(action: str) -> set[str]:
     filename = action[1:].replace("-", "_") + ".zig"
-    source = (ROOT / "ghostty" / "src" / "cli" / filename).read_text(
-        encoding="utf-8"
-    )
+    source = (ROOT / "ghostty" / "src" / "cli" / filename).read_text(encoding="utf-8")
     marker = "pub const Options = struct {"
     start = source.find(marker)
     if start < 0:
@@ -98,9 +95,7 @@ class ShellCompletionTest(unittest.TestCase):
         run([sys.executable, str(GENERATOR), "--check"])
 
     def test_actions_match_frontend_catalog_and_parity_manifest(self) -> None:
-        header = (ROOT / "src" / "ghostty_cli_delegation.h").read_text(
-            encoding="utf-8"
-        )
+        header = (ROOT / "src" / "ghostty_cli_delegation.h").read_text(encoding="utf-8")
         catalog = re.findall(r'\{"(\+[a-z0-9-]+)"\s*,', header)
         spec_actions = [action["name"] for action in self.spec["actions"]]
         self.assertEqual(catalog, spec_actions)
@@ -109,9 +104,7 @@ class ShellCompletionTest(unittest.TestCase):
             r"GhosttyCliFrontendSupport::ApplicationIpc\}",
             header,
         )
-        self.assertEqual(
-            application_ipc_actions, self.spec["application_ipc_actions"]
-        )
+        self.assertEqual(application_ipc_actions, self.spec["application_ipc_actions"])
 
         manifest = json.loads(
             (ROOT / "docs" / "ghostty-parity.json").read_text(encoding="utf-8")
@@ -151,9 +144,7 @@ class ShellCompletionTest(unittest.TestCase):
             flags=re.DOTALL,
         )
         hidden = set(
-            re.findall(
-                r"(\w+)\.setFlags\(QCommandLineOption::HiddenFromHelp\)", source
-            )
+            re.findall(r"(\w+)\.setFlags\(QCommandLineOption::HiddenFromHelp\)", source)
         )
         parser_options: set[str] = {"-e"}
         for variable, name_expression in constructors:
@@ -171,7 +162,9 @@ class ShellCompletionTest(unittest.TestCase):
         bash = COMPLETION_DIRECTORY / "ghostty-qt"
         run(["bash", "-n", str(bash)])
         contents = bash.read_text(encoding="utf-8")
-        self.assertIn("complete -o nospace -o bashdefault -F _ghostty_qt ghostty-qt", contents)
+        self.assertIn(
+            "complete -o nospace -o bashdefault -F _ghostty_qt ghostty-qt", contents
+        )
         self.assertNotIn("--gtk-single-instance", contents)
         self.assertNotIn("--theme=", contents)
 
@@ -186,9 +179,7 @@ class ShellCompletionTest(unittest.TestCase):
             ["--single-instance="],
             bash_completions(["ghostty-qt", "--sing"]),
         )
-        self.assertIn(
-            "+new-tab", bash_completions(["ghostty-qt", "+new-t"])
-        )
+        self.assertIn("+new-tab", bash_completions(["ghostty-qt", "+new-t"]))
         self.assertEqual(
             [
                 "--single-instance=false",

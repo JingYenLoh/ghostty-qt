@@ -45,30 +45,27 @@ GhosttyKeybindTrigger catchAll(quint8 modifiers = 0)
     };
 }
 
-GhosttyKeybindDefinition definition(
-    QVector<GhosttyKeybindTrigger> sequence,
-    QStringList actions,
-    bool global = true)
+GhosttyKeybindDefinition definition(QVector<GhosttyKeybindTrigger> sequence,
+                                    QStringList actions, bool global = true)
 {
     return GhosttyKeybindDefinition{
         .sequence = std::move(sequence),
         .actions = std::move(actions),
-        .flags = GhosttyKeybindFlags{
-            .consumed = true,
-            .all = false,
-            .global = global,
-            .performable = false,
-        },
+        .flags =
+            GhosttyKeybindFlags{
+                .consumed = true,
+                .all = false,
+                .global = global,
+                .performable = false,
+            },
     };
 }
 
 GhosttyKeybindDefinition definition(GhosttyKeybindTrigger trigger,
-                                    QString action,
-                                    bool global = true)
+                                    QString action, bool global = true)
 {
     return definition(QVector<GhosttyKeybindTrigger>{std::move(trigger)},
-                      QStringList{std::move(action)},
-                      global);
+                      QStringList{std::move(action)}, global);
 }
 
 int diagnosticCount(const GhosttyGlobalShortcutRegistry &registry,
@@ -124,8 +121,7 @@ public:
                               QString clientUniqueName)
         : m_connection(std::move(connection))
         , m_clientUniqueName(std::move(clientUniqueName))
-    {
-    }
+    {}
 
     QString introspect(const QString &path) const override
     {
@@ -172,18 +168,15 @@ public:
             QStringLiteral("/org/freedesktop/portal/desktop"),
             QStringLiteral("org.freedesktop.portal.GlobalShortcuts"),
             QStringLiteral("Activated"));
-        signal << QVariant::fromValue(QDBusObjectPath(session))
-               << id
-               << qulonglong(123)
-               << QVariantMap{};
+        signal << QVariant::fromValue(QDBusObjectPath(session)) << id
+               << qulonglong(123) << QVariantMap{};
         m_connection.send(signal);
     }
 
     void closeSession(const QString &session)
     {
         QDBusMessage signal = QDBusMessage::createSignal(
-            session,
-            QStringLiteral("org.freedesktop.portal.Session"),
+            session, QStringLiteral("org.freedesktop.portal.Session"),
             QStringLiteral("Closed"));
         signal << QVariantMap{};
         m_connection.send(signal);
@@ -218,16 +211,16 @@ private:
     void handleCreateSession(const QDBusMessage &message)
     {
         ++createCount;
-        const QVariantMap options = decodeVariantMap(
-            message.arguments().value(0));
-        const QString requestToken = optionString(
-            options, QStringLiteral("handle_token"));
-        const QString sessionToken = optionString(
-            options, QStringLiteral("session_handle_token"));
+        const QVariantMap options =
+            decodeVariantMap(message.arguments().value(0));
+        const QString requestToken =
+            optionString(options, QStringLiteral("handle_token"));
+        const QString sessionToken =
+            optionString(options, QStringLiteral("session_handle_token"));
         const QString requestPath = portalPath(
             m_clientUniqueName, QStringLiteral("request"), requestToken);
-        currentSession = portalPath(
-            m_clientUniqueName, QStringLiteral("session"), sessionToken);
+        currentSession = portalPath(m_clientUniqueName,
+                                    QStringLiteral("session"), sessionToken);
 
         if (deferNextCreate) {
             deferNextCreate = false;
@@ -237,8 +230,7 @@ private:
             sendResponse(requestPath, {}, 2);
         } else {
             sendResponse(requestPath,
-                         {{QStringLiteral("session_handle"),
-                           currentSession}});
+                         {{QStringLiteral("session_handle"), currentSession}});
         }
 
         m_connection.send(message.createReply(
@@ -267,10 +259,9 @@ private:
         }
 
         const QVariantMap options = decodeVariantMap(arguments.value(3));
-        const QString requestPath = portalPath(
-            m_clientUniqueName,
-            QStringLiteral("request"),
-            optionString(options, QStringLiteral("handle_token")));
+        const QString requestPath =
+            portalPath(m_clientUniqueName, QStringLiteral("request"),
+                       optionString(options, QStringLiteral("handle_token")));
         sendResponse(requestPath, {});
         m_connection.send(message.createReply(
             QVariant::fromValue(QDBusObjectPath(requestPath))));
@@ -280,8 +271,7 @@ private:
                       uint response = 0)
     {
         QDBusMessage signal = QDBusMessage::createSignal(
-            path,
-            QStringLiteral("org.freedesktop.portal.Request"),
+            path, QStringLiteral("org.freedesktop.portal.Request"),
             QStringLiteral("Response"));
         signal << response << results;
         m_connection.send(signal);
@@ -312,12 +302,12 @@ private Q_SLOTS:
 
 void GhosttyGlobalShortcutPortalTest::translatesUnicodeTriggersToXdgKeysyms()
 {
-    QCOMPARE(ghosttyXdgShortcutFromTrigger(unicode(
-                 'q', GhosttyKeybindSuper)),
+    QCOMPARE(ghosttyXdgShortcutFromTrigger(unicode('q', GhosttyKeybindSuper)),
              std::optional<QString>(QStringLiteral("LOGO+q")));
-    QCOMPARE(ghosttyXdgShortcutFromTrigger(unicode(
-                 '\\', GhosttyKeybindShift | GhosttyKeybindCtrl
-                          | GhosttyKeybindAlt | GhosttyKeybindSuper)),
+    QCOMPARE(ghosttyXdgShortcutFromTrigger(
+                 unicode('\\',
+                         GhosttyKeybindShift | GhosttyKeybindCtrl
+                             | GhosttyKeybindAlt | GhosttyKeybindSuper)),
              std::optional<QString>(
                  QStringLiteral("SHIFT+CTRL+ALT+LOGO+backslash")));
     QCOMPARE(ghosttyXdgShortcutFromTrigger(unicode('\'')),
@@ -332,34 +322,35 @@ void GhosttyGlobalShortcutPortalTest::translatesUnicodeTriggersToXdgKeysyms()
 
 void GhosttyGlobalShortcutPortalTest::translatesPinnedPhysicalKeyMap()
 {
-    QCOMPARE(ghosttyXdgShortcutFromTrigger(physical(
-                 QStringLiteral("key_a"), GhosttyKeybindCtrl)),
+    QCOMPARE(ghosttyXdgShortcutFromTrigger(
+                 physical(QStringLiteral("key_a"), GhosttyKeybindCtrl)),
              std::optional<QString>(QStringLiteral("CTRL+a")));
-    QCOMPARE(ghosttyXdgShortcutFromTrigger(physical(
-                 QStringLiteral("digit_7"), GhosttyKeybindAlt)),
+    QCOMPARE(ghosttyXdgShortcutFromTrigger(
+                 physical(QStringLiteral("digit_7"), GhosttyKeybindAlt)),
              std::optional<QString>(QStringLiteral("ALT+7")));
-    QCOMPARE(ghosttyXdgShortcutFromTrigger(physical(
-                 QStringLiteral("arrow_left"), GhosttyKeybindSuper)),
+    QCOMPARE(ghosttyXdgShortcutFromTrigger(
+                 physical(QStringLiteral("arrow_left"), GhosttyKeybindSuper)),
              std::optional<QString>(QStringLiteral("LOGO+Left")));
-    QCOMPARE(ghosttyXdgShortcutFromTrigger(physical(
-                 QStringLiteral("f25"), GhosttyKeybindShift)),
+    QCOMPARE(ghosttyXdgShortcutFromTrigger(
+                 physical(QStringLiteral("f25"), GhosttyKeybindShift)),
              std::optional<QString>(QStringLiteral("SHIFT+F25")));
-    QCOMPARE(ghosttyXdgShortcutFromTrigger(physical(
-                 QStringLiteral("numpad_3"), GhosttyKeybindCtrl)),
+    QCOMPARE(ghosttyXdgShortcutFromTrigger(
+                 physical(QStringLiteral("numpad_3"), GhosttyKeybindCtrl)),
              std::optional<QString>(QStringLiteral("CTRL+KP_3")));
-    QCOMPARE(ghosttyXdgShortcutFromTrigger(physical(
-                 QStringLiteral("numpad_page_down"))),
+    QCOMPARE(ghosttyXdgShortcutFromTrigger(
+                 physical(QStringLiteral("numpad_page_down"))),
              std::optional<QString>(QStringLiteral("KP_Page_Down")));
-    QCOMPARE(ghosttyXdgShortcutFromTrigger(physical(
-                 QStringLiteral("control_right"))),
+    QCOMPARE(ghosttyXdgShortcutFromTrigger(
+                 physical(QStringLiteral("control_right"))),
              std::optional<QString>(QStringLiteral("Control_R")));
 }
 
 void GhosttyGlobalShortcutPortalTest::rejectsUnrepresentableTriggers()
 {
     QVERIFY(!ghosttyXdgShortcutFromTrigger(catchAll()).has_value());
-    QVERIFY(!ghosttyXdgShortcutFromTrigger(
-        physical(QStringLiteral("context_menu"))).has_value());
+    QVERIFY(
+        !ghosttyXdgShortcutFromTrigger(physical(QStringLiteral("context_menu")))
+             .has_value());
     QVERIFY(!ghosttyXdgShortcutFromTrigger(unicode(0)).has_value());
     QVERIFY(!ghosttyXdgShortcutFromTrigger(unicode(0xd800)).has_value());
     QVERIFY(!ghosttyXdgShortcutFromTrigger(unicode(0x110000)).has_value());
@@ -373,8 +364,7 @@ void GhosttyGlobalShortcutPortalTest::registryUsesOnlyEligibleRootGlobals()
 {
     GhosttyKeybindConfig config;
     config.root = {
-        definition(unicode('g', GhosttyKeybindCtrl),
-                   QStringLiteral("new_tab")),
+        definition(unicode('g', GhosttyKeybindCtrl), QStringLiteral("new_tab")),
         definition(unicode('l', GhosttyKeybindCtrl),
                    QStringLiteral("close_surface"), false),
     };
@@ -382,10 +372,11 @@ void GhosttyGlobalShortcutPortalTest::registryUsesOnlyEligibleRootGlobals()
     config.tables = {
         GhosttyKeybindTable{
             .name = QStringLiteral("command"),
-            .bindings = {
-                definition(unicode('t', GhosttyKeybindSuper),
-                           QStringLiteral("new_tab")),
-            },
+            .bindings =
+                {
+                    definition(unicode('t', GhosttyKeybindSuper),
+                               QStringLiteral("new_tab")),
+                },
         },
     };
 
@@ -402,7 +393,8 @@ void GhosttyGlobalShortcutPortalTest::registryUsesOnlyEligibleRootGlobals()
     QVERIFY(registry.diagnostics.isEmpty());
 }
 
-void GhosttyGlobalShortcutPortalTest::registryDiagnosesEveryIneligibleGlobalForm()
+void GhosttyGlobalShortcutPortalTest::
+    registryDiagnosesEveryIneligibleGlobalForm()
 {
     GhosttyKeybindConfig config;
     config.root = {
@@ -410,8 +402,7 @@ void GhosttyGlobalShortcutPortalTest::registryDiagnosesEveryIneligibleGlobalForm
                    QStringList{QStringLiteral("new_tab")}),
         definition(QVector<GhosttyKeybindTrigger>{unicode('a'), unicode('b')},
                    QStringList{QStringLiteral("new_tab")}),
-        definition(QVector<GhosttyKeybindTrigger>{unicode('c')},
-                   QStringList{}),
+        definition(QVector<GhosttyKeybindTrigger>{unicode('c')}, QStringList{}),
         definition(QVector<GhosttyKeybindTrigger>{unicode('d')},
                    QStringList{QStringLiteral("new_tab"),
                                QStringLiteral("close_surface")}),
@@ -423,22 +414,22 @@ void GhosttyGlobalShortcutPortalTest::registryDiagnosesEveryIneligibleGlobalForm
     const GhosttyGlobalShortcutRegistry registry =
         buildGhosttyGlobalShortcutRegistry(config);
     QVERIFY(registry.registrations.isEmpty());
-    QCOMPARE(diagnosticCount(
-                 registry,
-                 GhosttyGlobalShortcutDiagnosticCode::SequenceUnsupported),
-             2);
+    QCOMPARE(
+        diagnosticCount(
+            registry, GhosttyGlobalShortcutDiagnosticCode::SequenceUnsupported),
+        2);
     QCOMPARE(diagnosticCount(
                  registry,
                  GhosttyGlobalShortcutDiagnosticCode::ActionChainUnsupported),
              2);
-    QCOMPARE(diagnosticCount(
-                 registry,
-                 GhosttyGlobalShortcutDiagnosticCode::CatchAllUnsupported),
-             1);
-    QCOMPARE(diagnosticCount(
-                 registry,
-                 GhosttyGlobalShortcutDiagnosticCode::TriggerUnsupported),
-             1);
+    QCOMPARE(
+        diagnosticCount(
+            registry, GhosttyGlobalShortcutDiagnosticCode::CatchAllUnsupported),
+        1);
+    QCOMPARE(
+        diagnosticCount(
+            registry, GhosttyGlobalShortcutDiagnosticCode::TriggerUnsupported),
+        1);
 
     for (qsizetype index = 0; index < registry.diagnostics.size(); ++index) {
         QCOMPARE(registry.diagnostics.at(index).rootBindingIndex,
@@ -447,19 +438,18 @@ void GhosttyGlobalShortcutPortalTest::registryDiagnosesEveryIneligibleGlobalForm
     }
 }
 
-void GhosttyGlobalShortcutPortalTest::collisionResolutionIsStableAndPrefersPhysical()
+void GhosttyGlobalShortcutPortalTest::
+    collisionResolutionIsStableAndPrefersPhysical()
 {
     const auto build = [](bool physicalFirst) {
         GhosttyKeybindConfig config;
-        const auto physicalBinding = definition(
-            physical(QStringLiteral("key_a"), GhosttyKeybindCtrl),
-            QStringLiteral("physical_action"));
+        const auto physicalBinding =
+            definition(physical(QStringLiteral("key_a"), GhosttyKeybindCtrl),
+                       QStringLiteral("physical_action"));
         const auto unicodeBinding = definition(
-            unicode('a', GhosttyKeybindCtrl),
-            QStringLiteral("unicode_action"));
-        config.root = physicalFirst
-            ? QVector{physicalBinding, unicodeBinding}
-            : QVector{unicodeBinding, physicalBinding};
+            unicode('a', GhosttyKeybindCtrl), QStringLiteral("unicode_action"));
+        config.root = physicalFirst ? QVector{physicalBinding, unicodeBinding}
+                                    : QVector{unicodeBinding, physicalBinding};
         return buildGhosttyGlobalShortcutRegistry(config);
     };
 
@@ -470,24 +460,21 @@ void GhosttyGlobalShortcutPortalTest::collisionResolutionIsStableAndPrefersPhysi
     QCOMPARE(first.registrations.front().id, QStringLiteral("CTRL+a"));
     QCOMPARE(first.registrations.front().action,
              QStringLiteral("physical_action"));
-    QCOMPARE(diagnosticCount(first,
-                             GhosttyGlobalShortcutDiagnosticCode::Collision),
-             1);
-    QCOMPARE(diagnosticCount(second,
-                             GhosttyGlobalShortcutDiagnosticCode::Collision),
-             1);
+    QCOMPARE(
+        diagnosticCount(first, GhosttyGlobalShortcutDiagnosticCode::Collision),
+        1);
+    QCOMPARE(
+        diagnosticCount(second, GhosttyGlobalShortcutDiagnosticCode::Collision),
+        1);
 }
 
 void GhosttyGlobalShortcutPortalTest::registryOrderingIsStable()
 {
     GhosttyKeybindConfig config;
     config.root = {
-        definition(unicode('z', GhosttyKeybindSuper),
-                   QStringLiteral("last")),
-        definition(unicode('a', GhosttyKeybindCtrl),
-                   QStringLiteral("first")),
-        definition(physical(QStringLiteral("f2")),
-                   QStringLiteral("middle")),
+        definition(unicode('z', GhosttyKeybindSuper), QStringLiteral("last")),
+        definition(unicode('a', GhosttyKeybindCtrl), QStringLiteral("first")),
+        definition(physical(QStringLiteral("f2")), QStringLiteral("middle")),
     };
 
     const GhosttyGlobalShortcutRegistry registry =
@@ -498,7 +485,8 @@ void GhosttyGlobalShortcutPortalTest::registryOrderingIsStable()
     QCOMPARE(registry.registrations.at(2).id, QStringLiteral("LOGO+z"));
 }
 
-void GhosttyGlobalShortcutPortalTest::disconnectedPortalRetainsPureRegistryState()
+void GhosttyGlobalShortcutPortalTest::
+    disconnectedPortalRetainsPureRegistryState()
 {
     const QDBusConnection disconnected(
         QStringLiteral("ghostty-qt-test-no-such-connection"));
@@ -507,15 +495,13 @@ void GhosttyGlobalShortcutPortalTest::disconnectedPortalRetainsPureRegistryState
     GhosttyGlobalShortcutPortal portal(disconnected);
     QSignalSpy registrySpy(&portal,
                            &GhosttyGlobalShortcutPortal::registryChanged);
-    QSignalSpy activeSpy(&portal,
-                         &GhosttyGlobalShortcutPortal::activeChanged);
+    QSignalSpy activeSpy(&portal, &GhosttyGlobalShortcutPortal::activeChanged);
     QSignalSpy warningSpy(&portal,
                           &GhosttyGlobalShortcutPortal::warningOccurred);
 
     GhosttyKeybindConfig config;
     config.root = {
-        definition(unicode('a', GhosttyKeybindCtrl),
-                   QStringLiteral("new_tab")),
+        definition(unicode('a', GhosttyKeybindCtrl), QStringLiteral("new_tab")),
     };
     portal.setKeybindConfig(config);
 
@@ -540,8 +526,7 @@ void GhosttyGlobalShortcutPortalTest::disconnectedPortalRetainsPureRegistryState
     // preserves builder diagnostics without requiring a live transport.
     GhosttyKeybindConfig invalid;
     invalid.root = {
-        definition({unicode('a'), unicode('b')},
-                   {QStringLiteral("new_tab")}),
+        definition({unicode('a'), unicode('b')}, {QStringLiteral("new_tab")}),
     };
     portal.setKeybindConfig(invalid);
     QCOMPARE(portal.generation(), quint64(3));
@@ -559,7 +544,7 @@ void GhosttyGlobalShortcutPortalTest::disconnectedPortalRetainsPureRegistryState
 }
 
 void GhosttyGlobalShortcutPortalTest::
-reentrantRegistryObserverKeepsNewestConfig()
+    reentrantRegistryObserverKeepsNewestConfig()
 {
     const QDBusConnection disconnected(
         QStringLiteral("ghostty-qt-test-reentrant-no-connection"));
@@ -573,8 +558,7 @@ reentrantRegistryObserverKeepsNewestConfig()
 
     GhosttyKeybindConfig first;
     first.root = {
-        definition(unicode('a', GhosttyKeybindCtrl),
-                   QStringLiteral("new_tab")),
+        definition(unicode('a', GhosttyKeybindCtrl), QStringLiteral("new_tab")),
     };
     GhosttyKeybindConfig newer;
     newer.root = {
@@ -583,8 +567,8 @@ reentrantRegistryObserverKeepsNewestConfig()
     };
 
     bool nested = false;
-    connect(&portal, &GhosttyGlobalShortcutPortal::registryChanged,
-            &portal, [&] {
+    connect(&portal, &GhosttyGlobalShortcutPortal::registryChanged, &portal,
+            [&] {
                 if (nested) return;
                 nested = true;
                 portal.setKeybindConfig(newer);
@@ -604,33 +588,32 @@ reentrantRegistryObserverKeepsNewestConfig()
 }
 
 void GhosttyGlobalShortcutPortalTest::
-portalRoundTripIsRaceSafeAndRejectsStaleResponses()
+    portalRoundTripIsRaceSafeAndRejectsStaleResponses()
 {
-    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon")).isEmpty()) {
+    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon"))
+            .isEmpty()) {
         QSKIP("dbus-daemon is unavailable");
     }
     PrivateSessionBus bus;
     QVERIFY2(bus.start(), qPrintable(bus.errorString()));
 
-    FakeGlobalShortcutsPortal fake(bus.server(),
-                                   bus.client().baseService());
+    FakeGlobalShortcutsPortal fake(bus.server(), bus.client().baseService());
     QVERIFY(bus.server().registerService(
         QStringLiteral("org.freedesktop.portal.Desktop")));
     QVERIFY(bus.server().registerVirtualObject(
-        QStringLiteral("/org/freedesktop/portal/desktop"),
-        &fake,
+        QStringLiteral("/org/freedesktop/portal/desktop"), &fake,
         QDBusConnection::SubPath));
 
     {
         GhosttyGlobalShortcutPortal portal(bus.client());
         QSignalSpy activationSpy(
             &portal, &GhosttyGlobalShortcutPortal::shortcutActivated);
-        QSignalSpy registrySpy(
-            &portal, &GhosttyGlobalShortcutPortal::registryChanged);
+        QSignalSpy registrySpy(&portal,
+                               &GhosttyGlobalShortcutPortal::registryChanged);
         QSignalSpy activeSpy(&portal,
                              &GhosttyGlobalShortcutPortal::activeChanged);
-        QSignalSpy warningSpy(
-            &portal, &GhosttyGlobalShortcutPortal::warningOccurred);
+        QSignalSpy warningSpy(&portal,
+                              &GhosttyGlobalShortcutPortal::warningOccurred);
 
         GhosttyKeybindConfig first;
         first.root = {
@@ -734,13 +717,13 @@ portalRoundTripIsRaceSafeAndRejectsStaleResponses()
                        QStringLiteral("new_window")),
         };
         bool replacedFromActiveChanged = false;
-        const QMetaObject::Connection activeChangedConnection = connect(
-            &portal, &GhosttyGlobalShortcutPortal::activeChanged,
-            &portal, [&](bool active) {
-                if (active || replacedFromActiveChanged) return;
-                replacedFromActiveChanged = true;
-                portal.setKeybindConfig(activeChangedReplacement);
-            });
+        const QMetaObject::Connection activeChangedConnection =
+            connect(&portal, &GhosttyGlobalShortcutPortal::activeChanged,
+                    &portal, [&](bool active) {
+                        if (active || replacedFromActiveChanged) return;
+                        replacedFromActiveChanged = true;
+                        portal.setKeybindConfig(activeChangedReplacement);
+                    });
         fake.closeSession(currentSession);
         QTRY_VERIFY_WITH_TIMEOUT(replacedFromActiveChanged, 3000);
         QTRY_VERIFY_WITH_TIMEOUT(portal.isActive(), 3000);
@@ -764,17 +747,17 @@ portalRoundTripIsRaceSafeAndRejectsStaleResponses()
                        QStringLiteral("new_tab")),
         };
         bool replacedFromWarning = false;
-        const QMetaObject::Connection warningConnection = connect(
-            &portal, &GhosttyGlobalShortcutPortal::warningOccurred,
-            &portal, [&](const QString &message) {
-                if (replacedFromWarning
-                    || !message.contains(
-                        QStringLiteral("failed with response code"))) {
-                    return;
-                }
-                replacedFromWarning = true;
-                portal.setKeybindConfig(warningReplacement);
-            });
+        const QMetaObject::Connection warningConnection =
+            connect(&portal, &GhosttyGlobalShortcutPortal::warningOccurred,
+                    &portal, [&](const QString &message) {
+                        if (replacedFromWarning
+                            || !message.contains(
+                                QStringLiteral("failed with response code"))) {
+                            return;
+                        }
+                        replacedFromWarning = true;
+                        portal.setKeybindConfig(warningReplacement);
+                    });
         fake.failNextCreate = true;
         portal.setKeybindConfig(failed);
         QTRY_VERIFY_WITH_TIMEOUT(replacedFromWarning, 3000);
@@ -814,9 +797,8 @@ portalRoundTripIsRaceSafeAndRejectsStaleResponses()
                     portal.clear();
                 });
         connect(&portal, &GhosttyGlobalShortcutPortal::shortcutActivated,
-                &portal, [&](const QString &action) {
-                    actionAfterClear = action;
-                });
+                &portal,
+                [&](const QString &action) { actionAfterClear = action; });
         fake.activate(portal.sessionHandle(), QStringLiteral("CTRL+f"));
         QTRY_VERIFY_WITH_TIMEOUT(!actionAfterClear.isNull(), 3000);
         QVERIFY(clearedFromActivation);

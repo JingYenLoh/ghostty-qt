@@ -17,13 +17,9 @@ Item {
     layer.live: true
     layer.smooth: true
     layer.textureMirroring: ShaderEffectSource.NoMirroring
-    layer.format: linearBlending ? ShaderEffectSource.RGBA16F
-                                 : ShaderEffectSource.RGBA8
-    layer.textureSize: Qt.size(
-        Math.max(1, Math.round(width * sourceDevicePixelRatio)),
-        Math.max(1, Math.round(height * sourceDevicePixelRatio)))
-    layer.effect: retainedPipeline ? retainedPipelineComponent
-                                   : legacyStageComponent
+    layer.format: linearBlending ? ShaderEffectSource.RGBA16F : ShaderEffectSource.RGBA8
+    layer.textureSize: Qt.size(Math.max(1, Math.round(width * sourceDevicePixelRatio)), Math.max(1, Math.round(height * sourceDevicePixelRatio)))
+    layer.effect: retainedPipeline ? retainedPipelineComponent : legacyStageComponent
 
     Component {
         id: retainedPipelineComponent

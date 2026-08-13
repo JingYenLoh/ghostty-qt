@@ -1462,8 +1462,8 @@ bool verifyTabBarContentEdge(QObject *rootObject, QObject *tabBar,
                              bool expectedBottom, const char *stage)
 {
     auto *const tabBarItem = qobject_cast<QQuickItem *>(tabBar);
-    auto *const toolbar = rootObject->findChild<QQuickItem *>(
-        QStringLiteral("windowToolbar"));
+    auto *const toolbar =
+        rootObject->findChild<QQuickItem *>(QStringLiteral("windowToolbar"));
     QQuickItem *firstButton = nullptr;
     const auto findFirstButton = [&firstButton](const auto &find,
                                                 QQuickItem *item) -> void {
@@ -1667,8 +1667,8 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
                         return;
                     }
                     if (!workspace->wideTabs()
-                        || !verifyTabBarContentEdge(
-                            rootObject, tabBar, false, "wide top tabs")
+                        || !verifyTabBarContentEdge(rootObject, tabBar, false,
+                                                    "wide top tabs")
                         || !verifyTabButtonWidths(tabBar, true, "wide tabs")
                         || !verifyToolbarActionGeometry(
                             rootObject, windowToolbar,
@@ -1797,8 +1797,8 @@ bool installTabsLocationTestHook(QQuickWindow *window,
     visibleTabs.windowShowTabBar = WindowShowTabBar::Always;
     workspace->applyLaunchOptions(visibleTabs);
 
-    const auto exercise =
-        [window, workspace, toolbar, topSlot, bottomSlot, tabBar] {
+    const auto exercise = [window, workspace, toolbar, topSlot, bottomSlot,
+                           tabBar] {
         if (workspace->findChildren<TerminalPane *>().size() != 1) {
             qCritical()
                 << "Tabs-location test hook did not start with one terminal pane";
@@ -1825,10 +1825,9 @@ bool installTabsLocationTestHook(QQuickWindow *window,
 
         const auto verify = [window, workspace, toolbar, topSlot, bottomSlot,
                              tabBar, panes, locationSignals, windowSize,
-                             nativeWindowId, contentItem,
-                             chromeHeight](bool expectedBottom,
-                                           int expectedSignals,
-                                           const char *stage) {
+                             nativeWindowId, contentItem, chromeHeight](
+                                bool expectedBottom, int expectedSignals,
+                                const char *stage) {
             if (!verifyToolbarActionGeometry(window, toolbar, stage)
                 || !verifyTabBarContentEdge(window, tabBar, expectedBottom,
                                             stage)) {
@@ -2951,8 +2950,8 @@ int main(int argc, char *argv[])
                 .titleOverride =
                     QStringLiteral("Editing configuration file %1").arg(*path),
             };
-            if (!applicationController.activateNewWindow(
-                    std::move(overrides), {})) {
+            if (!applicationController.activateNewWindow(std::move(overrides),
+                                                         {})) {
                 qWarning().noquote()
                     << "Could not open the Ghostty configuration in a new window";
             }

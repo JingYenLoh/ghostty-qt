@@ -545,10 +545,7 @@ public:
         clear();
     }
 
-    void clear() noexcept
-    {
-        next_ = 0;
-    }
+    void clear() noexcept { next_ = 0; }
 
     void append(const TerminalSearchCell &cell) noexcept
     {
@@ -765,8 +762,8 @@ detectTerminalLinkAt(GhosttyVtAdapter &adapter, GhosttyLinkMatcher *matcher,
     // Ghostty gives explicit OSC 8 destinations priority over configured
     // regex links at the same cell. If URI extraction fails, continue to the
     // default matcher just as Surface.linkAtPos does.
-    auto trackedOsc8 = linkOsc8 ? adapter.trackHyperlinkAt(column, row)
-                                : std::nullopt;
+    auto trackedOsc8 =
+        linkOsc8 ? adapter.trackHyperlinkAt(column, row) : std::nullopt;
     if (trackedOsc8.has_value()) {
         TrackedTerminalLink target(
             std::in_place_type<GhosttyVtAdapter::TrackedHyperlink>,
@@ -1018,13 +1015,12 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
     potentialActivityTimer_.invalidate();
     batchPtyReads_ = qEnvironmentVariable("GHOSTTY_QT_PTY_READ_BATCHING")
                          .trimmed()
-                         .compare(QStringLiteral("legacy"),
-                                  Qt::CaseInsensitive)
+                         .compare(QStringLiteral("legacy"), Qt::CaseInsensitive)
         != 0;
-    directPtyWrites_ = qEnvironmentVariable("GHOSTTY_QT_PTY_WRITE_DIRECT")
-                           .trimmed()
-                           .compare(QStringLiteral("legacy"),
-                                    Qt::CaseInsensitive)
+    directPtyWrites_ =
+        qEnvironmentVariable("GHOSTTY_QT_PTY_WRITE_DIRECT")
+            .trimmed()
+            .compare(QStringLiteral("legacy"), Qt::CaseInsensitive)
         != 0;
     ioMetrics_ = {};
     cursorBlinkResetTimer_.invalidate();
@@ -1113,9 +1109,9 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
 bool SessionWorker::createTerminal()
 {
     QByteArray effectiveTerm = options_.term;
-    const auto termOverride = std::ranges::find(
-        options_.environment, QByteArrayLiteral("TERM"),
-        &TerminalEnvironmentEntry::key);
+    const auto termOverride =
+        std::ranges::find(options_.environment, QByteArrayLiteral("TERM"),
+                          &TerminalEnvironmentEntry::key);
     if (termOverride != options_.environment.cend()) {
         effectiveTerm = termOverride->value;
     }
@@ -1128,8 +1124,7 @@ bool SessionWorker::createTerminal()
         .appearance = options_.runtime.appearance,
         .colorScheme = options_.runtime.colorScheme,
         .clipboardWriteAccess = options_.runtime.clipboardWrite,
-        .graphemeWidthUnicode =
-            options_.runtime.graphemeWidthMethod
+        .graphemeWidthUnicode = options_.runtime.graphemeWidthMethod
             == GraphemeWidthMethod::Unicode,
         .titleReport = options_.runtime.titleReport,
         .terminfoName = effectiveTerm,
@@ -1139,8 +1134,7 @@ bool SessionWorker::createTerminal()
         .enquiryResponse = options_.runtime.enquiryResponse,
     };
     GhosttyVtAdapter::Callbacks callbacks;
-    callbacks.writePty =
-        [this](QByteArrayView data) { queuePtyWrite(data); };
+    callbacks.writePty = [this](QByteArrayView data) { queuePtyWrite(data); };
     vt_ = GhosttyVtAdapter::create(options, std::move(callbacks));
     if (vt_ != nullptr) {
         if (!vt_->setSelectionWordChars(options_.runtime.selectionWordChars)
@@ -1880,9 +1874,9 @@ void SessionWorker::drainPty(bool finalDrain)
             reinterpret_cast<const char *>(buffer.data()), batchSize));
         ++ioMetrics_.parserSubmissions;
         ioMetrics_.parserBytes += static_cast<quint64>(batchSize);
-        ioMetrics_.maximumParserBatchBytes = std::max(
-            ioMetrics_.maximumParserBatchBytes,
-            static_cast<quint64>(batchSize));
+        ioMetrics_.maximumParserBatchBytes =
+            std::max(ioMetrics_.maximumParserBatchBytes,
+                     static_cast<quint64>(batchSize));
         batchSize = 0;
     };
 
@@ -1891,8 +1885,8 @@ void SessionWorker::drainPty(bool finalDrain)
     while (totalRead < readLimit) {
         const qsizetype remainingLimit = readLimit - totalRead;
         const qsizetype batchCapacity = kReadBufferSize - batchSize;
-        const size_t requestSize = static_cast<size_t>(
-            std::min(remainingLimit, batchCapacity));
+        const size_t requestSize =
+            static_cast<size_t>(std::min(remainingLimit, batchCapacity));
         ++ioMetrics_.readCalls;
         const ssize_t count =
             ::read(masterFd_, buffer.data() + batchSize, requestSize);
@@ -1922,8 +1916,7 @@ void SessionWorker::drainPty(bool finalDrain)
             // Parsing the trailing partial batch gives a streaming producer a
             // chance to refill the PTY. Retry once to preserve producer/
             // consumer overlap without turning an activation into a poll.
-            if (batchPtyReads_ && batchSize > 0
-                && !retriedAfterWouldBlock) {
+            if (batchPtyReads_ && batchSize > 0 && !retriedAfterWouldBlock) {
                 submitBatch();
                 retriedAfterWouldBlock = true;
                 continue;
@@ -2007,8 +2000,8 @@ void SessionWorker::queuePtyWrite(QByteArrayView data)
     ioMetrics_.writeSubmissionBytes += static_cast<quint64>(data.size());
     while (!data.isEmpty()) {
         ++ioMetrics_.writeCalls;
-        const ssize_t count = ::write(masterFd_, data.data(),
-                                      static_cast<size_t>(data.size()));
+        const ssize_t count =
+            ::write(masterFd_, data.data(), static_cast<size_t>(data.size()));
         if (count > 0) {
             const auto written = static_cast<qsizetype>(count);
             ioMetrics_.writeBytes += static_cast<quint64>(written);
@@ -2797,8 +2790,8 @@ void SessionWorker::resolveRightClick(const TerminalRightClickInput &input)
         if (modifiers == Qt::ControlModifier) {
             detected = detectTerminalLinkAt(
                 *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
-                options_.runtime.linkOsc8,
-                hyperlinkState_->viewport, input.column, input.row);
+                options_.runtime.linkOsc8, hyperlinkState_->viewport,
+                input.column, input.row);
         }
 
         bool selected = false;
@@ -4228,8 +4221,8 @@ void SessionWorker::processPendingHyperlinkQuery()
     } else if (vt_ != nullptr) {
         detected = detectTerminalLinkAt(
             *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
-            options_.runtime.linkOsc8,
-            hyperlinkState_->viewport, query.column, query.row);
+            options_.runtime.linkOsc8, hyperlinkState_->viewport, query.column,
+            query.row);
     }
 
     if (detected.has_value()) {
@@ -4283,10 +4276,9 @@ void SessionWorker::prepareHyperlinkActivation(quint64 requestId,
     if (!coordinateIsCurrent) {
         return;
     }
-    auto detected =
-        detectTerminalLinkAt(*vt_, linkMatcher_.get(), options_.runtime.linkUrl,
-                             options_.runtime.linkOsc8,
-                             hyperlinkState_->viewport, column, row);
+    auto detected = detectTerminalLinkAt(
+        *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
+        options_.runtime.linkOsc8, hyperlinkState_->viewport, column, row);
     if (!detected.has_value()) {
         return;
     }
@@ -4315,8 +4307,8 @@ void SessionWorker::commitHyperlinkActivation(quint64 requestId, int column,
         if (stillMatches && kind == TerminalLinkKind::Regex) {
             const auto current = detectTerminalLinkAt(
                 *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
-                options_.runtime.linkOsc8,
-                hyperlinkState_->viewport, column, row);
+                options_.runtime.linkOsc8, hyperlinkState_->viewport, column,
+                row);
             stillMatches = current.has_value() && current->resolved.kind == kind
                 && current->resolved.uri == match->uri
                 && current->resolved.targetCell == releaseCell
@@ -4410,9 +4402,8 @@ void SessionWorker::refreshTrackedHyperlink(bool force)
         if (match->kind == TerminalLinkKind::Regex) {
             const auto current = detectTerminalLinkAt(
                 *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
-                options_.runtime.linkOsc8,
-                hyperlinkState_->viewport, match->targetCell.x(),
-                match->targetCell.y());
+                options_.runtime.linkOsc8, hyperlinkState_->viewport,
+                match->targetCell.x(), match->targetCell.y());
             stillMatches = current.has_value()
                 && current->resolved.kind == match->kind
                 && current->resolved.uri == match->uri
@@ -4709,8 +4700,7 @@ void SessionWorker::updateProcessActivity()
     const pid_t idleProcessGroup = interactiveShellProcessGroup_ > 0
         ? static_cast<pid_t>(interactiveShellProcessGroup_)
         : static_cast<pid_t>(childPid_);
-    if (foregroundGroup < 0
-        || foregroundGroup != idleProcessGroup) {
+    if (foregroundGroup < 0 || foregroundGroup != idleProcessGroup) {
         setActiveProcess(true);
         scheduleActivityReconciliation(kForegroundActivityProbeMilliseconds);
         return;
@@ -4724,9 +4714,9 @@ void SessionWorker::updateProcessActivity()
         && potentialActivityTimer_.elapsed()
             < kPotentialActivityGraceMilliseconds) {
         setActiveProcess(true);
-        scheduleActivityReconciliation(static_cast<int>(
-            kPotentialActivityGraceMilliseconds
-            - potentialActivityTimer_.elapsed()));
+        scheduleActivityReconciliation(
+            static_cast<int>(kPotentialActivityGraceMilliseconds
+                             - potentialActivityTimer_.elapsed()));
         return;
     }
     potentialActivityTimer_.invalidate();

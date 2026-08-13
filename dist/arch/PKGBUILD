@@ -35,7 +35,8 @@ options=('!debug')
 _repo_root="$(realpath "$startdir/../..")"
 _zig="$_repo_root/.local/bin/zig"
 
-pkgver() {
+pkgver()
+{
     local version revision_count revision
 
     version=$(sed -n 's/^project(ghostty-qt VERSION \([^ ]*\).*/\1/p' \
@@ -45,7 +46,8 @@ pkgver() {
     printf '%s.r%s.g%s' "$version" "$revision_count" "$revision"
 }
 
-prepare() {
+prepare()
+{
     if [[ ! -f "$_repo_root/ghostty/CMakeLists.txt" ]]; then
         printf 'error: initialize the Ghostty submodule first:\n' >&2
         printf '  git -C %q submodule update --init --recursive\n' "$_repo_root" >&2
@@ -59,7 +61,8 @@ prepare() {
     fi
 }
 
-build() {
+build()
+{
     cmake -S "$_repo_root" -B "$srcdir/build" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr \
@@ -70,7 +73,8 @@ build() {
     cmake --build "$srcdir/build" -j"$(nproc)"
 }
 
-package() {
+package()
+{
     DESTDIR="$pkgdir" cmake --install "$srcdir/build"
 
     # Arch's systemd pacman hook watches /usr/lib/systemd/user.

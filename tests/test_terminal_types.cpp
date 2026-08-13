@@ -53,8 +53,8 @@ TerminalRowUpdate textRow(int row, std::initializer_list<QStringView> cells)
     return update;
 }
 
-TerminalRowUpdate hyperlinkRow(
-    int row, int columns, std::initializer_list<int> linkedColumns)
+TerminalRowUpdate hyperlinkRow(int row, int columns,
+                               std::initializer_list<int> linkedColumns)
 {
     TerminalRowUpdate update;
     update.row = row;
@@ -508,9 +508,13 @@ void TerminalTypesTest::indexesOsc8CellsAcrossSparseUpdates()
     QCOMPARE(index.columns(), 5);
     QCOMPARE(index.rows(), 4);
     QCOMPARE(index.contentRevision(), quint64{7});
-    QCOMPARE(index.candidates(), QVector<QPoint>({
-        QPoint(1, 0), QPoint(4, 0), QPoint(2, 2), QPoint(0, 3),
-    }));
+    QCOMPARE(index.candidates(),
+             QVector<QPoint>({
+                 QPoint(1, 0),
+                 QPoint(4, 0),
+                 QPoint(2, 2),
+                 QPoint(0, 3),
+             }));
     QVERIFY(index.containsCoordinate(0, 0));
     QVERIFY(index.containsCoordinate(4, 3));
     QVERIFY(!index.containsCoordinate(-1, 0));
@@ -526,12 +530,16 @@ void TerminalTypesTest::indexesOsc8CellsAcrossSparseUpdates()
         hyperlinkRow(2, 5, {1, 4}),
     };
     QVERIFY(index.apply(partial));
-    QCOMPARE(index.candidates(), QVector<QPoint>({
-        QPoint(1, 0), QPoint(4, 0),
-        QPoint(0, 1), QPoint(3, 1),
-        QPoint(1, 2), QPoint(4, 2),
-        QPoint(0, 3),
-    }));
+    QCOMPARE(index.candidates(),
+             QVector<QPoint>({
+                 QPoint(1, 0),
+                 QPoint(4, 0),
+                 QPoint(0, 1),
+                 QPoint(3, 1),
+                 QPoint(1, 2),
+                 QPoint(4, 2),
+                 QPoint(0, 3),
+             }));
 
     const QPoint *const unchangedStorage = index.candidates().constData();
     TerminalUpdate unchangedLinks;
@@ -549,11 +557,14 @@ void TerminalTypesTest::indexesOsc8CellsAcrossSparseUpdates()
     removal.contentRevision = 10;
     removal.dirtyRows = {hyperlinkRow(1, 5, {})};
     QVERIFY(index.apply(removal));
-    QCOMPARE(index.candidates(), QVector<QPoint>({
-        QPoint(1, 0), QPoint(4, 0),
-        QPoint(1, 2), QPoint(4, 2),
-        QPoint(0, 3),
-    }));
+    QCOMPARE(index.candidates(),
+             QVector<QPoint>({
+                 QPoint(1, 0),
+                 QPoint(4, 0),
+                 QPoint(1, 2),
+                 QPoint(4, 2),
+                 QPoint(0, 3),
+             }));
 
     const QPoint *const candidateStorage = index.candidates().constData();
     TerminalUpdate metadataOnly;
@@ -676,10 +687,10 @@ void TerminalTypesTest::resolvesClipboardRoutingWithoutPlatformAssumptions()
     verifyTargets(TerminalClipboardDestination::Standard, true, true, false);
     verifyTargets(TerminalClipboardDestination::Primary, false, true, false);
     verifyTargets(TerminalClipboardDestination::Primary, true, false, true);
-    verifyTargets(TerminalClipboardDestination::PrimaryAndStandard,
-                  false, true, false);
-    verifyTargets(TerminalClipboardDestination::PrimaryAndStandard,
-                  true, true, true);
+    verifyTargets(TerminalClipboardDestination::PrimaryAndStandard, false, true,
+                  false);
+    verifyTargets(TerminalClipboardDestination::PrimaryAndStandard, true, true,
+                  true);
 
     for (const TerminalCopyOnSelectMode mode : {
              TerminalCopyOnSelectMode::Disabled,

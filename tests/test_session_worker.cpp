@@ -57,34 +57,37 @@ bool updatesContain(const QSignalSpy &spy, const QString &needle)
 
 bool containsCursorBlinkReset(const QSignalSpy &spy)
 {
-    return std::any_of(spy.cbegin(), spy.cend(), [](const QList<QVariant> &args) {
-        return !args.isEmpty()
-            && qvariant_cast<TerminalUpdate>(args.constFirst()).resetCursorBlink;
-    });
+    return std::any_of(
+        spy.cbegin(), spy.cend(), [](const QList<QVariant> &args) {
+            return !args.isEmpty()
+                && qvariant_cast<TerminalUpdate>(args.constFirst())
+                       .resetCursorBlink;
+        });
 }
 
 bool containsFullFrame(const QSignalSpy &spy)
 {
-    return std::any_of(spy.cbegin(), spy.cend(), [](const QList<QVariant> &args) {
-        return !args.isEmpty()
-            && qvariant_cast<TerminalUpdate>(args.constFirst()).fullFrame;
-    });
+    return std::any_of(
+        spy.cbegin(), spy.cend(), [](const QList<QVariant> &args) {
+            return !args.isEmpty()
+                && qvariant_cast<TerminalUpdate>(args.constFirst()).fullFrame;
+        });
 }
 
 bool spyContainsBool(const QSignalSpy &spy, bool expected)
 {
-    return std::any_of(spy.cbegin(), spy.cend(), [expected](const QList<QVariant> &args) {
-        return !args.isEmpty() && args.constFirst().toBool() == expected;
-    });
+    return std::any_of(
+        spy.cbegin(), spy.cend(), [expected](const QList<QVariant> &args) {
+            return !args.isEmpty() && args.constFirst().toBool() == expected;
+        });
 }
 
-TerminalActionResult terminalActionResultAt(
-    const QSignalSpy &spy, qsizetype index)
+TerminalActionResult terminalActionResultAt(const QSignalSpy &spy,
+                                            qsizetype index)
 {
     Q_ASSERT(index >= 0 && index < spy.size());
     Q_ASSERT(!spy.at(index).isEmpty());
-    return qvariant_cast<TerminalActionResult>(
-        spy.at(index).constFirst());
+    return qvariant_cast<TerminalActionResult>(spy.at(index).constFirst());
 }
 
 TerminalRightClickResult rightClickResultAt(const QSignalSpy &spy,
@@ -95,8 +98,8 @@ TerminalRightClickResult rightClickResultAt(const QSignalSpy &spy,
     return qvariant_cast<TerminalRightClickResult>(spy.at(index).constFirst());
 }
 
-std::optional<TerminalSearchUpdate> latestSearchUpdate(
-    const QSignalSpy &spy, quint64 generation)
+std::optional<TerminalSearchUpdate> latestSearchUpdate(const QSignalSpy &spy,
+                                                       quint64 generation)
 {
     for (auto iterator = spy.crbegin(); iterator != spy.crend(); ++iterator) {
         const TerminalSearchUpdate update =
@@ -125,10 +128,10 @@ bool writeExecutableScript(const QString &path, QByteArrayView contents)
         return false;
     }
     script.close();
-    return QFile::setPermissions(
-        path,
-        QFileDevice::ReadOwner | QFileDevice::WriteOwner
-            | QFileDevice::ExeOwner);
+    return QFile::setPermissions(path,
+                                 QFileDevice::ReadOwner
+                                     | QFileDevice::WriteOwner
+                                     | QFileDevice::ExeOwner);
 }
 
 TerminalSelectionPressInput
@@ -213,10 +216,7 @@ public:
         : previousDirectory_(QDir::currentPath())
     {}
 
-    ~CurrentDirectoryRestore()
-    {
-        QDir::setCurrent(previousDirectory_);
-    }
+    ~CurrentDirectoryRestore() { QDir::setCurrent(previousDirectory_); }
 
     Q_DISABLE_COPY_MOVE(CurrentDirectoryRestore)
 
@@ -988,13 +988,11 @@ void SessionWorkerTest::searchesIncrementallyAndNavigates()
     TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
-        QStringLiteral("/bin/sh"),
-        QStringLiteral("-c"),
-        QStringLiteral(
-            "i=0; while [ $i -lt 500 ]; do "
-            "printf 'scan-row-%03d needle\\n' \"$i\"; "
-            "i=$((i + 1)); done; "
-            "printf 'AAAA\\nleft\\nright\\nÄ ä\\n界\\n'")};
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral("i=0; while [ $i -lt 500 ]; do "
+                       "printf 'scan-row-%03d needle\\n' \"$i\"; "
+                       "i=$((i + 1)); done; "
+                       "printf 'AAAA\\nleft\\nright\\nÄ ä\\n界\\n'")};
     options.hold = true;
     worker.initialize(options);
 
@@ -1004,9 +1002,8 @@ void SessionWorkerTest::searchesIncrementallyAndNavigates()
 
     bool eventLoopMarker = false;
     worker.search(1, QByteArrayLiteral("aa"));
-    QTimer::singleShot(0, &worker, [&eventLoopMarker] {
-        eventLoopMarker = true;
-    });
+    QTimer::singleShot(0, &worker,
+                       [&eventLoopMarker] { eventLoopMarker = true; });
     QTRY_VERIFY_WITH_TIMEOUT(eventLoopMarker, 1000);
     const std::optional<TerminalSearchUpdate> partial =
         latestSearchUpdate(searchSpy, 1);
@@ -1015,14 +1012,13 @@ void SessionWorkerTest::searchesIncrementallyAndNavigates()
     QVERIFY(!partial->complete);
     QVERIFY(partial->scannedRows < partial->totalRows);
 
-    QTRY_VERIFY_WITH_TIMEOUT(
-        latestSearchUpdate(searchSpy, 1).has_value()
-            && latestSearchUpdate(searchSpy, 1)->complete,
-        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(latestSearchUpdate(searchSpy, 1).has_value()
+                                 && latestSearchUpdate(searchSpy, 1)->complete,
+                             5000);
     const TerminalSearchUpdate completedAa = *latestSearchUpdate(searchSpy, 1);
     QCOMPARE(completedAa.totalMatches, quint64(3));
-    const qsizetype maskSize = static_cast<qsizetype>(completedAa.columns)
-        * completedAa.rows;
+    const qsizetype maskSize =
+        static_cast<qsizetype>(completedAa.columns) * completedAa.rows;
     QCOMPARE(completedAa.visibleCellMask.size(), maskSize);
     QCOMPARE(completedAa.selectedCellMask.size(), maskSize);
     QCOMPARE(completedAa.visibleCellMask.count(true), qsizetype(4));
@@ -1044,10 +1040,9 @@ void SessionWorkerTest::searchesIncrementallyAndNavigates()
     QCOMPARE(latestSearchUpdate(searchSpy, 1)->selectedMatch, qint64(0));
 
     worker.search(2, QByteArrayLiteral("left\nright"));
-    QTRY_VERIFY_WITH_TIMEOUT(
-        latestSearchUpdate(searchSpy, 2).has_value()
-            && latestSearchUpdate(searchSpy, 2)->complete,
-        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(latestSearchUpdate(searchSpy, 2).has_value()
+                                 && latestSearchUpdate(searchSpy, 2)->complete,
+                             5000);
     const TerminalSearchUpdate multiline = *latestSearchUpdate(searchSpy, 2);
     QCOMPARE(multiline.totalMatches, quint64(1));
     QCOMPARE(multiline.visibleCellMask.size(), maskSize);
@@ -1072,50 +1067,47 @@ void SessionWorkerTest::searchesIncrementallyAndNavigates()
                          selectedMultiline.visibleCellMask));
 
     worker.search(3, QStringLiteral("Ä").toUtf8());
-    QTRY_VERIFY_WITH_TIMEOUT(
-        latestSearchUpdate(searchSpy, 3).has_value()
-            && latestSearchUpdate(searchSpy, 3)->complete,
-        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(latestSearchUpdate(searchSpy, 3).has_value()
+                                 && latestSearchUpdate(searchSpy, 3)->complete,
+                             5000);
     QCOMPARE(latestSearchUpdate(searchSpy, 3)->totalMatches, quint64(1));
 
     worker.search(4, QStringLiteral("界").toUtf8());
-    QTRY_VERIFY_WITH_TIMEOUT(
-        latestSearchUpdate(searchSpy, 4).has_value()
-            && latestSearchUpdate(searchSpy, 4)->complete,
-        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(latestSearchUpdate(searchSpy, 4).has_value()
+                                 && latestSearchUpdate(searchSpy, 4)->complete,
+                             5000);
     QCOMPARE(latestSearchUpdate(searchSpy, 4)->totalMatches, quint64(1));
     QCOMPARE(latestSearchUpdate(searchSpy, 4)->visibleCellMask.count(true),
              qsizetype(1));
     const TerminalFrame wideFrame = accumulatedFrame(updateSpy);
-    const auto wideHead = std::ranges::find_if(
-        wideFrame.cells,
-        [](const TerminalCell &cell) { return cell.text == u"界"; });
+    const auto wideHead =
+        std::ranges::find_if(wideFrame.cells, [](const TerminalCell &cell) {
+            return cell.text == u"界";
+        });
     QVERIFY(wideHead != wideFrame.cells.cend());
     const qsizetype wideHeadIndex =
         std::ranges::distance(wideFrame.cells.cbegin(), wideHead);
     QCOMPARE(wideHead->columnSpan(), 2);
     QVERIFY(wideHeadIndex + 1 < wideFrame.cells.size());
     QVERIFY(wideFrame.cells.at(wideHeadIndex + 1).spacer());
-    QVERIFY(latestSearchUpdate(searchSpy, 4)->visibleCellMask.testBit(
-        wideHeadIndex));
+    QVERIFY(latestSearchUpdate(searchSpy, 4)
+                ->visibleCellMask.testBit(wideHeadIndex));
     worker.navigateSearch(4, TerminalSearchDirection::Next);
     QCOMPARE(latestSearchUpdate(searchSpy, 4)->selectedCellMask.count(true),
              qsizetype(1));
 
     worker.searchSerialized(5, QByteArrayLiteral("A\\x41"));
-    QTRY_VERIFY_WITH_TIMEOUT(
-        latestSearchUpdate(searchSpy, 5).has_value()
-            && latestSearchUpdate(searchSpy, 5)->complete,
-        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(latestSearchUpdate(searchSpy, 5).has_value()
+                                 && latestSearchUpdate(searchSpy, 5)->complete,
+                             5000);
     QCOMPARE(latestSearchUpdate(searchSpy, 5)->totalMatches, quint64(3));
 
     // The oldest match is wholly outside the live viewport. Previous starts
     // there, while Next wraps back to the newest result and follows it down.
     worker.search(6, QByteArrayLiteral("needle"));
-    QTRY_VERIFY_WITH_TIMEOUT(
-        latestSearchUpdate(searchSpy, 6).has_value()
-            && latestSearchUpdate(searchSpy, 6)->complete,
-        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(latestSearchUpdate(searchSpy, 6).has_value()
+                                 && latestSearchUpdate(searchSpy, 6)->complete,
+                             5000);
     QCOMPARE(latestSearchUpdate(searchSpy, 6)->totalMatches, quint64(500));
     worker.navigateSearch(6, TerminalSearchDirection::Previous);
     QCOMPARE(latestSearchUpdate(searchSpy, 6)->selectedMatch, qint64(499));
@@ -1130,10 +1122,9 @@ void SessionWorkerTest::searchesIncrementallyAndNavigates()
     worker.search(7, QByteArrayLiteral("needle"));
     worker.search(8, QByteArrayLiteral("aa"));
     worker.cancelSearch(9);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        latestSearchUpdate(searchSpy, 9).has_value()
-            && latestSearchUpdate(searchSpy, 9)->complete,
-        1000);
+    QTRY_VERIFY_WITH_TIMEOUT(latestSearchUpdate(searchSpy, 9).has_value()
+                                 && latestSearchUpdate(searchSpy, 9)->complete,
+                             1000);
     const TerminalSearchUpdate cancelled = *latestSearchUpdate(searchSpy, 9);
     QVERIFY(!cancelled.active);
     QCOMPARE(cancelled.columns, 0);
@@ -1306,8 +1297,7 @@ void SessionWorkerTest::preservesFormattedSearchBoundaries()
     TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
-        QStringLiteral("/bin/sh"),
-        QStringLiteral("-c"),
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
         QStringLiteral(
             "printf 'abc%14s\\n12345678901234  tail\\nfinal-line\\n' ''")};
     options.hold = true;
@@ -1327,30 +1317,27 @@ void SessionWorkerTest::preservesFormattedSearchBoundaries()
     // Navigation is an instantaneous mailbox operation. A request made
     // before the first progressive chunk finds a result must not be replayed.
     worker.navigateSearch(1, TerminalSearchDirection::Next);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        latestSearchUpdate(searchSpy, 1).has_value()
-            && latestSearchUpdate(searchSpy, 1)->complete,
-        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(latestSearchUpdate(searchSpy, 1).has_value()
+                                 && latestSearchUpdate(searchSpy, 1)->complete,
+                             5000);
     QCOMPARE(latestSearchUpdate(searchSpy, 1)->totalMatches, quint64(1));
     QCOMPARE(latestSearchUpdate(searchSpy, 1)->selectedMatch, qint64(-1));
 
     // The two spaces fill the final cells of the first physical row. They
     // remain part of the logical line when the following text soft-wraps.
     worker.search(2, QByteArrayLiteral("12345678901234  tail"));
-    QTRY_VERIFY_WITH_TIMEOUT(
-        latestSearchUpdate(searchSpy, 2).has_value()
-            && latestSearchUpdate(searchSpy, 2)->complete,
-        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(latestSearchUpdate(searchSpy, 2).has_value()
+                                 && latestSearchUpdate(searchSpy, 2)->complete,
+                             5000);
     QCOMPARE(latestSearchUpdate(searchSpy, 2)->totalMatches, quint64(1));
 
     // The first line wraps after a run of spaces but has no later nonblank
     // continuation. PageFormatter drops that pending run rather than making
     // it searchable.
     worker.search(3, QByteArrayLiteral("abc "));
-    QTRY_VERIFY_WITH_TIMEOUT(
-        latestSearchUpdate(searchSpy, 3).has_value()
-            && latestSearchUpdate(searchSpy, 3)->complete,
-        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(latestSearchUpdate(searchSpy, 3).has_value()
+                                 && latestSearchUpdate(searchSpy, 3)->complete,
+                             5000);
     QCOMPARE(latestSearchUpdate(searchSpy, 3)->totalMatches, quint64(0));
 
     worker.shutdown();
@@ -1382,7 +1369,9 @@ void SessionWorkerTest::runsCommandThroughPty()
     QTRY_VERIFY_WITH_TIMEOUT(exitSpy.count() > 0, 5000);
     QTRY_VERIFY_WITH_TIMEOUT(updateSpy.count() > 0, 5000);
     QVERIFY2(errorSpy.isEmpty(),
-             errorSpy.isEmpty() ? "" : qPrintable(errorSpy.constFirst().constFirst().toString()));
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
 
     QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
     QVERIFY(exitSpy.constFirst().at(2).toBool());
@@ -1501,12 +1490,10 @@ void SessionWorkerTest::writesPersistentTerminalFiles()
     QString historyPath;
     QString selectionPath;
     const auto cleanupArtifacts = qScopeGuard([&] {
-        for (const QString &path :
-             {screenPath, historyPath, selectionPath}) {
+        for (const QString &path : {screenPath, historyPath, selectionPath}) {
             if (path.isEmpty()) continue;
             static_cast<void>(QFile::remove(path));
-            static_cast<void>(
-                QDir().rmdir(QFileInfo(path).absolutePath()));
+            static_cast<void>(QDir().rmdir(QFileInfo(path).absolutePath()));
         }
     });
 
@@ -1514,8 +1501,7 @@ void SessionWorkerTest::writesPersistentTerminalFiles()
         SessionWorker worker;
         worker.resizeTerminal(12, 3, 8, 16, 96, 48);
         QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
-        QSignalSpy actionSpy(
-            &worker, &SessionWorker::terminalActionFinished);
+        QSignalSpy actionSpy(&worker, &SessionWorker::terminalActionFinished);
         QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
         QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
@@ -1524,12 +1510,11 @@ void SessionWorkerTest::writesPersistentTerminalFiles()
         options.program = {
             QStringLiteral("/bin/sh"),
             QStringLiteral("-c"),
-            QStringLiteral(
-                "printf 'history-0  \\r\\n"
-                "history-1\\r\\n"
-                "screen-0  \\r\\n"
-                "screen-1\\r\\n"
-                "screen-2  '"),
+            QStringLiteral("printf 'history-0  \\r\\n"
+                           "history-1\\r\\n"
+                           "screen-0  \\r\\n"
+                           "screen-1\\r\\n"
+                           "screen-2  '"),
         };
         options.hold = true;
         options.runtime.selectionClipboard.copyOnSelect =
@@ -1539,10 +1524,12 @@ void SessionWorkerTest::writesPersistentTerminalFiles()
         QTRY_VERIFY_WITH_TIMEOUT(
             updatesContain(updateSpy, QStringLiteral("screen-2")), 1000);
 
-        worker.writeTerminalFile(101, {
-            .location = TerminalFileLocation::Screen,
-            .disposition = TerminalFileDisposition::Copy,
-        });
+        worker.writeTerminalFile(
+            101,
+            {
+                .location = TerminalFileLocation::Screen,
+                .disposition = TerminalFileDisposition::Copy,
+            });
         QCOMPARE(actionSpy.count(), 0);
         QTRY_COMPARE_WITH_TIMEOUT(actionSpy.count(), 1, 5000);
         const TerminalActionResult screenResult =
@@ -1587,10 +1574,8 @@ void SessionWorkerTest::writesPersistentTerminalFiles()
         const TerminalActionResult selectionResult =
             terminalActionResultAt(actionSpy, 2);
         QCOMPARE(selectionResult.requestId, quint64{303});
-        QCOMPARE(selectionResult.outcome,
-                 TerminalActionOutcome::Success);
-        QCOMPARE(selectionResult.effect,
-                 TerminalActionEffect::Clipboard);
+        QCOMPARE(selectionResult.outcome, TerminalActionOutcome::Success);
+        QCOMPARE(selectionResult.effect, TerminalActionEffect::Clipboard);
         QVERIFY(selectionResult.performed);
         QCOMPARE(selectionResult.clipboardDestination,
                  TerminalClipboardDestination::Standard);
@@ -1614,29 +1599,29 @@ void SessionWorkerTest::writesPersistentTerminalFiles()
 
         QFile screenFile(screenPath);
         QVERIFY(screenFile.open(QIODevice::ReadOnly));
-        QCOMPARE(screenFile.readAll(), QByteArrayLiteral(
-            "history-0  \n"
-            "history-1\n"
-            "screen-0  \n"
-            "screen-1\n"
-            "screen-2  "));
+        QCOMPARE(screenFile.readAll(),
+                 QByteArrayLiteral("history-0  \n"
+                                   "history-1\n"
+                                   "screen-0  \n"
+                                   "screen-1\n"
+                                   "screen-2  "));
         screenFile.close();
 
         QFile historyFile(historyPath);
         QVERIFY(historyFile.open(QIODevice::ReadOnly));
-        QCOMPARE(historyFile.readAll(), QByteArrayLiteral(
-            "history-0  \n"
-            "history-1"));
+        QCOMPARE(historyFile.readAll(),
+                 QByteArrayLiteral("history-0  \n"
+                                   "history-1"));
         historyFile.close();
 
         QFile selectionFile(selectionPath);
         QVERIFY(selectionFile.open(QIODevice::ReadOnly));
-        QCOMPARE(selectionFile.readAll(), QByteArrayLiteral(
-            "screen-0\n"
-            "screen-1"));
+        QCOMPARE(selectionFile.readAll(),
+                 QByteArrayLiteral("screen-0\n"
+                                   "screen-1"));
         selectionFile.close();
 
-        struct stat status {};
+        struct stat status{};
         const QByteArray encodedScreenPath = QFile::encodeName(screenPath);
         QVERIFY(::stat(encodedScreenPath.constData(), &status) == 0);
         QCOMPARE(status.st_mode & 0777, mode_t{0600});
@@ -1662,11 +1647,11 @@ void SessionWorkerTest::writesPersistentTerminalFiles()
         QVERIFY(::stat(encodedSelectionDirectory.constData(), &status) == 0);
         QCOMPARE(status.st_mode & 0777, mode_t{0700});
 
-        QVERIFY2(errorSpy.isEmpty(),
-                 errorSpy.isEmpty()
-                     ? ""
-                     : qPrintable(
-                           errorSpy.constFirst().constFirst().toString()));
+        QVERIFY2(
+            errorSpy.isEmpty(),
+            errorSpy.isEmpty()
+                ? ""
+                : qPrintable(errorSpy.constFirst().constFirst().toString()));
         worker.shutdown();
     }
 
@@ -1676,8 +1661,7 @@ void SessionWorkerTest::writesPersistentTerminalFiles()
     QVERIFY(QFileInfo::exists(selectionPath));
     const QString screenDirectory = QFileInfo(screenPath).absolutePath();
     const QString historyDirectory = QFileInfo(historyPath).absolutePath();
-    const QString selectionDirectory =
-        QFileInfo(selectionPath).absolutePath();
+    const QString selectionDirectory = QFileInfo(selectionPath).absolutePath();
     QVERIFY(QFile::remove(screenPath));
     QVERIFY(QFile::remove(historyPath));
     QVERIFY(QFile::remove(selectionPath));
@@ -1748,9 +1732,8 @@ void SessionWorkerTest::skipsUnavailableTerminalFiles()
 {
     qRegisterMetaType<TerminalActionResult>();
     QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
-    QTemporaryDir controlDirectory(
-        QDir::current().filePath(
-            QStringLiteral("tmp/write-file-missing-XXXXXX")));
+    QTemporaryDir controlDirectory(QDir::current().filePath(
+        QStringLiteral("tmp/write-file-missing-XXXXXX")));
     QVERIFY(controlDirectory.isValid());
     const QString artifactRoot =
         QDir(controlDirectory.path()).filePath(QStringLiteral("artifacts"));
@@ -1761,8 +1744,7 @@ void SessionWorkerTest::skipsUnavailableTerminalFiles()
              QFileInfo(artifactRoot).canonicalFilePath());
 
     SessionWorker worker;
-    QSignalSpy actionSpy(
-        &worker, &SessionWorker::terminalActionFinished);
+    QSignalSpy actionSpy(&worker, &SessionWorker::terminalActionFinished);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
@@ -1773,43 +1755,45 @@ void SessionWorkerTest::skipsUnavailableTerminalFiles()
     QVERIFY(worker.initialize(options));
     QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
 
-    worker.writeTerminalFile(404, {
-        .location = TerminalFileLocation::Scrollback,
-        .disposition = TerminalFileDisposition::Copy,
-    });
+    worker.writeTerminalFile(404,
+                             {
+                                 .location = TerminalFileLocation::Scrollback,
+                                 .disposition = TerminalFileDisposition::Copy,
+                             });
     QCOMPARE(actionSpy.count(), 1);
     const TerminalActionResult historyResult =
         terminalActionResultAt(actionSpy, 0);
     QCOMPARE(historyResult.requestId, quint64{404});
-    QCOMPARE(historyResult.outcome,
-             TerminalActionOutcome::Unavailable);
+    QCOMPARE(historyResult.outcome, TerminalActionOutcome::Unavailable);
     QCOMPARE(historyResult.effect, TerminalActionEffect::None);
     QVERIFY(historyResult.performed);
     QVERIFY(historyResult.payload.isEmpty());
     QCOMPARE(historyResult.clipboardDestination,
              TerminalClipboardDestination::Standard);
 
-    worker.writeTerminalFile(505, {
-        .location = TerminalFileLocation::Selection,
-        .disposition = TerminalFileDisposition::Open,
-    });
+    worker.writeTerminalFile(505,
+                             {
+                                 .location = TerminalFileLocation::Selection,
+                                 .disposition = TerminalFileDisposition::Open,
+                             });
     QCOMPARE(actionSpy.count(), 2);
     const TerminalActionResult selectionResult =
         terminalActionResultAt(actionSpy, 1);
     QCOMPARE(selectionResult.requestId, quint64{505});
-    QCOMPARE(selectionResult.outcome,
-             TerminalActionOutcome::Unavailable);
+    QCOMPARE(selectionResult.outcome, TerminalActionOutcome::Unavailable);
     QCOMPARE(selectionResult.effect, TerminalActionEffect::None);
     QVERIFY(selectionResult.performed);
     QVERIFY(selectionResult.payload.isEmpty());
     QCOMPARE(selectionResult.clipboardDestination,
              TerminalClipboardDestination::Standard);
 
-    worker.writeTerminalFile(606, {
-        .location = TerminalFileLocation::Screen,
-        .disposition = TerminalFileDisposition::Copy,
-        .format = static_cast<TerminalFileFormat>(0xff),
-    });
+    worker.writeTerminalFile(
+        606,
+        {
+            .location = TerminalFileLocation::Screen,
+            .disposition = TerminalFileDisposition::Copy,
+            .format = static_cast<TerminalFileFormat>(0xff),
+        });
     QCOMPARE(actionSpy.count(), 3);
     const TerminalActionResult failedResult =
         terminalActionResultAt(actionSpy, 2);
@@ -1838,8 +1822,7 @@ void SessionWorkerTest::reportsTerminalInitializationSeparatelyFromChildExec()
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
     TerminalSessionLaunchOptions options;
-    options.workingDirectory =
-        QDir::current().filePath(QStringLiteral("tmp"));
+    options.workingDirectory = QDir::current().filePath(QStringLiteral("tmp"));
     QVERIFY(QDir().mkpath(options.workingDirectory.displayString()));
     options.program = {
         QStringLiteral("/ghostty-qt-test/nonexistent-child"),
@@ -1853,11 +1836,10 @@ void SessionWorkerTest::reportsTerminalInitializationSeparatelyFromChildExec()
     // turn the accepted terminal initialization into a false result.
     std::optional<bool> initializationResult;
     int errorsAtInitialization = -1;
-    QVERIFY(worker.initialize(
-        options, [&](bool initialized) {
-            initializationResult = initialized;
-            errorsAtInitialization = errorSpy.count();
-        }));
+    QVERIFY(worker.initialize(options, [&](bool initialized) {
+        initializationResult = initialized;
+        errorsAtInitialization = errorSpy.count();
+    }));
     QCOMPARE(initializationResult, std::optional(true));
     QCOMPARE(errorsAtInitialization, 0);
     QTRY_COMPARE_WITH_TIMEOUT(startedSpy.count(), 1, 5000);
@@ -1872,10 +1854,9 @@ void SessionWorkerTest::reportsTerminalInitializationSeparatelyFromChildExec()
     // The existing terminal makes a repeated attempt ineligible. It must not
     // replay either process-start or exit notification.
     initializationResult.reset();
-    QVERIFY(!worker.initialize(
-        options, [&](bool initialized) {
-            initializationResult = initialized;
-        }));
+    QVERIFY(!worker.initialize(options, [&](bool initialized) {
+        initializationResult = initialized;
+    }));
     QCOMPARE(initializationResult, std::optional(false));
     QVERIFY(errorSpy.isEmpty());
     QCOMPARE(startedSpy.count(), 1);
@@ -1896,11 +1877,10 @@ void SessionWorkerTest::reportsTerminalInitializationFailure()
 
     std::optional<bool> initializationResult;
     int errorsAtInitialization = -1;
-    QVERIFY(!worker.initialize(
-        options, [&](bool initialized) {
-            initializationResult = initialized;
-            errorsAtInitialization = errorSpy.count();
-        }));
+    QVERIFY(!worker.initialize(options, [&](bool initialized) {
+        initializationResult = initialized;
+        errorsAtInitialization = errorSpy.count();
+    }));
 
     QCOMPARE(initializationResult, std::optional(false));
     QCOMPARE(errorsAtInitialization, 0);
@@ -2991,8 +2971,7 @@ void SessionWorkerTest::fallsBackFromUnavailableWorkingDirectory()
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
-    QSignalSpy directorySpy(&worker,
-                            &SessionWorker::currentDirectoryChanged);
+    QSignalSpy directorySpy(&worker, &SessionWorker::currentDirectoryChanged);
 
     QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
     QTemporaryDir directory(QDir::current().filePath(
@@ -3023,8 +3002,7 @@ void SessionWorkerTest::fallsBackFromUnavailableWorkingDirectory()
     QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
     const QString contents = frameText(accumulatedFrame(updateSpy));
     QCOMPARE(directorySpy.count(), 1);
-    QCOMPARE(directorySpy.constFirst().constFirst().toString(),
-             requested);
+    QCOMPARE(directorySpy.constFirst().constFirst().toString(), requested);
     QVERIFY2(contents.contains(requested), qPrintable(contents));
     worker.shutdown();
 }
@@ -3037,19 +3015,18 @@ void SessionWorkerTest::preservesInheritedLogicalPwd()
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
-    QSignalSpy directorySpy(&worker,
-                            &SessionWorker::currentDirectoryChanged);
+    QSignalSpy directorySpy(&worker, &SessionWorker::currentDirectoryChanged);
 
     QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
-    QTemporaryDir directory(QDir::current().filePath(
-        QStringLiteral("tmp/inherited-pwd-XXXXXX")));
+    QTemporaryDir directory(
+        QDir::current().filePath(QStringLiteral("tmp/inherited-pwd-XXXXXX")));
     QVERIFY(directory.isValid());
     const QString logicalDirectory =
         directory.filePath(QStringLiteral("logical-cwd"));
     QVERIFY(QFile::link(QDir::currentPath(), logicalDirectory));
 
-    const ScopedEnvironmentVariable pwd(
-        QByteArrayLiteral("PWD"), QFile::encodeName(logicalDirectory));
+    const ScopedEnvironmentVariable pwd(QByteArrayLiteral("PWD"),
+                                        QFile::encodeName(logicalDirectory));
 
     TerminalSessionLaunchOptions options;
     options.workingDirectory = QStringLiteral("/ignored-in-inherit-mode");
@@ -3057,7 +3034,8 @@ void SessionWorkerTest::preservesInheritedLogicalPwd()
     options.program = {
         QStringLiteral("/bin/sh"),
         QStringLiteral("-c"),
-        QStringLiteral("printf 'environment=%s\\nactual=' \"$PWD\"; /bin/pwd -P"),
+        QStringLiteral(
+            "printf 'environment=%s\\nactual=' \"$PWD\"; /bin/pwd -P"),
     };
     options.hold = true;
     worker.initialize(options);
@@ -3074,9 +3052,9 @@ void SessionWorkerTest::preservesInheritedLogicalPwd()
     QVERIFY2(contents.contains(
                  QStringLiteral("environment=%1").arg(logicalDirectory)),
              qPrintable(contents));
-    QVERIFY2(contents.contains(
-                 QStringLiteral("actual=%1").arg(QDir::currentPath())),
-             qPrintable(contents));
+    QVERIFY2(
+        contents.contains(QStringLiteral("actual=%1").arg(QDir::currentPath())),
+        qPrintable(contents));
     worker.shutdown();
 }
 
@@ -3088,8 +3066,7 @@ void SessionWorkerTest::preservesSymlinkSensitiveWorkingDirectory()
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
-    QSignalSpy directorySpy(&worker,
-                            &SessionWorker::currentDirectoryChanged);
+    QSignalSpy directorySpy(&worker, &SessionWorker::currentDirectoryChanged);
 
     QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
     QTemporaryDir directory(QDir::current().filePath(
@@ -3099,12 +3076,14 @@ void SessionWorkerTest::preservesSymlinkSensitiveWorkingDirectory()
     const QString base = root.filePath(QStringLiteral("base"));
     const QString linkedDirectory =
         root.filePath(QStringLiteral("other/directory"));
-    const QString actualTarget =
-        root.filePath(QStringLiteral("other/target"));
+    const QString actualTarget = root.filePath(QStringLiteral("other/target"));
     const QString lexicallyCleanedTarget =
         root.filePath(QStringLiteral("base/target"));
     for (const QString &path : {
-             base, linkedDirectory, actualTarget, lexicallyCleanedTarget,
+             base,
+             linkedDirectory,
+             actualTarget,
+             lexicallyCleanedTarget,
          }) {
         QVERIFY(QDir().mkpath(path));
     }
@@ -3145,14 +3124,11 @@ void SessionWorkerTest::preservesSymlinkSensitiveWorkingDirectory()
              qPrintable(contents));
     QVERIFY2(!contents.contains(QStringLiteral("marker=lexical")),
              qPrintable(contents));
-    QVERIFY2(contents.contains(
-                 QStringLiteral("environment=%1").arg(requested)),
+    QVERIFY2(contents.contains(QStringLiteral("environment=%1").arg(requested)),
              qPrintable(contents));
-    QVERIFY2(contents.contains(
-                 QStringLiteral("actual=%1").arg(actualTarget)),
+    QVERIFY2(contents.contains(QStringLiteral("actual=%1").arg(actualTarget)),
              qPrintable(contents));
-    QVERIFY2(!contents.contains(lexicallyCleanedTarget),
-             qPrintable(contents));
+    QVERIFY2(!contents.contains(lexicallyCleanedTarget), qPrintable(contents));
     worker.shutdown();
 }
 
@@ -3227,12 +3203,12 @@ void SessionWorkerTest::rejectsNulWorkingDirectoryBeforePosixCalls()
     worker.shutdown();
 }
 
-void SessionWorkerTest::resolvesRelativePathEntriesFromChildWorkingDirectory_data()
+void SessionWorkerTest::
+    resolvesRelativePathEntriesFromChildWorkingDirectory_data()
 {
     QTest::addColumn<QByteArray>("pathValue");
     QTest::addColumn<QString>("toolDirectory");
-    QTest::newRow("dot")
-        << QByteArrayLiteral(".") << QString{};
+    QTest::newRow("dot") << QByteArrayLiteral(".") << QString{};
     QTest::newRow("relative-directory")
         << QByteArrayLiteral("tools") << QStringLiteral("tools");
 }
@@ -3253,8 +3229,7 @@ void SessionWorkerTest::resolvesRelativePathEntriesFromChildWorkingDirectory()
         QStringLiteral("tmp/relative-path-entry-XXXXXX")));
     QVERIFY(directory.isValid());
     const QDir root(directory.path());
-    const QString parentDirectory =
-        root.filePath(QStringLiteral("parent"));
+    const QString parentDirectory = root.filePath(QStringLiteral("parent"));
     const QString childDirectory =
         QDir(parentDirectory).filePath(QStringLiteral("child"));
     QVERIFY(QDir().mkpath(childDirectory));
@@ -3276,8 +3251,7 @@ void SessionWorkerTest::resolvesRelativePathEntriesFromChildWorkingDirectory()
 
     const CurrentDirectoryRestore currentDirectory;
     QVERIFY(QDir::setCurrent(parentDirectory));
-    const ScopedEnvironmentVariable path(
-        QByteArrayLiteral("PATH"), pathValue);
+    const ScopedEnvironmentVariable path(QByteArrayLiteral("PATH"), pathValue);
 
     TerminalSessionLaunchOptions options;
     options.workingDirectory = childDirectory;
@@ -3373,15 +3347,15 @@ void SessionWorkerTest::continuesPathLookupAfterMissingInterpreter()
     QVERIFY(QDir().mkpath(firstDirectory));
     QVERIFY(QDir().mkpath(secondDirectory));
     constexpr QLatin1StringView toolName("exec-fallback-tool");
-    QVERIFY(writeExecutableScript(
-        QDir(firstDirectory).filePath(toolName),
-        QByteArrayLiteral("#!/definitely/missing\n")));
+    QVERIFY(
+        writeExecutableScript(QDir(firstDirectory).filePath(toolName),
+                              QByteArrayLiteral("#!/definitely/missing\n")));
     QVERIFY(writeExecutableScript(
         QDir(secondDirectory).filePath(toolName),
         QByteArrayLiteral("#!/bin/sh\nprintf 'selected=second\\n'\n")));
 
-    const ScopedEnvironmentVariable path(
-        QByteArrayLiteral("PATH"), QByteArrayLiteral("first:second"));
+    const ScopedEnvironmentVariable path(QByteArrayLiteral("PATH"),
+                                         QByteArrayLiteral("first:second"));
     TerminalSessionLaunchOptions options;
     options.workingDirectory = childDirectory;
     options.program = {toolName.toString()};
@@ -3455,13 +3429,13 @@ void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
     SessionWorker worker;
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
     QSignalSpy hyperlinkSpy(&worker, &SessionWorker::hyperlinkResolved);
-    QSignalSpy activationSpy(
-        &worker, &SessionWorker::hyperlinkActivationResolved);
+    QSignalSpy activationSpy(&worker,
+                             &SessionWorker::hyperlinkActivationResolved);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
-    const QByteArray uri = QStringLiteral(
-        "https://example.test/worker-👻").toUtf8();
+    const QByteArray uri =
+        QStringLiteral("https://example.test/worker-👻").toUtf8();
     QByteArray output = QByteArrayLiteral("\033]8;id=worker;");
     output += uri;
     output += QByteArrayLiteral("\033\\LINK\033]8;;\033\\ plain\r\n");
@@ -3493,8 +3467,8 @@ void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
     QVector<QPoint> candidates;
     for (int index = 0; index < frame.cells.size(); ++index) {
         if (frame.cells.at(index).hasHyperlink()) {
-            candidates.append(QPoint(index % frame.columns,
-                                     index / frame.columns));
+            candidates.append(
+                QPoint(index % frame.columns, index / frame.columns));
         }
     }
     QCOMPARE(candidates.size(), 4);
@@ -3506,8 +3480,7 @@ void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
     QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), 1, 1000);
     QCOMPARE(hyperlinkSpy.at(0).at(0).toULongLong(), quint64(41));
     QCOMPARE(hyperlinkSpy.at(0).at(1).toULongLong(), frame.contentRevision);
-    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
-                 hyperlinkSpy.at(0).at(2)),
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(hyperlinkSpy.at(0).at(2)),
              TerminalHyperlinkState::Visible);
     QCOMPARE(qvariant_cast<TerminalLinkKind>(hyperlinkSpy.at(0).at(3)),
              TerminalLinkKind::Osc8);
@@ -3521,14 +3494,12 @@ void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
     worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Bottom});
     QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), 2, 1000);
     QCOMPARE(hyperlinkSpy.at(1).at(0).toULongLong(), quint64(41));
-    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
-                 hyperlinkSpy.at(1).at(2)),
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(hyperlinkSpy.at(1).at(2)),
              TerminalHyperlinkState::Hidden);
     worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
     QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), 3, 1000);
     QCOMPARE(hyperlinkSpy.at(2).at(0).toULongLong(), quint64(41));
-    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
-                 hyperlinkSpy.at(2).at(2)),
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(hyperlinkSpy.at(2).at(2)),
              TerminalHyperlinkState::Visible);
     QCOMPARE(qvariant_cast<TerminalLinkKind>(hyperlinkSpy.at(2).at(3)),
              TerminalLinkKind::Osc8);
@@ -3540,8 +3511,8 @@ void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
     QTest::qWait(30);
     QCOMPARE(hyperlinkSpy.count(), cancelledCount);
     worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
-    QTRY_VERIFY_WITH_TIMEOUT(
-        accumulatedFrame(updateSpy).scrollOffset == 0, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 0,
+                             1000);
     const TerminalFrame restoredFrame = accumulatedFrame(updateSpy);
 
     worker.queryHyperlink(42, restoredFrame.contentRevision, 11, 0);
@@ -3572,36 +3543,34 @@ void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
             &worker,
             [&worker, requestId, revision = restoredFrame.contentRevision,
              cell = candidates.constFirst()] {
-                worker.queryHyperlink(
-                    requestId, revision, cell.x(), cell.y());
+                worker.queryHyperlink(requestId, revision, cell.x(), cell.y());
             },
             Qt::QueuedConnection);
     }
     QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), beforeFlood + 1, 1000);
     QCOMPARE(hyperlinkSpy.constLast().at(0).toULongLong(), quint64(200));
-    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
-                 hyperlinkSpy.constLast().at(2)),
-             TerminalHyperlinkState::Visible);
+    QCOMPARE(
+        qvariant_cast<TerminalHyperlinkState>(hyperlinkSpy.constLast().at(2)),
+        TerminalHyperlinkState::Visible);
 
-    worker.queryHyperlink(
-        201, restoredFrame.contentRevision,
-        candidates.constFirst().x(), candidates.constFirst().y());
+    worker.queryHyperlink(201, restoredFrame.contentRevision,
+                          candidates.constFirst().x(),
+                          candidates.constFirst().y());
     worker.cancelHyperlinkQuery(201);
     QTest::qWait(30);
     QCOMPARE(hyperlinkSpy.count(), beforeFlood + 1);
 
     // Press validation is a separate tracked lane, so hover replacement and
     // cancellation cannot consume or retarget an activation.
-    worker.prepareHyperlinkActivation(
-        301, restoredFrame.contentRevision,
-        candidates.constFirst().x(), candidates.constFirst().y());
+    worker.prepareHyperlinkActivation(301, restoredFrame.contentRevision,
+                                      candidates.constFirst().x(),
+                                      candidates.constFirst().y());
     worker.queryHyperlink(302, restoredFrame.contentRevision, 11, 0);
-    worker.commitHyperlinkActivation(
-        301, candidates.constFirst().x(), candidates.constFirst().y());
+    worker.commitHyperlinkActivation(301, candidates.constFirst().x(),
+                                     candidates.constFirst().y());
     QCOMPARE(activationSpy.count(), 1);
     QCOMPARE(activationSpy.constFirst().at(0).toULongLong(), quint64(301));
-    QCOMPARE(qvariant_cast<TerminalLinkKind>(
-                 activationSpy.constFirst().at(2)),
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(activationSpy.constFirst().at(2)),
              TerminalLinkKind::Osc8);
     QCOMPARE(activationSpy.constFirst().at(3).toByteArray(), uri);
 
@@ -3609,24 +3578,23 @@ void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
     // when its decoded payload is empty. That viewport mutation advances the
     // revision, so a query using the old scrollback coordinates is rejected.
     worker.sendRawText(QByteArray{});
-    QTRY_VERIFY_WITH_TIMEOUT(
-        accumulatedFrame(updateSpy).contentRevision
-            > restoredFrame.contentRevision,
-        1000);
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).contentRevision
+                                 > restoredFrame.contentRevision,
+                             1000);
     const TerminalFrame liveFrame = accumulatedFrame(updateSpy);
     QVERIFY(liveFrame.scrollOffset > 0);
     worker.queryHyperlink(44, restoredFrame.contentRevision,
                           candidates.constFirst().x(),
                           candidates.constFirst().y());
-    QTRY_VERIFY_WITH_TIMEOUT(
-        !hyperlinkSpy.isEmpty()
-            && hyperlinkSpy.constLast().at(0).toULongLong() == quint64(44),
-        1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!hyperlinkSpy.isEmpty()
+                                 && hyperlinkSpy.constLast().at(0).toULongLong()
+                                     == quint64(44),
+                             1000);
     QCOMPARE(hyperlinkSpy.constLast().at(1).toULongLong(),
              liveFrame.contentRevision);
-    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
-                 hyperlinkSpy.constLast().at(2)),
-             TerminalHyperlinkState::Stale);
+    QCOMPARE(
+        qvariant_cast<TerminalHyperlinkState>(hyperlinkSpy.constLast().at(2)),
+        TerminalHyperlinkState::Stale);
 
     worker.shutdown();
 }
@@ -3645,10 +3613,10 @@ void SessionWorkerTest::resolvesRegexLinksAcrossUtf8WrapsAndOsc8Precedence()
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
-    const QByteArray regexUri = QByteArrayLiteral(
-        "https://example.test/wrapped");
-    const QByteArray oscUri = QByteArrayLiteral(
-        "https://example.test/osc-target");
+    const QByteArray regexUri =
+        QByteArrayLiteral("https://example.test/wrapped");
+    const QByteArray oscUri =
+        QByteArrayLiteral("https://example.test/osc-target");
     QByteArray output = QStringLiteral("e\u0301界 ").toUtf8();
     output += regexUri;
     output += QByteArrayLiteral("\r\n\033]8;;");
@@ -3687,19 +3655,18 @@ void SessionWorkerTest::resolvesRegexLinksAcrossUtf8WrapsAndOsc8Precedence()
     const QVector<QPoint> wrappedCells =
         qvariant_cast<QVector<QPoint>>(wrapped.at(6));
     QVERIFY(wrappedCells.contains(QPoint(4, 0)));
-    QVERIFY(std::any_of(
-        wrappedCells.cbegin(), wrappedCells.cend(),
-        [](const QPoint &cell) { return cell.y() > 0; }));
+    QVERIFY(std::any_of(wrappedCells.cbegin(), wrappedCells.cend(),
+                        [](const QPoint &cell) { return cell.y() > 0; }));
 
     // Both endpoints are logical anchors, so reflow changes the decoration
     // coordinates without losing the exact matched bytes.
     const int beforeReflow = hyperlinkSpy.count();
     const quint64 beforeReflowRevision = frame.contentRevision;
     worker.resizeTerminal(24, 8, 8, 16, 192, 128);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        (frame = accumulatedFrame(updateSpy)).columns == 24
-            && frame.contentRevision > beforeReflowRevision,
-        1000);
+    QTRY_VERIFY_WITH_TIMEOUT((frame = accumulatedFrame(updateSpy)).columns == 24
+                                 && frame.contentRevision
+                                     > beforeReflowRevision,
+                             1000);
     QTRY_VERIFY_WITH_TIMEOUT(hyperlinkSpy.count() > beforeReflow, 1000);
     const QList<QVariant> reflowed = hyperlinkSpy.constLast();
     QCOMPARE(qvariant_cast<TerminalHyperlinkState>(reflowed.at(2)),
@@ -3719,11 +3686,11 @@ void SessionWorkerTest::resolvesRegexLinksAcrossUtf8WrapsAndOsc8Precedence()
     frame = accumulatedFrame(updateSpy);
     const int beforeDisabledQuery = hyperlinkSpy.count();
     worker.queryHyperlink(402, frame.contentRevision, 4, 0);
-    QTRY_COMPARE_WITH_TIMEOUT(
-        hyperlinkSpy.count(), beforeDisabledQuery + 1, 1000);
-    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
-                 hyperlinkSpy.constLast().at(2)),
-             TerminalHyperlinkState::Invalid);
+    QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), beforeDisabledQuery + 1,
+                              1000);
+    QCOMPARE(
+        qvariant_cast<TerminalHyperlinkState>(hyperlinkSpy.constLast().at(2)),
+        TerminalHyperlinkState::Invalid);
 
     QPoint oscCell(-1, -1);
     for (int index = 0; index < frame.cells.size(); ++index) {
@@ -3733,10 +3700,9 @@ void SessionWorkerTest::resolvesRegexLinksAcrossUtf8WrapsAndOsc8Precedence()
         }
     }
     QVERIFY(oscCell.x() >= 0);
-    worker.queryHyperlink(
-        403, frame.contentRevision, oscCell.x(), oscCell.y());
-    QTRY_COMPARE_WITH_TIMEOUT(
-        hyperlinkSpy.count(), beforeDisabledQuery + 2, 1000);
+    worker.queryHyperlink(403, frame.contentRevision, oscCell.x(), oscCell.y());
+    QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), beforeDisabledQuery + 2,
+                              1000);
     const QList<QVariant> explicitLink = hyperlinkSpy.constLast();
     QCOMPARE(qvariant_cast<TerminalHyperlinkState>(explicitLink.at(2)),
              TerminalHyperlinkState::Visible);
@@ -3748,11 +3714,11 @@ void SessionWorkerTest::resolvesRegexLinksAcrossUtf8WrapsAndOsc8Precedence()
     worker.applyRuntimeOptions(disabled);
     const int beforeOsc8DisabledQuery = hyperlinkSpy.count();
     worker.queryHyperlink(404, frame.contentRevision, oscCell.x(), oscCell.y());
-    QTRY_COMPARE_WITH_TIMEOUT(
-        hyperlinkSpy.count(), beforeOsc8DisabledQuery + 1, 1000);
-    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
-                 hyperlinkSpy.constLast().at(2)),
-             TerminalHyperlinkState::Invalid);
+    QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), beforeOsc8DisabledQuery + 1,
+                              1000);
+    QCOMPARE(
+        qvariant_cast<TerminalHyperlinkState>(hyperlinkSpy.constLast().at(2)),
+        TerminalHyperlinkState::Invalid);
 
     worker.shutdown();
 }
@@ -3771,8 +3737,8 @@ void SessionWorkerTest::retainsRegexHoverAcrossViewportScrolling()
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
-    const QByteArray uri = QByteArrayLiteral(
-        "https://example.test/regex-scroll");
+    const QByteArray uri =
+        QByteArrayLiteral("https://example.test/regex-scroll");
     QByteArray output = uri + QByteArrayLiteral("\r\n");
     for (int row = 0; row < 40; ++row) {
         output += QByteArrayLiteral("regex-scroll-row-");
@@ -3796,8 +3762,8 @@ void SessionWorkerTest::retainsRegexHoverAcrossViewportScrolling()
     QVERIFY(errorSpy.isEmpty());
 
     worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
-    QTRY_VERIFY_WITH_TIMEOUT(
-        updatesContain(updateSpy, QString::fromUtf8(uri)), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(updatesContain(updateSpy, QString::fromUtf8(uri)),
+                             1000);
     TerminalFrame frame = accumulatedFrame(updateSpy);
     QCOMPARE(frame.scrollOffset, 0);
 
@@ -3848,27 +3814,28 @@ void SessionWorkerTest::revalidatesRegexActivationAcrossUnrelatedOutput()
     worker.resizeTerminal(40, 4, 8, 16, 320, 64);
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
     QSignalSpy hyperlinkSpy(&worker, &SessionWorker::hyperlinkResolved);
-    QSignalSpy activationSpy(
-        &worker, &SessionWorker::hyperlinkActivationResolved);
+    QSignalSpy activationSpy(&worker,
+                             &SessionWorker::hyperlinkActivationResolved);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
-    const QByteArray original = QByteArrayLiteral(
-        "https://example.test/live");
-    const QByteArray replacement = QByteArrayLiteral(
-        "https://example.test/gone");
-    const QString script = QStringLiteral(
-        "printf '\033[2J\033[Hhttps://example.test/live'; "
-        "sleep 0.5; "
-        "i=0; while [ $i -lt 80 ]; do "
-        "printf '\0337\033[4;1Htick-%02d\0338' \"$i\"; "
-        "i=$((i + 1)); sleep 0.02; done; "
-        "sleep 0.3; "
-        "printf '\0337\033[1;1Hhttps://example.test/gone\0338'");
+    const QByteArray original = QByteArrayLiteral("https://example.test/live");
+    const QByteArray replacement =
+        QByteArrayLiteral("https://example.test/gone");
+    const QString script =
+        QStringLiteral("printf '\033[2J\033[Hhttps://example.test/live'; "
+                       "sleep 0.5; "
+                       "i=0; while [ $i -lt 80 ]; do "
+                       "printf '\0337\033[4;1Htick-%02d\0338' \"$i\"; "
+                       "i=$((i + 1)); sleep 0.02; done; "
+                       "sleep 0.3; "
+                       "printf '\0337\033[1;1Hhttps://example.test/gone\0338'");
 
     TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
-        QStringLiteral("/bin/sh"), QStringLiteral("-c"), script,
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        script,
     };
     options.hold = true;
     options.runtime.linkUrl = true;
@@ -3879,9 +3846,9 @@ void SessionWorkerTest::revalidatesRegexActivationAcrossUnrelatedOutput()
     TerminalFrame frame = accumulatedFrame(updateSpy);
     worker.queryHyperlink(501, frame.contentRevision, 0, 0);
     QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), 1, 1000);
-    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
-                 hyperlinkSpy.constLast().at(2)),
-             TerminalHyperlinkState::Visible);
+    QCOMPARE(
+        qvariant_cast<TerminalHyperlinkState>(hyperlinkSpy.constLast().at(2)),
+        TerminalHyperlinkState::Visible);
     QCOMPARE(qvariant_cast<TerminalLinkKind>(hyperlinkSpy.constLast().at(3)),
              TerminalLinkKind::Regex);
     QCOMPARE(hyperlinkSpy.constLast().at(4).toByteArray(), original);
@@ -3898,32 +3865,29 @@ void SessionWorkerTest::revalidatesRegexActivationAcrossUnrelatedOutput()
     // A press owns a distinct text-range lease. Unrelated output can advance
     // the broad frame revision, but replacing the covered bytes must make the
     // eventual release fail closed rather than open the new text.
-    worker.prepareHyperlinkActivation(
-        502, frame.contentRevision, 0, 0);
+    worker.prepareHyperlinkActivation(502, frame.contentRevision, 0, 0);
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updateSpy, QString::fromUtf8(replacement)), 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        !hyperlinkSpy.isEmpty()
-            && qvariant_cast<TerminalHyperlinkState>(
-                   hyperlinkSpy.constLast().at(2))
-                == TerminalHyperlinkState::Invalid,
-        1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!hyperlinkSpy.isEmpty()
+                                 && qvariant_cast<TerminalHyperlinkState>(
+                                        hyperlinkSpy.constLast().at(2))
+                                     == TerminalHyperlinkState::Invalid,
+                             1000);
     worker.commitHyperlinkActivation(502, 0, 0);
     QTRY_COMPARE_WITH_TIMEOUT(activationSpy.count(), 1, 1000);
-    QCOMPARE(qvariant_cast<TerminalLinkKind>(
-                 activationSpy.constLast().at(2)),
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(activationSpy.constLast().at(2)),
              TerminalLinkKind::Regex);
     QVERIFY(activationSpy.constLast().at(3).toByteArray().isEmpty());
 
     frame = accumulatedFrame(updateSpy);
     worker.queryHyperlink(503, frame.contentRevision, 0, 0);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        !hyperlinkSpy.isEmpty()
-            && hyperlinkSpy.constLast().at(0).toULongLong() == quint64(503),
-        1000);
-    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
-                 hyperlinkSpy.constLast().at(2)),
-             TerminalHyperlinkState::Visible);
+    QTRY_VERIFY_WITH_TIMEOUT(!hyperlinkSpy.isEmpty()
+                                 && hyperlinkSpy.constLast().at(0).toULongLong()
+                                     == quint64(503),
+                             1000);
+    QCOMPARE(
+        qvariant_cast<TerminalHyperlinkState>(hyperlinkSpy.constLast().at(2)),
+        TerminalHyperlinkState::Visible);
     QCOMPARE(qvariant_cast<TerminalLinkKind>(hyperlinkSpy.constLast().at(3)),
              TerminalLinkKind::Regex);
     QCOMPARE(hyperlinkSpy.constLast().at(4).toByteArray(), replacement);
@@ -3936,8 +3900,7 @@ void SessionWorkerTest::batchesPtyReadsBeforeParsing()
 {
     const bool batchingWasSet =
         qEnvironmentVariableIsSet("GHOSTTY_QT_PTY_READ_BATCHING");
-    const QByteArray previousBatching =
-        qgetenv("GHOSTTY_QT_PTY_READ_BATCHING");
+    const QByteArray previousBatching = qgetenv("GHOSTTY_QT_PTY_READ_BATCHING");
     const auto restoreBatching =
         qScopeGuard([batchingWasSet, previousBatching] {
             if (batchingWasSet) {
@@ -3995,9 +3958,8 @@ void SessionWorkerTest::drainsLargeFinalOutputBeforeClosingPty()
     options.program = {
         QStringLiteral("/bin/sh"),
         QStringLiteral("-c"),
-        QStringLiteral(
-            "yes 0123456789abcdef | head -c 1500000; "
-            "printf '\\nlarge-output-final\\n'"),
+        QStringLiteral("yes 0123456789abcdef | head -c 1500000; "
+                       "printf '\\nlarge-output-final\\n'"),
     };
     options.hold = true;
     worker.initialize(options);
@@ -4160,16 +4122,14 @@ void SessionWorkerTest::sendsBracketedPasteThroughPty()
     TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
-        QStringLiteral("/bin/sh"),
-        QStringLiteral("-c"),
-        QStringLiteral(
-            "stty raw -echo; "
-            "printf '\\033[?2004hpaste-ready'; "
-            "payload=$(dd bs=1 count=19 2>/dev/null); "
-            "stty sane; "
-            "printf '\\033[?2004lpaste-bytes:'; "
-            "printf '%s' \"$payload\" | od -An -tx1 | tr -d ' \\n'; "
-            "printf '\\n'")};
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral("stty raw -echo; "
+                       "printf '\\033[?2004hpaste-ready'; "
+                       "payload=$(dd bs=1 count=19 2>/dev/null); "
+                       "stty sane; "
+                       "printf '\\033[?2004lpaste-bytes:'; "
+                       "printf '%s' \"$payload\" | od -An -tx1 | tr -d ' \\n'; "
+                       "printf '\\n'")};
     options.hold = true;
     worker.initialize(options);
 
@@ -4179,7 +4139,9 @@ void SessionWorkerTest::sendsBracketedPasteThroughPty()
 
     QTRY_VERIFY_WITH_TIMEOUT(exitSpy.count() > 0, 5000);
     QVERIFY2(errorSpy.isEmpty(),
-             errorSpy.isEmpty() ? "" : qPrintable(errorSpy.constFirst().constFirst().toString()));
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
     const TerminalFrame finalFrame = accumulatedFrame(updateSpy);
     const QString finalContents = frameText(finalFrame);
@@ -4195,8 +4157,8 @@ void SessionWorkerTest::protectsPasteWithCorrelatedWorkerConfirmation()
     SessionWorker worker;
     worker.resizeTerminal(32, 4, 8, 16, 256, 64);
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
-    QSignalSpy unsafeSpy(
-        &worker, &SessionWorker::unsafePasteConfirmationRequested);
+    QSignalSpy unsafeSpy(&worker,
+                         &SessionWorker::unsafePasteConfirmationRequested);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
@@ -4285,12 +4247,14 @@ void SessionWorkerTest::protectsPasteWithCorrelatedWorkerConfirmation()
     QFile marker(modeMarker);
     QVERIFY(marker.open(QIODevice::WriteOnly));
     marker.close();
-    QTRY_VERIFY_WITH_TIMEOUT(([&] {
-        worker.scrollViewport({
-            .kind = TerminalViewportRequest::Kind::Bottom,
-        });
-        return updatesContain(updateSpy, QStringLiteral("mode-ready"));
-    })(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        ([&] {
+            worker.scrollViewport({
+                .kind = TerminalViewportRequest::Kind::Bottom,
+            });
+            return updatesContain(updateSpy, QStringLiteral("mode-ready"));
+        })(),
+        5000);
     worker.confirmPaste(confirmedId);
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(
@@ -4306,8 +4270,7 @@ void SessionWorkerTest::protectsPasteWithCorrelatedWorkerConfirmation()
     worker.applyRuntimeOptions(options.runtime);
     worker.paste(unsafeText);
     QTRY_VERIFY_WITH_TIMEOUT(
-        updatesContain(updateSpy,
-                       QStringLiteral("paste-third:6f6e650d74776f")),
+        updatesContain(updateSpy, QStringLiteral("paste-third:6f6e650d74776f")),
         5000);
     QCOMPARE(unsafeSpy.count(), 3);
 
@@ -4334,8 +4297,7 @@ void SessionWorkerTest::sendsTerminalControlActionsThroughPty()
     TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
-        QStringLiteral("/bin/sh"),
-        QStringLiteral("-c"),
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
         QStringLiteral(
             "stty raw -echo; "
             "i=0; while [ $i -lt 40 ]; do "
@@ -4377,13 +4339,12 @@ void SessionWorkerTest::sendsTerminalControlActionsThroughPty()
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(
             updateSpy,
-            QStringLiteral(
-                "control-bytes:1b5b33316d1b371b5b1b1b5bc3a9"
-                "1b5c7837661b5b00410a00"
-                "f09f988142f09f91bbc280")),
+            QStringLiteral("control-bytes:1b5b33316d1b371b5b1b1b5bc3a9"
+                           "1b5c7837661b5b00410a00"
+                           "f09f988142f09f91bbc280")),
         5000);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        accumulatedFrame(updateSpy).scrollOffset > 0, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 0,
+                             1000);
     QTRY_VERIFY_WITH_TIMEOUT(exitSpy.count() > 0, 5000);
 
     // Ghostty scrolls for a valid empty text action even though it writes no
@@ -4392,12 +4353,13 @@ void SessionWorkerTest::sendsTerminalControlActionsThroughPty()
     QTRY_COMPARE_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset,
                               quint64{0}, 1000);
     worker.sendRawText(QByteArray{});
-    QTRY_VERIFY_WITH_TIMEOUT(
-        accumulatedFrame(updateSpy).scrollOffset > 0, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 0,
+                             1000);
 
     QVERIFY2(errorSpy.isEmpty(),
-             errorSpy.isEmpty() ? ""
-                                : qPrintable(errorSpy.constFirst().constFirst().toString()));
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 
@@ -4405,11 +4367,9 @@ void SessionWorkerTest::pastesTerminalFilePathAsRawOrderedInput()
 {
     qRegisterMetaType<TerminalUpdate>();
     qRegisterMetaType<TerminalActionResult>();
-    QVERIFY(QDir().mkpath(
-        QDir::current().filePath(QStringLiteral("tmp"))));
-    QTemporaryDir controlDirectory(
-        QDir::current().filePath(
-            QStringLiteral("tmp/write-file-paste-XXXXXX")));
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir controlDirectory(QDir::current().filePath(
+        QStringLiteral("tmp/write-file-paste-XXXXXX")));
     QVERIFY(controlDirectory.isValid());
     const QString artifactRoot =
         QDir(controlDirectory.path()).filePath(QStringLiteral("artifacts"));
@@ -4422,18 +4382,16 @@ void SessionWorkerTest::pastesTerminalFilePathAsRawOrderedInput()
              canonicalArtifactRoot);
 
     const QString representativePath =
-        QDir(canonicalArtifactRoot).filePath(
-            QStringLiteral("ghostty-qt-XXXXXX/screen.txt"));
+        QDir(canonicalArtifactRoot)
+            .filePath(QStringLiteral("ghostty-qt-XXXXXX/screen.txt"));
     const qsizetype pathSize = QFile::encodeName(representativePath).size();
-    const qsizetype orderedPayloadSize =
-        QByteArrayLiteral("BEFORE").size() + pathSize
-        + QByteArrayLiteral("AFTER").size();
+    const qsizetype orderedPayloadSize = QByteArrayLiteral("BEFORE").size()
+        + pathSize + QByteArrayLiteral("AFTER").size();
 
     SessionWorker worker;
     worker.resizeTerminal(80, 8, 8, 16, 640, 128);
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
-    QSignalSpy actionSpy(
-        &worker, &SessionWorker::terminalActionFinished);
+    QSignalSpy actionSpy(&worker, &SessionWorker::terminalActionFinished);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
@@ -4459,14 +4417,14 @@ void SessionWorkerTest::pastesTerminalFilePathAsRawOrderedInput()
     options.hold = true;
     QVERIFY(worker.initialize(options));
     QTRY_VERIFY_WITH_TIMEOUT(
-        updatesContain(updateSpy, QStringLiteral("write-file-ready")),
-        5000);
+        updatesContain(updateSpy, QStringLiteral("write-file-ready")), 5000);
 
     worker.sendRawText(QByteArrayLiteral("BEFORE"));
-    worker.writeTerminalFile(707, {
-        .location = TerminalFileLocation::Screen,
-        .disposition = TerminalFileDisposition::Paste,
-    });
+    worker.writeTerminalFile(707,
+                             {
+                                 .location = TerminalFileLocation::Screen,
+                                 .disposition = TerminalFileDisposition::Paste,
+                             });
     // Persistence is dispatched away from this worker. Input submitted after
     // the snapshot is retained behind its ordered completion placeholder.
     QCOMPARE(actionSpy.count(), 0);
@@ -4518,32 +4476,27 @@ void SessionWorkerTest::pastesTerminalFilePathAsRawOrderedInput()
     QCOMPARE(readOnlyResult.clipboardDestination,
              TerminalClipboardDestination::Standard);
     artifactDirectories =
-        QDir(artifactRoot).entryList(
-            QDir::Dirs | QDir::NoDotAndDotDot);
+        QDir(artifactRoot).entryList(QDir::Dirs | QDir::NoDotAndDotDot);
     QCOMPARE(artifactDirectories.size(), 2);
     QVERIFY(QFileInfo::exists(readOnlyResult.payload));
     QVERIFY(readOnlyResult.payload != pasteResult.payload);
     QTest::qWait(100);
-    QVERIFY(!updatesContain(
-        updateSpy, QStringLiteral("readonly-byte:")));
+    QVERIFY(!updatesContain(updateSpy, QStringLiteral("readonly-byte:")));
 
     // The rejected path is never replayed after the policy changes.
     worker.setReadOnly(false);
     worker.sendRawText(QByteArrayLiteral("Z"));
     QTRY_VERIFY_WITH_TIMEOUT(
-        updatesContain(updateSpy, QStringLiteral("readonly-byte:5a")),
-        5000);
+        updatesContain(updateSpy, QStringLiteral("readonly-byte:5a")), 5000);
     QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
     QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty()
                  ? ""
-                 : qPrintable(
-                       errorSpy.constFirst().constFirst().toString()));
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 
-    for (const QString &directoryName :
-         std::as_const(artifactDirectories)) {
+    for (const QString &directoryName : std::as_const(artifactDirectories)) {
         const QString directoryPath =
             QDir(artifactRoot).filePath(directoryName);
         const QString artifactPath =
@@ -4610,8 +4563,8 @@ void SessionWorkerTest::readOnlyBlocksSurfaceInputButPreservesProtocolReplies()
     SessionWorker worker;
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
     QSignalSpy mouseSpy(&worker, &SessionWorker::mouseTrackingChanged);
-    QSignalSpy unsafeSpy(
-        &worker, &SessionWorker::unsafePasteConfirmationRequested);
+    QSignalSpy unsafeSpy(&worker,
+                         &SessionWorker::unsafePasteConfirmationRequested);
     QSignalSpy startedSpy(&worker, &SessionWorker::started);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
@@ -4671,8 +4624,7 @@ void SessionWorkerTest::readOnlyBlocksSurfaceInputButPreservesProtocolReplies()
     // than by a surface input action. Pinned Ghostty lets them cross the PTY
     // boundary in read-only mode so applications cannot deadlock on a query.
     QTRY_VERIFY_WITH_TIMEOUT(
-        updatesContain(updateSpy,
-                       QStringLiteral("cpr-bytes:1b5b313b3152")),
+        updatesContain(updateSpy, QStringLiteral("cpr-bytes:1b5b313b3152")),
         5000);
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updateSpy, QStringLiteral("focus-ready")), 1000);
@@ -4682,8 +4634,7 @@ void SessionWorkerTest::readOnlyBlocksSurfaceInputButPreservesProtocolReplies()
     worker.setFocused(false);
     worker.setFocused(true);
     QTRY_VERIFY_WITH_TIMEOUT(
-        updatesContain(updateSpy,
-                       QStringLiteral("focus-bytes:1b5b4f1b5b49")),
+        updatesContain(updateSpy, QStringLiteral("focus-bytes:1b5b4f1b5b49")),
         5000);
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updateSpy, QStringLiteral("input-ready")), 1000);
@@ -4703,8 +4654,7 @@ void SessionWorkerTest::readOnlyBlocksSurfaceInputButPreservesProtocolReplies()
         return input;
     };
     worker.stageSequenceKey(1, letter(u's'));
-    worker.resolveSequence(1,
-                           TerminalSequenceResolution::FlushAndSendCurrent,
+    worker.resolveSequence(1, TerminalSequenceResolution::FlushAndSendCurrent,
                            true, letter(u'q'));
     worker.sendInputMethod({.commitText = QStringLiteral("blocked-ime")});
     worker.sendCsi(QByteArrayLiteral("31m"));
@@ -5056,16 +5006,14 @@ void SessionWorkerTest::stagesAndResolvesSequenceBytes()
     TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
-        QStringLiteral("/bin/sh"),
-        QStringLiteral("-c"),
-        QStringLiteral(
-            "stty raw -echo; "
-            "printf 'sequence-ready'; "
-            "payload=$(dd bs=1 count=4 2>/dev/null); "
-            "stty sane; "
-            "printf 'sequence-bytes:'; "
-            "printf '%s' \"$payload\" | od -An -tx1 | tr -d ' \\n'; "
-            "printf '\\n'")};
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral("stty raw -echo; "
+                       "printf 'sequence-ready'; "
+                       "payload=$(dd bs=1 count=4 2>/dev/null); "
+                       "stty sane; "
+                       "printf 'sequence-bytes:'; "
+                       "printf '%s' \"$payload\" | od -An -tx1 | tr -d ' \\n'; "
+                       "printf '\\n'")};
     options.hold = true;
     worker.initialize(options);
 
@@ -5092,8 +5040,7 @@ void SessionWorkerTest::stagesAndResolvesSequenceBytes()
     worker.resolveSequence(2, TerminalSequenceResolution::Flush, false, {});
     QTest::qWait(50);
     QVERIFY(exitSpy.isEmpty());
-    worker.resolveSequence(3,
-                           TerminalSequenceResolution::FlushAndSendCurrent,
+    worker.resolveSequence(3, TerminalSequenceResolution::FlushAndSendCurrent,
                            true, key(u'c'));
 
     QTRY_VERIFY_WITH_TIMEOUT(exitSpy.count() > 0, 5000);
@@ -5103,8 +5050,7 @@ void SessionWorkerTest::stagesAndResolvesSequenceBytes()
                  : qPrintable(errorSpy.constFirst().constFirst().toString()));
     QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
     const QString finalContents = frameText(accumulatedFrame(updateSpy));
-    QVERIFY2(finalContents.contains(
-                 QStringLiteral("sequence-bytes:79616263")),
+    QVERIFY2(finalContents.contains(QStringLiteral("sequence-bytes:79616263")),
              qPrintable(finalContents));
     worker.shutdown();
 }
@@ -5180,18 +5126,16 @@ void SessionWorkerTest::stagesSequenceKeysUsingModesAtStageTime()
     TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
-        QStringLiteral("/bin/sh"),
-        QStringLiteral("-c"),
-        QStringLiteral(
-            "stty raw -echo; "
-            "printf 'normal-ready'; "
-            "sleep 1; "
-            "printf '\\033[?1happlication-ready'; "
-            "payload=$(dd bs=1 count=3 2>/dev/null); "
-            "stty sane; "
-            "printf 'staged-mode-bytes:'; "
-            "printf '%s' \"$payload\" | od -An -tx1 | tr -d ' \\n'; "
-            "printf '\\n'")};
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral("stty raw -echo; "
+                       "printf 'normal-ready'; "
+                       "sleep 1; "
+                       "printf '\\033[?1happlication-ready'; "
+                       "payload=$(dd bs=1 count=3 2>/dev/null); "
+                       "stty sane; "
+                       "printf 'staged-mode-bytes:'; "
+                       "printf '%s' \"$payload\" | od -An -tx1 | tr -d ' \\n'; "
+                       "printf '\\n'")};
     options.hold = true;
     worker.initialize(options);
 
@@ -5215,8 +5159,7 @@ void SessionWorkerTest::stagesSequenceKeysUsingModesAtStageTime()
     const QString finalContents = frameText(accumulatedFrame(updateSpy));
     // Normal cursor mode is ESC [ A. Encoding only at resolution would have
     // observed DECCKM and incorrectly emitted ESC O A instead.
-    QVERIFY2(finalContents.contains(
-                 QStringLiteral("staged-mode-bytes:1b5b41")),
+    QVERIFY2(finalContents.contains(QStringLiteral("staged-mode-bytes:1b5b41")),
              qPrintable(finalContents));
     worker.shutdown();
 }
@@ -5336,8 +5279,8 @@ void SessionWorkerTest::appliesReloadedAppearanceToExistingTerminal()
     TerminalAppearance &appearance = options.runtime.appearance;
     appearance.foregroundColor = QColor(QStringLiteral("#abcdef"));
     appearance.backgroundColor = QColor(QStringLiteral("#102030"));
-    appearance.cursorColor = TerminalColorValue::fromColor(
-        QColor(QStringLiteral("#fedcba")));
+    appearance.cursorColor =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#fedcba")));
     appearance.palette.resize(256);
     for (int index = 0; index < appearance.palette.size(); ++index) {
         appearance.palette[index] =
@@ -5360,8 +5303,9 @@ void SessionWorkerTest::appliesReloadedAppearanceToExistingTerminal()
     QVERIFY(!frame.cursorBlinking);
     QVERIFY(!containsCursorBlinkReset(updateSpy));
     QVERIFY2(errorSpy.isEmpty(),
-             errorSpy.isEmpty() ? ""
-                                : qPrintable(errorSpy.constFirst().constFirst().toString()));
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 
@@ -6004,15 +5948,14 @@ void SessionWorkerTest::clearsSelectionOnlyForUpstreamTypingPaths()
     SessionWorker worker;
     worker.resizeTerminal(32, 4, 8, 16, 256, 64);
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
-    QSignalSpy selectionSpy(&worker,
-                            &SessionWorker::selectionAvailableChanged);
+    QSignalSpy selectionSpy(&worker, &SessionWorker::selectionAvailableChanged);
     QSignalSpy clipboardSpy(&worker, &SessionWorker::clipboardTextReady);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
     TerminalSessionLaunchOptions options;
     QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
-    QTemporaryDir controlDirectory(
-        QDir::current().filePath(QStringLiteral("tmp/selection-typing-XXXXXX")));
+    QTemporaryDir controlDirectory(QDir::current().filePath(
+        QStringLiteral("tmp/selection-typing-XXXXXX")));
     QVERIFY(controlDirectory.isValid());
     const QString kittyMarker =
         QDir(controlDirectory.path()).filePath(QStringLiteral("enable-kitty"));
@@ -6020,12 +5963,11 @@ void SessionWorkerTest::clearsSelectionOnlyForUpstreamTypingPaths()
     options.program = {
         QStringLiteral("/bin/sh"),
         QStringLiteral("-c"),
-        QStringLiteral(
-            "stty raw -echo; "
-            "printf 'selection-target\\r\\nlegacy-ready'; "
-            "while [ ! -e \"$1\" ]; do sleep 0.01; done; "
-            "printf '\\033[>11ukitty-ready'; "
-            "sleep 5"),
+        QStringLiteral("stty raw -echo; "
+                       "printf 'selection-target\\r\\nlegacy-ready'; "
+                       "while [ ! -e \"$1\" ]; do sleep 0.01; done; "
+                       "printf '\\033[>11ukitty-ready'; "
+                       "sleep 5"),
         QStringLiteral("selection-typing-test"),
         kittyMarker,
     };
@@ -6163,15 +6105,13 @@ void SessionWorkerTest::clearsSelectionOnlyForUpstreamTypingPaths()
 
     selectTarget();
     worker.stageSequenceKey(3, letter(u'g'));
-    worker.resolveSequence(3,
-                           TerminalSequenceResolution::FlushAndSendCurrent,
+    worker.resolveSequence(3, TerminalSequenceResolution::FlushAndSendCurrent,
                            true, letter(u'h'));
     expectClearedWithoutCopy();
 
     selectTarget();
     worker.stageSequenceKey(4, letter(u'i'));
-    worker.resolveSequence(4,
-                           TerminalSequenceResolution::FlushAndSendCurrent,
+    worker.resolveSequence(4, TerminalSequenceResolution::FlushAndSendCurrent,
                            true, shift);
     expectPreservedWithoutCopy();
 
@@ -6179,8 +6119,7 @@ void SessionWorkerTest::clearsSelectionOnlyForUpstreamTypingPaths()
     worker.applyRuntimeOptions(options.runtime);
     selectTarget();
     worker.stageSequenceKey(5, letter(u'j'));
-    worker.resolveSequence(5,
-                           TerminalSequenceResolution::FlushAndSendCurrent,
+    worker.resolveSequence(5, TerminalSequenceResolution::FlushAndSendCurrent,
                            true, escape);
     expectClearedWithoutCopy();
 
@@ -6197,8 +6136,7 @@ void SessionWorkerTest::clearsSelectionForReportedMouseButtonsAndWheels()
     SessionWorker worker;
     worker.resizeTerminal(24, 4, 8, 16, 192, 64);
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
-    QSignalSpy selectionSpy(&worker,
-                            &SessionWorker::selectionAvailableChanged);
+    QSignalSpy selectionSpy(&worker, &SessionWorker::selectionAvailableChanged);
     QSignalSpy mouseSpy(&worker, &SessionWorker::mouseTrackingChanged);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
@@ -6528,10 +6466,8 @@ void SessionWorkerTest::copiesSelectionWithRuntimeFormattingAndAtomicClear()
     worker.resizeTerminal(16, 4, 8, 16, 128, 64);
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
     QSignalSpy clipboardSpy(&worker, &SessionWorker::clipboardTextReady);
-    QSignalSpy actionSpy(
-        &worker, &SessionWorker::terminalActionFinished);
-    QSignalSpy selectionSpy(&worker,
-                            &SessionWorker::selectionAvailableChanged);
+    QSignalSpy actionSpy(&worker, &SessionWorker::terminalActionFinished);
+    QSignalSpy selectionSpy(&worker, &SessionWorker::selectionAvailableChanged);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
     TerminalSessionLaunchOptions options;
@@ -6556,8 +6492,7 @@ void SessionWorkerTest::copiesSelectionWithRuntimeFormattingAndAtomicClear()
 
     worker.copySelection();
     QCOMPARE(clipboardSpy.count(), 1);
-    QCOMPARE(clipboardSpy.constFirst().at(0).toString(),
-             QStringLiteral("abc"));
+    QCOMPARE(clipboardSpy.constFirst().at(0).toString(), QStringLiteral("abc"));
     QCOMPARE(qvariant_cast<TerminalClipboardDestination>(
                  clipboardSpy.constFirst().at(1)),
              TerminalClipboardDestination::Standard);
@@ -6575,17 +6510,17 @@ void SessionWorkerTest::copiesSelectionWithRuntimeFormattingAndAtomicClear()
     selectionSpy.clear();
     updateSpy.clear();
     QStringList lifecycle;
-    const QMetaObject::Connection completedConnection = connect(
-        &worker, &SessionWorker::terminalActionFinished, &worker,
-        [&lifecycle](const TerminalActionResult &) {
-            lifecycle.append(QStringLiteral("completed"));
-        });
-    const QMetaObject::Connection selectionConnection = connect(
-        &worker, &SessionWorker::selectionAvailableChanged, &worker,
-        [&lifecycle](bool available) {
-            lifecycle.append(available ? QStringLiteral("selected")
-                                       : QStringLiteral("cleared"));
-        });
+    const QMetaObject::Connection completedConnection =
+        connect(&worker, &SessionWorker::terminalActionFinished, &worker,
+                [&lifecycle](const TerminalActionResult &) {
+                    lifecycle.append(QStringLiteral("completed"));
+                });
+    const QMetaObject::Connection selectionConnection =
+        connect(&worker, &SessionWorker::selectionAvailableChanged, &worker,
+                [&lifecycle](bool available) {
+                    lifecycle.append(available ? QStringLiteral("selected")
+                                               : QStringLiteral("cleared"));
+                });
 
     worker.copySelectionAction(909);
     QCOMPARE(actionSpy.count(), 1);
@@ -6599,9 +6534,9 @@ void SessionWorkerTest::copiesSelectionWithRuntimeFormattingAndAtomicClear()
     QCOMPARE(copiedResult.payload, QStringLiteral("A!b___"));
     QCOMPARE(copiedResult.clipboardDestination,
              TerminalClipboardDestination::Standard);
-    QCOMPARE(lifecycle,
-             QStringList({QStringLiteral("cleared"),
-                          QStringLiteral("completed")}));
+    QCOMPARE(
+        lifecycle,
+        QStringList({QStringLiteral("cleared"), QStringLiteral("completed")}));
     QVERIFY(spyContainsBool(selectionSpy, false));
     QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 1000);
 
@@ -6611,8 +6546,7 @@ void SessionWorkerTest::copiesSelectionWithRuntimeFormattingAndAtomicClear()
     const TerminalActionResult unavailableResult =
         terminalActionResultAt(actionSpy, 1);
     QCOMPARE(unavailableResult.requestId, quint64{1'010});
-    QCOMPARE(unavailableResult.outcome,
-             TerminalActionOutcome::Unavailable);
+    QCOMPARE(unavailableResult.outcome, TerminalActionOutcome::Unavailable);
     QCOMPARE(unavailableResult.effect, TerminalActionEffect::None);
     QVERIFY(!unavailableResult.performed);
     QVERIFY(unavailableResult.payload.isEmpty());
@@ -6843,11 +6777,9 @@ void SessionWorkerTest::autoCopiesOnlyCommittedSelectionsAndSelectAll()
     worker.resizeTerminal(16, 4, 8, 16, 128, 64);
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
     QSignalSpy clipboardSpy(&worker, &SessionWorker::clipboardTextReady);
-    QSignalSpy selectionSpy(&worker,
-                            &SessionWorker::selectionAvailableChanged);
+    QSignalSpy selectionSpy(&worker, &SessionWorker::selectionAvailableChanged);
     QSignalSpy selectAllSpy(&worker, &SessionWorker::selectAllCompleted);
-    QSignalSpy actionSpy(
-        &worker, &SessionWorker::terminalActionFinished);
+    QSignalSpy actionSpy(&worker, &SessionWorker::terminalActionFinished);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
     TerminalSessionLaunchOptions options;
@@ -6938,17 +6870,15 @@ void SessionWorkerTest::retainsSelectionAvailabilityOutsideViewport()
     qRegisterMetaType<TerminalUpdate>();
     SessionWorker worker;
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
-    QSignalSpy selectionSpy(&worker,
-                            &SessionWorker::selectionAvailableChanged);
+    QSignalSpy selectionSpy(&worker, &SessionWorker::selectionAvailableChanged);
 
     TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStringLiteral("/bin/sh"),
         QStringLiteral("-c"),
-        QStringLiteral(
-            "i=0; while [ $i -lt 100 ]; do printf 'row-%03d\\n' $i; "
-            "i=$((i + 1)); done; sleep 5"),
+        QStringLiteral("i=0; while [ $i -lt 100 ]; do printf 'row-%03d\\n' $i; "
+                       "i=$((i + 1)); done; sleep 5"),
     };
     options.hold = true;
     worker.initialize(options);
@@ -7093,8 +7023,7 @@ void SessionWorkerTest::routesTypedViewportAndSelectionOperations()
     qRegisterMetaType<TerminalUpdate>();
     SessionWorker worker;
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
-    QSignalSpy selectionSpy(&worker,
-                            &SessionWorker::selectionAvailableChanged);
+    QSignalSpy selectionSpy(&worker, &SessionWorker::selectionAvailableChanged);
     QSignalSpy selectAllCompletedSpy(&worker,
                                      &SessionWorker::selectAllCompleted);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
@@ -7121,35 +7050,42 @@ void SessionWorkerTest::routesTypedViewportAndSelectionOperations()
     worker.scrollViewport({
         .kind = TerminalViewportRequest::Kind::Top,
     });
-    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 0, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 0,
+                             1000);
 
     worker.scrollViewport({
         .kind = TerminalViewportRequest::Kind::Row,
         .row = 10,
     });
-    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 10, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 10,
+                             1000);
 
     worker.scrollViewport({
         .kind = TerminalViewportRequest::Kind::Delta,
         .delta = -3,
     });
-    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 7, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 7,
+                             1000);
 
     worker.scrollViewport({
         .kind = TerminalViewportRequest::Kind::Bottom,
     });
-    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 10, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 10,
+                             1000);
 
     worker.scrollViewport({
         .kind = TerminalViewportRequest::Kind::Selection,
     });
-    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 0, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 0,
+                             1000);
 
     worker.adjustSelection(TerminalSelectionAdjustment::Left);
-    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 10, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 10,
+                             1000);
     QVERIFY2(errorSpy.isEmpty(),
-             errorSpy.isEmpty() ? ""
-                                : qPrintable(errorSpy.constFirst().constFirst().toString()));
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 
@@ -7161,8 +7097,7 @@ void SessionWorkerTest::resolvesCorrelatedSelectionActions()
     worker.resizeTerminal(32, 6, 8, 16, 256, 96);
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
     QSignalSpy actionSpy(&worker, &SessionWorker::terminalActionFinished);
-    QSignalSpy selectionSpy(&worker,
-                            &SessionWorker::selectionAvailableChanged);
+    QSignalSpy selectionSpy(&worker, &SessionWorker::selectionAvailableChanged);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
     TerminalSessionLaunchOptions options;
@@ -7197,7 +7132,8 @@ void SessionWorkerTest::resolvesCorrelatedSelectionActions()
     worker.scrollViewport({
         .kind = TerminalViewportRequest::Kind::Top,
     });
-    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 0, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 0,
+                             1000);
     worker.beginSelection(selectionPress(0, 0));
     worker.updateSelection(selectionDrag(16, 0));
     worker.endSelection(16, 0);
@@ -7218,8 +7154,7 @@ void SessionWorkerTest::resolvesCorrelatedSelectionActions()
 
     worker.adjustSelectionAction(1'306, TerminalSelectionAdjustment::Left);
     QCOMPARE(actionSpy.count(), 6);
-    const TerminalActionResult adjusted =
-        terminalActionResultAt(actionSpy, 5);
+    const TerminalActionResult adjusted = terminalActionResultAt(actionSpy, 5);
     QCOMPARE(adjusted.requestId, quint64{1'306});
     QCOMPARE(adjusted.outcome, TerminalActionOutcome::Success);
     QCOMPARE(adjusted.effect, TerminalActionEffect::None);
@@ -7229,11 +7164,11 @@ void SessionWorkerTest::resolvesCorrelatedSelectionActions()
     worker.scrollViewport({
         .kind = TerminalViewportRequest::Kind::Bottom,
     });
-    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 10, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 10,
+                             1000);
     worker.scrollToSelectionAction(1'307);
     QCOMPARE(actionSpy.count(), 7);
-    const TerminalActionResult scrolled =
-        terminalActionResultAt(actionSpy, 6);
+    const TerminalActionResult scrolled = terminalActionResultAt(actionSpy, 6);
     QCOMPARE(scrolled.requestId, quint64{1'307});
     QCOMPARE(scrolled.outcome, TerminalActionOutcome::Success);
     QCOMPARE(scrolled.effect, TerminalActionEffect::None);
@@ -7267,8 +7202,7 @@ void SessionWorkerTest::resetsTerminalStateAndWorkerCaches()
     SessionWorker worker;
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
     QSignalSpy mouseSpy(&worker, &SessionWorker::mouseTrackingChanged);
-    QSignalSpy selectionSpy(&worker,
-                            &SessionWorker::selectionAvailableChanged);
+    QSignalSpy selectionSpy(&worker, &SessionWorker::selectionAvailableChanged);
     QSignalSpy titleSpy(&worker, &SessionWorker::titleChanged);
     QSignalSpy directorySpy(&worker, &SessionWorker::currentDirectoryChanged);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
@@ -7276,8 +7210,7 @@ void SessionWorkerTest::resetsTerminalStateAndWorkerCaches()
     TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
-        QStringLiteral("/bin/sh"),
-        QStringLiteral("-c"),
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
         QStringLiteral(
             "stty raw -echo; "
             "i=0; while [ $i -lt 40 ]; do "
@@ -7295,11 +7228,10 @@ void SessionWorkerTest::resetsTerminalStateAndWorkerCaches()
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updateSpy, QStringLiteral("reset-alt-ready")), 5000);
     QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(mouseSpy, true), 1000);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        !titleSpy.isEmpty()
-            && titleSpy.constLast().constFirst().toString()
-                == QStringLiteral("reset-worker-title"),
-        1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!titleSpy.isEmpty()
+                                 && titleSpy.constLast().constFirst().toString()
+                                     == QStringLiteral("reset-worker-title"),
+                             1000);
     QTRY_VERIFY_WITH_TIMEOUT(
         !directorySpy.isEmpty()
             && directorySpy.constLast().constFirst().toString()
@@ -7338,8 +7270,9 @@ void SessionWorkerTest::resetsTerminalStateAndWorkerCaches()
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updateSpy, QStringLiteral("reset-input:5a")), 1000);
     QVERIFY2(errorSpy.isEmpty(),
-             errorSpy.isEmpty() ? ""
-                                : qPrintable(errorSpy.constFirst().constFirst().toString()));
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 
@@ -7590,8 +7523,8 @@ void SessionWorkerTest::interactiveShellTracksForegroundJobs()
     SessionWorker worker;
     QSignalSpy startedSpy(&worker, &SessionWorker::started);
     QSignalSpy activitySpy(&worker, &SessionWorker::activeProcessChanged);
-    QSignalSpy unsafeSpy(
-        &worker, &SessionWorker::unsafePasteConfirmationRequested);
+    QSignalSpy unsafeSpy(&worker,
+                         &SessionWorker::unsafePasteConfirmationRequested);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
     TerminalSessionLaunchOptions options;
@@ -7619,7 +7552,8 @@ void SessionWorkerTest::interactiveShellTracksForegroundJobs()
     QVERIFY(activityTimer != nullptr);
     QVERIFY(!activityTimer->isActive());
     if (worker.findChild<QSocketNotifier *>(
-            QStringLiteral("pidfdChildExitNotifier")) != nullptr) {
+            QStringLiteral("pidfdChildExitNotifier"))
+        != nullptr) {
         QVERIFY(!exitPollTimer->isActive());
     } else {
         QVERIFY(exitPollTimer->isActive());
@@ -7714,8 +7648,9 @@ void SessionWorkerTest::interactiveShellTracksForegroundJobs()
             && !activitySpy.constLast().constFirst().toBool(),
         3000);
     QVERIFY2(errorSpy.isEmpty(),
-             errorSpy.isEmpty() ? ""
-                                : qPrintable(errorSpy.constFirst().constFirst().toString()));
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 

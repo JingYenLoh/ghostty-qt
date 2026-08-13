@@ -25,25 +25,25 @@ Popup {
 
     function dismiss() {
         if (uiController !== null)
-            uiController.closeModal()
+            uiController.closeModal();
     }
 
     function activate(tabId) {
-        dismiss()
-        Qt.callLater(function() {
-            root.tabActivated(tabId)
-        })
+        dismiss();
+        Qt.callLater(function () {
+            root.tabActivated(tabId);
+        });
     }
 
     function activateCurrent() {
-        const item = tabs.currentItem
+        const item = tabs.currentItem;
         if (item !== null)
-            activate(item.stableTabId)
+            activate(item.stableTabId);
     }
 
     onClosed: {
         if (uiController !== null && uiController.tabOverviewVisible)
-            uiController.closeModal()
+            uiController.closeModal();
     }
 
     contentItem: ColumnLayout {
@@ -66,8 +66,7 @@ Popup {
             clip: true
             focus: root.visible
             currentIndex: root.currentIndex
-            cellWidth: Math.max(180, width / Math.max(1,
-                Math.floor(width / 220)))
+            cellWidth: Math.max(180, width / Math.max(1, Math.floor(width / 220)))
             cellHeight: 112
             keyNavigationEnabled: true
 
@@ -84,22 +83,22 @@ Popup {
                 required property bool readOnly
                 readonly property var stableTabId: tabId
                 readonly property string statusText: {
-                    const states = []
+                    const states = [];
                     if (running)
-                        states.push(qsTr("Running"))
+                        states.push(qsTr("Running"));
                     if (readOnly)
-                        states.push(qsTr("Read only"))
+                        states.push(qsTr("Read only"));
                     if (progress >= 0)
-                        states.push(qsTr("%1% complete").arg(progress))
-                    return states.join(" · ")
+                        states.push(qsTr("%1% complete").arg(progress));
+                    return states.join(" · ");
                 }
                 readonly property string accessibleDescription: {
-                    const parts = []
+                    const parts = [];
                     if (currentDirectory.length > 0)
-                        parts.push(currentDirectory)
+                        parts.push(currentDirectory);
                     if (statusText.length > 0)
-                        parts.push(statusText)
-                    return parts.join(". ")
+                        parts.push(statusText);
+                    return parts.join(". ");
                 }
 
                 width: GridView.view.cellWidth - 8
@@ -114,8 +113,7 @@ Popup {
                     Label {
                         Layout.fillWidth: true
                         text: tabDelegate.title
-                        font.bold: tabDelegate.attention
-                                   || tabDelegate.GridView.isCurrentItem
+                        font.bold: tabDelegate.attention || tabDelegate.GridView.isCurrentItem
                         elide: Text.ElideRight
                     }
 
@@ -139,14 +137,13 @@ Popup {
                 onClicked: root.activate(stableTabId)
             }
 
-            Keys.onPressed: function(event) {
-                if (event.key === Qt.Key_Return
-                        || event.key === Qt.Key_Enter) {
-                    root.activateCurrent()
-                    event.accepted = true
+            Keys.onPressed: function (event) {
+                if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                    root.activateCurrent();
+                    event.accepted = true;
                 } else if (event.key === Qt.Key_Escape) {
-                    root.dismiss()
-                    event.accepted = true
+                    root.dismiss();
+                    event.accepted = true;
                 }
             }
 
@@ -163,11 +160,11 @@ Popup {
 
     onVisibleChanged: {
         if (visible) {
-            tabs.currentIndex = currentIndex
-            Qt.callLater(function() {
+            tabs.currentIndex = currentIndex;
+            Qt.callLater(function () {
                 if (root.visible)
-                    tabs.forceActiveFocus()
-            })
+                    tabs.forceActiveFocus();
+            });
         }
     }
 }

@@ -149,8 +149,7 @@ void TerminalRectBatchTest::reusesSoftwareNodePool()
     const QVector<QSGSimpleRectNode *> firstNodes = softwareNodes(batch);
     QCOMPARE(firstNodes.size(), 3);
     QCOMPARE(firstNodes.at(1)->rect(), QRectF(4.0, 2.0, 3.0, 1.0));
-    QCOMPARE(firstNodes.at(1)->color(),
-             QColor::fromRgb(17, 33, 49, 128));
+    QCOMPARE(firstNodes.at(1)->color(), QColor::fromRgb(17, 33, 49, 128));
 
     QVector<TerminalColoredRect> &smaller = batch.beginUpdate();
     appendRect(smaller, 7);

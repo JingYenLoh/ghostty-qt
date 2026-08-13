@@ -13,9 +13,9 @@ namespace {
 
 using namespace std::chrono_literals;
 
-LaunchOptions lifetimeOptions(
-    bool quitAfterLastWindowClosed,
-    std::optional<std::chrono::milliseconds> delay = std::nullopt)
+LaunchOptions
+lifetimeOptions(bool quitAfterLastWindowClosed,
+                std::optional<std::chrono::milliseconds> delay = std::nullopt)
 {
     LaunchOptions options;
     options.quitAfterLastWindowClosed = quitAfterLastWindowClosed;
@@ -66,8 +66,7 @@ void ApplicationLifetimeTest::ignoresLastWindowSignalUntilAWindowWasVisible()
         delayMilliseconds < 0
             ? std::nullopt
             : std::optional(std::chrono::milliseconds(delayMilliseconds))));
-    QSignalSpy quit(&controller,
-                    &ApplicationLifetimeController::quitRequested);
+    QSignalSpy quit(&controller, &ApplicationLifetimeController::quitRequested);
 
     controller.lastWindowClosed();
     QTest::qWait(30);
@@ -75,7 +74,8 @@ void ApplicationLifetimeTest::ignoresLastWindowSignalUntilAWindowWasVisible()
     QVERIFY(!controller.quitPending());
 }
 
-void ApplicationLifetimeTest::ignoresLastWindowSignalUntilAWindowWasVisible_data()
+void ApplicationLifetimeTest::
+    ignoresLastWindowSignalUntilAWindowWasVisible_data()
 {
     QTest::addColumn<bool>("enabled");
     QTest::addColumn<int>("delayMilliseconds");
@@ -91,8 +91,7 @@ void ApplicationLifetimeTest::disabledPolicyKeepsTheApplicationResident()
     controller.applyLaunchOptions(lifetimeOptions(false, 1ms));
     QWindow window;
     showPrimaryWindow(controller, window);
-    QSignalSpy quit(&controller,
-                    &ApplicationLifetimeController::quitRequested);
+    QSignalSpy quit(&controller, &ApplicationLifetimeController::quitRequested);
 
     window.hide();
     controller.lastWindowClosed();
@@ -108,8 +107,7 @@ void ApplicationLifetimeTest::immediatePolicyQueuesOneQuit()
     ApplicationLifetimeController controller;
     QWindow window;
     showPrimaryWindow(controller, window);
-    QSignalSpy quit(&controller,
-                    &ApplicationLifetimeController::quitRequested);
+    QSignalSpy quit(&controller, &ApplicationLifetimeController::quitRequested);
 
     window.hide();
     controller.lastWindowClosed();
@@ -131,8 +129,7 @@ void ApplicationLifetimeTest::openingAWindowCancelsThePendingDelay()
     controller.applyLaunchOptions(lifetimeOptions(true, 80ms));
     QWindow firstWindow;
     showPrimaryWindow(controller, firstWindow);
-    QSignalSpy quit(&controller,
-                    &ApplicationLifetimeController::quitRequested);
+    QSignalSpy quit(&controller, &ApplicationLifetimeController::quitRequested);
 
     firstWindow.hide();
     controller.lastWindowClosed();
@@ -157,8 +154,7 @@ void ApplicationLifetimeTest::multipleWindowsWaitForTheGlobalLastWindowSignal()
     QWindow secondWindow;
     showPrimaryWindow(controller, firstWindow);
     showPrimaryWindow(controller, secondWindow);
-    QSignalSpy quit(&controller,
-                    &ApplicationLifetimeController::quitRequested);
+    QSignalSpy quit(&controller, &ApplicationLifetimeController::quitRequested);
 
     firstWindow.hide();
     QTest::qWait(30);
@@ -178,8 +174,7 @@ void ApplicationLifetimeTest::identicalReloadDoesNotRestartTheDelay()
     controller.applyLaunchOptions(options);
     QWindow window;
     showPrimaryWindow(controller, window);
-    QSignalSpy quit(&controller,
-                    &ApplicationLifetimeController::quitRequested);
+    QSignalSpy quit(&controller, &ApplicationLifetimeController::quitRequested);
 
     window.hide();
     controller.lastWindowClosed();
@@ -197,8 +192,7 @@ void ApplicationLifetimeTest::changedReloadReconcilesAndInvalidatesStaleTimers()
     controller.applyLaunchOptions(lifetimeOptions(true, 80ms));
     QWindow window;
     showPrimaryWindow(controller, window);
-    QSignalSpy quit(&controller,
-                    &ApplicationLifetimeController::quitRequested);
+    QSignalSpy quit(&controller, &ApplicationLifetimeController::quitRequested);
 
     window.hide();
     controller.lastWindowClosed();
@@ -222,8 +216,7 @@ void ApplicationLifetimeTest::explicitQuitBypassesPolicyAndLatches()
 {
     ApplicationLifetimeController controller;
     controller.applyLaunchOptions(lifetimeOptions(false, 10s));
-    QSignalSpy quit(&controller,
-                    &ApplicationLifetimeController::quitRequested);
+    QSignalSpy quit(&controller, &ApplicationLifetimeController::quitRequested);
 
     controller.requestQuitNow();
     QCOMPARE(quit.count(), 1);

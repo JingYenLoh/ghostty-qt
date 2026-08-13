@@ -153,8 +153,8 @@ public:
         }
     }
 
-    [[nodiscard]] std::optional<QString>
-    canonicalFamily(const QString &family, double pointSize)
+    [[nodiscard]] std::optional<QString> canonicalFamily(const QString &family,
+                                                         double pointSize)
     {
         if (family.isEmpty()) {
             return std::nullopt;
@@ -198,29 +198,25 @@ public:
         return iterator.value();
     }
 
-    [[nodiscard]] static QFont baseFont(const QStringList &families,
-                                        double pointSize, bool fixedPitch,
-                                        const TerminalFreetypeLoadFlags &flags =
-                                            {})
+    [[nodiscard]] static QFont
+    baseFont(const QStringList &families, double pointSize, bool fixedPitch,
+             const TerminalFreetypeLoadFlags &flags = {})
     {
-        QFont result =
-            QFontDatabase::systemFont(QFontDatabase::FixedFont);
+        QFont result = QFontDatabase::systemFont(QFontDatabase::FixedFont);
         if (!families.isEmpty()) {
             result.setFamilies(families);
         }
         result.setPointSizeF(normalizedPointSize(pointSize));
         result.setFixedPitch(fixedPitch);
-        result.setStyleHint(
-            fixedPitch ? QFont::Monospace : QFont::AnyStyle,
-            static_cast<QFont::StyleStrategy>(
-                QFont::PreferDefault | QFont::ContextFontMerging
-                | (flags.monochrome ? QFont::NoAntialias
-                                    : QFont::PreferAntialias)));
-        result.setHintingPreference(
-            !flags.hinting
-                ? QFont::PreferNoHinting
-                : flags.light ? QFont::PreferVerticalHinting
-                              : QFont::PreferFullHinting);
+        result.setStyleHint(fixedPitch ? QFont::Monospace : QFont::AnyStyle,
+                            static_cast<QFont::StyleStrategy>(
+                                QFont::PreferDefault | QFont::ContextFontMerging
+                                | (flags.monochrome ? QFont::NoAntialias
+                                                    : QFont::PreferAntialias)));
+        result.setHintingPreference(!flags.hinting ? QFont::PreferNoHinting
+                                        : flags.light
+                                        ? QFont::PreferVerticalHinting
+                                        : QFont::PreferFullHinting);
         result.setStyleName({});
         result.setWeight(QFont::Normal);
         result.setStyle(QFont::StyleNormal);
@@ -242,12 +238,10 @@ private:
                                           flags);
 }
 
-[[nodiscard]] std::optional<QFont>
-fontWithNamedStyle(FontDatabaseSnapshot &database,
-                   const QStringList &specificFamilies,
-                   const QStringList &fallbackFamilies, const QString &style,
-                   double pointSize, bool fixedPitch,
-                   const TerminalFreetypeLoadFlags &flags)
+[[nodiscard]] std::optional<QFont> fontWithNamedStyle(
+    FontDatabaseSnapshot &database, const QStringList &specificFamilies,
+    const QStringList &fallbackFamilies, const QString &style, double pointSize,
+    bool fixedPitch, const TerminalFreetypeLoadFlags &flags)
 {
     if (specificFamilies.isEmpty() || style.isEmpty()) {
         return std::nullopt;
@@ -327,8 +321,7 @@ void applyVariations(QFont &font,
             supported, [&tag](const QFontVariableAxis &candidate) {
                 return candidate.tag() == *tag;
             });
-        if (axis == supported.end()
-            || value < axis->minimumValue()
+        if (axis == supported.end() || value < axis->minimumValue()
             || value > axis->maximumValue()) {
             continue;
         }
@@ -336,8 +329,7 @@ void applyVariations(QFont &font,
     }
 }
 
-void applyFeatures(QFont &font,
-                   const QVector<TerminalFontFeature> &features)
+void applyFeatures(QFont &font, const QVector<TerminalFontFeature> &features)
 {
     for (const TerminalFontFeature &feature : features) {
         if (const auto tag = QFont::Tag::fromValue(feature.tag)) {
@@ -348,12 +340,10 @@ void applyFeatures(QFont &font,
     }
 }
 
-[[nodiscard]] std::optional<QFont>
-nativeRoleFont(FontDatabaseSnapshot &database,
-               const QStringList &specificFamilies,
-               const QStringList &fallbackFamilies, TerminalFontRole role,
-               double pointSize, bool fixedPitch,
-               const TerminalFreetypeLoadFlags &flags)
+[[nodiscard]] std::optional<QFont> nativeRoleFont(
+    FontDatabaseSnapshot &database, const QStringList &specificFamilies,
+    const QStringList &fallbackFamilies, TerminalFontRole role,
+    double pointSize, bool fixedPitch, const TerminalFreetypeLoadFlags &flags)
 {
     for (const QString &family : specificFamilies) {
         const auto canonical = database.canonicalFamily(family, pointSize);
@@ -361,12 +351,12 @@ nativeRoleFont(FontDatabaseSnapshot &database,
             continue;
         }
         const QStringList &styles = database.styles(*canonical);
-        const auto style = std::ranges::find_if(
-            styles, [&](const QString &candidate) {
+        const auto style =
+            std::ranges::find_if(styles, [&](const QString &candidate) {
                 return QFontDatabase::bold(*canonical, candidate)
-                        == roleBold(role)
+                    == roleBold(role)
                     && QFontDatabase::italic(*canonical, candidate)
-                        == roleItalic(role);
+                    == roleItalic(role);
             });
         if (style == styles.end()) {
             continue;
@@ -401,22 +391,20 @@ nativeRoleFont(FontDatabaseSnapshot &database,
 }
 
 [[nodiscard]] QFont
-resolveRoleFont(FontDatabaseSnapshot &database,
-                const TerminalFontFace &face,
-                const QStringList &fallbackFamilies,
-                const QFont &regular, TerminalFontRole role, double pointSize,
-                bool fixedPitch, const TerminalSyntheticStyle &syntheticStyle,
+resolveRoleFont(FontDatabaseSnapshot &database, const TerminalFontFace &face,
+                const QStringList &fallbackFamilies, const QFont &regular,
+                TerminalFontRole role, double pointSize, bool fixedPitch,
+                const TerminalSyntheticStyle &syntheticStyle,
                 const TerminalFreetypeLoadFlags &flags)
 {
     const QStringList specificFamilies = requestedFamilies(face.families);
     QFont result = std::visit(
         [&](const auto &style) -> QFont {
             using Style = std::decay_t<decltype(style)>;
-            if constexpr (std::same_as<Style,
-                                       TerminalFontStyles::Disabled>) {
+            if constexpr (std::same_as<Style, TerminalFontStyles::Disabled>) {
                 return regular;
-            } else if constexpr (std::same_as<
-                                     Style, TerminalFontStyles::Named>) {
+            } else if constexpr (std::same_as<Style,
+                                              TerminalFontStyles::Named>) {
                 if (const auto named = fontWithNamedStyle(
                         database, specificFamilies, fallbackFamilies,
                         style.name, pointSize, fixedPitch, flags)) {
@@ -468,10 +456,10 @@ resolveRoleFonts(FontDatabaseSnapshot &database,
         typography.face(TerminalFontRole::Regular);
     if (const auto *named =
             std::get_if<TerminalFontStyles::Named>(&regularFace.style)) {
-        if (const auto resolved = fontWithNamedStyle(
-                database, configuredRegularFamilies, regularFamilies,
-                named->name, pointSize, fixedPitch,
-                typography.freetypeLoadFlags)) {
+        if (const auto resolved =
+                fontWithNamedStyle(database, configuredRegularFamilies,
+                                   regularFamilies, named->name, pointSize,
+                                   fixedPitch, typography.freetypeLoadFlags)) {
             regular = *resolved;
         }
     }

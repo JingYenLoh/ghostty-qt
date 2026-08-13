@@ -574,8 +574,7 @@ void TerminalCustomShaderCompilerTest::compilesBouncingDvdExample()
 {
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
-    const QString shaderPath =
-        QString::fromUtf8(GHOSTTY_QT_DVD_SHADER_PATH);
+    const QString shaderPath = QString::fromUtf8(GHOSTTY_QT_DVD_SHADER_PATH);
     QVERIFY2(QFileInfo(shaderPath).isFile(), qPrintable(shaderPath));
 
     const TerminalCustomShaderCompileResult result =
@@ -590,8 +589,7 @@ void TerminalCustomShaderCompilerTest::compilesFlameLifecycleExample()
 {
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
-    const QString shaderPath =
-        QString::fromUtf8(GHOSTTY_QT_FLAME_SHADER_PATH);
+    const QString shaderPath = QString::fromUtf8(GHOSTTY_QT_FLAME_SHADER_PATH);
     QVERIFY2(QFileInfo(shaderPath).isFile(), qPrintable(shaderPath));
 
     const TerminalCustomShaderOptions options =
@@ -601,9 +599,8 @@ void TerminalCustomShaderCompilerTest::compilesFlameLifecycleExample()
     const TerminalCustomShaderCompileResult enter =
         compileTerminalCustomShaders(
             options, cache, TerminalCustomShaderCompileMode::PaneEnter);
-    const TerminalCustomShaderCompileResult exit =
-        compileTerminalCustomShaders(
-            options, cache, TerminalCustomShaderCompileMode::PaneExit);
+    const TerminalCustomShaderCompileResult exit = compileTerminalCustomShaders(
+        options, cache, TerminalCustomShaderCompileMode::PaneExit);
     QVERIFY2(enter.succeeded(), qPrintable(enter.diagnostic));
     QVERIFY2(exit.succeeded(), qPrintable(exit.diagnostic));
     QCOMPARE(enter.stages.size(), 1);

@@ -1021,9 +1021,8 @@ public:
         bool reorderedActive = false;
         return measure(
             QStringLiteral("kitty-implicit-reorder"), warmupIterations,
-            measuredIterations,
-            {.paintSerial = 1},
-            1, kittyTextureLogicalBytes, {},
+            measuredIterations, {.paintSerial = 1}, 1, kittyTextureLogicalBytes,
+            {},
             [this, ordered, reordered, &reorderedActive] {
                 reorderedActive = !reorderedActive;
                 publishKitty(reorderedActive ? reordered : ordered);
@@ -1579,9 +1578,8 @@ private:
             const int row = (index / qMax(1, grid_.columns - 1)) % grid_.rows;
             snapshot->placements.append({
                 .image = asset,
-                .placementId = explicitPlacementIds
-                    ? static_cast<quint32>(index + 1)
-                    : 0,
+                .placementId =
+                    explicitPlacementIds ? static_cast<quint32>(index + 1) : 0,
                 .z = 1,
                 .layer = TerminalKittyGraphicsLayer::AboveText,
                 .viewportColumn = column,

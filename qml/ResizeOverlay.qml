@@ -21,8 +21,7 @@ Rectangle {
 
     Text {
         anchors.centerIn: parent
-        text: root.terminalPane !== null
-              ? root.terminalPane.resizeOverlayText : ""
+        text: root.terminalPane !== null ? root.terminalPane.resizeOverlayText : ""
         color: "#f2f2f2"
         font.bold: true
         horizontalAlignment: Text.AlignHCenter

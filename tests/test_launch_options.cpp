@@ -2529,8 +2529,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QVERIFY(launch.runtime.vtKamAllowed);
     QVERIFY(!launch.runtime.linkUrl);
     QVERIFY(!launch.runtime.linkOsc8);
-    QCOMPARE(launch.runtime.graphemeWidthMethod,
-             GraphemeWidthMethod::Legacy);
+    QCOMPARE(launch.runtime.graphemeWidthMethod, GraphemeWidthMethod::Legacy);
     QVERIFY(launch.runtime.titleReport);
 }
 

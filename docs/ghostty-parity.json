@@ -335,493 +335,493 @@
           "status": "not_applicable",
           "scope": "macos"
         },
-    "auto-update-channel": {
-      "status": "not_applicable",
-      "scope": "macos"
-    },
-    "background": {
-      "status": "supported",
-      "note": "The exact pinned parser supplies the color and the libghostty adapter applies it to new and existing panes."
-    },
-    "background-blur": {
-      "status": "supported",
-      "scope": "wayland",
-      "note": "The strict config wire preserves Ghostty's exact finalized i16 C value: false and zero disable, true maps to 20, explicit radii retain 0 through 255, and both negative macOS glass sentinels remain distinct. Normal and quick-terminal windows apply every nonzero value as KWin's whole-client BlurBehind request through the optional KF6 WindowSystem backend, after native surface creation and across live reload or surface recreation without touching panes, workers, terminals, or PTYs. KWin exposes only a boolean, so it ignores the retained radius; builds without KF6 WindowSystem, other Wayland compositors, and sessions where KWin does not advertise blur are deterministic no-ops."
-    },
-    "background-image": {
-      "status": "supported",
-      "note": "The pinned optional Path is exported as a finalized absolute path with required/optional provenance. Each pane asynchronously decodes only PNG or JPEG without EXIF auto-rotation, keeps its prior image until a changed path succeeds, unloads on null, and logs while retaining the prior asset on failure; reload does not reread its unchanged source or retry that pane's failed source. Each worker attempt opens the source once with nonblocking Linux descriptor flags, rejects non-regular files, derives an identity from path, device, inode, link count, size, and nanosecond mtime/ctime, and decodes that same handle. Identical identities coalesce through a weak process-wide packed straight-alpha RGBA8 cache with a bounded 250 ms failure throttle; identical-size/mtime atomic replacements cannot reuse or poison the old entry. Observable same-inode metadata changes bypass cached failures and get one coherent retry if they occur during decode. Every split owns independent full-surface placement, texture, and composition state. Explicit raw RHI upload preserves straight-alpha filtering and shader-time premultiplication with one four-byte-per-pixel CPU image and one four-byte-per-pixel GPU texture. Shader reflection, upload telemetry, OpenGL/Vulkan semantic integration, and deterministic replacement races cover that contract. The software scene-graph fallback remains an explicitly documented source-resolution approximation, and final real-Wayland compositor presentation remains interactive validation."
-    },
-    "background-image-fit": {
-      "status": "supported",
-      "note": "Contain, cover, stretch, and none use Ghostty's full-pane fit equations, including padding; contain is the default and none maps one decoded pixel to one physical device pixel. Resize, DPR, and fit reload recompute placement without another decode or upload. Pure geometry plus the packed-RGBA RHI material are covered, including fractional DPR."
-    },
-    "background-image-opacity": {
-      "status": "supported",
-      "note": "The exact finalized f32 defaults to 1 and remains an unclamped relative multiplier, including documented values above one. The packed-RGBA material uses the rounded global-background alpha: opaque source pixels reach min(global opacity times image opacity, 1), transparent pixels reveal the global background, and global opacity zero suppresses the image. Option-only reload updates pane composition without decoding or texture upload, and minimum contrast intentionally ignores image pixels. OpenGL/Vulkan RHI integration covers the material and retained one-texture upload telemetry. The separately tracked alpha-blending pipeline implements native and linear modes, while linear-corrected remains partial at Qt's text-coverage boundary."
-    },
-    "background-image-position": {
-      "status": "supported",
-      "note": "All nine full-pane anchors are implemented, with both center and center-center mapping to the middle. Each split has an independent origin, position reload performs no decode or texture upload, and right/bottom anchors retain negative offsets when a fitted image is larger than the pane. Pure placement and OpenGL-RHI material integration are covered."
-    },
-    "background-image-repeat": {
-      "status": "supported",
-      "note": "The default-false boolean repeats the fitted tile in both axes before and after its pane-local anchor, and reload reuses the existing decoded image and texture. The public-QSG RHI material uses Ghostty's explicit positive modulo coordinates with a clamped linear texture, avoiding an ordinary repeated sampler's cross-seam filtering. Fractional-DPR hard-seam behavior passes RHI integration; the software scene-graph fallback retains its documented repeated-texture seam approximation."
-    },
-    "background-opacity": {
-      "status": "supported",
-      "note": "The finalized f64 defaults to 1, is clamped to [0, 1], and reloads every existing and future split pane without replacing its scene root, session worker, terminal, or PTY. The pane base layer uses Ghostty's rounded 8-bit alpha. Qt requests an alpha-capable native surface before any window and the QML terminal host is transparent, while retained top or bottom chrome and the ordinary interactive split dividers remain opaque. Offscreen coverage verifies the Qt surface format, divider fallback, and emitted alpha values; final hardware/compositor output remains an interactive Wayland check."
-    },
-    "background-opacity-cells": {
-      "status": "supported",
-      "note": "The exact default-false boolean preserves style and erase-cell explicit background provenance from the public libghostty render-cell query even when its RGB equals the terminal background. Explicit cell backgrounds are opaque when false and use Ghostty's truncated 8-bit background opacity when true; selection, candidate or selected search, and inverse backgrounds remain opaque, while default cells expose the rounded pane base. Minimum contrast composes the quantized linear-premultiplied cell layer over that base before evaluating glyphs and decorations. Reload is GUI-owned and pane-local."
-    },
-    "bell-audio-path": {
-      "status": "supported",
-      "scope": "qt_mapping",
-      "note": "The pinned parser finalizes relative paths and preserves required/optional provenance through the strict typed wire. With audio enabled, every pane lazily owns one reusable QMediaPlayer/QAudioOutput pipeline, rebuilds only for a changed identity or invalid medium, retries inaccessible paths on later bells, and keeps optional failures quiet."
-    },
-    "bell-audio-volume": {
-      "status": "supported",
-      "scope": "qt_mapping",
-      "note": "The raw finite f64 value is transported without premature normalization, applies live on the next BEL, and is clamped to zero through one only at the QAudioOutput playback boundary."
-    },
-    "bell-features": {
-      "status": "supported",
-      "scope": "qt_mapping",
-      "note": "The strict schema transports Ghostty's complete finalized system/audio/attention/title/border set. Every BEL independently calls Qt's best-effort public platform beep for system and replays the pane-local custom source for audio, while also latching its source pane and publishing an every-event GUI notification. Focus, non-modifier key or IME interaction, and any terminal mouse press clear that pane. Title prefixes only the active surface's displayed raw-derived tab/window title, border uses a three-pixel half-opacity input-transparent per-pane overlay, and attention requests QWindow's native indefinite alert only for an inactive host. Inactive tabs retain a separate stable attention marker until selected, including bells from non-active splits. All live changes apply to the next BEL without clearing the latch or changing pane/grid/PTY identity."
-    },
-    "bold-color": {
-      "status": "supported",
-      "note": "The renderer implements Ghostty's unset, bright-palette, and fixed-color bold foreground rules while retaining palette/direct/default color provenance."
-    },
-    "click-repeat-interval": {
-      "status": "supported",
-      "note": "The strict config projection carries Ghostty's finalized whole-millisecond value, including the Linux 500 ms default. Qt converts a nonzero arbitrary-origin millisecond window-system timestamp to nanoseconds with checked multiplication; zero or overflow produces an untimed press. The worker supplies the live interval and physical cell width, and libghostty accepts a repeat at inclusive consecutive-time and Euclidean-distance thresholds, with distance anchored to the original first press. It owns cell/word/line classification and clamps later repeats at triple; Linux Ctrl maps triple-click to OSC 133 semantic output while Meta/Super remains line. A Shift-left released by the effective mouse-shift-capture policy becomes an immediate drag only when a selection exists and its comparable timestamp is strictly more than the live interval after the retained ordinary press; the exact boundary remains an ordinary repeat candidate. The extension preserves libghostty's tracked anchor and selection behavior without replacing the retained press time, and Linux Ctrl+Alt selects rectangle mode for ordinary drags or delayed Shift extension. The pointer becomes a crosshair for Ctrl+Alt normally or Shift+Ctrl+Alt under raw DEC tracking, below hidden/link cursor priority. Qt ignores MouseButtonDblClick because its physical press already arrived. Reload affects the next press without reshaping an installed selection; ordinary release preserves repeat history, reported physical buttons reset it, and reported motion, wheels, or captured fractional scrolling preserve it."
-    },
-    "class": {
-      "status": "supported",
-      "scope": "qt_mapping",
-      "note": "The finalized optional raw value is resolved once before D-Bus arbitration or native surface creation. A valid GApplication/D-Bus application ID becomes both Qt's Wayland desktop-file identity and the single-instance service name; an invalid configured value emits a byte-exact diagnostic and falls back to the validated build application ID. Live reload deliberately cannot change this startup-only process identity."
-    },
-    "clipboard-codepoint-map": {
-      "status": "partial",
-      "note": "Schema v1 preserves Ghostty's finalized ordered u21 ranges and codepoint-or-UTF-8 replacements, including empty deletion strings and non-scalar codepoints. SessionWorker applies the live list after plain selection formatting with Ghostty's last-overlapping-entry-wins rule, emitting U+FFFD for a non-scalar codepoint exactly like the pinned formatter. Explicit action/context copies, automatic primary/standard copies, and select_all share that worker-atomic path; title, URL, terminal-file, and search consumers remain unmapped. Status is partial because automatic and mixed copies still lack Ghostty's exact styled MIME payload and upstream must define mapping behavior for VT/HTML."
-    },
-    "clipboard-paste-bracketed-safe": {
-      "status": "supported",
-      "note": "The live default-true policy trusts newlines only while Ghostty reports bracketed-paste mode, still rejects an embedded end fence, and shares one mode snapshot with encoding."
-    },
-    "clipboard-paste-protection": {
-      "status": "supported",
-      "note": "The live default-true policy is enforced on SessionWorker. Unsafe immutable text is correlated through pane-local request IDs; confirmation re-snapshots mode, and rejected or cancelled requests do not scroll, write, or mark activity."
-    },
-    "clipboard-read": {
-      "status": "blocked_upstream",
-      "note": "Public libghostty-vt explicitly ignores OSC 52 clipboard-read requests instead of publishing them through the host callback. Exact Ghostty ask/allow/deny reads therefore require a new public normalized request contract; ghostty-qt does not add a parallel escape parser."
-    },
-    "clipboard-trim-trailing-spaces": {
-      "status": "supported",
-      "note": "The current selection is formatted on the session thread through libghostty's plain formatter with the live trim option and soft-wrap unwrapping."
-    },
-    "clipboard-write": {
-      "status": "supported",
-      "note": "The exact ask, allow, and deny values cross the strict config wire, default to allow, and reload live. Public libghostty-vt normalizes OSC 52 and OSC 1337 into ordered, owned, binary-safe requests; allow commits all MIME representations atomically, deny returns a denied result without queuing an effect or advertising DA1 feature 52, and ask advertises feature 52 but enters one bounded FIFO confirmation at a time. Standard maps only to Qt's standard clipboard, while selection and primary both map only to the available Linux selection clipboard. Stable PaneId validation discards exited or removed sources, the workspace retains at most 64 requests and 64 MiB, and an ask decision may be remembered for only its split until the next config reload."
-    },
-    "command": {
-      "status": "supported",
-      "note": "The exact pinned parser supplies a nullable raw-byte shell/direct union. Shell values execute byte-for-byte through /bin/sh -c; direct values preserve the parser's literal-space argv boundaries and use the launching process PATH for bare argv[0] lookup before finalized env overrides are installed. The finalized default shell follows Ghostty's SHELL/passwd selection, and reload affects future panes."
-    },
-    "command-palette-entry": {
-      "status": "supported",
-      "scope": "qt_mapping",
-      "note": "Finalized title, description, action key, and canonical serialized action values populate each window-local Qt model after unsupported frontend actions are removed. On every palette opening they are combined with current typed surface-target rows, then prepared and deterministically sorted using colon-normalized case-insensitive keys. Filtering case-folds the query against cached keys for that row snapshot, equivalent replacement preserves selection by typed command identity, and configured actions close the modal before executing against the source window's then-current active pane."
-    },
-    "config-default-files": {
-      "status": "supported",
-      "note": "The Ghostty CLI-only boolean is parsed with the pinned boolean grammar and forwarded to every private-helper query. False discards standard user configuration candidates before replaying explicit CLI/config-file sources; successful snapshots omit those candidates from the live watcher set while still retaining explicit recursive includes. A config-file occurrence intentionally cannot toggle the value, matching pinned Ghostty, and single-instance launch forwarding preserves an explicit startup override."
-    },
-    "config-file": {
-      "status": "supported",
-      "note": "The pinned parser owns recursive include precedence and diagnostics. Existing include files, directories containing missing optional or required includes, atomic replacements, and failed-load retries all participate in asynchronous live reload while the last valid generation remains active."
-    },
-    "confirm-close-surface": {
-      "status": "partial",
-      "note": "false, true, and always map to live workspace close policy. Linux PTY foreground groups and a command-submission latch cover ordinary jobs and pre-output races. Successful shell injection protects startup until its first OSC 133 prompt; the exact public cursor-at-prompt query then distinguishes same-process-group shell builtins, alternate-screen work, and a returned prompt, while query failure remains active after integration is expected or observed. Status remains partial because the public API does not expose a terminal-owned integration-seen bit; shells without installed integration retain the foreground/latch fallback."
-    },
-    "copy-on-select": {
-      "status": "partial",
-      "note": "Linux false, primary-only true, and clipboard destination modes apply live, including standard fallback when primary selection is unavailable. Automatic copies use the same live trim and clipboard-codepoint-map path as explicit plain copies, but currently contain only plain text instead of Ghostty's mixed plain-plus-HTML payload; the missing exact public formatter contract is tracked in REQUIRES_UPSTREAM.md."
-    },
-    "cursor-click-to-move": {
-      "status": "blocked_upstream",
-      "note": "Ghostty gates this feature on its private live semantic click mode and computes exact prompt-relative shell movement inside Surface. Official libghostty-vt exposes neither that mode nor the cursor-click movement operation; duplicating it from visible cells would diverge across wrapped prompts, continuations, and compressed scrollback."
-    },
-    "cursor-color": {
-      "status": "supported",
-      "note": "The exact pinned parser supplies explicit colors and cell foreground/background aliases; live default updates preserve terminal OSC 12 overrides and OSC 112 reveals the newest configured default."
-    },
-    "cursor-opacity": {
-      "status": "supported",
-      "note": "Configured cursor opacity is clamped and applied to the focused cursor; an unfocused cursor becomes Ghostty's opaque hollow outline."
-    },
-    "cursor-style": {
-      "status": "supported",
-      "note": "Block, bar, underline, and hollow-block defaults apply to new and existing panes while terminal DECSCUSR state survives reload until reset."
-    },
-    "cursor-style-blink": {
-      "status": "partial",
-      "note": "The configured default is applied, but public libghostty-vt exposes only a boolean setter and cannot preserve Ghostty's explicit true/false precedence over DEC mode 12."
-    },
-    "cursor-text": {
-      "status": "supported",
-      "note": "Fixed, cell-foreground, and cell-background cursor text colors are resolved per rendered cursor cell with Ghostty's unset fallback."
-    },
-    "custom-shader": {
-      "status": "supported",
-      "note": "Repeatable finalized required/optional paths preserve declaration order and empty-reset semantics. Sources up to 4 MiB are compiled asynchronously into validated SPIR-V, desktop GLSL, and GLES QSB variants; identical concurrent pane work coalesces and structurally validated outputs use a content-addressed disk cache, so same-path edits are detected without blocking the GUI or render thread. One physical-resolution Qt Quick source layer and a retained QRhi ping-pong executor apply the complete ordered chain to pane-local terminal and Kitty content through the pinned ShaderToy mainImage, iChannel0, cursor constants, bottom-left coordinates, lifecycle iPaneTransition, and std140 uniform contract while leaving Qt chrome outside. Qt-owned enter/exit shader stages are phase-gated pass-through filters composed after the persistent Ghostty chain; finite durations animate visible pane pixels independently of the continuous animation policy. Close retires pane IDs and stops workers immediately, then defers pane, tab, or window destruction through a bounded final-frame grace. The final pass renders inline and chains longer than two passes retain at most two intermediate textures. Missing optional files are skipped; any missing required file or invalid program disables the affected chain and publishes a visible diagnostic, while a runtime retained-pipeline failure queues a pane-local fallback to direct unfiltered rendering and only retries retained rendering after a newer successful compile or scene-graph reset. Qt Quick's OpenGL or Vulkan RHI backend is required: other backends leave the terminal unfiltered, do not delay lifecycle close, and report that limitation; final GPU/compositor presentation remains an interactive check."
-    },
-    "custom-shader-animation": {
-      "status": "supported",
-      "note": "The pinned false, true, and always values map to never, focused, and always animation. Frame-swapped pacing advances time, delta, and frame while retained immutable snapshots carry the latest cursor, focus, palette, and color state. Updating an animated effect does not rebuild terminal cells or dirty retained row caches. Animation stops when policy, pane visibility, focus, window exposure, or backend support makes another frame unnecessary."
-    },
-    "desktop-notifications": {
-      "status": "supported",
-      "note": "The finalized default-true boolean crosses strict schema v5 and applies live as application-owned LaunchOptions policy. The pinned synchronous libghostty-vt callback normalizes OSC 9 and OSC 777; its sized borrowed strings are validated, deep-copied, bounded, and preserved in callback order before crossing the queued worker/controller/pane path. The application delivers native Linux notifications through org.freedesktop.Notifications, defaults an empty title to Ghostty, matches Ghostty's process-global one-second and sequential-identical five-second limits, reuses notification IDs by body, and routes default-action clicks through revalidated stable WindowId/PaneId targets. Backend absence and stale targets are non-fatal."
-    },
-    "enquiry-response": {
-      "status": "supported",
-      "note": "The strict config projection preserves Ghostty's finalized raw bytes, including embedded NUL, and the empty default is silent. Every parser-normalized ENQ (0x05) invokes the public libghostty callback once; the adapter publishes each non-empty value byte-exactly through the existing ordered public PTY sink and returns an empty callback slice, bypassing the standalone bridge's private 255-byte scratch-buffer ceiling without parsing terminal input twice or producing a duplicate reply. Existing panes replace their worker-owned response before later VT parsing, and terminal-protocol writes remain independent of read-only surface-input policy. Adapter and PTY integration tests cover empty, 1, 255, 256, 1024, and 4096-byte values, embedded NUL/high bytes, multiple ENQs, reply ordering, and live reload."
-    },
-    "env": {
-      "status": "supported",
-      "note": "The private typed projection preserves Ghostty's finalized ordered raw-byte override map, including repeated-key replacement, configured-key removal, whole-map reset, and include precedence. Each pane snapshots the map at construction and applies it byte-exactly after inherited and terminal-injected values; a concrete working directory writes PWD last, while a configured PATH is visible to the child without changing parent-PATH executable lookup. Removal/reset do not unset inherited variables. Embedded NUL is rejected as an execve-safety hardening."
-    },
-    "faint-opacity": {
-      "status": "supported",
-      "note": "Configured faint opacity applies to glyphs and text decorations without dimming cell backgrounds."
-    },
-    "focus-follows-mouse": {
-      "status": "supported",
-      "note": "The exact default-false boolean reloads live per pane. Accepted hover and button-drag motion focuses an unfocused pane only while its existing Qt window is active, so an inactive host is never raised and retains its current focus item. The shared physical-pixel filter rejects synthetic same-position motion and accumulates subpixel movement against the last accepted position. Focus publication is guarded against synchronous pane or workspace destruction."
-    },
-    "font-codepoint-map": {
-      "status": "partial",
-      "note": "The strict schema preserves finalized u21 ranges and family strings. GUI-thread resolution compiles overlaps in O(n log n) into sorted disjoint later-entry-wins intervals, including an unavailable latest face masking an older entry, and interns repeated resolved families in a compact face table. Cell lookup is logarithmic, always selects the mapped regular face, requires complete grapheme coverage, and ignores ZWJ plus text/emoji variation selectors for coverage. The immutable program is shared across panes and live reload replaces it without pane or PTY recreation. Status remains partial because public libghostty-vt does not expose Ghostty's resolved face collection, codepoint resolver, or face coverage decisions, so Qt owns platform discovery and glyph support."
-    },
-    "font-family": {
-      "status": "partial",
-      "note": "Pinned parsing, exact CLI precedence, four-role propagation, live reload, and ordered Qt fallback families are implemented. Equal effective font inputs share one weak-cached immutable program across panes and DPRs, and Qt font-database changes invalidate every live pane's program. Status remains partial because Ghostty's embedded production fallback stack and resolver are not exposed through public libghostty-vt, so Qt's platform resolver supplies the final fallback behavior."
-    },
-    "font-family-bold": {
-      "status": "partial",
-      "note": "The finalized ordered family list, role inheritance, synthesis permission, and live replacement are preserved. A disabled bold style uses the regular role, while a missing configured bold face may request Qt synthesis when permitted. Status remains partial because Qt owns final family substitution, fallback order, and native-versus-synthetic face selection."
-    },
-    "font-family-bold-italic": {
-      "status": "partial",
-      "note": "The finalized ordered family list, role inheritance, synthesis permission, and live replacement are preserved. A disabled bold-italic style uses the regular role, while a missing configured combined face may request Qt synthesis when permitted. Status remains partial because Qt owns final family substitution, fallback order, and native-versus-synthetic face selection."
-    },
-    "font-family-italic": {
-      "status": "partial",
-      "note": "The finalized ordered family list, role inheritance, synthesis permission, and live replacement are preserved. A disabled italic style uses the regular role, while a missing configured italic face may request Qt synthesis when permitted. Status remains partial because Qt owns final family substitution, fallback order, and native-versus-synthetic face selection."
-    },
-    "font-feature": {
-      "status": "partial",
-      "note": "The pinned feature parser supplies the complete ordered list, including implicit defaults and duplicate tags; later tags overwrite earlier ones in Qt's shaping font while a feature such as pwid cannot alter the regular face's authoritative grid metrics. Compatible cells are shaped together, programming ligatures may retain non-grid internal caret positions when Qt reports a grid-aligned shaping cluster, and reload replaces the typography without pane, terminal, or PTY recreation. Malformed cluster metadata or a validated physical-grid mismatch retains exact per-cell fallback. Status remains partial because public libghostty-vt does not expose Ghostty's HarfBuzz feature application, selected faces, or positioned glyph plan, so QTextLayout owns the final shaping result."
-    },
-    "font-shaping-break": {
-      "status": "partial",
-      "note": "The finalized cursor break flag reloads live. Maximal row runs break at font, foreground, complete style, selection, invisible cells, defensive plain fi/fl/st pairs, and optionally the logical cursor cell; wide spacers stay attached to their head. The renderer first validates every QTextLayout boundary in physical pixels. If only internal caret positions differ, it derives shaping clusters from Qt's glyph string indexes and instead validates cluster starts plus the run endpoint, permitting safe multi-cell programming ligatures. Incomplete or inconsistent cluster metadata and any validated grid mismatch fall back to exact per-cell placement for the run. Status remains partial because Ghostty's private run iterator and positioned glyph plan are not available through public libghostty-vt, so final cluster placement remains Qt-owned."
-    },
-    "font-size": {
-      "status": "supported",
-      "note": "The pinned f32 value, exact CLI precedence, initial geometry, inheritance, and live reload are implemented. Manually adjusted panes retain their local size while adopting other typography changes; reset_font_size restores the newest live default and resumes following reloads."
-    },
-    "font-style": {
-      "status": "partial",
-      "note": "Ghostty's automatic, disabled, and named alternatives cross the typed wire and reload live; pinned runtime semantics normalize disabled regular style to automatic. Status remains partial because Qt owns named-style substitution and final face selection rather than Ghostty's Fontconfig and FreeType collection."
-    },
-    "font-style-bold": {
-      "status": "partial",
-      "note": "Ghostty's automatic, disabled, and named alternatives select the bold role and reload live. Disabled uses the regular role; a missing automatic or named role requests synthesis only when its permission is enabled. Status remains partial because Qt owns exact style matching and native-versus-synthetic face selection."
-    },
-    "font-style-bold-italic": {
-      "status": "partial",
-      "note": "Ghostty's automatic, disabled, and named alternatives select the bold-italic role and reload live. Disabled uses the regular role; a missing automatic or named role requests synthesis only when its permission is enabled. Status remains partial because Qt owns exact style matching and native-versus-synthetic face selection."
-    },
-    "font-style-italic": {
-      "status": "partial",
-      "note": "Ghostty's automatic, disabled, and named alternatives select the italic role and reload live. Disabled uses the regular role; a missing automatic or named role requests synthesis only when its permission is enabled. Status remains partial because Qt owns exact style matching and native-versus-synthetic face selection."
-    },
-    "font-synthetic-style": {
-      "status": "partial",
-      "note": "The finalized bold, italic, and bold-italic synthesis permissions cross the typed schema and reload live. Native role faces are preferred; an allowed missing automatic or named styled role requests Qt synthesis, while a disabled permission or style uses the regular role. Status remains partial because Qt does not expose Ghostty's backend-specific FreeType synthetic-face construction or its exact bold and italic transforms."
-    },
-    "font-thicken": {
-      "status": "not_applicable",
-      "scope": "macos",
-      "note": "Upstream implements stroke thickening only in its macOS CoreText renderer."
-    },
-    "font-thicken-strength": {
-      "status": "not_applicable",
-      "scope": "macos",
-      "note": "This value only controls the macOS-only font-thicken renderer path."
-    },
-    "font-variation": {
-      "status": "partial",
-      "note": "The finalized ordered regular-face axis list crosses schema v5 as exact f64 bit patterns, including non-finite values. The first matching tag is consumed before validity and range checks, matching the pinned FreeType duplicate policy, and valid axes reload live. Status remains partial because Qt narrows applied values to its float axis API and does not expose Ghostty's selected FreeType face and variation-coordinate pipeline."
-    },
-    "font-variation-bold": {
-      "status": "partial",
-      "note": "The finalized bold-face variation list preserves exact f64 bits, order, and first-matching-tag semantics before Qt applies supported in-range axes. Final face selection and variation coordinates remain Qt-owned rather than Ghostty-owned."
-    },
-    "font-variation-bold-italic": {
-      "status": "partial",
-      "note": "The finalized bold-italic-face variation list preserves exact f64 bits, order, and first-matching-tag semantics before Qt applies supported in-range axes. Final face selection and variation coordinates remain Qt-owned rather than Ghostty-owned."
-    },
-    "font-variation-italic": {
-      "status": "partial",
-      "note": "The finalized italic-face variation list preserves exact f64 bits, order, and first-matching-tag semantics before Qt applies supported in-range axes. Final face selection and variation coordinates remain Qt-owned rather than Ghostty-owned."
-    },
-    "foreground": {
-      "status": "supported",
-      "note": "The exact pinned parser supplies the color and the libghostty adapter applies it to new and existing panes."
-    },
-    "freetype-load-flags": {
-      "status": "partial",
-      "scope": "linux",
-      "note": "All five finalized booleans cross the strict typed schema and reload live. Qt maps disabled hinting, effective light versus full hinting, and monochrome antialias policy to public QFont controls. Force-autohint and autohint are transport-only no-ops and are excluded from the effective font-program cache key, as is light while hinting is disabled. Status remains partial because public Qt cannot request Ghostty's exact FreeType load flags or expose the resulting face options."
-    },
-    "fullscreen": {
-      "status": "supported",
-      "scope": "linux",
-      "note": "The exact pinned enum defaults false. True and every non-native variant map to Qt native fullscreen on Linux for each subsequently created window; reload never changes existing window state. When maximize is also true, action- and compositor-driven fullscreen exits restore maximized."
-    },
-    "grapheme-width-method": {
-      "status": "supported",
-      "note": "The finalized legacy/unicode enum initializes public libghostty-vt mode 2027 through OPT_MODE_DEFAULT before the first VT write, so both the current value and the value restored by RIS match Ghostty. Application mode changes remain terminal-owned."
-    },
-    "input": {
-      "status": "supported",
-      "note": "The strict helper exports Ghostty's finalized ordered raw/path variants as lossless byte arrays. Before creating launch pipes or forking, SessionWorker resolves every path relative to the frontend process working directory, requires a regular readable file, and reads at most the exact 10 MiB limit; any failure aborts the entire pane without a child or cgroup move. Distinct chunks retain source order and are queued before started is published, so later GUI input cannot overtake them. Reload affects only subsequently constructed panes, including leaving an already deferred pane's immutable launch snapshot unchanged."
-    },
-    "initial-command": {
-      "status": "supported",
-      "note": "The tagged command replaces ordinary command only for the first session that successfully initializes libghostty-vt. Suppressed startup, close-before-deferred-start, and terminal initialization failure preserve the process-wide FIFO lease; child-launch failure consumes it. Reload can replace the pending value before reservation, an existing holder keeps its immutable snapshot, and a consumed lease cannot be re-armed. Explicit `-e` or retained `--` CLI argv has first-pane precedence, and later surfaces use ordinary command."
-    },
-    "initial-window": {
-      "status": "supported",
-      "scope": "linux",
-      "note": "The exact default-true boolean is sampled once per launching process. False starts a primary with no QML root or surface and makes an occupied-name secondary exit successfully without activation; a fresh true launcher still activates that false-started primary. The installed D-Bus service explicitly starts a unique false-initial-window host, then its queued standard activation creates exactly one first surface. Explicit bootstrap CLI values outrank configuration and reload. Local/application/process/desktop creation remains unconditional. The first session that successfully initializes receives the current one-shot program and hold values. Construction or presentation failure before libghostty-vt initialization, terminal initialization failure, and closing a deferred root before start do not consume them; a later child-launch failure does. Later sessions use ordinary launch defaults, and reload alone creates or closes nothing. Following pinned GTK's executable requested-window guard, a process that has never created a surface stays resident; the documented initial-delay behavior is not reachable because GTK exposes no startup quit-timer hook."
-    },
-    "image-storage-limit": {
-      "status": "supported",
-      "note": "The exact finalized u32 byte limit defaults to 320,000,000, initializes both libghostty screens, and applies live without recreating the pane or PTY. Zero disables and clears image storage. Ordinary Kitty placements use owned generation-stamped snapshots and retained Qt textures across all three z layers. A reverse render-order pass omits an older placement only after a successfully imported fully opaque placement at the same z and exact physical destination covers it, preserving libghostty state so later deletion can reveal the predecessor. Every asset retains one packed straight-alpha RGBA8 CPU image and one GPU texture; explicit raw RHI upload plus shader-time premultiplication preserves straight-alpha filtering while halving the former translucent two-plane footprint. Unicode virtual placements remain partial because public libghostty-vt does not expose their expanded viewport fragments. Renderer CPU/GPU mirrors remain additional to the configured Ghostty storage budget, and REQUIRES_UPSTREAM.md records the pinned library's tracked-pin leak during image eviction and external-placement replacement."
-    },
-    "keybind": {
-      "status": "partial",
-      "note": "A private versioned export carries Ghostty's finalized root and named-table bindings. Per-surface table stacks, shared-prefix sequences, physical/Unicode/catch-all triggers, chains, local flags, stage-time VT encoding, invalid replay, application-wide all/global dispatch, and Linux XDG portal registration are implemented for the supported action subset. XKB-resolved semantic keypad identities keep NumLock-off navigation distinct from the numeric identities at the same hardware locations, including canonical/W3C and legacy kp_* trigger spellings. Qt preedit composition is snapshotted across root and pane dispatch plus deferred replay; active-composition non-modifier keys bypass binding tries and carry Ghostty's composing flag, preventing duplicate legacy/Kitty bytes while retaining modifier reporting and delivering the later IME commit once. Selection-dependent copy, search, endpoint adjustment, and viewport movement use correlated worker-authoritative performability across separate input events; local and broad chains wait for ordered GUI effects before continuing. Portal registration intentionally matches the pinned GTK frontend's root/direct/single-action restriction."
-    },
-    "link": {
-      "status": "blocked_upstream",
-      "note": "User-defined regular expressions and arbitrary link actions are not implemented because the pinned Ghostty RepeatableLink.parseCLI returns error.NotImplemented. The built-in default matcher controlled by link-url is supported independently, alongside explicit OSC 8 destinations."
-    },
-    "link-previews": {
-      "status": "supported",
-      "note": "The exact true/false/osc8 policy previews all, no, or only OSC 8 accepted destinations. Live reload is pane-local and frontend-only: the bounded, middle-elided overlay safely escapes raw destination controls, replaces invalid UTF-8, relocates from bottom-left to bottom-right when entered, and reuses a hover that remains on the terminal link. Removing an occupied guard resumes physical hit testing and may query the newly exposed cell."
-    },
-    "link-osc8": {
-      "status": "supported",
-      "note": "The exact default-true boolean independently gates explicit OSC 8 highlighting, previews, copying, context-link selection, and activation. Live disable cancels worker tracking plus armed GUI hover/activation state without changing regex links controlled by link-url."
-    },
-    "link-url": {
-      "status": "supported",
-      "note": "The pinned default URL/path expression and vendored Oniguruma semantics run on complete semantic logical lines. The setting defaults true, reloads live, and controls only regex links; explicit OSC 8 destinations remain interactive when disabled."
-    },
-    "maximize": {
-      "status": "supported",
-      "note": "The exact default-false boolean presents every subsequently created window maximized. Initial, action-created, resident-replacement, and desktop-activated windows share the same creation path; reload affects future windows without mutating existing state."
-    },
-    "middle-click-action": {
-      "status": "supported",
-      "note": "Linux primary-paste and ignore reload live; primary paste follows Ghostty's copy-on-select-dependent source choice and primary-to-standard fallback while terminal mouse reporting retains precedence."
-    },
-    "minimum-contrast": {
-      "status": "supported",
-      "note": "The finalized f64 threshold defaults to 1, is clamped to [1, 21] by Ghostty, and reloads every existing pane without terminal or PTY replacement. The Qt renderer mirrors Ghostty's Linux cell shader: bold, inverse, selection/search colors, and faint alpha resolve first; WCAG contrast then uses linear premultiplied color against the effective cell background, replacing a strictly lower ratio with opaque white or black according to the stronger extreme, with ties choosing black. Glyphs and decorations are evaluated independently, the five pinned terminal-graphics codepoint ranges exempt only their glyph, block cursor text overrides contrast last, and cursor sprites participate after cursor opacity. Background images and Kitty content are composed independently, and minimum contrast intentionally does not sample their pixels; color emoji remains unavailable and the existing Qt preedit overlay remains a frontend-owned approximation."
-    },
-    "notify-on-command-finish": {
-      "status": "blocked_upstream",
-      "note": "Exact never, unfocused, and always policy needs Ghostty's normalized OSC 133 command-finished event. Standalone public libghostty-vt retains semantic prompt rows but does not publish command start/finish timing to its host."
-    },
-    "notify-on-command-finish-action": {
-      "status": "blocked_upstream",
-      "note": "Bell and native-notification actions depend on the missing standalone libghostty-vt command-finished effect and cannot be reconstructed exactly from rendered prompt rows."
-    },
-    "notify-on-command-finish-after": {
-      "status": "blocked_upstream",
-      "note": "The exact duration threshold depends on ordered, normalized OSC 133 command-start and command-finish effects, which standalone public libghostty-vt does not expose. Matching pinned Ghostty, the embedding surface owns the monotonic clock and computes the C-to-D duration."
-    },
-    "mouse-hide-while-typing": {
-      "status": "supported",
-      "note": "The exact default-false boolean reloads live per pane. A nonempty, non-repeating text press hides only when it is forwarded to the terminal, including invalid-sequence flush and unavailable performable fallback; consumed bindings, staged leaders, modifiers, releases, raw actions, and paste are excluded. A nonempty IME commit hides while preedit alone does not. Physical motion of at least one device pixel, pointer leave, button press/release, wheel input, focus in/out, or disabling reveals it. Deferred keys and action chains retain their original pointer-activity epoch so late fallback cannot re-hide after newer interaction or become retroactively eligible when the policy is enabled. The pane cursor arbiter gives blank-while-typing priority over a retained hyperlink hand, rectangle crosshair, and raw-state-derived arrow or I-beam."
-    },
-    "mouse-reporting": {
-      "status": "supported",
-      "note": "The default-true policy gates terminal-requested DEC mouse tracking per pane without changing raw terminal mode. The conjunction is reevaluated per pointer event. Independently of that frontend gate, ordinary non-overlapping raw DEC state changes the base pointer from an I-beam to an arrow, while Shift temporarily restores the I-beam regardless of mouse-shift-capture policy. Reported physical buttons clear selection and reset repeat-click history, motion does neither, and wheels plus captured fractional scrolling clear selection while preserving that history. Raw DEC capture still governs live mouse-shift-capture modifier normalization; reload replaces local runtime toggles, and future panes use configured state. Arbitrary OSC 22 application shapes and full Ghostty's overlapping-mode transition ordering remain blocked on a public effective-shape query tracked in REQUIRES_UPSTREAM.md."
-    },
-    "mouse-scroll-multiplier": {
-      "status": "supported",
-      "note": "The strict config projection preserves Ghostty's independently finalized precision and discrete values. Qt pixel deltas select precision input and fractional angle deltas select discrete input. Pane-local signed physical distance converts vertical input against cell height with the finalized multiplier; horizontal precision pixels accumulate independently against cell width without that multiplier, while horizontal discrete ticks round independently. Whole rows and columns cross once to the worker, which atomically chooses current DECSET 1007 alternate-screen conversion, effective raw DEC reporting, or typed viewport scrolling while retaining the pane-owned reporting policy. Alternate conversion consumes horizontal-only input, discards X when axes are simultaneous, emits DECCKM-aware Up/Down bytes, and clears selection only for nonzero rows. Raw reporting emits vertical buttons 4/5 before horizontal buttons 6/7; without effective reporting X is ignored. Captured sub-cell input clears selection only after a worker-owned DEC-state recheck. Read-only suppresses generated terminal input after local selection semantics. Live reload affects subsequent deltas without replacing the pane or discarding accumulated distance. A GUI dispatch is bounded to 10,000 steps per axis and retains excess precision movement. Pinned Surface.zig documents retaining post-row remainder but currently clears it by subtracting the untruncated amount; the Qt path intentionally implements the documented accumulator contract so high-resolution motion is not lost."
-    },
-    "mouse-shift-capture": {
-      "status": "partial",
-      "note": "The strict config projection transports false, true, always, and never, and reload applies to every existing pane without replacement. Always keeps Shift in captured DEC button input and never releases captured press/release and held-button motion for local selection, middle/right actions, and Ctrl+Shift links; those override-independent capture-routing branches are exact. True and false consistently use their configured capture/release fallback for those same routes, but cannot honor a later XTSHIFTESCAPE request because official libghostty-vt does not expose its internal unset/false/true flag. Matching Ghostty, captured wheel/fractional scrolling and buttonless DEC-motion reporting remain reported regardless of this setting, while buttonless Ctrl+Shift hover still consults it for local hyperlink eligibility. A locally routed delayed Shift-left extends an existing selection through the retained libghostty gesture, including Linux Ctrl+Alt rectangle mode. The raw-DEC-aware Shift I-beam and Shift+Ctrl+Alt crosshair intentionally remain independent of this capture policy. Status remains partial solely because the required public XTSHIFTESCAPE query is tracked in REQUIRES_UPSTREAM.md."
-    },
-    "osc-color-report-format": {
-      "status": "blocked_upstream",
-      "note": "Standalone public libghostty-vt answers OSC 4, 10, and 11 internally but exposes no host option for Ghostty's none, 8-bit, and 16-bit report formats. A second OSC parser would risk duplicate and divergent replies."
-    },
-    "palette": {
-      "status": "supported",
-      "note": "All 256 effective defaults are applied, including explicit entries retained by generation. Config reload preserves terminal OSC 4 overrides, and OSC 104 resets entries to the newest configured or generated defaults."
-    },
-    "palette-generate": {
-      "status": "supported",
-      "note": "The private finalized-config helper mirrors Ghostty's termio.DerivedConfig gate before exporting the effective 256-entry palette: generation runs only when enabled and the finalized explicit-entry mask is nonempty. Indices 0-15 and every explicitly assigned extended entry remain unchanged. The remaining CIELAB cube uses the configured background, ANSI indices 1-6, and foreground as anchors, while the grayscale ramp interpolates from configured background to foreground. The ordinary appearance path applies the result live without replacing panes, preserves terminal OSC 4 overrides, and makes OSC 104 reveal the newest generated defaults."
-    },
-    "palette-harmonious": {
-      "status": "supported",
-      "note": "The helper passes the finalized value into Ghostty's exact generator. For generated light-theme palettes, false orients the extended cube and ramp dark-to-light while true retains the configured light-background-to-dark-foreground orientation. It has no effect for dark themes, disabled generation, or the empty-explicit-mask gate; dynamic theme changes recompute the selected finalized palette through the same live path."
-    },
-    "progress-style": {
-      "status": "supported",
-      "note": "The finalized default-true boolean crosses strict schema v5 as live application-owned policy. The public sized libghostty-vt callback is validated and copied into a bounded ordered effect; saturation compacts the prefix into an equivalent state transformation instead of losing the newest remove or value. Worker and controller preserve the resulting order. Every pane presents a two-pixel top overlay with normal, error, paused, determinate, and report-driven indeterminate pulse states, restarts one 15-second stale-report timer after each non-remove update, and hides on remove, expiry, session lifetime, or live disable without resurfacing merely on re-enable. Active-pane determinate values also populate the existing tab progress role."
-    },
-    "quit-after-last-window-closed": {
-      "status": "supported",
-      "scope": "portable",
-      "note": "The application-owned GUI-thread policy uses Ghostty's Linux default, disables Qt's implicit last-window exit, and applies only after a real final registered primary window closes. A never-requested initial-window=false process remains resident, matching pinned GTK's requested-window guard. False leaves the process-level config, shortcuts, reload, quit, any enabled activation endpoint, and new-window factory alive with zero QML roots; either a local action or an acknowledged true bare-secondary launch can register a replacement before presentation. Reload reconciles active state, an explicit command forces true, and explicit quit bypasses the policy."
-    },
-    "quit-after-last-window-closed-delay": {
-      "status": "supported",
-      "scope": "linux",
-      "note": "The private structured export preserves null versus configured zero and applies Ghostty's exact whole-millisecond truncation and c_uint saturation. One application-owned QChronoTimer starts only after a real final surface closes, is cancelled by a successfully presented replacement, remains armed after factory failure, is bypassed by explicit quit and explicit-command launches, and is reconciled on live reload without moving an identical deadline. Pinned config prose describes a never-windowed initial timeout, but the GTK App lacks the startup timer method; this follows executable GTK behavior while intentionally repairing its separate stale-timer reload edge."
-    },
-    "resize-overlay": {
-      "status": "supported",
-      "scope": "qt_mapping",
-      "note": "The exact always/never/after-first mode controls one input-transparent 120x40-logical-pixel QML item per pane. Only accepted authoritative column/row changes schedule it: synchronous bursts coalesce to the newest grid, a later grid restarts the single QChronoTimer, raw pixel and DPR-only changes are inert, and split panes remain independent. After-first suppresses each pane's initial grid and further layout settling during Ghostty's initial 250 ms delay; always includes the first ordinary immediate grid, while pre-worker compositor negotiation is never classified as a resize, and never cancels visible or queued presentation. Reload applies live."
-    },
-    "resize-overlay-duration": {
-      "status": "supported",
-      "scope": "qt_mapping",
-      "note": "The private structured export preserves Ghostty's finalized whole-millisecond duration. The pane timer applies the pinned GTK 250 ms minimum and 750 ms default; a duration reload restarts an already visible overlay from the new value."
-    },
-    "resize-overlay-position": {
-      "status": "supported",
-      "scope": "qt_mapping",
-      "note": "All seven exact values—center, top-left, top-center, top-right, bottom-left, bottom-center, and bottom-right—map in logical coordinates relative to the owning pane. Reload moves an existing visible overlay immediately, independently for split panes and at any device scale."
-    },
-    "right-click-action": {
-      "status": "partial",
-      "scope": "qt_mapping",
-      "note": "All five finalized values reload live and preserve DEC mouse-reporting precedence with the live mouse-shift-capture decision; raw DEC state governs modifier normalization even when mouse-reporting disables effective routing. Paste, copy, copy-or-paste, and ignore are resolved atomically against worker-owned selection state, and independently correlated paste effects are not lost to popup supersession. Context-menu preserves a containing selection or selects an exact-Ctrl OSC 8 cell, full default-regex match, or configured word before requesting one stable-pane-targeted, in-scene Qt Quick Popup.Item menu with Copy, Paste, Reset, a Split submenu containing Change Title, all four directional splits, and Close Split, a Tab submenu containing Change Tab Title, New Tab, and Close Tab, a Window submenu containing New Window and Close Window, and a Config submenu containing Open Configuration and Reload Configuration; its retained window-root click point is mapped into the chrome-adjusted application content item immediately before opening, and stale coordinates cannot reselect current content. A selected fixed action consumes its token once after the menu closes, restores the current active pane's focus, and then revalidates and dispatches to its stable origin; window-local actions retain the originating host while application actions cross the established controller path, and resulting modal prompts retain focus. Status remains partial because copy uses the current plain clipboard representation instead of Ghostty's mixed plain-plus-HTML contract, and the menu still omits Notify on Next Command Finish and Clear."
-    },
-    "search-background": {
-      "status": "supported",
-      "note": "Fixed, cell-foreground, and cell-background values apply live to candidate matches; the Ghostty default #FFE082 is retained when unset."
-    },
-    "search-foreground": {
-      "status": "supported",
-      "note": "Fixed, cell-foreground, and cell-background values apply live to candidate matches; the Ghostty default black is retained when unset."
-    },
-    "search-selected-background": {
-      "status": "supported",
-      "note": "Fixed, cell-foreground, and cell-background values apply live to the navigated match; the Ghostty default #F2A57E is retained when unset."
-    },
-    "search-selected-foreground": {
-      "status": "supported",
-      "note": "Fixed, cell-foreground, and cell-background values apply live to the navigated match; the Ghostty default black is retained when unset."
-    },
-    "selection-background": {
-      "status": "supported",
-      "note": "Fixed and cell-relative colors are resolved per rendered cell; unset uses the effective terminal foreground."
-    },
-    "selection-clear-on-copy": {
-      "status": "supported",
-      "note": "Explicit copy formats and emits the installed selection before optionally clearing it in the same session-thread operation; automatic copy-on-select never clears."
-    },
-    "selection-clear-on-typing": {
-      "status": "supported",
-      "note": "Live worker-side policy clears only after encoded non-modifier keys, with physical Escape overriding false. IME commit/preedit lifecycle is atomic; consumed bindings, staged/replayed leaders, raw actions, and paste remain excluded."
-    },
-    "selection-foreground": {
-      "status": "supported",
-      "note": "Fixed and cell-relative colors are resolved per rendered cell; unset uses the effective terminal background."
-    },
-    "selection-word-chars": {
-      "status": "supported",
-      "note": "The strict config projection carries Ghostty's finalized numeric Unicode-scalar array, including its mandatory U+0000 boundary, without reparsing the source string in Qt. Existing panes replace the value live, and the session worker supplies the newest ASCII or non-BMP boundaries to libghostty's selection-gesture press and drag events; reload alone does not reshape an installed selection."
-    },
-    "shell-integration": {
-      "status": "supported",
-      "scope": "linux",
-      "note": "All finalized none, detect, bash, elvish, fish, nushell, and zsh modes apply to future panes through a bounded private helper transaction that invokes the pinned Ghostty launcher implementation. Pristine pinned resources are staged in the build tree, patched with zero fuzz only so SSH wrappers call ghostty-qt, validated, installed relocatably, and located at runtime. Ghostty transforms the command and pre-override environment; finalized env and concrete PWD retain their later precedence. Explicit `-e` and retained `--` programs reproduce Ghostty's forced-mode downgrade to detection, and any helper/resource failure keeps the original child launch usable with a warning."
-    },
-    "shell-integration-features": {
-      "status": "supported",
-      "scope": "linux",
-      "note": "All cursor, sudo, title, ssh-env, ssh-terminfo, and path flags cross the strict config schema and use pinned Ghostty's deterministic GHOSTTY_SHELL_FEATURES serialization, including cursor blink versus steady. Serialization still runs when automatic injection is none so manually loaded scripts retain their configured behavior. The five staged SSH wrappers call the existing pinned +ssh delegation through GHOSTTY_BIN_DIR/ghostty-qt."
-    },
-    "split-divider-color": {
-      "status": "supported",
-      "scope": "qt_mapping",
-      "note": "The exact pinned parser supplies the optional RGB override; existing and future exact-gap divider handles recolor live, while unset preserves the Qt frontend default without changing geometry, opacity, or focus."
-    },
-    "split-inherit-working-directory": {
-      "status": "supported",
-      "note": "The exact boolean defaults true and reloads for future splits only. True uses the explicit source pane's newest accepted local-host-validated OSC 7 directory and otherwise falls back to working-directory; false always uses that fallback. POSIX path bytes remain lossless through stable source routing, nested splits consult the newest workspace base, font inheritance remains independent, and stale concrete directories fall back to process cwd while retaining pinned Ghostty's requested logical PWD."
-    },
-    "split-preserve-zoom": {
-      "status": "supported",
-      "note": "The exact canonical no-navigation default clears zoom after a successful goto_split, while navigation atomically transfers the zoomed presentation to the destination for tree-order and spatial navigation. Reload affects subsequent navigation without mutating current state; failed navigation is inert, and direct activation or structural split changes retain their existing unzoom behavior."
-    },
-    "tab-inherit-working-directory": {
-      "status": "supported",
-      "note": "The exact default-true boolean reloads for future tabs only. True uses the explicit action-target pane, or the current tab's recorded active pane for an empty-context UI request, and inherits its newest accepted local OSC 7 directory; false or a cleared/unavailable report uses working-directory. Stable broad fanout retains each source independently, including lossless non-UTF-8 POSIX path bytes."
-    },
-    "term": {
-      "status": "supported",
-      "note": "Ghostty's finalized non-empty raw bytes supply each pane's initially injected TERM and default empty input to xterm-ghostty. The private schema and direct bytewise envp insertion preserve non-UTF-8 values. Reload affects panes constructed afterward; already constructed panes, including deferred panes without a child yet, retain their snapshot. TERMINFO initially points at ghostty-qt's resolved private database and COLORTERM initially equals truecolor; finalized env entries may replace all three before exec."
-    },
-    "theme": {
-      "status": "supported",
-      "note": "Ghostty's pinned parser selects the requested light or dark branch before finalization, preserves explicit root assignments over theme values, and exports the complete resolved configuration. Qt system-scheme changes reload through the serialized last-known-good configuration service without replacing windows, panes, terminals, PTYs, or scene roots. Existing and potential source paths for both variants are watched, including the inactive branch and atomic replacements. The selected scheme also drives CSI ?996n and mode 2031 reports through public libghostty-vt."
-    },
-    "title": {
-      "status": "supported",
-      "note": "The finalized nullable configured title applies live as each pane's base title, preserving an explicit empty string. While present it masks terminal OSC title updates; clearing it retains the current base until the next OSC update. Reapplication replaces a set_surface_title base, while persistent surface and tab overrides continue to mask it. The native Qt window title is the exact effective active-tab title. Normal --title= launch parsing preserves quoted whitespace and explicit reset through the pinned config helper, prevents source-less activation from dropping the override, and is advertised to desktop terminal launchers."
-    },
-    "title-report": {
-      "status": "partial",
-      "note": "The finalized default-false security gate is passed to public libghostty-vt before the first VT write, so CSI 21 t is silent unless explicitly enabled. When enabled, standalone lib-vt reports its internal OSC title rather than Ghostty's configured frontend base title, so that configured-title distinction remains incomplete."
-    },
-    "undo-timeout": {
-      "status": "not_applicable",
-      "scope": "macos",
-      "note": "Upstream documents undo operations and their timeout as macOS-only; Linux has no corresponding surface undo lifecycle."
-    },
-    "unfocused-split-fill": {
-      "status": "supported",
-      "scope": "qt_mapping",
-      "note": "The nullable fixed RGB fill resolves live to the configured background rather than OSC 11 state. One retained, input-transparent final pane rectangle appears only for actually unfocused surfaces in structurally split tabs, and that pane's active search UI suppresses it across tab, zoom, window, and scene lifecycle changes."
-    },
-    "unfocused-split-opacity": {
-      "status": "supported",
-      "scope": "qt_mapping",
-      "note": "Ghostty's finalized pane opacity is clamped to [0.15, 1.0] and mapped live to its complementary two-decimal overlay alpha. The GUI-only retained rectangle updates existing and future panes without worker projection, text-row rebuilds, or layout work."
-    },
+        "auto-update-channel": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "background": {
+          "status": "supported",
+          "note": "The exact pinned parser supplies the color and the libghostty adapter applies it to new and existing panes."
+        },
+        "background-blur": {
+          "status": "supported",
+          "scope": "wayland",
+          "note": "The strict config wire preserves Ghostty's exact finalized i16 C value: false and zero disable, true maps to 20, explicit radii retain 0 through 255, and both negative macOS glass sentinels remain distinct. Normal and quick-terminal windows apply every nonzero value as KWin's whole-client BlurBehind request through the optional KF6 WindowSystem backend, after native surface creation and across live reload or surface recreation without touching panes, workers, terminals, or PTYs. KWin exposes only a boolean, so it ignores the retained radius; builds without KF6 WindowSystem, other Wayland compositors, and sessions where KWin does not advertise blur are deterministic no-ops."
+        },
+        "background-image": {
+          "status": "supported",
+          "note": "The pinned optional Path is exported as a finalized absolute path with required/optional provenance. Each pane asynchronously decodes only PNG or JPEG without EXIF auto-rotation, keeps its prior image until a changed path succeeds, unloads on null, and logs while retaining the prior asset on failure; reload does not reread its unchanged source or retry that pane's failed source. Each worker attempt opens the source once with nonblocking Linux descriptor flags, rejects non-regular files, derives an identity from path, device, inode, link count, size, and nanosecond mtime/ctime, and decodes that same handle. Identical identities coalesce through a weak process-wide packed straight-alpha RGBA8 cache with a bounded 250 ms failure throttle; identical-size/mtime atomic replacements cannot reuse or poison the old entry. Observable same-inode metadata changes bypass cached failures and get one coherent retry if they occur during decode. Every split owns independent full-surface placement, texture, and composition state. Explicit raw RHI upload preserves straight-alpha filtering and shader-time premultiplication with one four-byte-per-pixel CPU image and one four-byte-per-pixel GPU texture. Shader reflection, upload telemetry, OpenGL/Vulkan semantic integration, and deterministic replacement races cover that contract. The software scene-graph fallback remains an explicitly documented source-resolution approximation, and final real-Wayland compositor presentation remains interactive validation."
+        },
+        "background-image-fit": {
+          "status": "supported",
+          "note": "Contain, cover, stretch, and none use Ghostty's full-pane fit equations, including padding; contain is the default and none maps one decoded pixel to one physical device pixel. Resize, DPR, and fit reload recompute placement without another decode or upload. Pure geometry plus the packed-RGBA RHI material are covered, including fractional DPR."
+        },
+        "background-image-opacity": {
+          "status": "supported",
+          "note": "The exact finalized f32 defaults to 1 and remains an unclamped relative multiplier, including documented values above one. The packed-RGBA material uses the rounded global-background alpha: opaque source pixels reach min(global opacity times image opacity, 1), transparent pixels reveal the global background, and global opacity zero suppresses the image. Option-only reload updates pane composition without decoding or texture upload, and minimum contrast intentionally ignores image pixels. OpenGL/Vulkan RHI integration covers the material and retained one-texture upload telemetry. The separately tracked alpha-blending pipeline implements native and linear modes, while linear-corrected remains partial at Qt's text-coverage boundary."
+        },
+        "background-image-position": {
+          "status": "supported",
+          "note": "All nine full-pane anchors are implemented, with both center and center-center mapping to the middle. Each split has an independent origin, position reload performs no decode or texture upload, and right/bottom anchors retain negative offsets when a fitted image is larger than the pane. Pure placement and OpenGL-RHI material integration are covered."
+        },
+        "background-image-repeat": {
+          "status": "supported",
+          "note": "The default-false boolean repeats the fitted tile in both axes before and after its pane-local anchor, and reload reuses the existing decoded image and texture. The public-QSG RHI material uses Ghostty's explicit positive modulo coordinates with a clamped linear texture, avoiding an ordinary repeated sampler's cross-seam filtering. Fractional-DPR hard-seam behavior passes RHI integration; the software scene-graph fallback retains its documented repeated-texture seam approximation."
+        },
+        "background-opacity": {
+          "status": "supported",
+          "note": "The finalized f64 defaults to 1, is clamped to [0, 1], and reloads every existing and future split pane without replacing its scene root, session worker, terminal, or PTY. The pane base layer uses Ghostty's rounded 8-bit alpha. Qt requests an alpha-capable native surface before any window and the QML terminal host is transparent, while retained top or bottom chrome and the ordinary interactive split dividers remain opaque. Offscreen coverage verifies the Qt surface format, divider fallback, and emitted alpha values; final hardware/compositor output remains an interactive Wayland check."
+        },
+        "background-opacity-cells": {
+          "status": "supported",
+          "note": "The exact default-false boolean preserves style and erase-cell explicit background provenance from the public libghostty render-cell query even when its RGB equals the terminal background. Explicit cell backgrounds are opaque when false and use Ghostty's truncated 8-bit background opacity when true; selection, candidate or selected search, and inverse backgrounds remain opaque, while default cells expose the rounded pane base. Minimum contrast composes the quantized linear-premultiplied cell layer over that base before evaluating glyphs and decorations. Reload is GUI-owned and pane-local."
+        },
+        "bell-audio-path": {
+          "status": "supported",
+          "scope": "qt_mapping",
+          "note": "The pinned parser finalizes relative paths and preserves required/optional provenance through the strict typed wire. With audio enabled, every pane lazily owns one reusable QMediaPlayer/QAudioOutput pipeline, rebuilds only for a changed identity or invalid medium, retries inaccessible paths on later bells, and keeps optional failures quiet."
+        },
+        "bell-audio-volume": {
+          "status": "supported",
+          "scope": "qt_mapping",
+          "note": "The raw finite f64 value is transported without premature normalization, applies live on the next BEL, and is clamped to zero through one only at the QAudioOutput playback boundary."
+        },
+        "bell-features": {
+          "status": "supported",
+          "scope": "qt_mapping",
+          "note": "The strict schema transports Ghostty's complete finalized system/audio/attention/title/border set. Every BEL independently calls Qt's best-effort public platform beep for system and replays the pane-local custom source for audio, while also latching its source pane and publishing an every-event GUI notification. Focus, non-modifier key or IME interaction, and any terminal mouse press clear that pane. Title prefixes only the active surface's displayed raw-derived tab/window title, border uses a three-pixel half-opacity input-transparent per-pane overlay, and attention requests QWindow's native indefinite alert only for an inactive host. Inactive tabs retain a separate stable attention marker until selected, including bells from non-active splits. All live changes apply to the next BEL without clearing the latch or changing pane/grid/PTY identity."
+        },
+        "bold-color": {
+          "status": "supported",
+          "note": "The renderer implements Ghostty's unset, bright-palette, and fixed-color bold foreground rules while retaining palette/direct/default color provenance."
+        },
+        "click-repeat-interval": {
+          "status": "supported",
+          "note": "The strict config projection carries Ghostty's finalized whole-millisecond value, including the Linux 500 ms default. Qt converts a nonzero arbitrary-origin millisecond window-system timestamp to nanoseconds with checked multiplication; zero or overflow produces an untimed press. The worker supplies the live interval and physical cell width, and libghostty accepts a repeat at inclusive consecutive-time and Euclidean-distance thresholds, with distance anchored to the original first press. It owns cell/word/line classification and clamps later repeats at triple; Linux Ctrl maps triple-click to OSC 133 semantic output while Meta/Super remains line. A Shift-left released by the effective mouse-shift-capture policy becomes an immediate drag only when a selection exists and its comparable timestamp is strictly more than the live interval after the retained ordinary press; the exact boundary remains an ordinary repeat candidate. The extension preserves libghostty's tracked anchor and selection behavior without replacing the retained press time, and Linux Ctrl+Alt selects rectangle mode for ordinary drags or delayed Shift extension. The pointer becomes a crosshair for Ctrl+Alt normally or Shift+Ctrl+Alt under raw DEC tracking, below hidden/link cursor priority. Qt ignores MouseButtonDblClick because its physical press already arrived. Reload affects the next press without reshaping an installed selection; ordinary release preserves repeat history, reported physical buttons reset it, and reported motion, wheels, or captured fractional scrolling preserve it."
+        },
+        "class": {
+          "status": "supported",
+          "scope": "qt_mapping",
+          "note": "The finalized optional raw value is resolved once before D-Bus arbitration or native surface creation. A valid GApplication/D-Bus application ID becomes both Qt's Wayland desktop-file identity and the single-instance service name; an invalid configured value emits a byte-exact diagnostic and falls back to the validated build application ID. Live reload deliberately cannot change this startup-only process identity."
+        },
+        "clipboard-codepoint-map": {
+          "status": "partial",
+          "note": "Schema v1 preserves Ghostty's finalized ordered u21 ranges and codepoint-or-UTF-8 replacements, including empty deletion strings and non-scalar codepoints. SessionWorker applies the live list after plain selection formatting with Ghostty's last-overlapping-entry-wins rule, emitting U+FFFD for a non-scalar codepoint exactly like the pinned formatter. Explicit action/context copies, automatic primary/standard copies, and select_all share that worker-atomic path; title, URL, terminal-file, and search consumers remain unmapped. Status is partial because automatic and mixed copies still lack Ghostty's exact styled MIME payload and upstream must define mapping behavior for VT/HTML."
+        },
+        "clipboard-paste-bracketed-safe": {
+          "status": "supported",
+          "note": "The live default-true policy trusts newlines only while Ghostty reports bracketed-paste mode, still rejects an embedded end fence, and shares one mode snapshot with encoding."
+        },
+        "clipboard-paste-protection": {
+          "status": "supported",
+          "note": "The live default-true policy is enforced on SessionWorker. Unsafe immutable text is correlated through pane-local request IDs; confirmation re-snapshots mode, and rejected or cancelled requests do not scroll, write, or mark activity."
+        },
+        "clipboard-read": {
+          "status": "blocked_upstream",
+          "note": "Public libghostty-vt explicitly ignores OSC 52 clipboard-read requests instead of publishing them through the host callback. Exact Ghostty ask/allow/deny reads therefore require a new public normalized request contract; ghostty-qt does not add a parallel escape parser."
+        },
+        "clipboard-trim-trailing-spaces": {
+          "status": "supported",
+          "note": "The current selection is formatted on the session thread through libghostty's plain formatter with the live trim option and soft-wrap unwrapping."
+        },
+        "clipboard-write": {
+          "status": "supported",
+          "note": "The exact ask, allow, and deny values cross the strict config wire, default to allow, and reload live. Public libghostty-vt normalizes OSC 52 and OSC 1337 into ordered, owned, binary-safe requests; allow commits all MIME representations atomically, deny returns a denied result without queuing an effect or advertising DA1 feature 52, and ask advertises feature 52 but enters one bounded FIFO confirmation at a time. Standard maps only to Qt's standard clipboard, while selection and primary both map only to the available Linux selection clipboard. Stable PaneId validation discards exited or removed sources, the workspace retains at most 64 requests and 64 MiB, and an ask decision may be remembered for only its split until the next config reload."
+        },
+        "command": {
+          "status": "supported",
+          "note": "The exact pinned parser supplies a nullable raw-byte shell/direct union. Shell values execute byte-for-byte through /bin/sh -c; direct values preserve the parser's literal-space argv boundaries and use the launching process PATH for bare argv[0] lookup before finalized env overrides are installed. The finalized default shell follows Ghostty's SHELL/passwd selection, and reload affects future panes."
+        },
+        "command-palette-entry": {
+          "status": "supported",
+          "scope": "qt_mapping",
+          "note": "Finalized title, description, action key, and canonical serialized action values populate each window-local Qt model after unsupported frontend actions are removed. On every palette opening they are combined with current typed surface-target rows, then prepared and deterministically sorted using colon-normalized case-insensitive keys. Filtering case-folds the query against cached keys for that row snapshot, equivalent replacement preserves selection by typed command identity, and configured actions close the modal before executing against the source window's then-current active pane."
+        },
+        "config-default-files": {
+          "status": "supported",
+          "note": "The Ghostty CLI-only boolean is parsed with the pinned boolean grammar and forwarded to every private-helper query. False discards standard user configuration candidates before replaying explicit CLI/config-file sources; successful snapshots omit those candidates from the live watcher set while still retaining explicit recursive includes. A config-file occurrence intentionally cannot toggle the value, matching pinned Ghostty, and single-instance launch forwarding preserves an explicit startup override."
+        },
+        "config-file": {
+          "status": "supported",
+          "note": "The pinned parser owns recursive include precedence and diagnostics. Existing include files, directories containing missing optional or required includes, atomic replacements, and failed-load retries all participate in asynchronous live reload while the last valid generation remains active."
+        },
+        "confirm-close-surface": {
+          "status": "partial",
+          "note": "false, true, and always map to live workspace close policy. Linux PTY foreground groups and a command-submission latch cover ordinary jobs and pre-output races. Successful shell injection protects startup until its first OSC 133 prompt; the exact public cursor-at-prompt query then distinguishes same-process-group shell builtins, alternate-screen work, and a returned prompt, while query failure remains active after integration is expected or observed. Status remains partial because the public API does not expose a terminal-owned integration-seen bit; shells without installed integration retain the foreground/latch fallback."
+        },
+        "copy-on-select": {
+          "status": "partial",
+          "note": "Linux false, primary-only true, and clipboard destination modes apply live, including standard fallback when primary selection is unavailable. Automatic copies use the same live trim and clipboard-codepoint-map path as explicit plain copies, but currently contain only plain text instead of Ghostty's mixed plain-plus-HTML payload; the missing exact public formatter contract is tracked in REQUIRES_UPSTREAM.md."
+        },
+        "cursor-click-to-move": {
+          "status": "blocked_upstream",
+          "note": "Ghostty gates this feature on its private live semantic click mode and computes exact prompt-relative shell movement inside Surface. Official libghostty-vt exposes neither that mode nor the cursor-click movement operation; duplicating it from visible cells would diverge across wrapped prompts, continuations, and compressed scrollback."
+        },
+        "cursor-color": {
+          "status": "supported",
+          "note": "The exact pinned parser supplies explicit colors and cell foreground/background aliases; live default updates preserve terminal OSC 12 overrides and OSC 112 reveals the newest configured default."
+        },
+        "cursor-opacity": {
+          "status": "supported",
+          "note": "Configured cursor opacity is clamped and applied to the focused cursor; an unfocused cursor becomes Ghostty's opaque hollow outline."
+        },
+        "cursor-style": {
+          "status": "supported",
+          "note": "Block, bar, underline, and hollow-block defaults apply to new and existing panes while terminal DECSCUSR state survives reload until reset."
+        },
+        "cursor-style-blink": {
+          "status": "partial",
+          "note": "The configured default is applied, but public libghostty-vt exposes only a boolean setter and cannot preserve Ghostty's explicit true/false precedence over DEC mode 12."
+        },
+        "cursor-text": {
+          "status": "supported",
+          "note": "Fixed, cell-foreground, and cell-background cursor text colors are resolved per rendered cursor cell with Ghostty's unset fallback."
+        },
+        "custom-shader": {
+          "status": "supported",
+          "note": "Repeatable finalized required/optional paths preserve declaration order and empty-reset semantics. Sources up to 4 MiB are compiled asynchronously into validated SPIR-V, desktop GLSL, and GLES QSB variants; identical concurrent pane work coalesces and structurally validated outputs use a content-addressed disk cache, so same-path edits are detected without blocking the GUI or render thread. One physical-resolution Qt Quick source layer and a retained QRhi ping-pong executor apply the complete ordered chain to pane-local terminal and Kitty content through the pinned ShaderToy mainImage, iChannel0, cursor constants, bottom-left coordinates, lifecycle iPaneTransition, and std140 uniform contract while leaving Qt chrome outside. Qt-owned enter/exit shader stages are phase-gated pass-through filters composed after the persistent Ghostty chain; finite durations animate visible pane pixels independently of the continuous animation policy. Close retires pane IDs and stops workers immediately, then defers pane, tab, or window destruction through a bounded final-frame grace. The final pass renders inline and chains longer than two passes retain at most two intermediate textures. Missing optional files are skipped; any missing required file or invalid program disables the affected chain and publishes a visible diagnostic, while a runtime retained-pipeline failure queues a pane-local fallback to direct unfiltered rendering and only retries retained rendering after a newer successful compile or scene-graph reset. Qt Quick's OpenGL or Vulkan RHI backend is required: other backends leave the terminal unfiltered, do not delay lifecycle close, and report that limitation; final GPU/compositor presentation remains an interactive check."
+        },
+        "custom-shader-animation": {
+          "status": "supported",
+          "note": "The pinned false, true, and always values map to never, focused, and always animation. Frame-swapped pacing advances time, delta, and frame while retained immutable snapshots carry the latest cursor, focus, palette, and color state. Updating an animated effect does not rebuild terminal cells or dirty retained row caches. Animation stops when policy, pane visibility, focus, window exposure, or backend support makes another frame unnecessary."
+        },
+        "desktop-notifications": {
+          "status": "supported",
+          "note": "The finalized default-true boolean crosses strict schema v5 and applies live as application-owned LaunchOptions policy. The pinned synchronous libghostty-vt callback normalizes OSC 9 and OSC 777; its sized borrowed strings are validated, deep-copied, bounded, and preserved in callback order before crossing the queued worker/controller/pane path. The application delivers native Linux notifications through org.freedesktop.Notifications, defaults an empty title to Ghostty, matches Ghostty's process-global one-second and sequential-identical five-second limits, reuses notification IDs by body, and routes default-action clicks through revalidated stable WindowId/PaneId targets. Backend absence and stale targets are non-fatal."
+        },
+        "enquiry-response": {
+          "status": "supported",
+          "note": "The strict config projection preserves Ghostty's finalized raw bytes, including embedded NUL, and the empty default is silent. Every parser-normalized ENQ (0x05) invokes the public libghostty callback once; the adapter publishes each non-empty value byte-exactly through the existing ordered public PTY sink and returns an empty callback slice, bypassing the standalone bridge's private 255-byte scratch-buffer ceiling without parsing terminal input twice or producing a duplicate reply. Existing panes replace their worker-owned response before later VT parsing, and terminal-protocol writes remain independent of read-only surface-input policy. Adapter and PTY integration tests cover empty, 1, 255, 256, 1024, and 4096-byte values, embedded NUL/high bytes, multiple ENQs, reply ordering, and live reload."
+        },
+        "env": {
+          "status": "supported",
+          "note": "The private typed projection preserves Ghostty's finalized ordered raw-byte override map, including repeated-key replacement, configured-key removal, whole-map reset, and include precedence. Each pane snapshots the map at construction and applies it byte-exactly after inherited and terminal-injected values; a concrete working directory writes PWD last, while a configured PATH is visible to the child without changing parent-PATH executable lookup. Removal/reset do not unset inherited variables. Embedded NUL is rejected as an execve-safety hardening."
+        },
+        "faint-opacity": {
+          "status": "supported",
+          "note": "Configured faint opacity applies to glyphs and text decorations without dimming cell backgrounds."
+        },
+        "focus-follows-mouse": {
+          "status": "supported",
+          "note": "The exact default-false boolean reloads live per pane. Accepted hover and button-drag motion focuses an unfocused pane only while its existing Qt window is active, so an inactive host is never raised and retains its current focus item. The shared physical-pixel filter rejects synthetic same-position motion and accumulates subpixel movement against the last accepted position. Focus publication is guarded against synchronous pane or workspace destruction."
+        },
+        "font-codepoint-map": {
+          "status": "partial",
+          "note": "The strict schema preserves finalized u21 ranges and family strings. GUI-thread resolution compiles overlaps in O(n log n) into sorted disjoint later-entry-wins intervals, including an unavailable latest face masking an older entry, and interns repeated resolved families in a compact face table. Cell lookup is logarithmic, always selects the mapped regular face, requires complete grapheme coverage, and ignores ZWJ plus text/emoji variation selectors for coverage. The immutable program is shared across panes and live reload replaces it without pane or PTY recreation. Status remains partial because public libghostty-vt does not expose Ghostty's resolved face collection, codepoint resolver, or face coverage decisions, so Qt owns platform discovery and glyph support."
+        },
+        "font-family": {
+          "status": "partial",
+          "note": "Pinned parsing, exact CLI precedence, four-role propagation, live reload, and ordered Qt fallback families are implemented. Equal effective font inputs share one weak-cached immutable program across panes and DPRs, and Qt font-database changes invalidate every live pane's program. Status remains partial because Ghostty's embedded production fallback stack and resolver are not exposed through public libghostty-vt, so Qt's platform resolver supplies the final fallback behavior."
+        },
+        "font-family-bold": {
+          "status": "partial",
+          "note": "The finalized ordered family list, role inheritance, synthesis permission, and live replacement are preserved. A disabled bold style uses the regular role, while a missing configured bold face may request Qt synthesis when permitted. Status remains partial because Qt owns final family substitution, fallback order, and native-versus-synthetic face selection."
+        },
+        "font-family-bold-italic": {
+          "status": "partial",
+          "note": "The finalized ordered family list, role inheritance, synthesis permission, and live replacement are preserved. A disabled bold-italic style uses the regular role, while a missing configured combined face may request Qt synthesis when permitted. Status remains partial because Qt owns final family substitution, fallback order, and native-versus-synthetic face selection."
+        },
+        "font-family-italic": {
+          "status": "partial",
+          "note": "The finalized ordered family list, role inheritance, synthesis permission, and live replacement are preserved. A disabled italic style uses the regular role, while a missing configured italic face may request Qt synthesis when permitted. Status remains partial because Qt owns final family substitution, fallback order, and native-versus-synthetic face selection."
+        },
+        "font-feature": {
+          "status": "partial",
+          "note": "The pinned feature parser supplies the complete ordered list, including implicit defaults and duplicate tags; later tags overwrite earlier ones in Qt's shaping font while a feature such as pwid cannot alter the regular face's authoritative grid metrics. Compatible cells are shaped together, programming ligatures may retain non-grid internal caret positions when Qt reports a grid-aligned shaping cluster, and reload replaces the typography without pane, terminal, or PTY recreation. Malformed cluster metadata or a validated physical-grid mismatch retains exact per-cell fallback. Status remains partial because public libghostty-vt does not expose Ghostty's HarfBuzz feature application, selected faces, or positioned glyph plan, so QTextLayout owns the final shaping result."
+        },
+        "font-shaping-break": {
+          "status": "partial",
+          "note": "The finalized cursor break flag reloads live. Maximal row runs break at font, foreground, complete style, selection, invisible cells, defensive plain fi/fl/st pairs, and optionally the logical cursor cell; wide spacers stay attached to their head. The renderer first validates every QTextLayout boundary in physical pixels. If only internal caret positions differ, it derives shaping clusters from Qt's glyph string indexes and instead validates cluster starts plus the run endpoint, permitting safe multi-cell programming ligatures. Incomplete or inconsistent cluster metadata and any validated grid mismatch fall back to exact per-cell placement for the run. Status remains partial because Ghostty's private run iterator and positioned glyph plan are not available through public libghostty-vt, so final cluster placement remains Qt-owned."
+        },
+        "font-size": {
+          "status": "supported",
+          "note": "The pinned f32 value, exact CLI precedence, initial geometry, inheritance, and live reload are implemented. Manually adjusted panes retain their local size while adopting other typography changes; reset_font_size restores the newest live default and resumes following reloads."
+        },
+        "font-style": {
+          "status": "partial",
+          "note": "Ghostty's automatic, disabled, and named alternatives cross the typed wire and reload live; pinned runtime semantics normalize disabled regular style to automatic. Status remains partial because Qt owns named-style substitution and final face selection rather than Ghostty's Fontconfig and FreeType collection."
+        },
+        "font-style-bold": {
+          "status": "partial",
+          "note": "Ghostty's automatic, disabled, and named alternatives select the bold role and reload live. Disabled uses the regular role; a missing automatic or named role requests synthesis only when its permission is enabled. Status remains partial because Qt owns exact style matching and native-versus-synthetic face selection."
+        },
+        "font-style-bold-italic": {
+          "status": "partial",
+          "note": "Ghostty's automatic, disabled, and named alternatives select the bold-italic role and reload live. Disabled uses the regular role; a missing automatic or named role requests synthesis only when its permission is enabled. Status remains partial because Qt owns exact style matching and native-versus-synthetic face selection."
+        },
+        "font-style-italic": {
+          "status": "partial",
+          "note": "Ghostty's automatic, disabled, and named alternatives select the italic role and reload live. Disabled uses the regular role; a missing automatic or named role requests synthesis only when its permission is enabled. Status remains partial because Qt owns exact style matching and native-versus-synthetic face selection."
+        },
+        "font-synthetic-style": {
+          "status": "partial",
+          "note": "The finalized bold, italic, and bold-italic synthesis permissions cross the typed schema and reload live. Native role faces are preferred; an allowed missing automatic or named styled role requests Qt synthesis, while a disabled permission or style uses the regular role. Status remains partial because Qt does not expose Ghostty's backend-specific FreeType synthetic-face construction or its exact bold and italic transforms."
+        },
+        "font-thicken": {
+          "status": "not_applicable",
+          "scope": "macos",
+          "note": "Upstream implements stroke thickening only in its macOS CoreText renderer."
+        },
+        "font-thicken-strength": {
+          "status": "not_applicable",
+          "scope": "macos",
+          "note": "This value only controls the macOS-only font-thicken renderer path."
+        },
+        "font-variation": {
+          "status": "partial",
+          "note": "The finalized ordered regular-face axis list crosses schema v5 as exact f64 bit patterns, including non-finite values. The first matching tag is consumed before validity and range checks, matching the pinned FreeType duplicate policy, and valid axes reload live. Status remains partial because Qt narrows applied values to its float axis API and does not expose Ghostty's selected FreeType face and variation-coordinate pipeline."
+        },
+        "font-variation-bold": {
+          "status": "partial",
+          "note": "The finalized bold-face variation list preserves exact f64 bits, order, and first-matching-tag semantics before Qt applies supported in-range axes. Final face selection and variation coordinates remain Qt-owned rather than Ghostty-owned."
+        },
+        "font-variation-bold-italic": {
+          "status": "partial",
+          "note": "The finalized bold-italic-face variation list preserves exact f64 bits, order, and first-matching-tag semantics before Qt applies supported in-range axes. Final face selection and variation coordinates remain Qt-owned rather than Ghostty-owned."
+        },
+        "font-variation-italic": {
+          "status": "partial",
+          "note": "The finalized italic-face variation list preserves exact f64 bits, order, and first-matching-tag semantics before Qt applies supported in-range axes. Final face selection and variation coordinates remain Qt-owned rather than Ghostty-owned."
+        },
+        "foreground": {
+          "status": "supported",
+          "note": "The exact pinned parser supplies the color and the libghostty adapter applies it to new and existing panes."
+        },
+        "freetype-load-flags": {
+          "status": "partial",
+          "scope": "linux",
+          "note": "All five finalized booleans cross the strict typed schema and reload live. Qt maps disabled hinting, effective light versus full hinting, and monochrome antialias policy to public QFont controls. Force-autohint and autohint are transport-only no-ops and are excluded from the effective font-program cache key, as is light while hinting is disabled. Status remains partial because public Qt cannot request Ghostty's exact FreeType load flags or expose the resulting face options."
+        },
+        "fullscreen": {
+          "status": "supported",
+          "scope": "linux",
+          "note": "The exact pinned enum defaults false. True and every non-native variant map to Qt native fullscreen on Linux for each subsequently created window; reload never changes existing window state. When maximize is also true, action- and compositor-driven fullscreen exits restore maximized."
+        },
+        "grapheme-width-method": {
+          "status": "supported",
+          "note": "The finalized legacy/unicode enum initializes public libghostty-vt mode 2027 through OPT_MODE_DEFAULT before the first VT write, so both the current value and the value restored by RIS match Ghostty. Application mode changes remain terminal-owned."
+        },
+        "input": {
+          "status": "supported",
+          "note": "The strict helper exports Ghostty's finalized ordered raw/path variants as lossless byte arrays. Before creating launch pipes or forking, SessionWorker resolves every path relative to the frontend process working directory, requires a regular readable file, and reads at most the exact 10 MiB limit; any failure aborts the entire pane without a child or cgroup move. Distinct chunks retain source order and are queued before started is published, so later GUI input cannot overtake them. Reload affects only subsequently constructed panes, including leaving an already deferred pane's immutable launch snapshot unchanged."
+        },
+        "initial-command": {
+          "status": "supported",
+          "note": "The tagged command replaces ordinary command only for the first session that successfully initializes libghostty-vt. Suppressed startup, close-before-deferred-start, and terminal initialization failure preserve the process-wide FIFO lease; child-launch failure consumes it. Reload can replace the pending value before reservation, an existing holder keeps its immutable snapshot, and a consumed lease cannot be re-armed. Explicit `-e` or retained `--` CLI argv has first-pane precedence, and later surfaces use ordinary command."
+        },
+        "initial-window": {
+          "status": "supported",
+          "scope": "linux",
+          "note": "The exact default-true boolean is sampled once per launching process. False starts a primary with no QML root or surface and makes an occupied-name secondary exit successfully without activation; a fresh true launcher still activates that false-started primary. The installed D-Bus service explicitly starts a unique false-initial-window host, then its queued standard activation creates exactly one first surface. Explicit bootstrap CLI values outrank configuration and reload. Local/application/process/desktop creation remains unconditional. The first session that successfully initializes receives the current one-shot program and hold values. Construction or presentation failure before libghostty-vt initialization, terminal initialization failure, and closing a deferred root before start do not consume them; a later child-launch failure does. Later sessions use ordinary launch defaults, and reload alone creates or closes nothing. Following pinned GTK's executable requested-window guard, a process that has never created a surface stays resident; the documented initial-delay behavior is not reachable because GTK exposes no startup quit-timer hook."
+        },
+        "image-storage-limit": {
+          "status": "supported",
+          "note": "The exact finalized u32 byte limit defaults to 320,000,000, initializes both libghostty screens, and applies live without recreating the pane or PTY. Zero disables and clears image storage. Ordinary Kitty placements use owned generation-stamped snapshots and retained Qt textures across all three z layers. A reverse render-order pass omits an older placement only after a successfully imported fully opaque placement at the same z and exact physical destination covers it, preserving libghostty state so later deletion can reveal the predecessor. Every asset retains one packed straight-alpha RGBA8 CPU image and one GPU texture; explicit raw RHI upload plus shader-time premultiplication preserves straight-alpha filtering while halving the former translucent two-plane footprint. Unicode virtual placements remain partial because public libghostty-vt does not expose their expanded viewport fragments. Renderer CPU/GPU mirrors remain additional to the configured Ghostty storage budget, and REQUIRES_UPSTREAM.md records the pinned library's tracked-pin leak during image eviction and external-placement replacement."
+        },
+        "keybind": {
+          "status": "partial",
+          "note": "A private versioned export carries Ghostty's finalized root and named-table bindings. Per-surface table stacks, shared-prefix sequences, physical/Unicode/catch-all triggers, chains, local flags, stage-time VT encoding, invalid replay, application-wide all/global dispatch, and Linux XDG portal registration are implemented for the supported action subset. XKB-resolved semantic keypad identities keep NumLock-off navigation distinct from the numeric identities at the same hardware locations, including canonical/W3C and legacy kp_* trigger spellings. Qt preedit composition is snapshotted across root and pane dispatch plus deferred replay; active-composition non-modifier keys bypass binding tries and carry Ghostty's composing flag, preventing duplicate legacy/Kitty bytes while retaining modifier reporting and delivering the later IME commit once. Selection-dependent copy, search, endpoint adjustment, and viewport movement use correlated worker-authoritative performability across separate input events; local and broad chains wait for ordered GUI effects before continuing. Portal registration intentionally matches the pinned GTK frontend's root/direct/single-action restriction."
+        },
+        "link": {
+          "status": "blocked_upstream",
+          "note": "User-defined regular expressions and arbitrary link actions are not implemented because the pinned Ghostty RepeatableLink.parseCLI returns error.NotImplemented. The built-in default matcher controlled by link-url is supported independently, alongside explicit OSC 8 destinations."
+        },
+        "link-previews": {
+          "status": "supported",
+          "note": "The exact true/false/osc8 policy previews all, no, or only OSC 8 accepted destinations. Live reload is pane-local and frontend-only: the bounded, middle-elided overlay safely escapes raw destination controls, replaces invalid UTF-8, relocates from bottom-left to bottom-right when entered, and reuses a hover that remains on the terminal link. Removing an occupied guard resumes physical hit testing and may query the newly exposed cell."
+        },
+        "link-osc8": {
+          "status": "supported",
+          "note": "The exact default-true boolean independently gates explicit OSC 8 highlighting, previews, copying, context-link selection, and activation. Live disable cancels worker tracking plus armed GUI hover/activation state without changing regex links controlled by link-url."
+        },
+        "link-url": {
+          "status": "supported",
+          "note": "The pinned default URL/path expression and vendored Oniguruma semantics run on complete semantic logical lines. The setting defaults true, reloads live, and controls only regex links; explicit OSC 8 destinations remain interactive when disabled."
+        },
+        "maximize": {
+          "status": "supported",
+          "note": "The exact default-false boolean presents every subsequently created window maximized. Initial, action-created, resident-replacement, and desktop-activated windows share the same creation path; reload affects future windows without mutating existing state."
+        },
+        "middle-click-action": {
+          "status": "supported",
+          "note": "Linux primary-paste and ignore reload live; primary paste follows Ghostty's copy-on-select-dependent source choice and primary-to-standard fallback while terminal mouse reporting retains precedence."
+        },
+        "minimum-contrast": {
+          "status": "supported",
+          "note": "The finalized f64 threshold defaults to 1, is clamped to [1, 21] by Ghostty, and reloads every existing pane without terminal or PTY replacement. The Qt renderer mirrors Ghostty's Linux cell shader: bold, inverse, selection/search colors, and faint alpha resolve first; WCAG contrast then uses linear premultiplied color against the effective cell background, replacing a strictly lower ratio with opaque white or black according to the stronger extreme, with ties choosing black. Glyphs and decorations are evaluated independently, the five pinned terminal-graphics codepoint ranges exempt only their glyph, block cursor text overrides contrast last, and cursor sprites participate after cursor opacity. Background images and Kitty content are composed independently, and minimum contrast intentionally does not sample their pixels; color emoji remains unavailable and the existing Qt preedit overlay remains a frontend-owned approximation."
+        },
+        "notify-on-command-finish": {
+          "status": "blocked_upstream",
+          "note": "Exact never, unfocused, and always policy needs Ghostty's normalized OSC 133 command-finished event. Standalone public libghostty-vt retains semantic prompt rows but does not publish command start/finish timing to its host."
+        },
+        "notify-on-command-finish-action": {
+          "status": "blocked_upstream",
+          "note": "Bell and native-notification actions depend on the missing standalone libghostty-vt command-finished effect and cannot be reconstructed exactly from rendered prompt rows."
+        },
+        "notify-on-command-finish-after": {
+          "status": "blocked_upstream",
+          "note": "The exact duration threshold depends on ordered, normalized OSC 133 command-start and command-finish effects, which standalone public libghostty-vt does not expose. Matching pinned Ghostty, the embedding surface owns the monotonic clock and computes the C-to-D duration."
+        },
+        "mouse-hide-while-typing": {
+          "status": "supported",
+          "note": "The exact default-false boolean reloads live per pane. A nonempty, non-repeating text press hides only when it is forwarded to the terminal, including invalid-sequence flush and unavailable performable fallback; consumed bindings, staged leaders, modifiers, releases, raw actions, and paste are excluded. A nonempty IME commit hides while preedit alone does not. Physical motion of at least one device pixel, pointer leave, button press/release, wheel input, focus in/out, or disabling reveals it. Deferred keys and action chains retain their original pointer-activity epoch so late fallback cannot re-hide after newer interaction or become retroactively eligible when the policy is enabled. The pane cursor arbiter gives blank-while-typing priority over a retained hyperlink hand, rectangle crosshair, and raw-state-derived arrow or I-beam."
+        },
+        "mouse-reporting": {
+          "status": "supported",
+          "note": "The default-true policy gates terminal-requested DEC mouse tracking per pane without changing raw terminal mode. The conjunction is reevaluated per pointer event. Independently of that frontend gate, ordinary non-overlapping raw DEC state changes the base pointer from an I-beam to an arrow, while Shift temporarily restores the I-beam regardless of mouse-shift-capture policy. Reported physical buttons clear selection and reset repeat-click history, motion does neither, and wheels plus captured fractional scrolling clear selection while preserving that history. Raw DEC capture still governs live mouse-shift-capture modifier normalization; reload replaces local runtime toggles, and future panes use configured state. Arbitrary OSC 22 application shapes and full Ghostty's overlapping-mode transition ordering remain blocked on a public effective-shape query tracked in REQUIRES_UPSTREAM.md."
+        },
+        "mouse-scroll-multiplier": {
+          "status": "supported",
+          "note": "The strict config projection preserves Ghostty's independently finalized precision and discrete values. Qt pixel deltas select precision input and fractional angle deltas select discrete input. Pane-local signed physical distance converts vertical input against cell height with the finalized multiplier; horizontal precision pixels accumulate independently against cell width without that multiplier, while horizontal discrete ticks round independently. Whole rows and columns cross once to the worker, which atomically chooses current DECSET 1007 alternate-screen conversion, effective raw DEC reporting, or typed viewport scrolling while retaining the pane-owned reporting policy. Alternate conversion consumes horizontal-only input, discards X when axes are simultaneous, emits DECCKM-aware Up/Down bytes, and clears selection only for nonzero rows. Raw reporting emits vertical buttons 4/5 before horizontal buttons 6/7; without effective reporting X is ignored. Captured sub-cell input clears selection only after a worker-owned DEC-state recheck. Read-only suppresses generated terminal input after local selection semantics. Live reload affects subsequent deltas without replacing the pane or discarding accumulated distance. A GUI dispatch is bounded to 10,000 steps per axis and retains excess precision movement. Pinned Surface.zig documents retaining post-row remainder but currently clears it by subtracting the untruncated amount; the Qt path intentionally implements the documented accumulator contract so high-resolution motion is not lost."
+        },
+        "mouse-shift-capture": {
+          "status": "partial",
+          "note": "The strict config projection transports false, true, always, and never, and reload applies to every existing pane without replacement. Always keeps Shift in captured DEC button input and never releases captured press/release and held-button motion for local selection, middle/right actions, and Ctrl+Shift links; those override-independent capture-routing branches are exact. True and false consistently use their configured capture/release fallback for those same routes, but cannot honor a later XTSHIFTESCAPE request because official libghostty-vt does not expose its internal unset/false/true flag. Matching Ghostty, captured wheel/fractional scrolling and buttonless DEC-motion reporting remain reported regardless of this setting, while buttonless Ctrl+Shift hover still consults it for local hyperlink eligibility. A locally routed delayed Shift-left extends an existing selection through the retained libghostty gesture, including Linux Ctrl+Alt rectangle mode. The raw-DEC-aware Shift I-beam and Shift+Ctrl+Alt crosshair intentionally remain independent of this capture policy. Status remains partial solely because the required public XTSHIFTESCAPE query is tracked in REQUIRES_UPSTREAM.md."
+        },
+        "osc-color-report-format": {
+          "status": "blocked_upstream",
+          "note": "Standalone public libghostty-vt answers OSC 4, 10, and 11 internally but exposes no host option for Ghostty's none, 8-bit, and 16-bit report formats. A second OSC parser would risk duplicate and divergent replies."
+        },
+        "palette": {
+          "status": "supported",
+          "note": "All 256 effective defaults are applied, including explicit entries retained by generation. Config reload preserves terminal OSC 4 overrides, and OSC 104 resets entries to the newest configured or generated defaults."
+        },
+        "palette-generate": {
+          "status": "supported",
+          "note": "The private finalized-config helper mirrors Ghostty's termio.DerivedConfig gate before exporting the effective 256-entry palette: generation runs only when enabled and the finalized explicit-entry mask is nonempty. Indices 0-15 and every explicitly assigned extended entry remain unchanged. The remaining CIELAB cube uses the configured background, ANSI indices 1-6, and foreground as anchors, while the grayscale ramp interpolates from configured background to foreground. The ordinary appearance path applies the result live without replacing panes, preserves terminal OSC 4 overrides, and makes OSC 104 reveal the newest generated defaults."
+        },
+        "palette-harmonious": {
+          "status": "supported",
+          "note": "The helper passes the finalized value into Ghostty's exact generator. For generated light-theme palettes, false orients the extended cube and ramp dark-to-light while true retains the configured light-background-to-dark-foreground orientation. It has no effect for dark themes, disabled generation, or the empty-explicit-mask gate; dynamic theme changes recompute the selected finalized palette through the same live path."
+        },
+        "progress-style": {
+          "status": "supported",
+          "note": "The finalized default-true boolean crosses strict schema v5 as live application-owned policy. The public sized libghostty-vt callback is validated and copied into a bounded ordered effect; saturation compacts the prefix into an equivalent state transformation instead of losing the newest remove or value. Worker and controller preserve the resulting order. Every pane presents a two-pixel top overlay with normal, error, paused, determinate, and report-driven indeterminate pulse states, restarts one 15-second stale-report timer after each non-remove update, and hides on remove, expiry, session lifetime, or live disable without resurfacing merely on re-enable. Active-pane determinate values also populate the existing tab progress role."
+        },
+        "quit-after-last-window-closed": {
+          "status": "supported",
+          "scope": "portable",
+          "note": "The application-owned GUI-thread policy uses Ghostty's Linux default, disables Qt's implicit last-window exit, and applies only after a real final registered primary window closes. A never-requested initial-window=false process remains resident, matching pinned GTK's requested-window guard. False leaves the process-level config, shortcuts, reload, quit, any enabled activation endpoint, and new-window factory alive with zero QML roots; either a local action or an acknowledged true bare-secondary launch can register a replacement before presentation. Reload reconciles active state, an explicit command forces true, and explicit quit bypasses the policy."
+        },
+        "quit-after-last-window-closed-delay": {
+          "status": "supported",
+          "scope": "linux",
+          "note": "The private structured export preserves null versus configured zero and applies Ghostty's exact whole-millisecond truncation and c_uint saturation. One application-owned QChronoTimer starts only after a real final surface closes, is cancelled by a successfully presented replacement, remains armed after factory failure, is bypassed by explicit quit and explicit-command launches, and is reconciled on live reload without moving an identical deadline. Pinned config prose describes a never-windowed initial timeout, but the GTK App lacks the startup timer method; this follows executable GTK behavior while intentionally repairing its separate stale-timer reload edge."
+        },
+        "resize-overlay": {
+          "status": "supported",
+          "scope": "qt_mapping",
+          "note": "The exact always/never/after-first mode controls one input-transparent 120x40-logical-pixel QML item per pane. Only accepted authoritative column/row changes schedule it: synchronous bursts coalesce to the newest grid, a later grid restarts the single QChronoTimer, raw pixel and DPR-only changes are inert, and split panes remain independent. After-first suppresses each pane's initial grid and further layout settling during Ghostty's initial 250 ms delay; always includes the first ordinary immediate grid, while pre-worker compositor negotiation is never classified as a resize, and never cancels visible or queued presentation. Reload applies live."
+        },
+        "resize-overlay-duration": {
+          "status": "supported",
+          "scope": "qt_mapping",
+          "note": "The private structured export preserves Ghostty's finalized whole-millisecond duration. The pane timer applies the pinned GTK 250 ms minimum and 750 ms default; a duration reload restarts an already visible overlay from the new value."
+        },
+        "resize-overlay-position": {
+          "status": "supported",
+          "scope": "qt_mapping",
+          "note": "All seven exact values—center, top-left, top-center, top-right, bottom-left, bottom-center, and bottom-right—map in logical coordinates relative to the owning pane. Reload moves an existing visible overlay immediately, independently for split panes and at any device scale."
+        },
+        "right-click-action": {
+          "status": "partial",
+          "scope": "qt_mapping",
+          "note": "All five finalized values reload live and preserve DEC mouse-reporting precedence with the live mouse-shift-capture decision; raw DEC state governs modifier normalization even when mouse-reporting disables effective routing. Paste, copy, copy-or-paste, and ignore are resolved atomically against worker-owned selection state, and independently correlated paste effects are not lost to popup supersession. Context-menu preserves a containing selection or selects an exact-Ctrl OSC 8 cell, full default-regex match, or configured word before requesting one stable-pane-targeted, in-scene Qt Quick Popup.Item menu with Copy, Paste, Reset, a Split submenu containing Change Title, all four directional splits, and Close Split, a Tab submenu containing Change Tab Title, New Tab, and Close Tab, a Window submenu containing New Window and Close Window, and a Config submenu containing Open Configuration and Reload Configuration; its retained window-root click point is mapped into the chrome-adjusted application content item immediately before opening, and stale coordinates cannot reselect current content. A selected fixed action consumes its token once after the menu closes, restores the current active pane's focus, and then revalidates and dispatches to its stable origin; window-local actions retain the originating host while application actions cross the established controller path, and resulting modal prompts retain focus. Status remains partial because copy uses the current plain clipboard representation instead of Ghostty's mixed plain-plus-HTML contract, and the menu still omits Notify on Next Command Finish and Clear."
+        },
+        "search-background": {
+          "status": "supported",
+          "note": "Fixed, cell-foreground, and cell-background values apply live to candidate matches; the Ghostty default #FFE082 is retained when unset."
+        },
+        "search-foreground": {
+          "status": "supported",
+          "note": "Fixed, cell-foreground, and cell-background values apply live to candidate matches; the Ghostty default black is retained when unset."
+        },
+        "search-selected-background": {
+          "status": "supported",
+          "note": "Fixed, cell-foreground, and cell-background values apply live to the navigated match; the Ghostty default #F2A57E is retained when unset."
+        },
+        "search-selected-foreground": {
+          "status": "supported",
+          "note": "Fixed, cell-foreground, and cell-background values apply live to the navigated match; the Ghostty default black is retained when unset."
+        },
+        "selection-background": {
+          "status": "supported",
+          "note": "Fixed and cell-relative colors are resolved per rendered cell; unset uses the effective terminal foreground."
+        },
+        "selection-clear-on-copy": {
+          "status": "supported",
+          "note": "Explicit copy formats and emits the installed selection before optionally clearing it in the same session-thread operation; automatic copy-on-select never clears."
+        },
+        "selection-clear-on-typing": {
+          "status": "supported",
+          "note": "Live worker-side policy clears only after encoded non-modifier keys, with physical Escape overriding false. IME commit/preedit lifecycle is atomic; consumed bindings, staged/replayed leaders, raw actions, and paste remain excluded."
+        },
+        "selection-foreground": {
+          "status": "supported",
+          "note": "Fixed and cell-relative colors are resolved per rendered cell; unset uses the effective terminal background."
+        },
+        "selection-word-chars": {
+          "status": "supported",
+          "note": "The strict config projection carries Ghostty's finalized numeric Unicode-scalar array, including its mandatory U+0000 boundary, without reparsing the source string in Qt. Existing panes replace the value live, and the session worker supplies the newest ASCII or non-BMP boundaries to libghostty's selection-gesture press and drag events; reload alone does not reshape an installed selection."
+        },
+        "shell-integration": {
+          "status": "supported",
+          "scope": "linux",
+          "note": "All finalized none, detect, bash, elvish, fish, nushell, and zsh modes apply to future panes through a bounded private helper transaction that invokes the pinned Ghostty launcher implementation. Pristine pinned resources are staged in the build tree, patched with zero fuzz only so SSH wrappers call ghostty-qt, validated, installed relocatably, and located at runtime. Ghostty transforms the command and pre-override environment; finalized env and concrete PWD retain their later precedence. Explicit `-e` and retained `--` programs reproduce Ghostty's forced-mode downgrade to detection, and any helper/resource failure keeps the original child launch usable with a warning."
+        },
+        "shell-integration-features": {
+          "status": "supported",
+          "scope": "linux",
+          "note": "All cursor, sudo, title, ssh-env, ssh-terminfo, and path flags cross the strict config schema and use pinned Ghostty's deterministic GHOSTTY_SHELL_FEATURES serialization, including cursor blink versus steady. Serialization still runs when automatic injection is none so manually loaded scripts retain their configured behavior. The five staged SSH wrappers call the existing pinned +ssh delegation through GHOSTTY_BIN_DIR/ghostty-qt."
+        },
+        "split-divider-color": {
+          "status": "supported",
+          "scope": "qt_mapping",
+          "note": "The exact pinned parser supplies the optional RGB override; existing and future exact-gap divider handles recolor live, while unset preserves the Qt frontend default without changing geometry, opacity, or focus."
+        },
+        "split-inherit-working-directory": {
+          "status": "supported",
+          "note": "The exact boolean defaults true and reloads for future splits only. True uses the explicit source pane's newest accepted local-host-validated OSC 7 directory and otherwise falls back to working-directory; false always uses that fallback. POSIX path bytes remain lossless through stable source routing, nested splits consult the newest workspace base, font inheritance remains independent, and stale concrete directories fall back to process cwd while retaining pinned Ghostty's requested logical PWD."
+        },
+        "split-preserve-zoom": {
+          "status": "supported",
+          "note": "The exact canonical no-navigation default clears zoom after a successful goto_split, while navigation atomically transfers the zoomed presentation to the destination for tree-order and spatial navigation. Reload affects subsequent navigation without mutating current state; failed navigation is inert, and direct activation or structural split changes retain their existing unzoom behavior."
+        },
+        "tab-inherit-working-directory": {
+          "status": "supported",
+          "note": "The exact default-true boolean reloads for future tabs only. True uses the explicit action-target pane, or the current tab's recorded active pane for an empty-context UI request, and inherits its newest accepted local OSC 7 directory; false or a cleared/unavailable report uses working-directory. Stable broad fanout retains each source independently, including lossless non-UTF-8 POSIX path bytes."
+        },
+        "term": {
+          "status": "supported",
+          "note": "Ghostty's finalized non-empty raw bytes supply each pane's initially injected TERM and default empty input to xterm-ghostty. The private schema and direct bytewise envp insertion preserve non-UTF-8 values. Reload affects panes constructed afterward; already constructed panes, including deferred panes without a child yet, retain their snapshot. TERMINFO initially points at ghostty-qt's resolved private database and COLORTERM initially equals truecolor; finalized env entries may replace all three before exec."
+        },
+        "theme": {
+          "status": "supported",
+          "note": "Ghostty's pinned parser selects the requested light or dark branch before finalization, preserves explicit root assignments over theme values, and exports the complete resolved configuration. Qt system-scheme changes reload through the serialized last-known-good configuration service without replacing windows, panes, terminals, PTYs, or scene roots. Existing and potential source paths for both variants are watched, including the inactive branch and atomic replacements. The selected scheme also drives CSI ?996n and mode 2031 reports through public libghostty-vt."
+        },
+        "title": {
+          "status": "supported",
+          "note": "The finalized nullable configured title applies live as each pane's base title, preserving an explicit empty string. While present it masks terminal OSC title updates; clearing it retains the current base until the next OSC update. Reapplication replaces a set_surface_title base, while persistent surface and tab overrides continue to mask it. The native Qt window title is the exact effective active-tab title. Normal --title= launch parsing preserves quoted whitespace and explicit reset through the pinned config helper, prevents source-less activation from dropping the override, and is advertised to desktop terminal launchers."
+        },
+        "title-report": {
+          "status": "partial",
+          "note": "The finalized default-false security gate is passed to public libghostty-vt before the first VT write, so CSI 21 t is silent unless explicitly enabled. When enabled, standalone lib-vt reports its internal OSC title rather than Ghostty's configured frontend base title, so that configured-title distinction remains incomplete."
+        },
+        "undo-timeout": {
+          "status": "not_applicable",
+          "scope": "macos",
+          "note": "Upstream documents undo operations and their timeout as macOS-only; Linux has no corresponding surface undo lifecycle."
+        },
+        "unfocused-split-fill": {
+          "status": "supported",
+          "scope": "qt_mapping",
+          "note": "The nullable fixed RGB fill resolves live to the configured background rather than OSC 11 state. One retained, input-transparent final pane rectangle appears only for actually unfocused surfaces in structurally split tabs, and that pane's active search UI suppresses it across tab, zoom, window, and scene lifecycle changes."
+        },
+        "unfocused-split-opacity": {
+          "status": "supported",
+          "scope": "qt_mapping",
+          "note": "Ghostty's finalized pane opacity is clamped to [0.15, 1.0] and mapped live to its complementary two-decimal overlay alpha. The GUI-only retained rectangle updates existing and future panes without worker projection, text-row rebuilds, or layout work."
+        },
         "gtk-custom-css": {
           "status": "not_applicable",
           "scope": "gtk_only",

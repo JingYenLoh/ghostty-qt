@@ -17,11 +17,11 @@ if [ "$(uname -s)" != Linux ]; then
 fi
 
 case "$(uname -m)" in
-    x86_64|amd64)
+    x86_64 | amd64)
         zig_arch=x86_64
         archive_sha256=70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
         ;;
-    aarch64|arm64)
+    aarch64 | arm64)
         zig_arch=aarch64
         archive_sha256=ea4b09bfb22ec6f6c6ceac57ab63efb6b46e17ab08d21f69f3a48b38e1534f17
         ;;

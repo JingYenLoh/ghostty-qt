@@ -22,58 +22,47 @@ ApplicationWindow {
     property int previousVisibility: Window.Hidden
     property size initialNormalSize: Qt.size(0, 0)
     property bool initialNormalSizePending: false
-    readonly property bool terminalHeaderVisible: !window.quickTerminal
-                                                  || workspace.tabBarVisible
+    readonly property bool terminalHeaderVisible: !window.quickTerminal || workspace.tabBarVisible
     // ApplicationController sizes the client area in terminal cells before
     // the first pane is constructed. Keep the frontend chrome contract typed
     // and explicit instead of guessing it from a partially laid-out item tree.
     readonly property real terminalChromeWidth: 0
-    readonly property real terminalChromeHeight: terminalHeaderVisible
-                                                  ? windowHeader.implicitHeight
-                                                  : 0
+    readonly property real terminalChromeHeight: terminalHeaderVisible ? windowHeader.implicitHeight : 0
 
     function toggleFullscreen() {
         if (visibility === Window.FullScreen) {
-            visibility = visibilityBeforeFullscreen
+            visibility = visibilityBeforeFullscreen;
         } else {
-            visibilityBeforeFullscreen = visibility
-            visibility = Window.FullScreen
+            visibilityBeforeFullscreen = visibility;
+            visibility = Window.FullScreen;
         }
     }
 
     function toggleMaximize() {
         if (visibility === Window.FullScreen) {
-            visibilityBeforeFullscreen =
-                    visibilityBeforeFullscreen === Window.Maximized
-                    ? Window.Windowed
-                    : Window.Maximized
+            visibilityBeforeFullscreen = visibilityBeforeFullscreen === Window.Maximized ? Window.Windowed : Window.Maximized;
         } else {
-            visibility = visibility === Window.Maximized
-                       ? Window.Windowed
-                       : Window.Maximized
+            visibility = visibility === Window.Maximized ? Window.Windowed : Window.Maximized;
         }
     }
 
     onVisibilityChanged: {
-        const prior = previousVisibility
-        previousVisibility = window.visibility
-        if (prior === Window.FullScreen
-                && window.visibility === Window.Windowed
-                && visibilityBeforeFullscreen !== Window.Windowed) {
+        const prior = previousVisibility;
+        previousVisibility = window.visibility;
+        if (prior === Window.FullScreen && window.visibility === Window.Windowed && visibilityBeforeFullscreen !== Window.Windowed) {
             // A compositor-side fullscreen exit bypasses toggleFullscreen().
             // Restore the state captured before fullscreen just as the
             // application action does.
-            window.visibility = visibilityBeforeFullscreen
-            return
+            window.visibility = visibilityBeforeFullscreen;
+            return;
         }
-        if (window.visibility === Window.Windowed
-                && initialNormalSizePending) {
+        if (window.visibility === Window.Windowed && initialNormalSizePending) {
             // A root first mapped maximized/fullscreen has no compositor-owned
             // normal geometry yet. Restore the hidden pre-map size once; all
             // later normal geometry belongs to Qt and the compositor.
-            initialNormalSizePending = false
-            window.width = initialNormalSize.width
-            window.height = initialNormalSize.height
+            initialNormalSizePending = false;
+            window.width = initialNormalSize.width;
+            window.height = initialNormalSize.height;
         }
     }
 
@@ -85,21 +74,11 @@ ApplicationWindow {
     title: workspace.currentTitle
     palette.window: workspace.chromeBackground
     palette.windowText: workspace.chromeForeground
-    palette.button: workspace.platformChromePalette
-                    ? platformPalette.button
-                    : workspace.chromeBackground
-    palette.buttonText: workspace.platformChromePalette
-                        ? platformPalette.buttonText
-                        : workspace.chromeForeground
-    palette.base: workspace.platformChromePalette
-                  ? platformPalette.base
-                  : workspace.chromeBackground
-    palette.alternateBase: workspace.platformChromePalette
-                           ? platformPalette.alternateBase
-                           : workspace.chromeBackground
-    palette.text: workspace.platformChromePalette
-                  ? platformPalette.text
-                  : workspace.chromeForeground
+    palette.button: workspace.platformChromePalette ? platformPalette.button : workspace.chromeBackground
+    palette.buttonText: workspace.platformChromePalette ? platformPalette.buttonText : workspace.chromeForeground
+    palette.base: workspace.platformChromePalette ? platformPalette.base : workspace.chromeBackground
+    palette.alternateBase: workspace.platformChromePalette ? platformPalette.alternateBase : workspace.chromeBackground
+    palette.text: workspace.platformChromePalette ? platformPalette.text : workspace.chromeForeground
     // Platform mode preserves KDE's distinct Window, Button, and Base roles.
     // Forced and Ghostty themes replace only the neutral chrome roles; the
     // platform still owns accent, selection, and other semantic colors.
@@ -206,33 +185,29 @@ ApplicationWindow {
             required property int progress
             required property bool readOnly
             readonly property string statusText: {
-                const states = []
+                const states = [];
                 if (running)
-                    states.push(qsTr("Running"))
+                    states.push(qsTr("Running"));
                 if (readOnly)
-                    states.push(qsTr("Read only"))
+                    states.push(qsTr("Read only"));
                 if (progress >= 0)
-                    states.push(qsTr("%1% complete").arg(progress))
-                return states.join(" · ")
+                    states.push(qsTr("%1% complete").arg(progress));
+                return states.join(" · ");
             }
             text: title
             font.bold: attention
-            width: TabBar.tabBar !== null && TabBar.tabBar.count > 0
-                   ? (TabBar.tabBar.availableWidth
-                      - TabBar.tabBar.spacing * (TabBar.tabBar.count - 1))
-                     / TabBar.tabBar.count
-                   : implicitWidth
+            width: TabBar.tabBar !== null && TabBar.tabBar.count > 0 ? (TabBar.tabBar.availableWidth - TabBar.tabBar.spacing * (TabBar.tabBar.count - 1)) / TabBar.tabBar.count : implicitWidth
             focusPolicy: Qt.NoFocus
             Accessible.description: statusText
             ToolTip.visible: hovered
             ToolTip.delay: 500
             ToolTip.text: {
-                const lines = [title]
+                const lines = [title];
                 if (currentDirectory.length > 0)
-                    lines.push(currentDirectory)
+                    lines.push(currentDirectory);
                 if (statusText.length > 0)
-                    lines.push(statusText)
-                return lines.join("\n")
+                    lines.push(statusText);
+                return lines.join("\n");
             }
             onClicked: workspace.setCurrentIndex(index)
         }
@@ -250,14 +225,14 @@ ApplicationWindow {
             required property int progress
             required property bool readOnly
             readonly property string statusText: {
-                const states = []
+                const states = [];
                 if (running)
-                    states.push(qsTr("Running"))
+                    states.push(qsTr("Running"));
                 if (readOnly)
-                    states.push(qsTr("Read only"))
+                    states.push(qsTr("Read only"));
                 if (progress >= 0)
-                    states.push(qsTr("%1% complete").arg(progress))
-                return states.join(" · ")
+                    states.push(qsTr("%1% complete").arg(progress));
+                return states.join(" · ");
             }
             text: title
             font.bold: attention
@@ -267,32 +242,30 @@ ApplicationWindow {
             ToolTip.visible: hovered
             ToolTip.delay: 500
             ToolTip.text: {
-                const lines = [title]
+                const lines = [title];
                 if (currentDirectory.length > 0)
-                    lines.push(currentDirectory)
+                    lines.push(currentDirectory);
                 if (statusText.length > 0)
-                    lines.push(statusText)
-                return lines.join("\n")
+                    lines.push(statusText);
+                return lines.join("\n");
             }
             onClicked: workspace.setCurrentIndex(index)
         }
     }
 
-    onClosing: function(close) {
+    onClosing: function (close) {
         if (closeApproved) {
-            close.accepted = true
-            return
+            close.accepted = true;
+            return;
         }
-        close.accepted = false
-        workspace.requestWindowClose()
+        close.accepted = false;
+        workspace.requestWindowClose();
     }
 
     header: Rectangle {
         id: topToolbarSlot
         objectName: "topToolbarSlot"
-        implicitHeight: window.terminalHeaderVisible
-                        ? windowHeader.implicitHeight
-                        : 0
+        implicitHeight: window.terminalHeaderVisible ? windowHeader.implicitHeight : 0
         visible: window.terminalHeaderVisible && !workspace.tabBarAtBottom
         // The terminal viewport may be translucent, but application chrome is
         // intentionally opaque.
@@ -302,9 +275,7 @@ ApplicationWindow {
     footer: Rectangle {
         id: bottomToolbarSlot
         objectName: "bottomToolbarSlot"
-        implicitHeight: window.terminalHeaderVisible
-                        ? windowHeader.implicitHeight
-                        : 0
+        implicitHeight: window.terminalHeaderVisible ? windowHeader.implicitHeight : 0
         visible: window.terminalHeaderVisible && workspace.tabBarAtBottom
         color: workspace.chromeBackground
     }
@@ -315,13 +286,9 @@ ApplicationWindow {
         // Pinned Linux quick terminals hide their ordinary header bar but
         // retain the tab strip when multiple tabs make it visible.
         visible: window.terminalHeaderVisible
-        parent: workspace.tabBarAtBottom
-                ? bottomToolbarSlot
-                : topToolbarSlot
+        parent: workspace.tabBarAtBottom ? bottomToolbarSlot : topToolbarSlot
         anchors.fill: parent
-        position: workspace.tabBarAtBottom
-                  ? ToolBar.Footer
-                  : ToolBar.Header
+        position: workspace.tabBarAtBottom ? ToolBar.Footer : ToolBar.Header
         font.family: workspace.titleFontFamily
         // This is a mutable tab strip with adjacent actions, not a standalone
         // padded toolbar. KDE places mutable tabs directly against their
@@ -356,26 +323,16 @@ ApplicationWindow {
                     objectName: "windowTabBar"
                     width: parent.width
                     height: implicitHeight
-                    y: workspace.tabBarAtBottom
-                       ? 0
-                       : parent.height - height
-                    readonly property Item firstTabButton:
-                        count > 0 ? itemAt(0) : null
-                    implicitHeight: firstTabButton !== null
-                                    ? firstTabButton.implicitHeight
-                                      + topPadding + bottomPadding
-                                    : 0
+                    y: workspace.tabBarAtBottom ? 0 : parent.height - height
+                    readonly property Item firstTabButton: count > 0 ? itemAt(0) : null
+                    implicitHeight: firstTabButton !== null ? firstTabButton.implicitHeight + topPadding + bottomPadding : 0
                     visible: workspace.tabBarVisible
                     currentIndex: workspace.currentIndex
-                    position: workspace.tabBarAtBottom
-                              ? TabBar.Footer
-                              : TabBar.Header
+                    position: workspace.tabBarAtBottom ? TabBar.Footer : TabBar.Header
 
                     Repeater {
                         model: workspace.tabModel
-                        delegate: workspace.wideTabs
-                                  ? wideTabButtonFactory
-                                  : compactTabButtonFactory
+                        delegate: workspace.wideTabs ? wideTabButtonFactory : compactTabButtonFactory
                     }
                 }
             }
@@ -393,16 +350,14 @@ ApplicationWindow {
                 id: windowSubtitle
                 objectName: "windowSubtitle"
                 Layout.maximumWidth: 320
-                visible: !window.quickTerminal
-                         && workspace.currentSubtitle.length > 0
+                visible: !window.quickTerminal && workspace.currentSubtitle.length > 0
                 text: workspace.currentSubtitle
                 elide: Text.ElideMiddle
                 color: workspace.chromeForeground
             }
 
             ToolSeparator {
-                visible: !window.quickTerminal
-                         && (tabs.visible || windowSubtitle.visible)
+                visible: !window.quickTerminal && (tabs.visible || windowSubtitle.visible)
                 orientation: Qt.Vertical
                 Layout.fillHeight: true
             }
@@ -473,8 +428,8 @@ ApplicationWindow {
         uiController: window.uiController
         tabModel: workspace.tabModel
         currentIndex: workspace.currentIndex
-        onTabActivated: function(tabId) {
-            workspace.activateTabByStableId(tabId)
+        onTabActivated: function (tabId) {
+            workspace.activateTabByStableId(tabId);
         }
     }
 
@@ -502,45 +457,38 @@ ApplicationWindow {
         popupType: Popup.Item
 
         function scheduleOpen(requestId) {
-            Qt.callLater(function() {
-                if (terminalContextMenu.requestId !== requestId
-                        || terminalContextMenu.visible
-                        || terminalContextMenu.closingRequestId !== 0)
-                    return
-                const popupPosition = window.contentItem.mapFromItem(
-                                                null,
-                                                terminalContextMenu.requestPosition)
-                terminalContextMenu.popup(window.contentItem,
-                                          popupPosition.x,
-                                          popupPosition.y)
-            })
+            Qt.callLater(function () {
+                if (terminalContextMenu.requestId !== requestId || terminalContextMenu.visible || terminalContextMenu.closingRequestId !== 0)
+                    return;
+                const popupPosition = window.contentItem.mapFromItem(null, terminalContextMenu.requestPosition);
+                terminalContextMenu.popup(window.contentItem, popupPosition.x, popupPosition.y);
+            });
         }
 
         function showFor(requestId, position, selectionAvailable) {
-            terminalContextMenu.requestId = requestId
-            terminalContextMenu.requestPosition = position
-            terminalContextMenu.selectionAvailable = selectionAvailable
-            terminalContextMenu.pendingAction = ""
-            if (!terminalContextMenu.visible
-                    && terminalContextMenu.closingRequestId === 0)
-                terminalContextMenu.scheduleOpen(requestId)
+            terminalContextMenu.requestId = requestId;
+            terminalContextMenu.requestPosition = position;
+            terminalContextMenu.selectionAvailable = selectionAvailable;
+            terminalContextMenu.pendingAction = "";
+            if (!terminalContextMenu.visible && terminalContextMenu.closingRequestId === 0)
+                terminalContextMenu.scheduleOpen(requestId);
         }
 
         function cancel(requestId) {
             if (terminalContextMenu.requestId !== requestId)
-                return
-            terminalContextMenu.requestId = 0
-            terminalContextMenu.pendingAction = ""
+                return;
+            terminalContextMenu.requestId = 0;
+            terminalContextMenu.pendingAction = "";
             if (terminalContextMenu.visible) {
                 if (terminalContextMenu.closingRequestId === 0)
-                    terminalContextMenu.closingRequestId = requestId
-                terminalContextMenu.close()
+                    terminalContextMenu.closingRequestId = requestId;
+                terminalContextMenu.close();
             }
         }
 
         function select(action) {
-            terminalContextMenu.pendingAction = action
-            terminalContextMenu.close()
+            terminalContextMenu.pendingAction = action;
+            terminalContextMenu.close();
         }
 
         Action {
@@ -558,8 +506,7 @@ ApplicationWindow {
             onTriggered: terminalContextMenu.select("paste_from_clipboard")
         }
 
-        MenuSeparator {
-        }
+        MenuSeparator {}
 
         Action {
             objectName: "terminalContextMenuReset"
@@ -568,8 +515,7 @@ ApplicationWindow {
             onTriggered: terminalContextMenu.select("reset")
         }
 
-        MenuSeparator {
-        }
+        MenuSeparator {}
 
         Menu {
             objectName: "terminalContextMenuSplit"
@@ -611,8 +557,7 @@ ApplicationWindow {
                 onTriggered: terminalContextMenu.select("new_split:right")
             }
 
-            MenuSeparator {
-            }
+            MenuSeparator {}
 
             Action {
                 objectName: "terminalContextMenuCloseSplit"
@@ -641,8 +586,7 @@ ApplicationWindow {
                 onTriggered: terminalContextMenu.select("prompt_tab_title")
             }
 
-            MenuSeparator {
-            }
+            MenuSeparator {}
 
             Action {
                 objectName: "terminalContextMenuCloseTab"
@@ -672,8 +616,7 @@ ApplicationWindow {
             }
         }
 
-        MenuSeparator {
-        }
+        MenuSeparator {}
 
         Menu {
             objectName: "terminalContextMenuConfig"
@@ -696,27 +639,24 @@ ApplicationWindow {
         }
 
         onClosed: {
-            const cancelledClose = closingRequestId !== 0
-            const finishedRequestId = cancelledClose
-                                      ? closingRequestId
-                                      : requestId
-            const selectedAction = cancelledClose ? "" : pendingAction
-            closingRequestId = 0
+            const cancelledClose = closingRequestId !== 0;
+            const finishedRequestId = cancelledClose ? closingRequestId : requestId;
+            const selectedAction = cancelledClose ? "" : pendingAction;
+            closingRequestId = 0;
             if (!cancelledClose) {
-                requestId = 0
-                pendingAction = ""
+                requestId = 0;
+                pendingAction = "";
             }
             if (finishedRequestId !== 0) {
-                Qt.callLater(function() {
+                Qt.callLater(function () {
                     if (selectedAction.length !== 0)
-                        workspace.executeContextMenuAction(finishedRequestId,
-                                                           selectedAction)
+                        workspace.executeContextMenuAction(finishedRequestId, selectedAction);
                     else
-                        workspace.finishContextMenu(finishedRequestId)
-                })
+                        workspace.finishContextMenu(finishedRequestId);
+                });
             }
             if (requestId !== 0)
-                terminalContextMenu.scheduleOpen(requestId)
+                terminalContextMenu.scheduleOpen(requestId);
         }
     }
 
@@ -734,9 +674,9 @@ ApplicationWindow {
         footer: DialogButtonBox {
             standardButtons: DialogButtonBox.Cancel | DialogButtonBox.Ok
             Component.onCompleted: {
-                const closeButton = standardButton(DialogButtonBox.Ok)
+                const closeButton = standardButton(DialogButtonBox.Ok);
                 if (closeButton !== null)
-                    closeButton.text = qsTr("Close")
+                    closeButton.text = qsTr("Close");
             }
         }
 
@@ -760,9 +700,9 @@ ApplicationWindow {
         footer: DialogButtonBox {
             standardButtons: DialogButtonBox.Cancel | DialogButtonBox.Ok
             Component.onCompleted: {
-                const pasteButton = standardButton(DialogButtonBox.Ok)
+                const pasteButton = standardButton(DialogButtonBox.Ok);
                 if (pasteButton !== null)
-                    pasteButton.text = qsTr("Paste")
+                    pasteButton.text = qsTr("Paste");
             }
         }
 
@@ -795,27 +735,25 @@ ApplicationWindow {
         modal: true
         title: qsTr("Authorize Clipboard Access")
         onAccepted: {
-            const acceptedId = confirmationId
-            confirmationId = 0
-            workspace.confirmClipboardWrite(acceptedId,
-                                            rememberClipboardChoice.checked)
+            const acceptedId = confirmationId;
+            confirmationId = 0;
+            workspace.confirmClipboardWrite(acceptedId, rememberClipboardChoice.checked);
         }
         onRejected: {
-            const rejectedId = confirmationId
-            confirmationId = 0
-            workspace.cancelClipboardWrite(rejectedId,
-                                           rememberClipboardChoice.checked)
+            const rejectedId = confirmationId;
+            confirmationId = 0;
+            workspace.cancelClipboardWrite(rejectedId, rememberClipboardChoice.checked);
         }
 
         footer: DialogButtonBox {
             standardButtons: DialogButtonBox.Cancel | DialogButtonBox.Ok
             Component.onCompleted: {
-                const denyButton = standardButton(DialogButtonBox.Cancel)
+                const denyButton = standardButton(DialogButtonBox.Cancel);
                 if (denyButton !== null)
-                    denyButton.text = qsTr("Deny")
-                const allowButton = standardButton(DialogButtonBox.Ok)
+                    denyButton.text = qsTr("Deny");
+                const allowButton = standardButton(DialogButtonBox.Ok);
                 if (allowButton !== null)
-                    allowButton.text = qsTr("Allow")
+                    allowButton.text = qsTr("Allow");
             }
         }
 
@@ -865,24 +803,24 @@ ApplicationWindow {
         modal: true
         standardButtons: Dialog.Ok | Dialog.Cancel
         onOpened: {
-            titleField.forceActiveFocus()
-            titleField.cursorPosition = titleField.length
+            titleField.forceActiveFocus();
+            titleField.cursorPosition = titleField.length;
         }
         onAccepted: {
-            const acceptedPromptId = promptId
-            promptId = 0
-            workspace.confirmTitlePrompt(acceptedPromptId, titleField.text)
+            const acceptedPromptId = promptId;
+            promptId = 0;
+            workspace.confirmTitlePrompt(acceptedPromptId, titleField.text);
         }
         onRejected: {
-            const rejectedPromptId = promptId
-            promptId = 0
-            workspace.cancelTitlePrompt(rejectedPromptId)
+            const rejectedPromptId = promptId;
+            promptId = 0;
+            workspace.cancelTitlePrompt(rejectedPromptId);
         }
         onClosed: {
-            const target = focusReturnTarget
-            focusReturnTarget = null
+            const target = focusReturnTarget;
+            focusReturnTarget = null;
             if (target)
-                target.forceActiveFocus()
+                target.forceActiveFocus();
         }
 
         ColumnLayout {
@@ -908,72 +846,69 @@ ApplicationWindow {
     Connections {
         target: workspace
         function onCloseConfirmationRequested(confirmationId, message) {
-            closeDialog.confirmationId = confirmationId
-            closeMessage.text = message
-            closeDialog.open()
+            closeDialog.confirmationId = confirmationId;
+            closeMessage.text = message;
+            closeDialog.open();
         }
         function onCloseConfirmationResolved(confirmationId) {
             if (closeDialog.confirmationId !== confirmationId)
-                return
-            closeDialog.confirmationId = 0
-            closeDialog.close()
+                return;
+            closeDialog.confirmationId = 0;
+            closeDialog.close();
         }
         function onUnsafePasteConfirmationRequested(confirmationId, preview) {
-            pasteDialog.confirmationId = confirmationId
-            pastePreview.text = preview
-            pasteDialog.open()
+            pasteDialog.confirmationId = confirmationId;
+            pastePreview.text = preview;
+            pasteDialog.open();
         }
         function onUnsafePasteConfirmationResolved(confirmationId) {
             if (pasteDialog.confirmationId !== confirmationId)
-                return
-            pasteDialog.confirmationId = 0
-            pasteDialog.close()
+                return;
+            pasteDialog.confirmationId = 0;
+            pasteDialog.close();
         }
-        function onTerminalClipboardWriteConfirmationRequested(
-                confirmationId, preview) {
-            clipboardWriteDialog.confirmationId = confirmationId
-            clipboardWritePreview.text = preview
-            rememberClipboardChoice.checked = false
-            clipboardWriteDialog.open()
+        function onTerminalClipboardWriteConfirmationRequested(confirmationId, preview) {
+            clipboardWriteDialog.confirmationId = confirmationId;
+            clipboardWritePreview.text = preview;
+            rememberClipboardChoice.checked = false;
+            clipboardWriteDialog.open();
         }
         function onTerminalClipboardWriteConfirmationResolved(confirmationId) {
             if (clipboardWriteDialog.confirmationId !== confirmationId)
-                return
-            clipboardWriteDialog.confirmationId = 0
-            clipboardWriteDialog.close()
+                return;
+            clipboardWriteDialog.confirmationId = 0;
+            clipboardWriteDialog.close();
         }
         function onTitlePromptRequested(promptId, heading, initialTitle) {
-            titleDialog.promptId = promptId
-            titleDialog.title = heading
-            titleField.text = initialTitle
+            titleDialog.promptId = promptId;
+            titleDialog.title = heading;
+            titleField.text = initialTitle;
             // Popup focus restoration differs between Qt versions. Preserve
             // the exact pre-dialog item so broad title actions never infer a
             // pane target or disturb the active tab/split on close.
-            titleDialog.focusReturnTarget = window.activeFocusItem
-            titleDialog.open()
+            titleDialog.focusReturnTarget = window.activeFocusItem;
+            titleDialog.open();
         }
         function onTitlePromptResolved(promptId) {
             if (titleDialog.promptId !== promptId)
-                return
-            titleDialog.promptId = 0
-            titleDialog.close()
+                return;
+            titleDialog.promptId = 0;
+            titleDialog.close();
         }
-        function onContextMenuRequested(requestId, windowPosition,
-                                        selectionAvailable) {
-            terminalContextMenu.showFor(requestId, windowPosition,
-                                        selectionAvailable)
+        function onContextMenuRequested(requestId, windowPosition, selectionAvailable) {
+            terminalContextMenu.showFor(requestId, windowPosition, selectionAvailable);
         }
         function onContextMenuCancelled(requestId) {
-            terminalContextMenu.cancel(requestId)
+            terminalContextMenu.cancel(requestId);
         }
         function onToggleFullscreenRequested() {
-            window.toggleFullscreen()
+            window.toggleFullscreen();
         }
         function onToggleMaximizeRequested() {
-            window.toggleMaximize()
+            window.toggleMaximize();
         }
         function onWindowCloseApproved() {
-            window.closeApproved = true
+            window.closeApproved = true;
         }
     }
 }

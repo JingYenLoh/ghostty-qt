@@ -76,8 +76,8 @@ TerminalTextRunBuilder::TerminalTextRunBuilder(qsizetype expectedCellCount,
     runs_.reserve(std::min<qsizetype>(expectedCellCount_, 16));
 }
 
-Q_ALWAYS_INLINE bool TerminalTextRunBuilder::compatibleWithPending(
-    TerminalTextCellView cell) const
+Q_ALWAYS_INLINE bool
+TerminalTextRunBuilder::compatibleWithPending(TerminalTextCellView cell) const
 {
     Q_ASSERT(pending_.has_value());
     Q_ASSERT(previous_.has_value());
@@ -86,17 +86,15 @@ Q_ALWAYS_INLINE bool TerminalTextRunBuilder::compatibleWithPending(
     const bool defensiveLigatureBoundary = left.plainCodepoint
         && cell.plainCodepoint
         && ((left.baseCodepoint == U'f'
-             && (cell.baseCodepoint == U'i'
-                 || cell.baseCodepoint == U'l'))
+             && (cell.baseCodepoint == U'i' || cell.baseCodepoint == U'l'))
             || (left.baseCodepoint == U's' && cell.baseCodepoint == U't'));
     const bool cursorBoundary = breakAtCursor_
         && ((left.cursor && !left.extendedGrapheme)
             || (cell.cursor && !cell.extendedGrapheme));
-    return left.column + leftSpan == cell.column
-        && pending_->font == cell.font && pending_->color == cell.color
-        && pendingStyle_ == cell.style
-        && pendingSelected_ == cell.selected
-        && !defensiveLigatureBoundary && !cursorBoundary;
+    return left.column + leftSpan == cell.column && pending_->font == cell.font
+        && pending_->color == cell.color && pendingStyle_ == cell.style
+        && pendingSelected_ == cell.selected && !defensiveLigatureBoundary
+        && !cursorBoundary;
 }
 
 void TerminalTextRunBuilder::startPending(TerminalTextCellView cell)

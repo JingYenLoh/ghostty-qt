@@ -10,7 +10,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SPEC = ROOT / "dist" / "shell-completions" / "spec.json"
 DEFAULT_OUTPUT_DIRECTORY = DEFAULT_SPEC.parent
@@ -67,38 +66,38 @@ def bash_value_body(option: dict[str, Any], prefix: str = "    ") -> list[str]:
     if completion == "font":
         return [
             f"{prefix}while IFS= read -r candidate; do",
-            f"{prefix}  [[ $candidate == \"$value\"* ]] || continue",
-            f"{prefix}  COMPREPLY+=(\"$reply_prefix$candidate \" )",
+            f'{prefix}  [[ $candidate == "$value"* ]] || continue',
+            f'{prefix}  COMPREPLY+=("$reply_prefix$candidate " )',
             f"{prefix}done < <(command ghostty-qt +list-fonts 2>/dev/null | grep '^[A-Z]')",
         ]
     if completion == "directory":
         quoted_choices = shell_words(choices)
         lines = [
             f"{prefix}while IFS= read -r candidate; do",
-            f"{prefix}  COMPREPLY+=(\"$reply_prefix$candidate \" )",
+            f'{prefix}  COMPREPLY+=("$reply_prefix$candidate " )',
             f"{prefix}done < <(compgen -W '{quoted_choices}' -- \"$value\")",
             f"{prefix}while IFS= read -r candidate; do",
-            f"{prefix}  COMPREPLY+=(\"$reply_prefix$candidate/\")",
-            f"{prefix}done < <(compgen -d -- \"$value\")",
+            f'{prefix}  COMPREPLY+=("$reply_prefix$candidate/")',
+            f'{prefix}done < <(compgen -d -- "$value")',
         ]
         return lines
     if completion == "file":
         return [
             f"{prefix}compopt -o filenames 2>/dev/null || true",
             f"{prefix}while IFS= read -r candidate; do",
-            f"{prefix}  COMPREPLY+=(\"$reply_prefix$candidate\")",
-            f"{prefix}done < <(compgen -f -- \"$value\")",
+            f'{prefix}  COMPREPLY+=("$reply_prefix$candidate")',
+            f'{prefix}done < <(compgen -f -- "$value")',
         ]
     if completion == "command":
         return [
             f"{prefix}while IFS= read -r candidate; do",
-            f"{prefix}  COMPREPLY+=(\"$reply_prefix$candidate \" )",
-            f"{prefix}done < <(compgen -c -- \"$value\")",
+            f'{prefix}  COMPREPLY+=("$reply_prefix$candidate " )',
+            f'{prefix}done < <(compgen -c -- "$value")',
         ]
     if choices:
         return [
             f"{prefix}while IFS= read -r candidate; do",
-            f"{prefix}  COMPREPLY+=(\"$reply_prefix$candidate \" )",
+            f'{prefix}  COMPREPLY+=("$reply_prefix$candidate " )',
             f"{prefix}done < <(compgen -W '{shell_words(choices)}' -- \"$value\")",
         ]
     return [f"{prefix}return 0"]
@@ -106,9 +105,11 @@ def bash_value_body(option: dict[str, Any], prefix: str = "    ") -> list[str]:
 
 def render_bash(spec: dict[str, Any]) -> str:
     actions = spec["actions"]
-    top_candidates = option_candidates(spec["options"]) + ["--"] + [
-        action["name"] for action in actions
-    ]
+    top_candidates = (
+        option_candidates(spec["options"])
+        + ["--"]
+        + [action["name"] for action in actions]
+    )
 
     lines = [
         f"# {GENERATED_NOTICE}",
@@ -117,14 +118,14 @@ def render_bash(spec: dict[str, Any]) -> str:
         "{",
         "  local words=$1 value=$2 candidate",
         "  while IFS= read -r candidate; do",
-        "    [[ $candidate == *= ]] && COMPREPLY+=(\"$candidate\") || COMPREPLY+=(\"$candidate \" )",
-        "  done < <(compgen -W \"$words\" -- \"$value\")",
+        '    [[ $candidate == *= ]] && COMPREPLY+=("$candidate") || COMPREPLY+=("$candidate " )',
+        '  done < <(compgen -W "$words" -- "$value")',
         "}",
         "",
         "_ghostty_qt_complete_value()",
         "{",
         "  local action=$1 option=$2 value=$3 reply_prefix=$4 candidate",
-        "  case \"$action:$option\" in",
+        '  case "$action:$option" in',
     ]
 
     for option in spec["options"]:
@@ -139,9 +140,7 @@ def render_bash(spec: dict[str, Any]) -> str:
         for option in action["options"]:
             if option["kind"] not in {"value", "optional-value"}:
                 continue
-            lines.append(
-                f"  {bash_case_pattern(action['name'], option['name'])})"
-            )
+            lines.append(f"  {bash_case_pattern(action['name'], option['name'])})")
             lines.extend(bash_value_body(option))
             lines.append("    ;;")
 
@@ -172,10 +171,10 @@ def render_bash(spec: dict[str, Any]) -> str:
             "",
             "  if (( boundary >= 0 )); then",
             "    if (( COMP_CWORD == boundary + 1 )); then",
-            "      while IFS= read -r candidate; do COMPREPLY+=(\"$candidate \" ); done < <(compgen -c -- \"$cur\")",
+            '      while IFS= read -r candidate; do COMPREPLY+=("$candidate " ); done < <(compgen -c -- "$cur")',
             "    else",
             "      compopt -o filenames 2>/dev/null || true",
-            "      mapfile -t COMPREPLY < <(compgen -f -- \"$cur\")",
+            '      mapfile -t COMPREPLY < <(compgen -f -- "$cur")',
             "    fi",
             "    return 0",
             "  fi",
@@ -184,7 +183,7 @@ def render_bash(spec: dict[str, Any]) -> str:
             "    option=${cur%%=*}",
             "    value=${cur#*=}",
             "    reply_prefix=$option=",
-            "    _ghostty_qt_complete_value \"$action\" \"$option\" \"$value\" \"$reply_prefix\"",
+            '    _ghostty_qt_complete_value "$action" "$option" "$value" "$reply_prefix"',
             "    return 0",
             "  fi",
             "  if [[ $cur == '=' ]]; then",
@@ -194,7 +193,7 @@ def render_bash(spec: dict[str, Any]) -> str:
             "  fi",
             "  if [[ $prev == '=' && $COMP_CWORD -gt 1 ]]; then",
             "    option=${COMP_WORDS[COMP_CWORD-2]}",
-            "    _ghostty_qt_complete_value \"$action\" \"$option\" \"$cur\" ''",
+            '    _ghostty_qt_complete_value "$action" "$option" "$cur" \'\'',
             "    return 0",
             "  fi",
             "",
@@ -254,10 +253,7 @@ def fish_completion_expression(option: dict[str, Any]) -> str | None:
     choices = option.get("choices", [])
     completion = option.get("completion")
     if completion == "font":
-        return (
-            "(ghostty-qt +list-fonts 2>/dev/null "
-            "| string match -r '^[A-Z].*')"
-        )
+        return "(ghostty-qt +list-fonts 2>/dev/null | string match -r '^[A-Z].*')"
     if completion == "directory":
         return f"{shell_words(choices)} (__fish_complete_directories)"
     if completion == "command" or option["kind"] == "command":
@@ -267,9 +263,7 @@ def fish_completion_expression(option: dict[str, Any]) -> str | None:
     return None
 
 
-def fish_option_line(
-    command: str, condition: str, option: dict[str, Any]
-) -> str:
+def fish_option_line(command: str, condition: str, option: dict[str, Any]) -> str:
     parts = ["complete", "-c", command, "-n", f"'{condition}'"]
     names = option["names"] if "names" in option else [option["name"]]
     for name in names:
@@ -426,8 +420,7 @@ def render_zsh(spec: dict[str, Any]) -> str:
     )
     for action in spec["actions"]:
         action_specs = [
-            zsh_option_spec(option, option["name"])
-            for option in action["options"]
+            zsh_option_spec(option, option["name"]) for option in action["options"]
         ]
         action_specs.append("--help[Show help for this action]")
         positional = action.get("positional")
@@ -441,9 +434,7 @@ def render_zsh(spec: dict[str, Any]) -> str:
         lines.append("          _arguments \\")
         for index, option_spec in enumerate(action_specs):
             continuation = " \\" if index + 1 < len(action_specs) else ""
-            lines.append(
-                f"            {zsh_double_quote(option_spec)}{continuation}"
-            )
+            lines.append(f"            {zsh_double_quote(option_spec)}{continuation}")
         lines.append("          ;;")
     lines.extend(
         [
@@ -453,7 +444,7 @@ def render_zsh(spec: dict[str, Any]) -> str:
             "  esac",
             "}",
             "",
-            "_ghostty_qt \"$@\"",
+            '_ghostty_qt "$@"',
             "",
         ]
     )
@@ -517,10 +508,14 @@ def main() -> int:
     spec = load_spec(args.spec)
     generated = outputs(spec)
     if args.check:
-        return 0 if all(
-            check_output(args.output_directory / name, content)
-            for name, content in generated.items()
-        ) else 1
+        return (
+            0
+            if all(
+                check_output(args.output_directory / name, content)
+                for name, content in generated.items()
+            )
+            else 1
+        )
 
     args.output_directory.mkdir(parents=True, exist_ok=True)
     for name, content in generated.items():

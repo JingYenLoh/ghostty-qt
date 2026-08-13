@@ -42,7 +42,6 @@ void terminalLinearizePremultipliedSrgb8(QImage &image);
 [[nodiscard]] QColor terminalLinearizedColor(const QColor &color);
 [[nodiscard]] QColor terminalRenderingColor(const QColor &color,
                                             TerminalAlphaBlending mode);
-[[nodiscard]] const TerminalCustomShaderStage &
-terminalAlphaEncodeShaderStage();
+[[nodiscard]] const TerminalCustomShaderStage &terminalAlphaEncodeShaderStage();
 
 Q_DECLARE_METATYPE(TerminalAlphaBlending)

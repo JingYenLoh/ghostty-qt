@@ -13,8 +13,10 @@ cmake_path(GET OUTPUT PARENT_PATH output_directory)
 file(MAKE_DIRECTORY "${output_directory}")
 set(temporary_output "${OUTPUT}.tmp")
 file(WRITE "${temporary_output}" "${CONTRACT}\n")
-file(RENAME "${temporary_output}" "${OUTPUT}"
-    RESULT rename_result)
+file(RENAME "${temporary_output}" "${OUTPUT}" RESULT rename_result)
 if(rename_result)
-    message(FATAL_ERROR "Unable to publish build-contract stamp: ${rename_result}")
+    message(
+        FATAL_ERROR
+        "Unable to publish build-contract stamp: ${rename_result}"
+    )
 endif()

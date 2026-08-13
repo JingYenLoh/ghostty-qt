@@ -11,21 +11,19 @@ Rectangle {
     property bool dragging: false
     property real dragY: 0
 
-    readonly property bool hasTables: terminalPane !== null
-                                              && terminalPane.activeKeyTables.length > 0
-    readonly property bool hasSequence: terminalPane !== null
-                                                && terminalPane.pendingKeySequence.length > 0
+    readonly property bool hasTables: terminalPane !== null && terminalPane.activeKeyTables.length > 0
+    readonly property bool hasSequence: terminalPane !== null && terminalPane.pendingKeySequence.length > 0
 
     function boundedY(value) {
         if (parent === null)
-            return 0
-        return Math.max(0, Math.min(value, parent.height - height))
+            return 0;
+        return Math.max(0, Math.min(value, parent.height - height));
     }
 
     function restingY() {
         if (parent === null)
-            return 0
-        return boundedY(alignTop ? 8 : parent.height - height - 8)
+            return 0;
+        return boundedY(alignTop ? 8 : parent.height - height - 8);
     }
 
     objectName: "terminalKeyStateOverlay"
@@ -41,13 +39,12 @@ Rectangle {
     border.width: 1
 
     Accessible.name: {
-        const parts = []
+        const parts = [];
         if (hasTables)
-            parts.push("Key tables " + terminalPane.activeKeyTables.join(" > "))
+            parts.push("Key tables " + terminalPane.activeKeyTables.join(" > "));
         if (hasSequence)
-            parts.push("Pending key sequence "
-                       + terminalPane.pendingKeySequence.join(" "))
-        return parts.join(", ")
+            parts.push("Pending key sequence " + terminalPane.pendingKeySequence.join(" "));
+        return parts.join(", ");
     }
     Accessible.role: Accessible.StaticText
 
@@ -69,8 +66,7 @@ Rectangle {
 
             objectName: "terminalKeyStateTables"
             visible: root.hasTables
-            text: root.hasTables
-                  ? root.terminalPane.activeKeyTables.join(" > ") : ""
+            text: root.hasTables ? root.terminalPane.activeKeyTables.join(" > ") : ""
             color: "#f2f2f2"
         }
 
@@ -87,8 +83,7 @@ Rectangle {
 
             objectName: "terminalKeyStateSequence"
             visible: root.hasSequence
-            text: root.hasSequence
-                  ? root.terminalPane.pendingKeySequence.join(" ") : ""
+            text: root.hasSequence ? root.terminalPane.pendingKeySequence.join(" ") : ""
             color: "#f2f2f2"
         }
 
@@ -114,31 +109,29 @@ Rectangle {
 
         function parentY(mouse) {
             if (root.parent === null)
-                return 0
-            return mapToItem(root.parent, mouse.x, mouse.y).y
+                return 0;
+            return mapToItem(root.parent, mouse.x, mouse.y).y;
         }
 
-        onPressed: function(mouse) {
-            root.dragY = root.y
-            previousParentY = parentY(mouse)
-            root.dragging = true
-            mouse.accepted = true
+        onPressed: function (mouse) {
+            root.dragY = root.y;
+            previousParentY = parentY(mouse);
+            root.dragging = true;
+            mouse.accepted = true;
         }
 
-        onPositionChanged: function(mouse) {
+        onPositionChanged: function (mouse) {
             if (!pressed)
-                return
-            const nextParentY = parentY(mouse)
-            root.dragY = root.boundedY(root.dragY
-                                      + nextParentY - previousParentY)
-            previousParentY = nextParentY
+                return;
+            const nextParentY = parentY(mouse);
+            root.dragY = root.boundedY(root.dragY + nextParentY - previousParentY);
+            previousParentY = nextParentY;
         }
 
-        onReleased: function(mouse) {
-            root.alignTop = root.dragY + root.height / 2
-                    <= root.parent.height / 2
-            root.dragging = false
-            mouse.accepted = true
+        onReleased: function (mouse) {
+            root.alignTop = root.dragY + root.height / 2 <= root.parent.height / 2;
+            root.dragging = false;
+            mouse.accepted = true;
         }
 
         onCanceled: root.dragging = false

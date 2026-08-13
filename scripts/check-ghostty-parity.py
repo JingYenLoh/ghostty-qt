@@ -9,12 +9,12 @@ check fails loudly instead of silently producing an incomplete inventory.
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 import json
-from pathlib import Path
 import re
 import subprocess
 import sys
+from collections import Counter
+from pathlib import Path
 from typing import Any, Callable
 
 
@@ -27,11 +27,11 @@ _CONFIG_FIELD = re.compile(
 )
 _BINDING_VARIANT = re.compile(
     r'^    (?:@"(?P<quoted>[^"]+)"|(?P<plain>[A-Za-z_][A-Za-z0-9_]*))'
-    r'\s*(?::[^,]+)?\s*,(?:\s*//.*)?$'
+    r"\s*(?::[^,]+)?\s*,(?:\s*//.*)?$"
 )
 _CLI_VARIANT = re.compile(
     r'^    (?:@"(?P<quoted>[^"]+)"|(?P<plain>[A-Za-z_][A-Za-z0-9_-]*))'
-    r'\s*,(?:\s*//.*)?$'
+    r"\s*,(?:\s*//.*)?$"
 )
 
 
@@ -66,9 +66,7 @@ def _match_names(text: str, pattern: re.Pattern[str]) -> list[str]:
 def extract_config_keys(path: Path) -> list[str]:
     prefix = _slice(_read(path), "", "pub fn deinit", path)
     return sorted(
-        name
-        for name in _match_names(prefix, _CONFIG_FIELD)
-        if not name.startswith("_")
+        name for name in _match_names(prefix, _CONFIG_FIELD) if not name.startswith("_")
     )
 
 
@@ -111,9 +109,7 @@ def _require_string(value: Any, label: str) -> str:
     return value
 
 
-def _require_exact_keys(
-    value: Any, label: str, expected: set[str]
-) -> dict[str, Any]:
+def _require_exact_keys(value: Any, label: str, expected: set[str]) -> dict[str, Any]:
     result = _require_dict(value, label)
     missing = sorted(expected - set(result))
     unsupported = sorted(set(result) - expected)
@@ -128,9 +124,8 @@ def _require_exact_keys(
 
 
 def _require_string_list(value: Any, label: str) -> list[str]:
-    if (
-        not isinstance(value, list)
-        or any(not isinstance(item, str) or not item for item in value)
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) or not item for item in value
     ):
         raise ParityError(f"{label} must be an array of non-empty strings")
     return value
@@ -186,9 +181,7 @@ def _cmake_revision_file(path: Path) -> Path:
         re.MULTILINE,
     )
     if not match:
-        raise ParityError(
-            f"cannot find GHOSTTY_QT_GHOSTTY_REVISION_FILE in {path}"
-        )
+        raise ParityError(f"cannot find GHOSTTY_QT_GHOSTTY_REVISION_FILE in {path}")
     return Path(match.group(1))
 
 
@@ -201,9 +194,7 @@ def _repository_path(root: Path, relative: str, label: str) -> Path:
     try:
         path.relative_to(root)
     except ValueError as error:
-        raise ParityError(
-            f"{label} must stay within the repository root"
-        ) from error
+        raise ParityError(f"{label} must stay within the repository root") from error
     return path
 
 
@@ -211,13 +202,11 @@ def _pinned_revision(root: Path, relative: str) -> str:
     path = _repository_path(root, relative, "upstream.revision_file")
     text = _read(path)
     revision = text.strip()
-    if (
-        not re.fullmatch(r"[0-9a-f]{40}", revision)
-        or text not in {revision, revision + "\n"}
-    ):
-        raise ParityError(
-            f"{path} must contain one full lowercase Git hash"
-        )
+    if not re.fullmatch(r"[0-9a-f]{40}", revision) or text not in {
+        revision,
+        revision + "\n",
+    }:
+        raise ParityError(f"{path} must contain one full lowercase Git hash")
     return revision
 
 
@@ -279,12 +268,8 @@ def check_repository(
     _require_string_list(scope.get("host_os"), "scope.host_os")
     _require_string_list(scope.get("display_servers"), "scope.display_servers")
     _require_string(scope.get("toolkit"), "scope.toolkit")
-    _require_string(
-        scope.get("toolkit_mapping_policy"), "scope.toolkit_mapping_policy"
-    )
-    _require_string_list(
-        scope.get("excluded_platforms"), "scope.excluded_platforms"
-    )
+    _require_string(scope.get("toolkit_mapping_policy"), "scope.toolkit_mapping_policy")
+    _require_string_list(scope.get("excluded_platforms"), "scope.excluded_platforms")
     shared_config = _require_exact_keys(
         scope.get("shared_config"),
         "scope.shared_config",
@@ -318,14 +303,10 @@ def check_repository(
         )
 
     statuses = set(
-        _require_string_map(
-            manifest.get("status_definitions"), "status_definitions"
-        )
+        _require_string_map(manifest.get("status_definitions"), "status_definitions")
     )
     scopes = set(
-        _require_string_map(
-            manifest.get("scope_definitions"), "scope_definitions"
-        )
+        _require_string_map(manifest.get("scope_definitions"), "scope_definitions")
     )
 
     inventories = _require_dict(manifest.get("inventories"), "inventories")
