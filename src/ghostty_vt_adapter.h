@@ -165,6 +165,11 @@ public:
         TerminalColorScheme colorScheme = TerminalColorScheme::Light;
         TerminalClipboardAccess clipboardWriteAccess =
             TerminalClipboardAccess::Allow;
+        bool graphemeWidthUnicode = true;
+        bool titleReport = false;
+        // Effective child TERM advertised through XTGETTCAP TN. An empty or
+        // overlong value leaves the report unset per lib-vt's contract.
+        QByteArray terminfoName;
         // A concrete launch directory initializes terminal-owned PWD before
         // the child starts so immediately-created panes can inherit it.
         std::optional<QByteArray> initialWorkingDirectory;
@@ -428,12 +433,10 @@ public:
     [[nodiscard]] TerminalInspectorCellSnapshot
     inspectorCellSnapshot(int viewportColumn, int viewportRow) const;
 
-    // Mirror Ghostty's cursor-at-prompt policy using the public C surface:
-    // alternate screens are always Away; a semantic prompt/continuation row
-    // is AtPrompt; otherwise the stored cursor cell decides. Public
-    // libghostty-vt does not expose the live cursor semantic mode or whether
-    // shell integration has ever been observed, so Away also covers a
-    // terminal without semantic prompt integration.
+    // Query Ghostty's exact cursor-at-prompt predicate through the public C
+    // surface. Public libghostty-vt still does not expose whether shell
+    // integration has ever been observed, so Away also covers a terminal
+    // without semantic prompt integration.
     SemanticPromptState semanticPromptState() const;
     std::uint64_t compressionActivity() const;
     bool compressScrollback();

@@ -434,7 +434,7 @@ GTK-prefixed settings are not aliases for Qt settings.
 
 The complete Ghostty application parser is not part of `libghostty-vt`.
 `ghostty-qt-config-helper` therefore links a private revision-matched
-`ghostty-internal` library and exports a strict schema-v4 value projection.
+`ghostty-internal` library and exports a strict schema-v5 value projection.
 The GUI process never parses human-oriented `+show-config` output.
 
 The process boundary contains the private Zig application API and lets the main

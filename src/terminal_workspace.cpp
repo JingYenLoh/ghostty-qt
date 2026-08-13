@@ -925,6 +925,7 @@ QStringList TerminalWorkspace::tabTitles() const
 
 QString TerminalWorkspace::currentTitle() const
 {
+    if (windowTitleOverride_.has_value()) return *windowTitleOverride_;
     return tabModel_
         .data(tabModel_.index(currentIndex_, 0), TabListModel::TitleRole)
         .toString();
@@ -1292,6 +1293,28 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
         if (tab->titleOverride != request.payload) {
             tab->titleOverride = request.payload;
             refreshTab(tabId);
+        }
+        return true;
+    }
+    case WorkspaceAction::PromptWindowTitle:
+        if (request.context.paneId.isValid()
+            && (paneForId(request.context.paneId) == nullptr
+                || !contextMatchesPane())) {
+            return false;
+        }
+        return enqueueTitlePrompt(TitlePromptTarget{std::monostate{}},
+                                  currentTitle());
+    case WorkspaceAction::SetWindowTitle: {
+        if (request.context.paneId.isValid()
+            && (paneForId(request.context.paneId) == nullptr
+                || !contextMatchesPane())) {
+            return false;
+        }
+        std::optional<QString> replacement;
+        if (!request.payload.isEmpty()) replacement = request.payload;
+        if (windowTitleOverride_ != replacement) {
+            windowTitleOverride_ = std::move(replacement);
+            Q_EMIT currentTitleChanged();
         }
         return true;
     }
@@ -3359,6 +3382,7 @@ bool TerminalWorkspace::enqueueTitlePrompt(TitlePromptTarget target,
 bool TerminalWorkspace::titlePromptTargetExists(
     const TitlePromptTarget &target) const
 {
+    if (std::holds_alternative<std::monostate>(target)) return true;
     if (const auto *paneId = std::get_if<PaneId>(&target)) {
         return paneForId(*paneId) != nullptr;
     }
@@ -3382,7 +3406,9 @@ void TerminalWorkspace::showNextTitlePrompt()
         const QString heading =
             std::holds_alternative<PaneId>(activeTitlePrompt_->target)
             ? QStringLiteral("Change Terminal Title")
-            : QStringLiteral("Change Tab Title");
+            : std::holds_alternative<TabId>(activeTitlePrompt_->target)
+            ? QStringLiteral("Change Tab Title")
+            : QStringLiteral("Change Window Title");
         Q_EMIT titlePromptRequested(activeTitlePrompt_->requestId, heading,
                                     activeTitlePrompt_->initialTitle);
         return;
@@ -3435,16 +3461,19 @@ void TerminalWorkspace::finishTitlePrompt(quint64 promptId,
                 pane->setSurfaceTitleOverride(std::move(titleOverride));
                 if (guard == nullptr) return;
             }
-        } else {
-            const TabId tabId = std::get<TabId>(prompt.target);
-            if (tabById(tabId) != nullptr) {
+        } else if (const auto *tabId =
+                       std::get_if<TabId>(&prompt.target)) {
+            if (tabById(*tabId) != nullptr) {
                 dispatchAction({
                     WorkspaceAction::SetTabTitle,
-                    {tabId, PaneId{}, 0},
+                    {*tabId, PaneId{}, 0},
                     *title,
                 });
                 if (guard == nullptr) return;
             }
+        } else {
+            dispatchAction({WorkspaceAction::SetWindowTitle, {}, *title});
+            if (guard == nullptr) return;
         }
     }
     Q_EMIT titlePromptResolved(promptId);

@@ -36,6 +36,8 @@ enum class WorkspaceAction {
     PromptSurfaceTitle,
     PromptTabTitle,
     SetTabTitle,
+    PromptWindowTitle,
+    SetWindowTitle,
     ResizeSplit,
     EqualizeSplits,
     ToggleSplitZoom,

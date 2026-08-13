@@ -539,7 +539,8 @@ TerminalPane::TerminalPane(
                 }
                 updateScrollbarState();
                 if (guard == nullptr) return;
-                if (hyperlinkQueryRejected_ && options_.linkUrl
+                if (hyperlinkQueryRejected_
+                    && (options_.linkUrl || options_.linkOsc8)
                     && (terminalUpdate.fullFrame
                         || terminalUpdate.scrollbarChanged
                         || std::any_of(terminalUpdate.dirtyRows.cbegin(),
@@ -2450,6 +2451,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.horizontalTabScroll = options.horizontalTabScroll;
     updated.vtKamAllowed = options.vtKamAllowed;
     updated.linkUrl = options.linkUrl;
+    updated.linkOsc8 = options.linkOsc8;
     updated.linkPreviews = options.linkPreviews;
     updated.scrollbackCompression = options.scrollbackCompression;
     updated.kittyImageStorageLimitBytes = options.kittyImageStorageLimitBytes;
@@ -2520,6 +2522,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
 
     const bool previewWasPointerCaptured = linkPreviewPointerCaptured_;
     const bool linkUrlChanged = options_.linkUrl != updated.linkUrl;
+    const bool linkOsc8Changed = options_.linkOsc8 != updated.linkOsc8;
     const bool linkPreviewModeChanged =
         options_.linkPreviews != updated.linkPreviews;
     const bool mouseShiftCaptureChanged =
@@ -2688,11 +2691,21 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
             if (!stillCurrentUpdate()) return;
         }
     }
-    if (linkUrlChanged || mouseShiftCaptureChanged) {
+    if (linkOsc8Changed && !options.linkOsc8) {
+        if (hyperlinkPressKind_ == TerminalLinkKind::Osc8) {
+            cancelHyperlinkPress();
+            if (!stillCurrentUpdate()) return;
+        }
+        if (pendingActivationKind_ == TerminalLinkKind::Osc8) {
+            cancelPendingHyperlinkActivation();
+            if (!stillCurrentUpdate()) return;
+        }
+    }
+    if (linkUrlChanged || linkOsc8Changed || mouseShiftCaptureChanged) {
         clearHyperlinkHover();
         if (!stillCurrentUpdate()) return;
     }
-    if (linkUrlChanged || mouseShiftCaptureChanged) {
+    if (linkUrlChanged || linkOsc8Changed || mouseShiftCaptureChanged) {
         recomputeHyperlinkHover();
         if (!stillCurrentUpdate()) return;
     }
@@ -4702,6 +4715,8 @@ bool TerminalPane::performWorkspaceAction(WorkspaceActionRequest request)
     case WorkspaceAction::PromptSurfaceTitle:
     case WorkspaceAction::PromptTabTitle:
     case WorkspaceAction::SetTabTitle:
+    case WorkspaceAction::PromptWindowTitle:
+    case WorkspaceAction::SetWindowTitle:
     case WorkspaceAction::ResizeSplit:
     case WorkspaceAction::EqualizeSplits:
     case WorkspaceAction::ToggleSplitZoom:
@@ -5664,7 +5679,8 @@ void TerminalPane::refreshHyperlinkHover()
         const int targetIndex =
             hoverCell_.y() * frame_.columns + hoverCell_.x();
         targetMayHaveLink = options_.linkUrl
-            || (targetIndex >= 0 && targetIndex < frame_.cells.size()
+            || (options_.linkOsc8 && targetIndex >= 0
+                && targetIndex < frame_.cells.size()
                 && frame_.cells.cell(hoverCell_.y(), hoverCell_.x())
                        .hasHyperlink());
     }
@@ -5835,7 +5851,8 @@ bool TerminalPane::hyperlinkCellCandidate(const QPoint &cell,
         return false;
     }
     const int index = cell.y() * frame_.columns + cell.x();
-    const bool osc8Candidate = index >= 0 && index < frame_.cells.size()
+    const bool osc8Candidate = options_.linkOsc8 && index >= 0
+        && index < frame_.cells.size()
         && frame_.cells.cell(cell.y(), cell.x()).hasHyperlink();
     const bool resolvedRegexCandidate = options_.linkUrl
         && hoveredLinkKind_ == TerminalLinkKind::Regex

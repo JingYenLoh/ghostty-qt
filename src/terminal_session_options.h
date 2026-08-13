@@ -39,6 +39,11 @@ struct TerminalEnvironmentEntry {
 
 using TerminalEnvironment = QVector<TerminalEnvironmentEntry>;
 
+enum class GraphemeWidthMethod : quint8 {
+    Legacy,
+    Unicode,
+};
+
 enum class GhosttyShellIntegrationMode : quint8 {
     None,
     Detect,
@@ -141,6 +146,10 @@ struct TerminalSessionRuntimeOptions {
     TerminalClipboardPasteOptions clipboardPaste;
     RightClickAction rightClickAction = RightClickAction::ContextMenu;
     bool linkUrl = true;
+    bool linkOsc8 = true;
+    // These lib-vt policies are fixed at terminal construction upstream.
+    GraphemeWidthMethod graphemeWidthMethod = GraphemeWidthMethod::Unicode;
+    bool titleReport = false;
     // KAM remains terminal-owned. This live frontend policy decides whether
     // ANSI mode 2 is permitted to suppress ordinary keyboard and IME input.
     bool vtKamAllowed = false;

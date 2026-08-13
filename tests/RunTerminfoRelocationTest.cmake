@@ -57,13 +57,13 @@ if(CONFIG_HELPER_NAME)
         LIST_DIRECTORIES FALSE
         "${relocated_themes}/*")
     list(LENGTH relocated_theme_files relocated_theme_count)
-    if(NOT relocated_theme_count EQUAL 592
+    if(NOT relocated_theme_count EQUAL 602
        OR NOT EXISTS "${relocated_themes}/3024 Day"
        OR NOT EXISTS "${relocated_themes}/3024 Night"
        OR NOT EXISTS "${relocated_themes}/Dracula")
         message(FATAL_ERROR
             "Relocated pinned theme inventory is incomplete: "
-            "expected 592 files, found ${relocated_theme_count}")
+            "expected 602 files, found ${relocated_theme_count}")
     endif()
 
     set(relocated_application
@@ -222,7 +222,7 @@ if(CONFIG_HELPER_NAME)
        OR progress_style_json_error
        OR progress_style_value_json_error
        OR palette_json_error
-       OR NOT structured_schema EQUAL 4
+       OR NOT structured_schema EQUAL 5
        OR NOT values_type STREQUAL "OBJECT"
        OR NOT lifetime_type STREQUAL "BOOLEAN"
        OR NOT initial_window_type STREQUAL "BOOLEAN"
@@ -252,6 +252,21 @@ endif()
 set(relocated_probe "${relocated_prefix}/${INSTALL_BINDIR}/${probe_name}")
 set(expected_database "${relocated_prefix}/${INSTALL_TERMINFO_DIR}")
 file(REAL_PATH "${expected_database}" expected_database_real)
+
+find_program(terminfo_infocmp infocmp REQUIRED)
+execute_process(
+    COMMAND "${terminfo_infocmp}" -x -1 -A "${expected_database_real}"
+        xterm-ghostty
+    RESULT_VARIABLE terminfo_result
+    OUTPUT_VARIABLE terminfo_output
+    ERROR_VARIABLE terminfo_error)
+string(FIND "${terminfo_output}" "Smol=\\E[53m" smol_offset)
+string(FIND "${terminfo_output}" "Rmol=\\E[55m" rmol_offset)
+if(NOT terminfo_result EQUAL 0 OR smol_offset EQUAL -1 OR rmol_offset EQUAL -1)
+    message(FATAL_ERROR
+        "Relocated xterm-ghostty terminfo is missing overline capabilities "
+        "(${terminfo_result}):\n${terminfo_output}\n${terminfo_error}")
+endif()
 
 execute_process(
     COMMAND "${CMAKE_COMMAND}" -E env --unset=GHOSTTY_QT_TERMINFO

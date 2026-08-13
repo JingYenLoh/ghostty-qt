@@ -27,9 +27,9 @@ SPEC.loader.exec_module(PARITY)
 class ParityManifestTest(unittest.TestCase):
     def test_manifest_matches_pinned_source(self) -> None:
         summaries = PARITY.check_repository(ROOT, source_path=GHOSTTY_SOURCE)
-        self.assertEqual(206, sum(summaries["config_keys"].values()))
-        self.assertEqual(85, sum(summaries["keybinding_actions"].values()))
-        self.assertEqual(18, sum(summaries["cli_actions"].values()))
+        self.assertEqual(208, sum(summaries["config_keys"].values()))
+        self.assertEqual(88, sum(summaries["keybinding_actions"].values()))
+        self.assertEqual(19, sum(summaries["cli_actions"].values()))
 
     def test_drift_message_is_deterministic(self) -> None:
         self.assertEqual(

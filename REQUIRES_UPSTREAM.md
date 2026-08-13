@@ -18,7 +18,7 @@ limited to finalized configuration and launch preparation.
 
 Unless a section records a newer comparison, the contracts below were checked
 against official pinned Ghostty commit
-`48d85eaeb06ac9fc49073815bda5bac97de655ca` on 2026-08-05.
+`c54ec80c55a045312f7c97d66b32c8043526f03c` on 2026-08-13.
 
 Most items share this landing procedure once an official upstream commit
 provides the contract:
@@ -434,63 +434,38 @@ the planner and queues its output in PTY order without a second OSC 133 state
 machine. Tests must cover click-versus-drag and selection precedence in the Qt
 layer in addition to the upstream terminal matrix.
 
-## Live semantic cursor and integration state
+## Semantic integration-observed state
 
-**Status:** public row/cell metadata provides a conservative approximation;
-exact prompt-aware close policy and other consumers of
-`Terminal.cursorIsAtPrompt` remain partial.
+**Status:** blocked on an upstream public API.
 
-Ghostty's private `Terminal.cursorIsAtPrompt()` is a live terminal predicate.
-It returns false on the alternate screen. On the primary screen it returns true
-when the cursor row is marked as a prompt or continuation; otherwise it checks
-the cursor's live `semantic_content`, which can be prompt, input, or output even
-when the stored cell at that location does not yet carry the same state.
-`Screen.semantic_prompt.seen` separately records whether a prompt marker has
-ever set prompt state on that screen and is reset with the screen.
-
-Public `libghostty-vt` exposes active-screen identity, cursor coordinates,
-stored row prompt metadata, and stored cell semantic content. That permits the
-current frontend approximation, but it cannot observe the cursor's live
-semantic content or the screen's `seen` bit. The difference is visible at an
-empty or not-yet-written cursor cell, across OSC 133 transitions, and during
-alternate-screen work. It affects exact `confirm-close-surface`, the semantic
-clear branch, and prompt-click eligibility; the latter two are still best
-exposed as composite operations rather than reassembled from this query.
+Ghostty's private `Screen.semantic_prompt.seen` records whether a prompt marker
+has ever established semantic integration on a screen and resets with that
+screen. Public libghostty-vt exposes the separate exact cursor-at-prompt
+predicate, which ghostty-qt already uses, but not this persistent observation
+bit. The missing state matters when the host must distinguish an ordinary
+uninjected shell from one whose semantic integration has been observed.
 
 ### Required upstream contract
 
-Official `libghostty-vt` needs append-only terminal-data queries for:
-
-- the exact current result of `Terminal.cursorIsAtPrompt()`; and
-- whether semantic prompt integration has been seen on a specified screen, or
-  at minimum on the primary screen independently of which screen is active.
-
-A boolean cursor result is sufficient because "integration unavailable" is
-represented by false in Ghostty's predicate. The separate seen query lets an
-embedding frontend distinguish an ordinary uninjected shell from one whose
-integration has been observed; whether integration was expected or injected
-remains host launch state. Both queries must be coherent with the active-screen
-and cursor values returned by `ghostty_terminal_get_multi`, reflect completed
-VT writes, and reset exactly when the corresponding private screen state does.
+Official `libghostty-vt` needs an append-only terminal-data query for
+whether semantic prompt integration has been seen on a specified screen, or
+at minimum on the primary screen independently of which screen is active. It
+must reflect completed VT writes, reset exactly with the private screen state,
+and be coherent with other values returned by `ghostty_terminal_get_multi`.
 
 ### Upstream acceptance evidence
 
-Public tests should compare the queries directly with the private predicates
-for a new terminal; OSC 133 prompt, input, output, and command transitions;
-empty cursor cells; text written before and after each transition; explicit and
-inferred continuation rows; soft wrapping; primary/alternate switching; screen
-replacement; and RIS. A batched getter test must prove that active screen,
-cursor location, cursor-at-prompt, and integration-seen form one coherent
-snapshot.
+Public tests should compare integration-seen directly
+with private screen state across a new terminal, OSC 133 transitions, primary
+and alternate screens, screen replacement, and RIS. A batched getter test
+should prove that active screen, cursor-at-prompt, and integration-seen form one
+coherent snapshot.
 
 ### ghostty-qt follow-up after upstream support lands
 
-`SessionWorker` should replace its public-grid approximation with the two
-queries while retaining the frontend's successful-injection and process-group
-state. It should continue to publish only an owned prompt/activity enum to the
-GUI thread. Exact close-policy tests should cover startup before the first
-prompt, same-process-group shell builtins, external foreground jobs,
-alternate-screen programs, prompt return, reset, query failure, and pane exit.
+Once integration-seen is public, `SessionWorker` should combine it with the
+frontend's successful-injection and process-group state while continuing to
+publish only an owned prompt/activity enum to the GUI thread.
 
 ## Semantic screen clearing
 
@@ -572,64 +547,6 @@ commit:
 5. Exercise local and all/global bindings across primary and alternate panes.
 6. Promote `clear_screen` in `docs/ghostty-parity.json` only after the public
    adapter and PTY-ordering tests pass.
-
-## Kitty placement-pin lifetime during eviction and replacement
-
-**Status:** ghostty-qt bounds its own mirrors of fully occluded opaque video
-frames; libghostty leaves the screen pin owned by each placement tracked until
-terminal teardown when image-budget eviction or external-placement replacement
-removes the placement without deinitializing it.
-
-Every ordinary Kitty placement tracks a `PageList.Pin`, and
-`ImageStorage.Placement.deinit(screen)` is the operation that untracks it.
-The pinned implementation's image-budget eviction removes matching placement
-map entries with `removeByPtr()` without first calling that deinitializer.
-Likewise, `addPlacement()` assigns a new value over an existing external
-`(image_id, placement_id)` entry without deinitializing the placement it
-replaces.
-
-This matters for sustained video. mpv 0.41 sends RGB24 transmit-and-display
-frames without image or placement IDs. libghostty assigns a new image and
-internal placement to every frame, retains their decoded bytes up to
-`image-storage-limit`, and then evicts the oldest used images and placement
-entries. The byte budget remains bounded, but each evicted frame leaves one
-tracked screen pin behind. Long sessions can therefore grow both pin storage
-and the work of operations that walk tracked pins.
-
-ghostty-qt's snapshot bridge safely avoids copying fully hidden opaque frames
-into Qt CPU images and textures, but it must not send synthetic delete commands
-or edit libghostty-owned placement state: doing so would change protocol
-semantics, and a later application delete is allowed to reveal a lower
-placement in renderer order. This lifetime bug remains present in the pinned
-official revision `48d85eaeb06ac9fc49073815bda5bac97de655ca`, verified
-on 2026-08-05.
-
-### Required upstream correction
-
-Official Ghostty should deinitialize every placement before eviction removes
-its map entry and before insertion replaces an existing external placement.
-The internal call chain must make the owning screen available wherever this
-cleanup occurs; changing a private function signature is sufficient, and no
-new public C API is required.
-
-Eviction tests should repeatedly exceed a small image budget with used
-placements and verify that the tracked-pin count returns to the number of live
-placements. Replacement tests should repeatedly reuse one non-zero placement
-ID and make the same assertion. Both paths should then scroll, resize, clear,
-and delete content to exercise tracked-pin traversal before terminal teardown.
-
-### ghostty-qt follow-up after the upstream fix lands
-
-Once the correction is present in an official, publicly reachable commit:
-
-1. Update `GHOSTTY_REVISION` and the official submodule gitlink together.
-2. Add a sustained mpv-shaped adapter test whose raw data crosses a deliberately
-   small image-storage limit while its Qt snapshot stays bounded.
-3. Confirm that deleting the covering frame still reveals the highest retained
-   predecessor in renderer order and that tracked-pin count remains bounded
-   throughout the session.
-4. Remove this entry only after the upstream lifetime regression tests and the
-   frontend integration case both pass.
 
 ## Expanded Kitty Unicode placement rendering
 
@@ -854,7 +771,7 @@ reinterpreting the original text.
 ### ghostty-qt follow-up after upstream support lands
 
 After an official pinned revision exposes the completed grammar, extend the
-schema-v4 configuration export with ordered structured link rules, route their
+schema-v5 configuration export with ordered structured link rules, route their
 typed actions through the existing stable-pane pipeline, add differential
 parser/matcher/action tests, and only then promote `link` from
 `blocked_upstream`.
@@ -962,8 +879,8 @@ of its formatter paths can express that clipboard contract:
 - The colors and palette can be queried separately through
   `ghostty_terminal_get`, but the public formatter cannot consume them.
 
-This was verified against the official pinned submodule commit
-`48d85eaeb06ac9fc49073815bda5bac97de655ca` on 2026-08-05.
+This remains verified against the official pinned submodule commit
+`c54ec80c55a045312f7c97d66b32c8043526f03c` on 2026-08-13.
 
 ### Why ghostty-qt does not approximate styled copies
 
@@ -1246,13 +1163,11 @@ changes, and live policy changes while the cursor is default versus explicit.
 Afterward ghostty-qt can replace the boolean setter with the tri-state option
 and promote `cursor-style-blink` without changing renderer timers.
 
-## Normalized standalone VT effects and policy controls
+## Standalone command lifecycle and report policy
 
-**Status:** dynamic light/dark scheme reporting, desktop notifications, and
-progress effects are implemented through existing public callbacks and mode
-helpers. Title-report policy, command-finished notifications, color-report
-format, and initial grapheme-width policy remain blocked on standalone public
-`libghostty-vt` contracts.
+**Status:** exact configured-base title replies remain partial;
+command-finished notifications and color-report format are blocked on upstream
+public contracts.
 
 ghostty-qt links the public standalone terminal library described by
 `ghostty/vt/terminal.h`. Ghostty's broader embedded application API in
@@ -1266,14 +1181,10 @@ The standalone stream still has the following gaps:
   ordered command-start/command-finished lifecycle. In full Ghostty the stream
   emits start/stop messages; `Surface`, not the parser, owns the clock and
   calculates elapsed wall time between them.
-- It answers CSI 21 t directly from the terminal's internal OSC title. The
-  frontend cannot apply Ghostty's default-false `title-report` security gate or
-  substitute the configured base title that full Ghostty reports.
+- Its CSI 21 t implementation reports the terminal's internal OSC title rather
+  than the configured frontend base title.
 - It answers OSC 4, OSC 10, and OSC 11 color queries internally without a host
   option for Ghostty's `none`, `8-bit`, or `16-bit` report formats.
-- The public terminal API does not accept Ghostty's `legacy` versus `unicode`
-  grapheme-width policy for a new terminal. Mode 2027 remains terminal-owned,
-  so resolving widths later in Qt would not be equivalent.
 
 The affected configuration keys are:
 
@@ -1281,8 +1192,7 @@ The affected configuration keys are:
 - `notify-on-command-finish`;
 - `notify-on-command-finish-action`;
 - `notify-on-command-finish-after`;
-- `osc-color-report-format`; and
-- `grapheme-width-method`.
+- `osc-color-report-format`.
 
 ### Why ghostty-qt does not inspect PTY bytes
 
@@ -1315,23 +1225,15 @@ These effects should follow the existing callback contract: they occur during
 `ghostty_terminal_vt_write`, are non-reentrant, retain borrowed data only for
 the callback, and preserve terminal input order.
 
-Title reporting additionally needs either:
+Exact title reporting additionally needs either:
 
-- a terminal option that gates CSI 21 t and a setter for the host-visible base
-  title; or
-- a normalized report-title callback that lets the host apply the gate and
-  return the exact base title synchronously.
+- a setter for the host-visible configured base title; or
+- a normalized report-title callback that lets the host return that exact base
+  title synchronously.
 
 Color reporting needs a construction/runtime option matching Ghostty's
 `none`, `8-bit`, and `16-bit` enum before the internal OSC query path emits a
-reply. Grapheme width needs an ABI-safe way to initialize both the current mode
-2027 value and the terminal's reset-default value from `legacy`/`unicode`.
-`ghostty_terminal_new` now takes only allocator, output handle, columns, and
-rows, and directs callers to set options before use. An append-only terminal
-option that updates both current and reset-default mode state before the first
-VT write, or an explicit default-mode initialization API, would fit that
-contract. The existing public mode setter is only a partial workaround because
-it changes the current bit but RIS restores the construction default.
+reply.
 
 Every new enum member, terminal option, callback, and value struct must follow
 the library's existing append-only ABI rules.
@@ -1343,13 +1245,10 @@ Public C tests should cover:
 - OSC 133 C/D ordering, repeated C, D without C, missing/malformed/out-of-range
   exit status, reset, and interleaved terminal output, plus a full-runtime test
   proving that the embedding Surface starts/stops the duration clock;
-- CSI 21 t disabled by default, enabled empty/non-empty base titles, a
-  configured title masking OSC updates, and exact response bytes;
+- CSI 21 t enabled with a configured title masking OSC updates and exact
+  response bytes;
 - OSC 4/10/11 under none, 8-bit, and 16-bit reporting, including palette and
-  current default-color changes; and
-- both initial grapheme-width methods, mode 2027 set/reset precedence, RIS
-  restoring the configured construction default, combining clusters, emoji
-  modifiers, and width-sensitive cursor movement.
+  current default-color changes.
 
 ### ghostty-qt follow-up after upstream support lands
 
@@ -1363,7 +1262,7 @@ Ghostty commit:
 3. Resolve a command-finished notification click through the current `PaneId`,
    no-op after closure, and otherwise select the correct tab/split, focus it,
    and activate its existing window.
-4. Pass title-report, color-report, and grapheme-width policy through typed
+4. Pass configured report-title content and color-report policy through typed
    adapter options rather than parsing terminal bytes.
 5. Add adapter, worker-ordering, pane-lifetime, live-reload, focus, rate-limit,
    and activation tests before promoting the affected parity entries.

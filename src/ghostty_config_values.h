@@ -76,6 +76,12 @@ enum class WindowShowTabBar {
     Never,
 };
 
+enum class DragHandleMode {
+    Always,
+    Auto,
+    Never,
+};
+
 enum class WindowDecorationMode {
     Auto,
     Client,
@@ -228,6 +234,7 @@ struct GhosttyConfigValues {
     bool windowInheritFontSize = false;
     WindowNewTabPosition windowNewTabPosition = WindowNewTabPosition::Current;
     WindowShowTabBar windowShowTabBar = WindowShowTabBar::Auto;
+    DragHandleMode dragHandle = DragHandleMode::Auto;
     WindowDecorationMode windowDecoration = WindowDecorationMode::Auto;
     WindowAppearanceOptions windowAppearance;
     quint32 windowWidth = 0;
@@ -275,7 +282,10 @@ struct GhosttyConfigValues {
     // When true, terminal-owned ANSI mode 2 suppresses ordinary key and IME
     // input after frontend keybindings have had an opportunity to run.
     bool vtKamAllowed = false;
+    GraphemeWidthMethod graphemeWidthMethod = GraphemeWidthMethod::Unicode;
+    bool titleReport = false;
     bool linkUrl = false;
+    bool linkOsc8 = true;
     LinkPreviewMode linkPreviews = LinkPreviewMode::Never;
 
     ApplicationShellOptions applicationShell;

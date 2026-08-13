@@ -311,7 +311,7 @@ struct WorkspaceVoidActionSpec {
     std::optional<qint64> contextValue;
 };
 
-constexpr std::array<WorkspaceVoidActionSpec, 12> kWorkspaceVoidActions{{
+constexpr std::array<WorkspaceVoidActionSpec, 13> kWorkspaceVoidActions{{
     {QLatin1StringView("new_tab"), WorkspaceAction::NewTab, std::nullopt},
     {QLatin1StringView("close_surface"), WorkspaceAction::ClosePane,
      std::nullopt},
@@ -333,9 +333,11 @@ constexpr std::array<WorkspaceVoidActionSpec, 12> kWorkspaceVoidActions{{
      WorkspaceAction::PromptSurfaceTitle, std::nullopt},
     {QLatin1StringView("prompt_tab_title"), WorkspaceAction::PromptTabTitle,
      std::nullopt},
+    {QLatin1StringView("prompt_window_title"),
+     WorkspaceAction::PromptWindowTitle, std::nullopt},
 }};
 
-constexpr std::array<QLatin1StringView, 8> kParameterizedWorkspaceActions{{
+constexpr std::array<QLatin1StringView, 9> kParameterizedWorkspaceActions{{
     QLatin1StringView("close_tab"),
     QLatin1StringView("new_split"),
     QLatin1StringView("goto_split"),
@@ -343,6 +345,7 @@ constexpr std::array<QLatin1StringView, 8> kParameterizedWorkspaceActions{{
     QLatin1StringView("move_tab"),
     QLatin1StringView("set_surface_title"),
     QLatin1StringView("set_tab_title"),
+    QLatin1StringView("set_window_title"),
     QLatin1StringView("resize_split"),
 }};
 
@@ -481,8 +484,10 @@ translateWorkspaceAction(GhosttySerializedActionView parsed,
 
     const bool setsSurfaceTitle =
         equals(actionName, QLatin1StringView("set_surface_title"));
-    if (setsSurfaceTitle
-        || equals(actionName, QLatin1StringView("set_tab_title"))) {
+    const bool setsTabTitle =
+        equals(actionName, QLatin1StringView("set_tab_title"));
+    if (setsSurfaceTitle || setsTabTitle
+        || equals(actionName, QLatin1StringView("set_window_title"))) {
         // The pinned structured helper serializes []const u8 action values
         // with std.zig.stringEscape. Invert that byte boundary and reject
         // text Qt cannot represent losslessly. An empty decoded title remains
@@ -494,8 +499,9 @@ translateWorkspaceAction(GhosttySerializedActionView parsed,
         if (!title.has_value()) {
             return reject(Error::InvalidFormat, actionName, parameter);
         }
-        return accept(setsSurfaceTitle ? WorkspaceAction::SetSurfaceTitle
-                                       : WorkspaceAction::SetTabTitle,
+        return accept(setsSurfaceTitle   ? WorkspaceAction::SetSurfaceTitle
+                      : setsTabTitle     ? WorkspaceAction::SetTabTitle
+                                         : WorkspaceAction::SetWindowTitle,
                       context, actionName, parameter, std::move(*title));
     }
 
@@ -781,6 +787,16 @@ bool isExecutableFrontendAction(
 std::optional<ApplicationAction>
 parseApplicationActionView(GhosttySerializedActionView parsed)
 {
+    if (parsed.name == QLatin1StringView("open_config")) {
+        if (!parsed.parameter.has_value()
+            || *parsed.parameter == QLatin1StringView("os_open")) {
+            return ApplicationAction::OpenConfig;
+        }
+        if (*parsed.parameter == QLatin1StringView("new_window")) {
+            return ApplicationAction::OpenConfigNewWindow;
+        }
+        return std::nullopt;
+    }
     if (parsed.parameter.has_value()) return std::nullopt;
 
     const ApplicationActionSpec *const spec =
@@ -1049,9 +1065,11 @@ parseConfiguredActionView(GhosttySerializedActionView parsed,
     // action through a surface parser.
     if (const ApplicationActionSpec *const spec =
             findActionSpec(parsed.name, kApplicationActions)) {
-        if (!parsed.parameter.has_value() && spec->parsedAction.has_value()
-            && spec->executable) {
-            return GhosttyConfiguredAction{*spec->parsedAction};
+        if (spec->executable) {
+            if (auto action = parseApplicationActionView(parsed);
+                action.has_value()) {
+                return GhosttyConfiguredAction{*action};
+            }
         }
         return std::nullopt;
     }

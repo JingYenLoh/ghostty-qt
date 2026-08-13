@@ -480,6 +480,7 @@ void GhosttyActionCatalogTest::translatesParameterlessActions()
          123},
         {"prompt_surface_title", WorkspaceAction::PromptSurfaceTitle, 123},
         {"prompt_tab_title", WorkspaceAction::PromptTabTitle, 123},
+        {"prompt_window_title", WorkspaceAction::PromptWindowTitle, 123},
     };
 
     for (const auto &testCase : cases) {
@@ -531,6 +532,10 @@ void GhosttyActionCatalogTest::translatesParameterlessActions()
         QStringLiteral("prompt_tab_title:")));
     QVERIFY(!GhosttyActionCatalog::isImplemented(
         QStringLiteral("prompt_tab_title:project")));
+    QVERIFY(GhosttyActionCatalog::isImplemented(
+        QStringLiteral("prompt_window_title")));
+    QVERIFY(!GhosttyActionCatalog::isImplemented(
+        QStringLiteral("prompt_window_title:")));
 }
 
 void GhosttyActionCatalogTest::translatesParameterizedActions_data()
@@ -675,6 +680,7 @@ void GhosttyActionCatalogTest::translatesTitleActions()
     } actions[] = {
         {QStringLiteral("set_surface_title"), WorkspaceAction::SetSurfaceTitle},
         {QStringLiteral("set_tab_title"), WorkspaceAction::SetTabTitle},
+        {QStringLiteral("set_window_title"), WorkspaceAction::SetWindowTitle},
     };
 
     for (const auto &action : actions) {
@@ -809,6 +815,8 @@ void GhosttyActionCatalogTest::parsesApplicationActionsExactly()
         {"close_all_windows", ApplicationAction::DeprecatedCloseAllWindows},
         {"new_window", ApplicationAction::NewWindow},
         {"open_config", ApplicationAction::OpenConfig},
+        {"open_config:os_open", ApplicationAction::OpenConfig},
+        {"open_config:new_window", ApplicationAction::OpenConfigNewWindow},
         {"reload_config", ApplicationAction::ReloadConfig},
         {"toggle_quick_terminal", ApplicationAction::ToggleQuickTerminal},
         {"quit", ApplicationAction::Quit},

@@ -258,7 +258,10 @@ GhosttyConfigSnapshot completeSnapshot()
         .discrete = 4.5,
     };
     values.vtKamAllowed = true;
+    values.graphemeWidthMethod = GraphemeWidthMethod::Legacy;
+    values.titleReport = true;
     values.linkUrl = false;
+    values.linkOsc8 = false;
     values.linkPreviews = LinkPreviewMode::Osc8;
     values.configFiles = {
         {.path = QStringLiteral("/work/include.ghostty")},
@@ -1326,7 +1329,10 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
              QVector<quint32>({0, 0x20, 0x2502, 0x1f642}));
     QCOMPARE(cliResult.clickRepeatIntervalMilliseconds, quint32{731});
     QVERIFY(cliResult.vtKamAllowed);
+    QCOMPARE(cliResult.graphemeWidthMethod, GraphemeWidthMethod::Legacy);
+    QVERIFY(cliResult.titleReport);
     QVERIFY(!cliResult.linkUrl);
+    QVERIFY(!cliResult.linkOsc8);
     QCOMPARE(cliResult.linkPreviews, LinkPreviewMode::Osc8);
     QVERIFY(cliResult.keybindSource.isAvailable());
     QVERIFY(cliResult.keybindSource.text() == nullptr);
@@ -2240,8 +2246,11 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.rightClickAction = RightClickAction::CopyOrPaste;
     options.middleClickAction = MiddleClickAction::Ignore;
     options.vtKamAllowed = true;
+    options.graphemeWidthMethod = GraphemeWidthMethod::Legacy;
+    options.titleReport = true;
     options.appearance.minimumContrast = 7.25;
     options.linkUrl = false;
+    options.linkOsc8 = false;
     options.splitAppearance = {
         .unfocusedOpacity = 0.35,
         .unfocusedFill = QColor(QStringLiteral("#123456")),
@@ -2266,6 +2275,9 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(runtime.rightClickAction, options.rightClickAction);
     QCOMPARE(runtime.vtKamAllowed, options.vtKamAllowed);
     QCOMPARE(runtime.linkUrl, options.linkUrl);
+    QCOMPARE(runtime.linkOsc8, options.linkOsc8);
+    QCOMPARE(runtime.graphemeWidthMethod, options.graphemeWidthMethod);
+    QCOMPARE(runtime.titleReport, options.titleReport);
     QCOMPARE(runtime.scrollbackCompression, options.scrollbackCompression);
     QCOMPARE(runtime.abnormalCommandExitRuntimeMilliseconds,
              options.abnormalCommandExitRuntimeMilliseconds);
@@ -2457,6 +2469,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.middleClickAction = MiddleClickAction::PrimaryPaste;
     options.vtKamAllowed = false;
     options.linkUrl = true;
+    options.linkOsc8 = true;
     QCOMPARE(launch.workingDirectory,
              QStringLiteral("/session/working-directory"));
     QCOMPARE(
@@ -2515,6 +2528,10 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(launch.runtime.scrollToBottom, expectedScrollToBottom);
     QVERIFY(launch.runtime.vtKamAllowed);
     QVERIFY(!launch.runtime.linkUrl);
+    QVERIFY(!launch.runtime.linkOsc8);
+    QCOMPARE(launch.runtime.graphemeWidthMethod,
+             GraphemeWidthMethod::Legacy);
+    QVERIFY(launch.runtime.titleReport);
 }
 
 void LaunchOptionsTest::preservesIndependentScrollbackLimits()

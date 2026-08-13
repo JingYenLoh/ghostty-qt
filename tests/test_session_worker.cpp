@@ -3744,6 +3744,16 @@ void SessionWorkerTest::resolvesRegexLinksAcrossUtf8WrapsAndOsc8Precedence()
              TerminalLinkKind::Osc8);
     QCOMPARE(explicitLink.at(4).toByteArray(), oscUri);
 
+    disabled.linkOsc8 = false;
+    worker.applyRuntimeOptions(disabled);
+    const int beforeOsc8DisabledQuery = hyperlinkSpy.count();
+    worker.queryHyperlink(404, frame.contentRevision, oscCell.x(), oscCell.y());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        hyperlinkSpy.count(), beforeOsc8DisabledQuery + 1, 1000);
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
+                 hyperlinkSpy.constLast().at(2)),
+             TerminalHyperlinkState::Invalid);
+
     worker.shutdown();
 }
 

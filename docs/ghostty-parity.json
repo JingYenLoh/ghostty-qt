@@ -105,6 +105,7 @@
         "custom-shader",
         "custom-shader-animation",
         "desktop-notifications",
+        "drag-handle",
         "enquiry-response",
         "env",
         "faint-opacity",
@@ -152,6 +153,7 @@
         "keybind",
         "language",
         "link",
+        "link-osc8",
         "link-previews",
         "link-url",
         "linux-cgroup",
@@ -445,7 +447,7 @@
     },
     "confirm-close-surface": {
       "status": "partial",
-      "note": "false, true, and always map to live workspace close policy. Linux PTY foreground groups and a command-submission latch cover ordinary jobs and pre-output races. Successful shell injection protects startup until its first OSC 133 prompt; public libghostty row/cell semantic metadata then distinguishes same-process-group shell builtins, alternate-screen work, and a returned prompt, while query failure remains active after integration is expected or observed. Status remains partial because the public API does not expose Ghostty's private live cursor semantic mode or a terminal-owned integration-seen bit; shells without installed integration retain the foreground/latch fallback."
+      "note": "false, true, and always map to live workspace close policy. Linux PTY foreground groups and a command-submission latch cover ordinary jobs and pre-output races. Successful shell injection protects startup until its first OSC 133 prompt; the exact public cursor-at-prompt query then distinguishes same-process-group shell builtins, alternate-screen work, and a returned prompt, while query failure remains active after integration is expected or observed. Status remains partial because the public API does not expose a terminal-owned integration-seen bit; shells without installed integration retain the foreground/latch fallback."
     },
     "copy-on-select": {
       "status": "partial",
@@ -485,7 +487,7 @@
     },
     "desktop-notifications": {
       "status": "supported",
-      "note": "The finalized default-true boolean crosses strict schema v4 and applies live as application-owned LaunchOptions policy. The pinned synchronous libghostty-vt callback normalizes OSC 9 and OSC 777; its sized borrowed strings are validated, deep-copied, bounded, and preserved in callback order before crossing the queued worker/controller/pane path. The application delivers native Linux notifications through org.freedesktop.Notifications, defaults an empty title to Ghostty, matches Ghostty's process-global one-second and sequential-identical five-second limits, reuses notification IDs by body, and routes default-action clicks through revalidated stable WindowId/PaneId targets. Backend absence and stale targets are non-fatal."
+      "note": "The finalized default-true boolean crosses strict schema v5 and applies live as application-owned LaunchOptions policy. The pinned synchronous libghostty-vt callback normalizes OSC 9 and OSC 777; its sized borrowed strings are validated, deep-copied, bounded, and preserved in callback order before crossing the queued worker/controller/pane path. The application delivers native Linux notifications through org.freedesktop.Notifications, defaults an empty title to Ghostty, matches Ghostty's process-global one-second and sequential-identical five-second limits, reuses notification IDs by body, and routes default-action clicks through revalidated stable WindowId/PaneId targets. Backend absence and stale targets are non-fatal."
     },
     "enquiry-response": {
       "status": "supported",
@@ -567,7 +569,7 @@
     },
     "font-variation": {
       "status": "partial",
-      "note": "The finalized ordered regular-face axis list crosses schema v4 as exact f64 bit patterns, including non-finite values. The first matching tag is consumed before validity and range checks, matching the pinned FreeType duplicate policy, and valid axes reload live. Status remains partial because Qt narrows applied values to its float axis API and does not expose Ghostty's selected FreeType face and variation-coordinate pipeline."
+      "note": "The finalized ordered regular-face axis list crosses schema v5 as exact f64 bit patterns, including non-finite values. The first matching tag is consumed before validity and range checks, matching the pinned FreeType duplicate policy, and valid axes reload live. Status remains partial because Qt narrows applied values to its float axis API and does not expose Ghostty's selected FreeType face and variation-coordinate pipeline."
     },
     "font-variation-bold": {
       "status": "partial",
@@ -596,8 +598,8 @@
       "note": "The exact pinned enum defaults false. True and every non-native variant map to Qt native fullscreen on Linux for each subsequently created window; reload never changes existing window state. When maximize is also true, action- and compositor-driven fullscreen exits restore maximized."
     },
     "grapheme-width-method": {
-      "status": "blocked_upstream",
-      "note": "The standalone public libghostty-vt constructor does not expose Ghostty's legacy versus Unicode grapheme-width policy for new terminals. Recomputing clusters in Qt would diverge from the terminal model and mode 2027 override."
+      "status": "supported",
+      "note": "The finalized legacy/unicode enum initializes public libghostty-vt mode 2027 through OPT_MODE_DEFAULT before the first VT write, so both the current value and the value restored by RIS match Ghostty. Application mode changes remain terminal-owned."
     },
     "input": {
       "status": "supported",
@@ -627,6 +629,10 @@
     "link-previews": {
       "status": "supported",
       "note": "The exact true/false/osc8 policy previews all, no, or only OSC 8 accepted destinations. Live reload is pane-local and frontend-only: the bounded, middle-elided overlay safely escapes raw destination controls, replaces invalid UTF-8, relocates from bottom-left to bottom-right when entered, and reuses a hover that remains on the terminal link. Removing an occupied guard resumes physical hit testing and may query the newly exposed cell."
+    },
+    "link-osc8": {
+      "status": "supported",
+      "note": "The exact default-true boolean independently gates explicit OSC 8 highlighting, previews, copying, context-link selection, and activation. Live disable cancels worker tracking plus armed GUI hover/activation state without changing regex links controlled by link-url."
     },
     "link-url": {
       "status": "supported",
@@ -690,7 +696,7 @@
     },
     "progress-style": {
       "status": "supported",
-      "note": "The finalized default-true boolean crosses strict schema v4 as live application-owned policy. The public sized libghostty-vt callback is validated and copied into a bounded ordered effect; saturation compacts the prefix into an equivalent state transformation instead of losing the newest remove or value. Worker and controller preserve the resulting order. Every pane presents a two-pixel top overlay with normal, error, paused, determinate, and report-driven indeterminate pulse states, restarts one 15-second stale-report timer after each non-remove update, and hides on remove, expiry, session lifetime, or live disable without resurfacing merely on re-enable. Active-pane determinate values also populate the existing tab progress role."
+      "note": "The finalized default-true boolean crosses strict schema v5 as live application-owned policy. The public sized libghostty-vt callback is validated and copied into a bounded ordered effect; saturation compacts the prefix into an equivalent state transformation instead of losing the newest remove or value. Worker and controller preserve the resulting order. Every pane presents a two-pixel top overlay with normal, error, paused, determinate, and report-driven indeterminate pulse states, restarts one 15-second stale-report timer after each non-remove update, and hides on remove, expiry, session lifetime, or live disable without resurfacing merely on re-enable. Active-pane determinate values also populate the existing tab progress role."
     },
     "quit-after-last-window-closed": {
       "status": "supported",
@@ -798,8 +804,8 @@
       "note": "The finalized nullable configured title applies live as each pane's base title, preserving an explicit empty string. While present it masks terminal OSC title updates; clearing it retains the current base until the next OSC update. Reapplication replaces a set_surface_title base, while persistent surface and tab overrides continue to mask it. The native Qt window title is the exact effective active-tab title. Normal --title= launch parsing preserves quoted whitespace and explicit reset through the pinned config helper, prevents source-less activation from dropping the override, and is advertised to desktop terminal launchers."
     },
     "title-report": {
-      "status": "blocked_upstream",
-      "note": "Standalone public libghostty-vt answers CSI 21 t from its internal OSC title unconditionally and exposes neither Ghostty's default-false security gate nor a callback for the frontend's configured base title. Exact behavior requires an upstream option or normalized report request."
+      "status": "partial",
+      "note": "The finalized default-false security gate is passed to public libghostty-vt before the first VT write, so CSI 21 t is silent unless explicitly enabled. When enabled, standalone lib-vt reports its internal OSC title rather than Ghostty's configured frontend base title, so that configured-title distinction remains incomplete."
     },
     "undo-timeout": {
       "status": "not_applicable",
@@ -844,7 +850,7 @@
         "gtk-single-instance": {
           "status": "not_applicable",
           "scope": "gtk_only",
-          "note": "The upstream GTK key is not consumed. The private schema-v4 export retains its raw value only as an unused compatibility field; ghostty-qt owns equivalent process arbitration through single-instance in $XDG_CONFIG_HOME/ghostty-qt/config and --single-instance."
+          "note": "The upstream GTK key is not consumed. The private schema-v5 export retains its raw value only as an unused compatibility field; ghostty-qt owns equivalent process arbitration through single-instance in $XDG_CONFIG_HOME/ghostty-qt/config and --single-instance."
         },
         "gtk-tabs-location": {
           "status": "not_applicable",
@@ -1098,6 +1104,11 @@
           "scope": "qt_mapping",
           "note": "The exact always/auto/never enum defaults to auto. Always shows the QML tab strip at every tab count, auto hides it for one tab and shows it at two or more, and never hides it; config reload and one/two-tab transitions update the property live. Acceptance covers workspace state and real QML visibility while the surrounding toolbar remains available."
         },
+        "drag-handle": {
+          "status": "partial",
+          "scope": "qt_mapping",
+          "note": "The exact always/auto/never enum is parsed, validated, and retained in the live application snapshot. Qt already provides direct split-divider resizing, but does not yet expose Ghostty's surface drag handle or detach/adopt a running split between containers, so presentation and rearrangement remain outstanding."
+        },
         "window-step-resize": {
           "status": "not_applicable",
           "scope": "macos",
@@ -1140,7 +1151,7 @@
         },
         "working-directory": {
           "status": "supported",
-          "note": "The shared-config value supplies initial panes plus new-tab, split, and new-window fallback. Raw POSIX bytes remain lossless through strict schema-v4 export, CLI parsing, launch snapshots, worker chdir/PWD, OSC 7, controllers, and inheritance; QString is only the GUI display projection. Original-process classification preserves Ghostty's unset desktop-launch home default versus probable-CLI inherit behavior across reloads. Explicit home/tilde paths, symlink-sensitive spelling, live future-surface updates, composite source identity, NUL rejection, and pinned stale-PWD/non-fatal-chdir fallback are tested."
+          "note": "The shared-config value supplies initial panes plus new-tab, split, and new-window fallback. Raw POSIX bytes remain lossless through strict schema-v5 export, CLI parsing, launch snapshots, worker chdir/PWD, OSC 7, controllers, and inheritance; QString is only the GUI display projection. Original-process classification preserves Ghostty's unset desktop-launch home default versus probable-CLI inherit behavior across reloads. Explicit home/tilde paths, symlink-sensitive spelling, live future-surface updates, composite source identity, NUL rejection, and pinned stale-PWD/non-fatal-chdir fallback are tested."
         },
         "x11-instance-name": {
           "status": "not_applicable",
@@ -1186,6 +1197,7 @@
         "jump_to_prompt",
         "last_tab",
         "move_tab",
+        "move_tab_to_new_window",
         "navigate_search",
         "new_split",
         "new_tab",
@@ -1197,6 +1209,7 @@
         "previous_tab",
         "prompt_surface_title",
         "prompt_tab_title",
+        "prompt_window_title",
         "quit",
         "redo",
         "reload_config",
@@ -1218,6 +1231,7 @@
         "set_font_size",
         "set_surface_title",
         "set_tab_title",
+        "set_window_title",
         "show_gtk_inspector",
         "show_on_screen_keyboard",
         "start_search",
@@ -1366,6 +1380,10 @@
           "status": "supported",
           "note": "Moves the source surface's tab by a signed cyclic offset while retaining stable tab identity and selection."
         },
+        "move_tab_to_new_window": {
+          "status": "planned",
+          "note": "Exact parity requires detaching the selected tab's complete split tree and live sessions and adopting it into a new window without restarting PTYs. The current workspace owns tabs and panes per window and has no cross-workspace transfer transaction yet."
+        },
         "navigate_search": {
           "status": "partial",
           "note": "Supports exact previous/next grammar, cyclic newest-to-oldest navigation, selected-result highlighting, and off-viewport scrolling. An independent row-local probe provisionally highlights wholly contained matches in the current viewport without changing canonical counts or navigation; soft-wrap, newline, and viewport-edge-spanning candidates can still wait for the bottom-up scan. Terminal-data mutation restarts that scan, and inactive-screen results are not preserved independently."
@@ -1388,7 +1406,7 @@
         },
         "open_config": {
           "status": "supported",
-          "note": "Accepts only the exact void spelling and routes one process-scoped request for local, root, all, or global dispatch, including with zero windows. Linux edit selection examines preferred XDG config.ghostty before legacy config, chooses the first non-empty file or otherwise the first existing empty file, recursively creates the preferred path when neither exists, and uses exclusive creation so contents and concurrent creators are preserved. The selected local-file URL is opened through Qt desktop services; preparation and launch failures are logged without falling through to PTY input. This is the GUI action, not the separately tracked +edit-config CLI contract."
+          "note": "Accepts the legacy void spelling plus the upstream os_open and new_window enum forms and routes one process-scoped request for local, root, all, or global dispatch. os_open preserves exclusive config preparation and Qt desktop opening. new_window selects non-empty VISUAL then EDITOR then vi, shell-quotes the prepared path, and launches that editor through the typed first-surface command/title override path in a new terminal window."
         },
         "paste_from_clipboard": {
           "status": "supported",
@@ -1410,6 +1428,10 @@
         "prompt_tab_title": {
           "status": "supported",
           "note": "Accepts only the exact void spelling with no colon and targets the source surface's tab by stable identity. Each request snapshots the raw override when present or the current display title otherwise, including the modeled zoom prefix; the focused field places its caret at the end without selecting all. OK preserves text exactly, blank clears the override, and Cancel is inert. Requests share one FIFO with surface-title prompts, with all/global retaining one request per surface and no split-tab deduplication. Source-pane removal is harmless while its tab survives; target deletion resolves or prunes its requests, and stale completions cannot rename another tab."
+        },
+        "prompt_window_title": {
+          "status": "supported",
+          "note": "The exact void action opens the shared title-prompt FIFO with a stable containing-window target and snapshots the current window override or effective active-tab title. Focus and tab changes while the prompt is open cannot retarget it; blank input clears the window override."
         },
         "quit": {
           "status": "supported",
@@ -1495,6 +1517,10 @@
         "set_tab_title": {
           "status": "supported",
           "note": "Decodes Ghostty's canonical byte-string escapes and valid UTF-8, then applies a non-empty override to the source surface's tab by stable identity. An empty payload clears the override and reveals the active pane's effective surface title; focus and surface/base-title changes plus tab insertion and reordering preserve the override."
+        },
+        "set_window_title": {
+          "status": "supported",
+          "note": "Canonical escaped bytes are decoded as valid UTF-8 and stored as a per-window override above tab and surface titles. The override survives tab selection and topology changes, and an empty payload clears it to reveal the active tab's effective title."
         },
         "show_gtk_inspector": {
           "status": "not_applicable",
@@ -1609,6 +1635,7 @@
         "list-fonts",
         "list-keybinds",
         "list-themes",
+        "new-tab",
         "new-window",
         "show-config",
         "show-face",
@@ -1664,6 +1691,10 @@
           "status": "supported",
           "scope": "linux",
           "note": "Before any GUI startup, the raw-argv client reproduces pinned Ghostty's class targeting, concrete cwd tilde/relative realpath normalization, implicit caller-cwd insertion, home/inherit forwarding quirk, opaque arguments after `-e`, UTF-8 validation, and exact org.gtk.Actions new-window-command string-array variant with empty platform data. It performs one blocking D-Bus call with service activation and no retry or local fallback. The primary decodes last-valid command/cwd/title values, including Ghostty's literal relative-path treatment of winning home/inherit values, unknown-option ignoring, direct/shell command grammar, and non-empty argv-after-`-e` precedence; overrides apply only to the registered first surface while preserving the global initial-session lease lifecycle. Warm and cold private-bus process tests cover the real executable path."
+        },
+        "new-tab": {
+          "status": "planned",
+          "note": "Upstream's new IPC action targets a process-global surface ID and carries command, working-directory, shell-integration, and title overrides. ghostty-qt still needs an application-owned surface registry, child GHOSTTY_SURFACE_ID injection, the typed (tas) D-Bus route, and first-surface tab overrides before this can be claimed."
         },
         "show-config": {
           "status": "supported",

@@ -654,6 +654,42 @@ const std::array inspectorModeSpecs{
     InspectorModeSpec{GHOSTTY_MODE_IN_BAND_RESIZE, "In-band resize"},
 };
 
+GhosttyResult terminalModeGet(GhosttyTerminal terminal, GhosttyMode mode,
+                              bool *value)
+{
+    if (value == nullptr) return GHOSTTY_INVALID_VALUE;
+
+    GhosttyTerminalModeConfig config{
+        .mode = mode,
+        .value = false,
+    };
+    const GhosttyResult result = ghostty_terminal_get(
+        terminal, GHOSTTY_TERMINAL_DATA_MODE, &config);
+    if (result == GHOSTTY_SUCCESS) *value = config.value;
+    return result;
+}
+
+GhosttyResult terminalModeSet(GhosttyTerminal terminal, GhosttyMode mode,
+                              bool value)
+{
+    const GhosttyTerminalModeConfig config{
+        .mode = mode,
+        .value = value,
+    };
+    return ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_MODE, &config);
+}
+
+GhosttyResult terminalModeSetDefault(GhosttyTerminal terminal,
+                                     GhosttyMode mode, bool value)
+{
+    const GhosttyTerminalModeConfig config{
+        .mode = mode,
+        .value = value,
+    };
+    return ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_MODE_DEFAULT,
+                                &config);
+}
+
 constexpr GhosttyColorScheme
 toGhosttyColorScheme(TerminalColorScheme scheme) noexcept
 {
@@ -918,6 +954,13 @@ public:
                                  boundedU16(geometry_.columns),
                                  boundedU16(geometry_.rows))
                 != GHOSTTY_SUCCESS
+            || terminalModeSetDefault(terminal_, GHOSTTY_MODE_GRAPHEME_CLUSTER,
+                                      adapterOptions.graphemeWidthUnicode)
+                != GHOSTTY_SUCCESS
+            || ghostty_terminal_set(terminal_,
+                                     GHOSTTY_TERMINAL_OPT_TITLE_REPORT,
+                                     &adapterOptions.titleReport)
+                != GHOSTTY_SUCCESS
             || ghostty_terminal_set(
                    terminal_, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES,
                    scrollbackBytes ? &*scrollbackBytes : nullptr)
@@ -928,6 +971,22 @@ public:
                 != GHOSTTY_SUCCESS
             || !resize(geometry_)) {
             return false;
+        }
+
+        if (!adapterOptions.terminfoName.isEmpty()
+            && adapterOptions.terminfoName.size() <= 128
+            && !adapterOptions.terminfoName.contains('\0')) {
+            const GhosttyString terminfoName{
+                .ptr = reinterpret_cast<const uint8_t *>(
+                    adapterOptions.terminfoName.constData()),
+                .len = static_cast<size_t>(adapterOptions.terminfoName.size()),
+            };
+            if (ghostty_terminal_set(terminal_,
+                                     GHOSTTY_TERMINAL_OPT_TERMINFO_NAME,
+                                     &terminfoName)
+                != GHOSTTY_SUCCESS) {
+                return false;
+            }
         }
 
         const bool imageMediumEnabled = true;
@@ -1141,7 +1200,7 @@ public:
         colorScheme_ = scheme;
 
         bool reportEnabled = false;
-        if (ghostty_terminal_mode_get(
+        if (terminalModeGet(
                 terminal_, GHOSTTY_MODE_COLOR_SCHEME_REPORT, &reportEnabled)
                 != GHOSTTY_SUCCESS
             || !reportEnabled || !callbacks_.writePty) {
@@ -1262,8 +1321,8 @@ public:
     bool observeOutputBottomAnchorChanged()
     {
         bool synchronizedOutput = false;
-        if (ghostty_terminal_mode_get(terminal_, GHOSTTY_MODE_SYNC_OUTPUT,
-                                      &synchronizedOutput)
+        if (terminalModeGet(terminal_, GHOSTTY_MODE_SYNC_OUTPUT,
+                            &synchronizedOutput)
                 != GHOSTTY_SUCCESS
             || synchronizedOutput) {
             // Ghostty skips its entire renderer update while mode 2026 is
@@ -1340,7 +1399,7 @@ public:
         // Kitty's active flag stack is read-only in libghostty-vt's current C
         // surface, so force the equivalent disabled value on the encoder after
         // each subsequent terminal-state synchronization.
-        (void)ghostty_terminal_mode_set(terminal_, GHOSTTY_MODE_KAM, false);
+        (void)terminalModeSet(terminal_, GHOSTTY_MODE_KAM, false);
         normalizeKeyboardAfterCommandExit_ = true;
     }
 
@@ -1352,12 +1411,25 @@ public:
             GHOSTTY_MODE_UTF8_MOUSE,   GHOSTTY_MODE_SGR_MOUSE,
             GHOSTTY_MODE_URXVT_MOUSE,  GHOSTTY_MODE_SGR_PIXELS_MOUSE,
         };
-        uint32_t fingerprint = 0;
+        std::array<GhosttyTerminalModeConfig, modes.size()> configs{};
+        std::array<GhosttyTerminalData, modes.size()> keys{};
+        std::array<void *, modes.size()> values{};
         for (size_t index = 0; index < modes.size(); ++index) {
-            bool enabled = false;
-            if (ghostty_terminal_mode_get(terminal_, modes[index], &enabled)
-                    == GHOSTTY_SUCCESS
-                && enabled) {
+            configs[index].mode = modes[index];
+            keys[index] = GHOSTTY_TERMINAL_DATA_MODE;
+            values[index] = &configs[index];
+        }
+        size_t written = 0;
+        if (ghostty_terminal_get_multi(terminal_, keys.size(), keys.data(),
+                                       values.data(), &written)
+                != GHOSTTY_SUCCESS
+            || written != keys.size()) {
+            return;
+        }
+
+        uint32_t fingerprint = 0;
+        for (size_t index = 0; index < configs.size(); ++index) {
+            if (configs[index].value) {
                 fingerprint |= uint32_t{1} << static_cast<uint32_t>(index);
             }
         }
@@ -1437,7 +1509,7 @@ public:
     bool keyboardActionMode() const
     {
         bool enabled = false;
-        return ghostty_terminal_mode_get(terminal_, GHOSTTY_MODE_KAM, &enabled)
+        return terminalModeGet(terminal_, GHOSTTY_MODE_KAM, &enabled)
             == GHOSTTY_SUCCESS
             && enabled;
     }
@@ -1516,8 +1588,8 @@ public:
                                  &screen)
                 != GHOSTTY_SUCCESS
             || screen != GHOSTTY_TERMINAL_SCREEN_ALTERNATE
-            || ghostty_terminal_mode_get(terminal_, GHOSTTY_MODE_ALT_SCROLL,
-                                         &alternateScroll)
+            || terminalModeGet(terminal_, GHOSTTY_MODE_ALT_SCROLL,
+                               &alternateScroll)
                 != GHOSTTY_SUCCESS
             || !alternateScroll) {
             return std::nullopt;
@@ -1528,8 +1600,8 @@ public:
         }
 
         bool applicationCursorKeys = false;
-        (void)ghostty_terminal_mode_get(terminal_, GHOSTTY_MODE_DECCKM,
-                                        &applicationCursorKeys);
+        (void)terminalModeGet(terminal_, GHOSTTY_MODE_DECCKM,
+                              &applicationCursorKeys);
         const QByteArrayView sequence = rows > 0 ? applicationCursorKeys
                 ? QByteArrayView("\033OA", 3)
                 : QByteArrayView("\033[A", 3)
@@ -1556,8 +1628,7 @@ public:
     QByteArray encodeFocus(bool focused) const
     {
         bool reportFocus = false;
-        if (ghostty_terminal_mode_get(terminal_, GHOSTTY_MODE_FOCUS_EVENT,
-                                      &reportFocus)
+        if (terminalModeGet(terminal_, GHOSTTY_MODE_FOCUS_EVENT, &reportFocus)
                 != GHOSTTY_SUCCESS
             || !reportFocus) {
             return {};
@@ -1577,8 +1648,8 @@ public:
     bool bracketedPasteMode() const
     {
         bool bracketed = false;
-        (void)ghostty_terminal_mode_get(terminal_, GHOSTTY_MODE_BRACKETED_PASTE,
-                                        &bracketed);
+        (void)terminalModeGet(terminal_, GHOSTTY_MODE_BRACKETED_PASTE,
+                              &bracketed);
         return bracketed;
     }
 
@@ -2021,18 +2092,34 @@ public:
             return snapshot;
         }
 
+        std::array<GhosttyTerminalModeConfig, inspectorModeSpecs.size()>
+            modeConfigs{};
+        std::array<GhosttyTerminalData, inspectorModeSpecs.size()> modeKeys{};
+        std::array<void *, inspectorModeSpecs.size()> modeValues{};
+        for (size_t index = 0; index < inspectorModeSpecs.size(); ++index) {
+            modeConfigs[index].mode = inspectorModeSpecs[index].mode;
+            modeKeys[index] = GHOSTTY_TERMINAL_DATA_MODE;
+            modeValues[index] = &modeConfigs[index];
+        }
+        written = 0;
+        if (ghostty_terminal_get_multi(terminal_, modeKeys.size(),
+                                       modeKeys.data(), modeValues.data(),
+                                       &written)
+                != GHOSTTY_SUCCESS
+            || written != modeKeys.size()) {
+            return snapshot;
+        }
+
         snapshot.modes.reserve(
             static_cast<qsizetype>(inspectorModeSpecs.size()));
-        for (const InspectorModeSpec &spec : inspectorModeSpecs) {
+        for (size_t index = 0; index < inspectorModeSpecs.size(); ++index) {
+            const InspectorModeSpec &spec = inspectorModeSpecs[index];
             TerminalInspectorModeState mode{
                 .name = QString::fromLatin1(spec.name),
                 .number = ghostty_mode_value(spec.mode),
                 .ansi = ghostty_mode_ansi(spec.mode),
+                .enabled = modeConfigs[index].value,
             };
-            if (ghostty_terminal_mode_get(terminal_, spec.mode, &mode.enabled)
-                != GHOSTTY_SUCCESS) {
-                return snapshot;
-            }
             snapshot.modes.append(std::move(mode));
         }
         snapshot.status = TerminalInspectorStatus::Ready;
@@ -2287,73 +2374,14 @@ public:
 
     GhosttyVtAdapter::SemanticPromptState semanticPromptState() const
     {
-        GhosttyTerminalScreen screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
-        uint16_t cursorX = 0;
-        uint16_t cursorY = 0;
-        const GhosttyTerminalData keys[] = {
-            GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN,
-            GHOSTTY_TERMINAL_DATA_CURSOR_X,
-            GHOSTTY_TERMINAL_DATA_CURSOR_Y,
-        };
-        void *values[] = {
-            &screen,
-            &cursorX,
-            &cursorY,
-        };
-        size_t written = 0;
-        if (ghostty_terminal_get_multi(terminal_, std::size(keys), keys, values,
-                                       &written)
-                != GHOSTTY_SUCCESS
-            || written != std::size(keys)) {
-            return SemanticPromptState::Unavailable;
-        }
-        if (screen == GHOSTTY_TERMINAL_SCREEN_ALTERNATE) {
-            return SemanticPromptState::Away;
-        }
-        if (screen != GHOSTTY_TERMINAL_SCREEN_PRIMARY) {
-            return SemanticPromptState::Unavailable;
-        }
-
-        GhosttyPoint point{};
-        point.tag = GHOSTTY_POINT_TAG_ACTIVE;
-        point.value.coordinate.x = cursorX;
-        point.value.coordinate.y = cursorY;
-        GhosttyGridRef reference{};
-        reference.size = sizeof(reference);
-        GhosttyRow row = 0;
-        GhosttyCell cell = 0;
-        if (ghostty_terminal_grid_ref(terminal_, point, &reference)
-                != GHOSTTY_SUCCESS
-            || ghostty_grid_ref_row(&reference, &row) != GHOSTTY_SUCCESS
-            || ghostty_grid_ref_cell(&reference, &cell) != GHOSTTY_SUCCESS) {
-            return SemanticPromptState::Unavailable;
-        }
-
-        GhosttyRowSemanticPrompt rowSemantic = GHOSTTY_ROW_SEMANTIC_NONE;
-        if (ghostty_row_get(row, GHOSTTY_ROW_DATA_SEMANTIC_PROMPT, &rowSemantic)
-            != GHOSTTY_SUCCESS) {
-            return SemanticPromptState::Unavailable;
-        }
-        switch (rowSemantic) {
-        case GHOSTTY_ROW_SEMANTIC_PROMPT:
-        case GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION:
-            return SemanticPromptState::AtPrompt;
-        case GHOSTTY_ROW_SEMANTIC_NONE: break;
-        default: return SemanticPromptState::Unavailable;
-        }
-
-        GhosttyCellSemanticContent cellSemantic = GHOSTTY_CELL_SEMANTIC_OUTPUT;
-        if (ghostty_cell_get(cell, GHOSTTY_CELL_DATA_SEMANTIC_CONTENT,
-                             &cellSemantic)
-            != GHOSTTY_SUCCESS) {
-            return SemanticPromptState::Unavailable;
-        }
-        switch (cellSemantic) {
-        case GHOSTTY_CELL_SEMANTIC_INPUT:
-        case GHOSTTY_CELL_SEMANTIC_PROMPT: return SemanticPromptState::AtPrompt;
-        case GHOSTTY_CELL_SEMANTIC_OUTPUT: return SemanticPromptState::Away;
-        default: return SemanticPromptState::Unavailable;
-        }
+        bool atPrompt = false;
+        return ghostty_terminal_get(terminal_,
+                                    GHOSTTY_TERMINAL_DATA_CURSOR_AT_PROMPT,
+                                    &atPrompt)
+                == GHOSTTY_SUCCESS
+            ? (atPrompt ? SemanticPromptState::AtPrompt
+                        : SemanticPromptState::Away)
+            : SemanticPromptState::Unavailable;
     }
 
     std::optional<QByteArray>

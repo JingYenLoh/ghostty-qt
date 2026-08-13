@@ -320,6 +320,8 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(appearance.faintOpacity, 0.375);
     QCOMPARE(appearance.minimumContrast, 4.25);
     QVERIFY(values.vtKamAllowed);
+    QCOMPARE(values.graphemeWidthMethod, GraphemeWidthMethod::Legacy);
+    QVERIFY(values.titleReport);
 
     QCOMPARE(values.splitAppearance.unfocusedOpacity, 0.7);
     QVERIFY(!values.splitAppearance.unfocusedFill.has_value());
@@ -332,6 +334,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(!values.windowInheritFontSize);
     QCOMPARE(values.windowNewTabPosition, WindowNewTabPosition::End);
     QCOMPARE(values.windowShowTabBar, WindowShowTabBar::Always);
+    QCOMPARE(values.dragHandle, DragHandleMode::Never);
     QCOMPARE(values.windowDecoration, WindowDecorationMode::Server);
     QCOMPARE(values.windowAppearance.theme, WindowTheme::Ghostty);
     QCOMPARE(values.windowAppearance.titleFontFamily,
@@ -415,6 +418,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(values.mouseScrollMultiplier.precision, 0.75);
     QCOMPARE(values.mouseScrollMultiplier.discrete, 4.5);
     QVERIFY(!values.linkUrl);
+    QVERIFY(!values.linkOsc8);
     QCOMPARE(values.linkPreviews, LinkPreviewMode::Osc8);
 
     QCOMPARE(values.configFiles.size(), qsizetype{2});
@@ -1266,7 +1270,7 @@ void GhosttyConfigExportTest::rejectsMalformedEnvelope()
                  "Ghostty structured config JSON root must be an object"));
 
     QJsonObject malformed = object();
-    malformed.insert(QStringLiteral("version"), 5);
+    malformed.insert(QStringLiteral("version"), 6);
     parsed = parseGhosttyConfigExportJson(json(malformed));
     QVERIFY(!parsed);
     QCOMPARE(parsed.error(),
@@ -3006,6 +3010,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     for (const QString &enumName : {
              QStringLiteral("window-new-tab-position"),
              QStringLiteral("window-show-tab-bar"),
+             QStringLiteral("drag-handle"),
              QStringLiteral("window-decoration"),
              QStringLiteral("window-theme"),
              QStringLiteral("window-subtitle"),
@@ -3018,6 +3023,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
              QStringLiteral("right-click-action"),
              QStringLiteral("middle-click-action"),
              QStringLiteral("mouse-shift-capture"),
+             QStringLiteral("grapheme-width-method"),
              QStringLiteral("link-previews"),
              QStringLiteral("scrollbar"),
              QStringLiteral("resize-overlay"),

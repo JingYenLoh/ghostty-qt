@@ -63,6 +63,21 @@
 
 namespace {
 
+QByteArray shellQuote(QByteArrayView value)
+{
+    QByteArray result("'");
+    result.reserve(value.size() + 2);
+    for (const char character : value) {
+        if (character == '\'') {
+            result.append(QByteArrayLiteral("'\\''"));
+        } else {
+            result.append(character);
+        }
+    }
+    result.append('\'');
+    return result;
+}
+
 #if GHOSTTY_QT_CONFIG_ENABLED
 std::expected<QString, QString> siblingExecutablePath(QStringView filename)
 {
@@ -2899,6 +2914,37 @@ int main(int argc, char *argv[])
                                  << opened.error();
                          }
                      });
+    QObject::connect(
+        &applicationController,
+        &ApplicationController::configOpenInNewWindowRequested, &application,
+        [&applicationController, frontendConfigPath] {
+            const auto path =
+                prepareGhosttyConfigForEditing({frontendConfigPath});
+            if (!path.has_value()) {
+                qWarning().noquote()
+                    << "Could not prepare the Ghostty configuration:"
+                    << path.error();
+                return;
+            }
+            QByteArray editor = qgetenv("VISUAL");
+            if (editor.isEmpty()) editor = qgetenv("EDITOR");
+            if (editor.isEmpty()) editor = QByteArrayLiteral("vi");
+            const QByteArray encodedPath = QFile::encodeName(*path);
+            GhosttyNewWindowTransportOverrides overrides{
+                .command = TerminalCommand::direct(
+                    {QByteArrayLiteral("/bin/sh"), QByteArrayLiteral("-c"),
+                     editor + QByteArrayLiteral(" ")
+                         + shellQuote(encodedPath)}),
+                .workingDirectory = std::nullopt,
+                .titleOverride =
+                    QStringLiteral("Editing configuration file %1").arg(*path),
+            };
+            if (!applicationController.activateNewWindow(
+                    std::move(overrides), {})) {
+                qWarning().noquote()
+                    << "Could not open the Ghostty configuration in a new window";
+            }
+        });
 
     QObject::connect(&systemdLifecycle,
                      &SystemdApplicationLifecycle::reloadRequested,

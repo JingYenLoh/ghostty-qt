@@ -512,6 +512,7 @@ private Q_SLOTS:
     void surfaceTitlePromptsPreserveStableTargetsAndLayers();
     void broadSurfaceTitlePromptsShareFifoAndPruneRemovedPanes();
     void tabTitlePromptsPreserveStableTargetsAndReset();
+    void windowTitleActionsMaskTabsAndPrompt();
     void broadTabTitlePromptsQueueEverySurfaceAndSurviveRemoval();
     void newTabPositionReloadsAndKeepsBroadOrder();
     void tabBarVisibilityTracksPolicyAndCount();
@@ -11860,6 +11861,48 @@ void TerminalWorkspaceTest::tabTitlePromptsPreserveStableTargetsAndReset()
         {secondTabId, firstPaneId, 0},
     }));
     QCOMPARE(requested.count(), 4);
+}
+
+void TerminalWorkspaceTest::windowTitleActionsMaskTabsAndPrompt()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+
+    QSignalSpy titleChanged(&workspace,
+                            &TerminalWorkspace::currentTitleChanged);
+    QVERIFY(pane->executeConfiguredAction(
+        QStringLiteral("set_window_title:whole window")));
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("whole window"));
+    QCOMPARE(titleChanged.count(), 1);
+
+    workspace.newTab();
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("whole window"));
+
+    QSignalSpy requested(&workspace,
+                         &TerminalWorkspace::titlePromptRequested);
+    QVERIFY(pane->executeConfiguredAction(
+        QStringLiteral("prompt_window_title")));
+    QCOMPARE(requested.count(), 1);
+    QCOMPARE(requested.constFirst().at(1).toString(),
+             QStringLiteral("Change Window Title"));
+    QCOMPARE(requested.constFirst().at(2).toString(),
+             QStringLiteral("whole window"));
+
+    const quint64 promptId =
+        requested.constFirst().constFirst().toULongLong();
+    const int titleChangesBeforeClear = titleChanged.count();
+    workspace.confirmTitlePrompt(promptId, QString{});
+    QVERIFY(workspace.currentTitle() != QStringLiteral("whole window"));
+    QCOMPARE(titleChanged.count(), titleChangesBeforeClear + 1);
 }
 
 void TerminalWorkspaceTest::broadTabTitlePromptsQueueEverySurfaceAndSurviveRemoval()

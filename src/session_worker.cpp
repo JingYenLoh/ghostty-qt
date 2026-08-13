@@ -755,8 +755,8 @@ bool trackedTerminalLinkValid(GhosttyVtAdapter &adapter,
 
 std::optional<DetectedTerminalLink>
 detectTerminalLinkAt(GhosttyVtAdapter &adapter, GhosttyLinkMatcher *matcher,
-                     bool linkUrl, const TerminalOsc8Index &viewport,
-                     int column, int row)
+                     bool linkUrl, bool linkOsc8,
+                     const TerminalOsc8Index &viewport, int column, int row)
 {
     if (!viewport.containsCoordinate(column, row)) {
         return std::nullopt;
@@ -765,7 +765,8 @@ detectTerminalLinkAt(GhosttyVtAdapter &adapter, GhosttyLinkMatcher *matcher,
     // Ghostty gives explicit OSC 8 destinations priority over configured
     // regex links at the same cell. If URI extraction fails, continue to the
     // default matcher just as Surface.linkAtPos does.
-    auto trackedOsc8 = adapter.trackHyperlinkAt(column, row);
+    auto trackedOsc8 = linkOsc8 ? adapter.trackHyperlinkAt(column, row)
+                                : std::nullopt;
     if (trackedOsc8.has_value()) {
         TrackedTerminalLink target(
             std::in_place_type<GhosttyVtAdapter::TrackedHyperlink>,
@@ -1111,6 +1112,13 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
 
 bool SessionWorker::createTerminal()
 {
+    QByteArray effectiveTerm = options_.term;
+    const auto termOverride = std::ranges::find(
+        options_.environment, QByteArrayLiteral("TERM"),
+        &TerminalEnvironmentEntry::key);
+    if (termOverride != options_.environment.cend()) {
+        effectiveTerm = termOverride->value;
+    }
     const GhosttyVtAdapter::Options options{
         .geometry = geometry_,
         .scrollbackBytes = options_.scrollbackLimits.bytes,
@@ -1120,6 +1128,11 @@ bool SessionWorker::createTerminal()
         .appearance = options_.runtime.appearance,
         .colorScheme = options_.runtime.colorScheme,
         .clipboardWriteAccess = options_.runtime.clipboardWrite,
+        .graphemeWidthUnicode =
+            options_.runtime.graphemeWidthMethod
+            == GraphemeWidthMethod::Unicode,
+        .titleReport = options_.runtime.titleReport,
+        .terminfoName = effectiveTerm,
         .initialWorkingDirectory = options_.inheritWorkingDirectory
             ? std::nullopt
             : std::optional(options_.workingDirectory.bytes()),
@@ -1157,6 +1170,7 @@ void SessionWorker::applyRuntimeOptions(
     const quint32 previousKittyImageStorageLimit =
         options_.runtime.kittyImageStorageLimitBytes;
     const bool linkUrlChanged = options_.runtime.linkUrl != options.linkUrl;
+    const bool linkOsc8Changed = options_.runtime.linkOsc8 != options.linkOsc8;
     const QVector<quint32> previousSelectionWordChars =
         options_.runtime.selectionWordChars;
     const bool selectionWordCharsChanged =
@@ -1235,6 +1249,29 @@ void SessionWorker::applyRuntimeOptions(
             hyperlinkState_->activationRequestId = 0;
             hyperlinkState_->activationKind = TerminalLinkKind::Osc8;
             hyperlinkState_->trackedActivation.reset();
+        }
+    }
+    if (linkOsc8Changed && !options_.runtime.linkOsc8) {
+        if (hyperlinkState_->trackedHover.has_value()
+            && std::holds_alternative<GhosttyVtAdapter::TrackedHyperlink>(
+                *hyperlinkState_->trackedHover)) {
+            const quint64 requestId = hyperlinkState_->activeRequestId;
+            hyperlinkState_->activeRequestId = 0;
+            hyperlinkState_->trackedHover.reset();
+            hyperlinkState_->publishedState = TerminalHyperlinkState::Invalid;
+            hyperlinkState_->publishedKind = TerminalLinkKind::Osc8;
+            hyperlinkState_->publishedUri.clear();
+            hyperlinkState_->publishedTarget = QPoint(-1, -1);
+            hyperlinkState_->publishedCells.clear();
+            hyperlinkState_->publishedRelevantRows.clear();
+            hyperlinkState_->publishedColumns = 0;
+            hyperlinkState_->publishedRows = 0;
+            if (requestId != 0) {
+                Q_EMIT hyperlinkResolved(requestId, terminalContentRevision_,
+                                         TerminalHyperlinkState::Invalid,
+                                         TerminalLinkKind::Osc8, {},
+                                         QPoint(-1, -1), {});
+            }
         }
     }
 
@@ -2760,6 +2797,7 @@ void SessionWorker::resolveRightClick(const TerminalRightClickInput &input)
         if (modifiers == Qt::ControlModifier) {
             detected = detectTerminalLinkAt(
                 *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
+                options_.runtime.linkOsc8,
                 hyperlinkState_->viewport, input.column, input.row);
         }
 
@@ -4190,6 +4228,7 @@ void SessionWorker::processPendingHyperlinkQuery()
     } else if (vt_ != nullptr) {
         detected = detectTerminalLinkAt(
             *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
+            options_.runtime.linkOsc8,
             hyperlinkState_->viewport, query.column, query.row);
     }
 
@@ -4246,6 +4285,7 @@ void SessionWorker::prepareHyperlinkActivation(quint64 requestId,
     }
     auto detected =
         detectTerminalLinkAt(*vt_, linkMatcher_.get(), options_.runtime.linkUrl,
+                             options_.runtime.linkOsc8,
                              hyperlinkState_->viewport, column, row);
     if (!detected.has_value()) {
         return;
@@ -4275,6 +4315,7 @@ void SessionWorker::commitHyperlinkActivation(quint64 requestId, int column,
         if (stillMatches && kind == TerminalLinkKind::Regex) {
             const auto current = detectTerminalLinkAt(
                 *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
+                options_.runtime.linkOsc8,
                 hyperlinkState_->viewport, column, row);
             stillMatches = current.has_value() && current->resolved.kind == kind
                 && current->resolved.uri == match->uri
@@ -4369,6 +4410,7 @@ void SessionWorker::refreshTrackedHyperlink(bool force)
         if (match->kind == TerminalLinkKind::Regex) {
             const auto current = detectTerminalLinkAt(
                 *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
+                options_.runtime.linkOsc8,
                 hyperlinkState_->viewport, match->targetCell.x(),
                 match->targetCell.y());
             stillMatches = current.has_value()

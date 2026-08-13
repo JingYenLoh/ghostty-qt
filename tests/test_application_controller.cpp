@@ -2582,6 +2582,11 @@ void ApplicationControllerTest::residentProcessReloadsRecreatesAndQuitsWithZeroW
                           &ApplicationController::configOpenRequested);
     QVERIFY(controller.dispatch(ApplicationAction::OpenConfig));
     QCOMPARE(openConfig.count(), 1);
+    QSignalSpy openConfigWindow(
+        &controller,
+        &ApplicationController::configOpenInNewWindowRequested);
+    QVERIFY(controller.dispatch(ApplicationAction::OpenConfigNewWindow));
+    QCOMPARE(openConfigWindow.count(), 1);
 
     QSignalSpy reload(&controller,
                       &ApplicationController::configReloadRequested);

@@ -389,7 +389,7 @@ private:
         PaneId paneId;
         QPointer<TerminalPane> pane;
     };
-    using TitlePromptTarget = std::variant<PaneId, TabId>;
+    using TitlePromptTarget = std::variant<std::monostate, PaneId, TabId>;
     struct PendingTitlePrompt {
         quint64 requestId = 0;
         TitlePromptTarget target;
@@ -581,6 +581,7 @@ private:
     // individual pane. A present override masks live config reloads until the
     // next toggle clears it and reveals the newest configured value.
     std::optional<WindowDecorationMode> windowDecorationOverride_;
+    std::optional<QString> windowTitleOverride_;
     GhosttyKeybindProgram keybindProgram_;
     RevisionCounter launchOptionsRevision_;
     std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator_;

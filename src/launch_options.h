@@ -179,6 +179,9 @@ struct LaunchOptions {
     // Controls the frontend tab-bar visibility without affecting terminal
     // session state.
     WindowShowTabBar windowShowTabBar = WindowShowTabBar::Auto;
+    // Ghostty's surface-drag affordance. Qt currently retains this finalized
+    // policy for workspace presentation and future surface transfer support.
+    DragHandleMode dragHandle = DragHandleMode::Auto;
     // Qt-owned placement for the stable window toolbar and tab strip.
     TabsLocation tabsLocation = TabsLocation::Top;
     // Qt-owned tab presentation and terminal-surface precision gesture
@@ -257,9 +260,13 @@ struct LaunchOptions {
     // Allows terminal-owned ANSI KAM mode 2 to suppress ordinary keyboard and
     // IME input. Keybindings and their raw actions remain independent.
     bool vtKamAllowed = false;
+    GraphemeWidthMethod graphemeWidthMethod = GraphemeWidthMethod::Unicode;
+    bool titleReport = false;
     // Enables Ghostty's built-in URL matcher. OSC 8 hyperlinks remain
     // available independently of this setting.
     bool linkUrl = true;
+    // Enables explicit OSC 8 targets independently of the regex matcher.
+    bool linkOsc8 = true;
     // Controls whether matched link destinations are shown before activation.
     // Ghostty defaults to previews for both regex and OSC 8 links.
     LinkPreviewMode linkPreviews = LinkPreviewMode::Always;

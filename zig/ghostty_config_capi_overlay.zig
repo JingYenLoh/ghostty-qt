@@ -424,7 +424,7 @@ fn configJson(
     var json: std.json.Stringify = .{ .writer = &output.writer };
     try json.beginObject();
     try json.objectField("version");
-    try json.write(@as(u8, 4));
+    try json.write(@as(u8, 5));
 
     {
         var config = try loadSelectedConfig(
@@ -813,6 +813,8 @@ fn writeValues(
     try json.write(@tagName(config.@"window-new-tab-position"));
     try json.objectField("window-show-tab-bar");
     try json.write(@tagName(config.@"window-show-tab-bar"));
+    try json.objectField("drag-handle");
+    try json.write(@tagName(config.@"drag-handle"));
     try json.objectField("window-decoration");
     try json.write(@tagName(config.@"window-decoration"));
     try json.objectField("window-theme");
@@ -884,6 +886,10 @@ fn writeValues(
     try json.write(config.@"minimum-contrast");
     try json.objectField("vt-kam-allowed");
     try json.write(config.@"vt-kam-allowed");
+    try json.objectField("grapheme-width-method");
+    try json.write(@tagName(config.@"grapheme-width-method"));
+    try json.objectField("title-report");
+    try json.write(config.@"title-report");
     try json.objectField("scrollback-limit-bytes");
     if (config.@"scrollback-limit-bytes".optional()) |value|
         try writeDecimalUint64(json, @intCast(value))
@@ -975,6 +981,8 @@ fn writeValues(
     try json.endObject();
     try json.objectField("link-url");
     try json.write(config.@"link-url");
+    try json.objectField("link-osc8");
+    try json.write(config.@"link-osc8");
     try json.objectField("link-previews");
     try json.write(@tagName(config.@"link-previews"));
     try json.objectField("config-file");
@@ -1211,12 +1219,62 @@ fn writeQuickTerminalSize(
     try json.endObject();
 }
 
+// Binding.Action.format is a parser-facing representation and is not a stable
+// byte transport. Keep the helper's v5 action strings independent of upstream
+// display-format changes: byte slices use the escaped representation consumed
+// by ghostty-qt, while all other values retain Ghostty's grammar.
+fn writeActionValue(
+    writer: *std.Io.Writer,
+    value: anytype,
+) !void {
+    const Value = @TypeOf(value);
+    const value_info = @typeInfo(Value);
+    switch (Value) {
+        void => {},
+        []const u8 => try std.zig.stringEscape(value, writer),
+        else => switch (value_info) {
+            .@"enum" => try writer.print("{t}", .{value}),
+            .float => try writer.print("{d}", .{value}),
+            .int => try writer.print("{d}", .{value}),
+            .@"struct" => |info| format: {
+                if (@hasDecl(Value, "format")) {
+                    try value.format(writer);
+                    break :format;
+                }
+                if (!info.is_tuple)
+                    @compileError("unhandled action value: " ++ @typeName(Value));
+                inline for (info.fields, 0..) |field, index| {
+                    try writeActionValue(writer, @field(value, field.name));
+                    if (index + 1 < info.fields.len)
+                        try writer.writeAll(",");
+                }
+            },
+            else => @compileError("unhandled action value: " ++ @typeName(Value)),
+        },
+    }
+}
+
+fn writeAction(
+    writer: *std.Io.Writer,
+    action: Binding.Action,
+) !void {
+    switch (action) {
+        inline else => |value| {
+            try writer.print("{s}", .{@tagName(action)});
+            if (@TypeOf(value) != void) {
+                try writer.writeByte(':');
+                try writeActionValue(writer, value);
+            }
+        },
+    }
+}
+
 fn writeCommandPalette(json: *std.json.Stringify, value: anytype) !void {
     try json.beginArray();
     for (value.value.items) |command| {
         var formatted: std.Io.Writer.Allocating = .init(global.alloc());
         defer formatted.deinit();
-        try command.action.format(&formatted.writer);
+        try writeAction(&formatted.writer, command.action);
 
         try json.beginObject();
         try json.objectField("title");
@@ -1574,7 +1632,7 @@ fn writeBinding(
     for (actions) |action| {
         var formatted: std.Io.Writer.Allocating = .init(alloc);
         defer formatted.deinit();
-        try action.format(&formatted.writer);
+        try writeAction(&formatted.writer, action);
         try json.write(formatted.written());
     }
     try json.endArray();

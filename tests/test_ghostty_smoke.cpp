@@ -188,21 +188,25 @@ void GhosttySmokeTest::encodesInputAndPasteSafety()
         terminal, reinterpret_cast<const uint8_t *>(enableBracketedPaste),
         sizeof(enableBracketedPaste) - 1);
 
-    bool bracketed = false;
-    QCOMPARE(ghostty_terminal_mode_get(terminal, GHOSTTY_MODE_BRACKETED_PASTE, &bracketed),
+    GhosttyTerminalModeConfig bracketed{
+        .mode = GHOSTTY_MODE_BRACKETED_PASTE,
+        .value = false,
+    };
+    QCOMPARE(ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_MODE,
+                                  &bracketed),
              GHOSTTY_SUCCESS);
-    QVERIFY(bracketed);
+    QVERIFY(bracketed.value);
 
     QByteArray pasteInput("line one\nline two");
     size_t pasteSize = 0;
     QCOMPARE(ghostty_paste_encode(pasteInput.data(),
-                                  static_cast<size_t>(pasteInput.size()), bracketed,
+                                  static_cast<size_t>(pasteInput.size()), bracketed.value,
                                   nullptr, 0, &pasteSize),
              GHOSTTY_OUT_OF_SPACE);
     QByteArray pasteOutput(static_cast<qsizetype>(pasteSize), Qt::Uninitialized);
     size_t pasteWritten = 0;
     QCOMPARE(ghostty_paste_encode(
-                 pasteInput.data(), static_cast<size_t>(pasteInput.size()), bracketed,
+                 pasteInput.data(), static_cast<size_t>(pasteInput.size()), bracketed.value,
                  pasteOutput.data(), static_cast<size_t>(pasteOutput.size()), &pasteWritten),
              GHOSTTY_SUCCESS);
     pasteOutput.resize(static_cast<qsizetype>(pasteWritten));

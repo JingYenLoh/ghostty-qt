@@ -221,6 +221,9 @@ toTerminalSessionRuntimeOptions(const LaunchOptions &options)
         .clipboardPaste = options.clipboardPaste,
         .rightClickAction = options.rightClickAction,
         .linkUrl = options.linkUrl,
+        .linkOsc8 = options.linkOsc8,
+        .graphemeWidthMethod = options.graphemeWidthMethod,
+        .titleReport = options.titleReport,
         .vtKamAllowed = options.vtKamAllowed,
         .scrollbackCompression = options.scrollbackCompression,
         .kittyImageStorageLimitBytes = options.kittyImageStorageLimitBytes,
@@ -343,6 +346,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     result.windowInheritFontSize = config.windowInheritFontSize;
     result.windowNewTabPosition = config.windowNewTabPosition;
     result.windowShowTabBar = config.windowShowTabBar;
+    result.dragHandle = config.dragHandle;
     result.windowDecoration = config.windowDecoration;
     result.windowAppearance = config.windowAppearance;
     result.windowWidth = config.windowWidth;
@@ -388,7 +392,10 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     result.focusFollowsMouse = config.focusFollowsMouse;
     result.mouseScrollMultiplier = config.mouseScrollMultiplier;
     result.vtKamAllowed = config.vtKamAllowed;
+    result.graphemeWidthMethod = config.graphemeWidthMethod;
+    result.titleReport = config.titleReport;
     result.linkUrl = config.linkUrl;
+    result.linkOsc8 = config.linkOsc8;
     result.linkPreviews = config.linkPreviews;
     result.applicationShell = config.applicationShell;
     result.modifierRemaps = config.modifierRemaps;

@@ -904,6 +904,9 @@ bool ApplicationController::dispatch(ApplicationAction action,
     case ApplicationAction::OpenConfig:
         Q_EMIT configOpenRequested();
         return true;
+    case ApplicationAction::OpenConfigNewWindow:
+        Q_EMIT configOpenInNewWindowRequested();
+        return true;
     case ApplicationAction::ReloadConfig:
         Q_EMIT configReloadRequested();
         return true;
@@ -1016,6 +1019,7 @@ void ApplicationController::dispatchRequestedAction(
         (void)dispatch(action, sourceWorkspace, sourcePaneId);
         return;
     case ApplicationAction::OpenConfig:
+    case ApplicationAction::OpenConfigNewWindow:
     case ApplicationAction::ReloadConfig:
     case ApplicationAction::ToggleQuickTerminal:
     case ApplicationAction::Quit: break;

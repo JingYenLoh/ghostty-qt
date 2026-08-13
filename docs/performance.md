@@ -77,6 +77,22 @@ FIFO-copied bytes from 15.0 MiB to 6.4 MiB, and FIFO backing allocations from
 copies and allocations. `GHOSTTY_QT_PTY_WRITE_DIRECT=legacy` restores the
 always-buffered path for benchmark A/B diagnosis only.
 
+### Terminal C-API query topology
+
+The current C-boundary topology includes two optimizations adopted with the
+`c54ec80c` Ghostty pin:
+
+| Path | Former topology | Current topology | Status and measurement gate |
+| --- | --- | --- | --- |
+| Input-mode synchronization | Eight standalone mode getter calls for X10, normal, button, any-event, UTF-8, SGR, URXVT, and SGR-pixel mouse modes | One `ghostty_terminal_get_multi` call carrying eight `GHOSTTY_TERMINAL_DATA_MODE` requests | Landed. This removes seven C ABI crossings whenever VT input modes are synchronized after writes and resets while retaining one coherent fingerprint. Benchmark input-mode-heavy output before claiming an end-to-end win. |
+| Inspector mode snapshot | 42 standalone mode getter calls after the inspector's other terminal queries | One `ghostty_terminal_get_multi` call carrying all 42 mode requests | Landed. Inspector collection is request-driven, so this is primarily lower diagnostic overhead and a more coherent snapshot rather than a normal frame-path optimization. |
+| Semantic prompt polling | On the primary screen, one three-field query followed by grid-reference construction, row/cell resolution, a row semantic query, and sometimes a cell semantic query: five or six public C calls | One `GHOSTTY_TERMINAL_DATA_CURSOR_AT_PROMPT` query | Landed. This removes four or five C crossings plus frontend reconstruction from activity reconciliation. It adds no timer: polling retains the event-driven/temporarily armed topology documented under Idle session monitoring. Measure foreground-job and prompt-transition workloads before assigning a latency or CPU percentage. |
+
+These reductions are current-design topology facts, not benchmark results. In
+particular, `get_multi` still performs the requested lookups inside
+libghostty; its benefit is fewer ABI transitions, one validation boundary, and
+coherent collection, not elimination of the underlying mode reads.
+
 ### Frame transport
 
 Visible cells cross the worker/UI boundary as contiguous row payloads. Their

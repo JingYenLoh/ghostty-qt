@@ -513,6 +513,7 @@ inline QJsonObject values()
         {QStringLiteral("window-inherit-font-size"), false},
         {QStringLiteral("window-new-tab-position"), QStringLiteral("end")},
         {QStringLiteral("window-show-tab-bar"), QStringLiteral("always")},
+        {QStringLiteral("drag-handle"), QStringLiteral("never")},
         {QStringLiteral("window-decoration"), QStringLiteral("server")},
         {QStringLiteral("window-theme"), QStringLiteral("ghostty")},
         {QStringLiteral("window-title-font-family"),
@@ -552,6 +553,8 @@ inline QJsonObject values()
         {QStringLiteral("faint-opacity"), 0.375},
         {QStringLiteral("minimum-contrast"), 4.25},
         {QStringLiteral("vt-kam-allowed"), true},
+        {QStringLiteral("grapheme-width-method"), QStringLiteral("legacy")},
+        {QStringLiteral("title-report"), true},
         {QStringLiteral("scrollback-limit-bytes"),
          QStringLiteral("18446744073709551615")},
         {QStringLiteral("scrollback-limit-lines"),
@@ -602,6 +605,7 @@ inline QJsonObject values()
         {QStringLiteral("mouse-scroll-multiplier"),
          mouseScrollMultiplier(0.75, 4.5)},
         {QStringLiteral("link-url"), false},
+        {QStringLiteral("link-osc8"), false},
         {QStringLiteral("link-previews"), QStringLiteral("osc8")},
         {QStringLiteral("config-file"),
          QJsonArray{QStringLiteral("/work/include.ghostty"),
@@ -645,7 +649,7 @@ inline QJsonObject object()
 {
     const QJsonObject baseline = keybindings();
     return {
-        {QStringLiteral("version"), 4},
+        {QStringLiteral("version"), 5},
         {QStringLiteral("values"), values()},
         {QStringLiteral("keybindings"), baseline},
         {QStringLiteral("default-keybindings"), baseline},

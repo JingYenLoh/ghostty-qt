@@ -105,6 +105,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("window-inherit-font-size"),
     QLatin1StringView("window-new-tab-position"),
     QLatin1StringView("window-show-tab-bar"),
+    QLatin1StringView("drag-handle"),
     QLatin1StringView("window-decoration"),
     QLatin1StringView("window-theme"),
     QLatin1StringView("window-title-font-family"),
@@ -135,6 +136,8 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("faint-opacity"),
     QLatin1StringView("minimum-contrast"),
     QLatin1StringView("vt-kam-allowed"),
+    QLatin1StringView("grapheme-width-method"),
+    QLatin1StringView("title-report"),
     QLatin1StringView("scrollback-limit-bytes"),
     QLatin1StringView("scrollback-limit-lines"),
     QLatin1StringView("image-storage-limit"),
@@ -165,6 +168,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("focus-follows-mouse"),
     QLatin1StringView("mouse-scroll-multiplier"),
     QLatin1StringView("link-url"),
+    QLatin1StringView("link-osc8"),
     QLatin1StringView("link-previews"),
     QLatin1StringView("config-file"),
     QLatin1StringView("config-default-files"),
@@ -2128,7 +2132,9 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
              {QLatin1StringView("focus-follows-mouse"),
               &result.focusFollowsMouse},
              {QLatin1StringView("vt-kam-allowed"), &result.vtKamAllowed},
+             {QLatin1StringView("title-report"), &result.titleReport},
              {QLatin1StringView("link-url"), &result.linkUrl},
+             {QLatin1StringView("link-osc8"), &result.linkOsc8},
              {QLatin1StringView("quit-after-last-window-closed"),
               &result.quitAfterLastWindowClosed},
              {QLatin1StringView("initial-window"), &result.initialWindow},
@@ -2195,6 +2201,17 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
             {QLatin1StringView("always"), WindowShowTabBar::Always},
             {QLatin1StringView("auto"), WindowShowTabBar::Auto},
             {QLatin1StringView("never"), WindowShowTabBar::Never},
+        });
+    constexpr auto DragHandleModes =
+        std::to_array<std::pair<QLatin1StringView, DragHandleMode>>({
+            {QLatin1StringView("always"), DragHandleMode::Always},
+            {QLatin1StringView("auto"), DragHandleMode::Auto},
+            {QLatin1StringView("never"), DragHandleMode::Never},
+        });
+    constexpr auto GraphemeWidthMethods =
+        std::to_array<std::pair<QLatin1StringView, GraphemeWidthMethod>>({
+            {QLatin1StringView("legacy"), GraphemeWidthMethod::Legacy},
+            {QLatin1StringView("unicode"), GraphemeWidthMethod::Unicode},
         });
     constexpr auto WindowDecorations =
         std::to_array<std::pair<QLatin1StringView, WindowDecorationMode>>({
@@ -2372,6 +2389,15 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         return std::unexpected(std::move(parsed.error()));
     if (auto parsed = assignEnum(QLatin1StringView("window-show-tab-bar"),
                                  result.windowShowTabBar, TabBarModes);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assignEnum(QLatin1StringView("drag-handle"),
+                                 result.dragHandle, DragHandleModes);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assignEnum(QLatin1StringView("grapheme-width-method"),
+                                 result.graphemeWidthMethod,
+                                 GraphemeWidthMethods);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
     if (auto parsed = assignEnum(QLatin1StringView("window-decoration"),

@@ -162,6 +162,7 @@ private Q_SLOTS:
     void decodesKittyPngPayloads();
     void respondsToEnquiryWithConfiguredBytes();
     void reportsConfiguredColorSchemeAndLiveChanges();
+    void appliesConstructionPoliciesToPublicTerminal();
     void observesActiveScreenBottomAnchorChanges();
     void normalizesTerminalClipboardWritesAndPolicies();
     void validatesDynamicAndMacShapedOsc7Hostnames();
@@ -760,9 +761,22 @@ void GhosttyVtAdapterTest::publishesKittyGraphicsSnapshots()
              GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(replaced.update.kittyGraphicsChanged);
     QVERIFY(replaced.update.kittyGraphics != nullptr);
-    QCOMPARE(replaced.update.kittyGraphics->placements.size(), 3);
+    // Upstream now clears placements when retransmitting the same image ID;
+    // stale placements must not silently display replacement bytes.
+    QVERIFY(replaced.update.kittyGraphics->placements.isEmpty());
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033[H\033_Ga=p,i=1,p=1,c=2,r=1,z=5;\033\\"
+        "\033[H\033_Ga=p,i=1,p=2,c=2,r=1,z=-1;\033\\"
+        "\033[H\033_Ga=p,i=1,p=3,c=2,r=1,z=-1073741825;\033\\"));
+    GhosttyVtAdapter::RenderSnapshot redisplayed;
+    QCOMPARE(adapter->renderFrame(&redisplayed),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(redisplayed.update.kittyGraphicsChanged);
+    QVERIFY(redisplayed.update.kittyGraphics != nullptr);
+    QCOMPARE(redisplayed.update.kittyGraphics->placements.size(), 3);
     const auto replacement =
-        replaced.update.kittyGraphics->placements.constFirst().image;
+        redisplayed.update.kittyGraphics->placements.constFirst().image;
     QVERIFY(replacement != nullptr);
     QVERIFY(replacement->generation > firstGeneration);
     QCOMPARE(replacement->straightRgba.pixelColor(0, 0), QColor(1, 2, 3));
@@ -1178,6 +1192,46 @@ void GhosttyVtAdapterTest::reportsConfiguredColorSchemeAndLiveChanges()
     QCOMPARE(writes, QVector{QByteArrayLiteral("\033[?997;1n")});
 }
 
+void GhosttyVtAdapterTest::appliesConstructionPoliciesToPublicTerminal()
+{
+    QVector<QByteArray> writes;
+    GhosttyVtAdapter::Options options;
+    options.graphemeWidthUnicode = false;
+    options.titleReport = true;
+    options.terminfoName = QByteArrayLiteral("configured-term");
+    auto adapter = GhosttyVtAdapter::create(
+        options, {.writePty = [&writes](QByteArrayView data) {
+            writes.append(data.toByteArray());
+        }});
+    QVERIFY(adapter != nullptr);
+
+    adapter->writeVt(QByteArrayLiteral("\033[?2027$p"));
+    QCOMPARE(writes.takeFirst(), QByteArrayLiteral("\033[?2027;2$y"));
+    adapter->writeVt(QByteArrayLiteral("\033[?2027h\033c\033[?2027$p"));
+    QCOMPARE(writes.takeFirst(), QByteArrayLiteral("\033[?2027;2$y"));
+
+    adapter->writeVt(
+        QByteArrayLiteral("\033]2;reported title\033\\\033[21t"));
+    QCOMPARE(writes.takeFirst(),
+             QByteArrayLiteral("\033]lreported title\033\\"));
+
+    adapter->writeVt(QByteArrayLiteral("\033P+q544E\033\\"));
+    QCOMPARE(writes.takeFirst(),
+             QByteArrayLiteral("\033P1+r544E=636F6E666967757265642D7465726D\033\\"));
+    QVERIFY(writes.isEmpty());
+
+    GhosttyVtAdapter::Options secure;
+    secure.titleReport = false;
+    auto defaultAdapter = GhosttyVtAdapter::create(
+        secure, {.writePty = [&writes](QByteArrayView data) {
+            writes.append(data.toByteArray());
+        }});
+    QVERIFY(defaultAdapter != nullptr);
+    defaultAdapter->writeVt(
+        QByteArrayLiteral("\033]2;not reported\033\\\033[21t"));
+    QVERIFY(writes.isEmpty());
+}
+
 void GhosttyVtAdapterTest::queriesSemanticPromptStateFromPublicTerminalData()
 {
     using State = GhosttyVtAdapter::SemanticPromptState;
@@ -1205,8 +1259,8 @@ void GhosttyVtAdapterTest::queriesSemanticPromptStateFromPublicTerminalData()
     adapter->writeVt(QByteArrayLiteral("\r\n\033]133;P;k=c\a"));
     QCOMPARE(adapter->semanticPromptState(), State::AtPrompt);
 
-    // The public fallback reads the stored cell under the cursor. Exercise it
-    // on an input cell in a row with no prompt marker.
+    // The public predicate also recognizes live input state on a row without
+    // a stored prompt marker.
     adapter->writeVt(QByteArrayLiteral("\r\n\033]133;B\ax\b"));
     QCOMPARE(adapter->semanticPromptState(), State::AtPrompt);
 

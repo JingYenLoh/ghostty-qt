@@ -10,6 +10,7 @@ enum class ApplicationAction {
     DeprecatedCloseAllWindows,
     NewWindow,
     OpenConfig,
+    OpenConfigNewWindow,
     ReloadConfig,
     ToggleQuickTerminal,
     Quit,
