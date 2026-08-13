@@ -21,6 +21,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(GNUInstallDirs)
 
+set(GHOSTTY_QT_UNINSTALL_SCRIPT
+    "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Uninstall.cmake.in"
+    "${GHOSTTY_QT_UNINSTALL_SCRIPT}"
+    @ONLY)
+add_custom_target(uninstall
+    COMMAND "${CMAKE_COMMAND}" -P "${GHOSTTY_QT_UNINSTALL_SCRIPT}"
+    COMMENT "Uninstall files recorded by the latest CMake install")
+
 option(GHOSTTY_QT_BUILD_TESTS "Build ghostty-qt tests" ON)
 option(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS
     "Build opt-in terminal performance microbenchmarks" OFF)
@@ -75,6 +85,12 @@ set(GHOSTTY_QT_INSTALL_SHELL_INTEGRATION_DIR
     "${GHOSTTY_QT_INSTALL_RESOURCES_DIR}/shell-integration")
 set(GHOSTTY_QT_INSTALL_THEMES_DIR
     "${GHOSTTY_QT_INSTALL_RESOURCES_DIR}/themes")
+set(GHOSTTY_QT_SHELL_COMPLETION_SOURCE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/dist/shell-completions")
+if(NOT GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+    string(APPEND GHOSTTY_QT_SHELL_COMPLETION_SOURCE_DIR
+        "/config-disabled")
+endif()
 file(GLOB_RECURSE GHOSTTY_QT_SHELL_INTEGRATION_SOURCE_FILES
     CONFIGURE_DEPENDS
     LIST_DIRECTORIES FALSE
@@ -1615,6 +1631,15 @@ install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/examples/shaders/crt-pane-transition.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/examples/shaders/flame-pane-transition.glsl"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/ghostty-qt/shaders")
+install(FILES
+    "${GHOSTTY_QT_SHELL_COMPLETION_SOURCE_DIR}/ghostty-qt"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/bash-completion/completions")
+install(FILES
+    "${GHOSTTY_QT_SHELL_COMPLETION_SOURCE_DIR}/ghostty-qt.fish"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/fish/vendor_completions.d")
+install(FILES
+    "${GHOSTTY_QT_SHELL_COMPLETION_SOURCE_DIR}/_ghostty-qt"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/zsh/site-functions")
 install(SCRIPT
     "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/PatchInstalledDesktopMetadata.cmake")
 install(DIRECTORY "${GHOSTTY_QT_TERMINFO_DIR}/"

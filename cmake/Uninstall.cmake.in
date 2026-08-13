@@ -1,0 +1,41 @@
+if(NOT DEFINED GHOSTTY_QT_INSTALL_MANIFEST)
+    set(GHOSTTY_QT_INSTALL_MANIFEST
+        "@CMAKE_BINARY_DIR@/install_manifest.txt")
+endif()
+if(NOT EXISTS "${GHOSTTY_QT_INSTALL_MANIFEST}")
+    message(FATAL_ERROR
+        "Install manifest not found: ${GHOSTTY_QT_INSTALL_MANIFEST}. "
+        "Install this build tree before uninstalling it.")
+endif()
+
+file(STRINGS "${GHOSTTY_QT_INSTALL_MANIFEST}" installed_files)
+list(LENGTH installed_files installed_file_count)
+if(installed_file_count EQUAL 0)
+    message(FATAL_ERROR
+        "Install manifest is empty: ${GHOSTTY_QT_INSTALL_MANIFEST}")
+endif()
+
+set(removed_file_count 0)
+foreach(manifest_path IN LISTS installed_files)
+    if(NOT IS_ABSOLUTE "${manifest_path}")
+        message(FATAL_ERROR
+            "Refusing relative install-manifest entry: ${manifest_path}")
+    endif()
+    set(installed_path "$ENV{DESTDIR}${manifest_path}")
+    if(EXISTS "${installed_path}" OR IS_SYMLINK "${installed_path}")
+        execute_process(
+            COMMAND "@CMAKE_COMMAND@" -E rm -f -- "${installed_path}"
+            RESULT_VARIABLE remove_result
+            ERROR_VARIABLE remove_error)
+        if(NOT remove_result EQUAL 0)
+            message(FATAL_ERROR
+                "Could not remove ${installed_path}: ${remove_error}")
+        endif()
+        math(EXPR removed_file_count "${removed_file_count} + 1")
+    else()
+        message(STATUS "Already absent: ${installed_path}")
+    endif()
+endforeach()
+
+message(STATUS
+    "Removed ${removed_file_count} of ${installed_file_count} installed files")

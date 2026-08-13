@@ -1447,6 +1447,13 @@ set_tests_properties(ghostty-parity-manifest PROPERTIES
 )
 
 add_test(
+    NAME shell-completions
+    COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test_shell_completions.py"
+)
+set_tests_properties(shell-completions PROPERTIES TIMEOUT 10)
+
+add_test(
     NAME application-lifecycle
     COMMAND $<TARGET_FILE:ghostty-qt> -- /bin/true
 )
@@ -1774,7 +1781,9 @@ add_test(
         "-DCONFIG=$<CONFIG>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/RunDesktopIntegrationInstallTest.cmake"
 )
-set_tests_properties(desktop-integration-install PROPERTIES TIMEOUT 30)
+set_tests_properties(desktop-integration-install PROPERTIES
+    TIMEOUT 30
+    RESOURCE_LOCK ghostty-qt-install-manifest)
 
 qt_add_executable(test-terminfo-path-probe
     test_terminfo_path_probe.cpp
@@ -1806,5 +1815,7 @@ if(NOT IS_ABSOLUTE "${CMAKE_INSTALL_BINDIR}"
             "-DCONFIG=$<CONFIG>"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/RunTerminfoRelocationTest.cmake"
     )
-    set_tests_properties(terminfo-relocatable-install PROPERTIES TIMEOUT 30)
+    set_tests_properties(terminfo-relocatable-install PROPERTIES
+        TIMEOUT 30
+        RESOURCE_LOCK ghostty-qt-install-manifest)
 endif()

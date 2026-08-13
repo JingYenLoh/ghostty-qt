@@ -15,11 +15,11 @@ The earlier `-- program ...` spelling remains available. Ordinary `--help` and
 `--version` describe the Qt frontend.
 
 Supported non-GUI `+` actions are delegated to the pinned Ghostty helper before
-Qt starts. `+new-window` and `+toggle-quick-terminal` are instead Qt-owned D-Bus
-clients. Known but unsupported upstream actions fail explicitly. The
-[parity manifest](ghostty-parity.json) is authoritative for frontend support;
-the delegated `ghostty-qt +help` may list upstream actions the Qt frontend does
-not implement.
+Qt starts. `+new-window`, `+new-tab`, and `+toggle-quick-terminal` are instead
+Qt-owned D-Bus clients. Known but unsupported upstream actions fail explicitly.
+The [parity manifest](ghostty-parity.json) is authoritative for frontend
+support; the delegated `ghostty-qt +help` may list upstream actions the Qt
+frontend does not implement.
 
 ## Configuration
 

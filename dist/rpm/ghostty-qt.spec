@@ -81,11 +81,14 @@ DESTDIR="%{buildroot}" cmake --install "%{_vpath_builddir}"
 %{_bindir}/ghostty-qt-config-helper
 %{_libdir}/ghostty-qt/
 %{_datadir}/applications/io.github.JingYenLoh.ghostty_qt.desktop
+%{_datadir}/bash-completion/completions/ghostty-qt
 %{_datadir}/dbus-1/services/io.github.JingYenLoh.ghostty_qt.service
+%{_datadir}/fish/vendor_completions.d/ghostty-qt.fish
 %{_datadir}/ghostty-qt/
 %{_datadir}/icons/hicolor/scalable/apps/io.github.JingYenLoh.ghostty_qt.svg
 %{_datadir}/metainfo/io.github.JingYenLoh.ghostty_qt.metainfo.xml
 %{_datadir}/systemd/user/app-io.github.JingYenLoh.ghostty_qt.service
+%{_datadir}/zsh/site-functions/_ghostty-qt
 
 %changelog
 * Wed Aug 12 2026 Jing Yen Loh <lohjingyen@gmail.com> - 0.1.0-1

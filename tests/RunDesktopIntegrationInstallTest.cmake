@@ -29,6 +29,9 @@ if(NOT install_result EQUAL 0)
     message(FATAL_ERROR
         "Staged install failed (${install_result})\n${install_output}\n${install_error}")
 endif()
+set(staged_install_manifest "${STAGE_DIR}/install_manifest.txt")
+file(COPY_FILE "${BUILD_DIR}/install_manifest.txt"
+    "${staged_install_manifest}" ONLY_IF_DIFFERENT)
 
 function(resolve_final_install_path output directory)
     if(IS_ABSOLUTE "${directory}")
@@ -54,9 +57,16 @@ set(icon
     "${staging_root}${final_data_dir}/icons/hicolor/scalable/apps/${APPLICATION_ID}.svg")
 set(metainfo
     "${staging_root}${final_data_dir}/metainfo/${APPLICATION_ID}.metainfo.xml")
+set(bash_completion
+    "${staging_root}${final_data_dir}/bash-completion/completions/ghostty-qt")
+set(fish_completion
+    "${staging_root}${final_data_dir}/fish/vendor_completions.d/ghostty-qt.fish")
+set(zsh_completion
+    "${staging_root}${final_data_dir}/zsh/site-functions/_ghostty-qt")
 foreach(required_path IN ITEMS
         "${executable}" "${desktop}" "${service}" "${systemd_service}"
-        "${icon}" "${metainfo}")
+        "${icon}" "${metainfo}" "${bash_completion}" "${fish_completion}"
+        "${zsh_completion}")
     if(NOT EXISTS "${required_path}")
         message(FATAL_ERROR "Installed desktop integration is missing: ${required_path}")
     endif()
@@ -67,6 +77,35 @@ file(READ "${service}" service_contents)
 file(READ "${systemd_service}" systemd_service_contents)
 file(READ "${icon}" icon_contents)
 file(READ "${metainfo}" metainfo_contents)
+file(READ "${bash_completion}" bash_completion_contents)
+file(READ "${fish_completion}" fish_completion_contents)
+file(READ "${zsh_completion}" zsh_completion_contents)
+
+if(NOT bash_completion_contents MATCHES
+       "complete -o nospace -o bashdefault -F _ghostty_qt ghostty-qt"
+   OR NOT bash_completion_contents MATCHES "\\+new-tab"
+   OR bash_completion_contents MATCHES "--gtk-single-instance"
+   OR NOT fish_completion_contents MATCHES "complete -c ghostty-qt"
+   OR NOT fish_completion_contents MATCHES "\\+new-tab"
+   OR fish_completion_contents MATCHES "--gtk-single-instance"
+   OR NOT zsh_completion_contents MATCHES "#compdef ghostty-qt"
+   OR NOT zsh_completion_contents MATCHES "\\+new-tab"
+   OR zsh_completion_contents MATCHES "--gtk-single-instance")
+    message(FATAL_ERROR "Installed shell completions are invalid")
+endif()
+if(EXPECT_CONFIG_HELPER)
+    if(NOT bash_completion_contents MATCHES "\\+show-config"
+       OR NOT fish_completion_contents MATCHES "\\+show-config"
+       OR NOT zsh_completion_contents MATCHES "\\+show-config")
+        message(FATAL_ERROR
+            "Config-enabled completions omit delegated Ghostty actions")
+    endif()
+elseif(bash_completion_contents MATCHES "\\+show-config"
+       OR fish_completion_contents MATCHES "\\+show-config"
+       OR zsh_completion_contents MATCHES "\\+show-config")
+    message(FATAL_ERROR
+        "Config-disabled completions advertise delegated Ghostty actions")
+endif()
 
 find_program(desktop_file_validate desktop-file-validate)
 if(desktop_file_validate)
@@ -378,3 +417,29 @@ elseif(NOT SHELL_CACHE_PROBE STREQUAL "")
     message(FATAL_ERROR
         "Config-disabled build unexpectedly supplied a shell cache probe")
 endif()
+
+set(uninstall_script "${BUILD_DIR}/cmake_uninstall.cmake")
+if(NOT EXISTS "${uninstall_script}")
+    message(FATAL_ERROR "Uninstall script is missing: ${uninstall_script}")
+endif()
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E env "DESTDIR=${staging_root}"
+        "${CMAKE_COMMAND}"
+        "-DGHOSTTY_QT_INSTALL_MANIFEST=${staged_install_manifest}"
+        -P "${uninstall_script}"
+    RESULT_VARIABLE uninstall_result
+    OUTPUT_VARIABLE uninstall_output
+    ERROR_VARIABLE uninstall_error)
+if(NOT uninstall_result EQUAL 0)
+    message(FATAL_ERROR
+        "Staged uninstall failed (${uninstall_result})\n${uninstall_output}\n${uninstall_error}")
+endif()
+
+file(STRINGS "${staged_install_manifest}" installed_files)
+foreach(installed_file IN LISTS installed_files)
+    set(staged_file "${staging_root}${installed_file}")
+    if(EXISTS "${staged_file}" OR IS_SYMLINK "${staged_file}")
+        message(FATAL_ERROR
+            "Staged uninstall retained manifest file: ${staged_file}")
+    endif()
+endforeach()

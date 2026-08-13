@@ -1,8 +1,8 @@
 # Installation and desktop integration
 
 The build tree is directly runnable. Installing a Release build adds runtime
-helpers and resources, desktop activation, metadata, terminfo, themes, and
-shell integration.
+helpers and resources, desktop activation, metadata, terminfo, themes, shell
+integration, and Bash, Fish, and Zsh tab completions.
 
 ## Local distribution packages
 
@@ -66,13 +66,28 @@ The installation contains:
 - `ghostty-qt` and its private configuration helper/runtime;
 - desktop, D-Bus, systemd user-service, icon, and AppStream files;
 - the compiled `xterm-ghostty` terminfo entry;
-- pinned Ghostty themes and shell-integration resources.
+- pinned Ghostty themes and shell-integration resources; and
+- frontend-owned Bash, Fish, and Zsh completions for `ghostty-qt`.
 
 Relative GNU installation directories are finalized against the selected
 prefix. The executable/helper/resource layout is relocatable because runtime
 resources are resolved relative to the executable. Desktop, D-Bus, and systemd
 metadata embeds the install-time executable path and must be regenerated after
 moving an installation.
+
+## Uninstall
+
+Distribution packages should be removed with their package manager so its
+ownership database remains authoritative. For an installation made directly
+with `cmake --install`, the originating build tree can remove every file from
+its latest install manifest:
+
+```sh
+cmake --build build/release --target uninstall
+```
+
+The target removes files only; shared or now-empty installation directories
+are retained. It follows `DESTDIR` when uninstalling a staged installation.
 
 ## KDE controls
 

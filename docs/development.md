@@ -180,13 +180,26 @@ The checker verifies that `GHOSTTY_REVISION`, the submodule checkout, CMake,
 and `docs/ghostty-parity.json` agree, then derives configuration and action
 inventories from upstream declarations.
 
+Shell completions are generated from the frontend-owned schema in
+`dist/shell-completions/spec.json`:
+
+```sh
+python3 scripts/generate-shell-completions.py
+python3 scripts/generate-shell-completions.py --check
+```
+
+The generator emits config-enabled and config-disabled Bash, Fish, and Zsh
+artifacts. Tests keep the ordinary options aligned with the Qt parser and the
+action names/options aligned with the pinned Ghostty inventory; the installed
+scripts never import Ghostty's private completion generator.
+
 For an intentional Ghostty upgrade:
 
 1. update the submodule and `GHOSTTY_REVISION` together;
 2. inspect public C API, private helper/schema, required Zig version, and
    bootstrap checksums;
-3. update project overlays, inventory extraction, and the parity manifest where
-   required;
+3. update project overlays, inventory extraction, the parity manifest, and the
+   shell completion schema where required;
 4. run the parity checker and focused adapter/configuration tests;
 5. qualify complete Debug, Release, and sanitizer builds;
 6. keep the upstream submodule free of local commits.

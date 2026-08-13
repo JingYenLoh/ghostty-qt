@@ -1,0 +1,259 @@
+{
+  "command": "ghostty-qt",
+  "description": "Qt terminal emulator powered by Ghostty",
+  "application_ipc_actions": [
+    "+new-window",
+    "+new-tab",
+    "+toggle-quick-terminal"
+  ],
+  "options": [
+    {
+      "names": ["-h", "--help"],
+      "kind": "flag",
+      "description": "Show command-line help"
+    },
+    {
+      "names": ["-v", "--version"],
+      "kind": "flag",
+      "description": "Show ghostty-qt version information"
+    },
+    {
+      "names": ["--working-directory"],
+      "kind": "value",
+      "value": "directory",
+      "completion": "directory",
+      "choices": ["home", "inherit"],
+      "description": "Start the command in this directory"
+    },
+    {
+      "names": ["--title"],
+      "kind": "value",
+      "value": "title",
+      "description": "Set the initial terminal title"
+    },
+    {
+      "names": ["--font-family"],
+      "kind": "value",
+      "value": "family",
+      "completion": "font",
+      "description": "Use this terminal font family"
+    },
+    {
+      "names": ["--font-size"],
+      "kind": "value",
+      "value": "points",
+      "description": "Set the terminal font size"
+    },
+    {
+      "names": ["--class"],
+      "kind": "value",
+      "value": "application-id",
+      "description": "Use this application and single-instance identity"
+    },
+    {
+      "names": ["--config-default-files"],
+      "kind": "value",
+      "value": "boolean",
+      "choices": ["true", "false"],
+      "description": "Load Ghostty's standard configuration files"
+    },
+    {
+      "names": ["--scrollback-lines"],
+      "kind": "value",
+      "value": "lines",
+      "description": "Estimate scrollback capacity in rows"
+    },
+    {
+      "names": ["--hold"],
+      "kind": "flag",
+      "description": "Keep the pane after the command exits"
+    },
+    {
+      "names": ["--wait-after-command"],
+      "kind": "optional-value",
+      "value": "boolean",
+      "choices": ["true", "false"],
+      "description": "Wait for a key press after the command exits"
+    },
+    {
+      "names": ["--single-instance"],
+      "kind": "value",
+      "value": "mode",
+      "choices": ["false", "true", "detect"],
+      "description": "Select process uniqueness behavior"
+    },
+    {
+      "names": ["--initial-window"],
+      "kind": "value",
+      "value": "boolean",
+      "choices": ["true", "false"],
+      "description": "Request an initial window"
+    },
+    {
+      "names": ["-e"],
+      "kind": "command",
+      "value": "program",
+      "description": "Run a command with all remaining arguments"
+    }
+  ],
+  "actions": [
+    {
+      "name": "+version",
+      "description": "Show pinned Ghostty build information",
+      "options": []
+    },
+    {
+      "name": "+help",
+      "description": "Show help for a pinned Ghostty action",
+      "options": []
+    },
+    {
+      "name": "+list-fonts",
+      "description": "List fonts visible to the pinned Ghostty helper",
+      "options": [
+        {"name": "--family", "kind": "value", "value": "family", "completion": "font", "description": "Filter by font family"},
+        {"name": "--style", "kind": "value", "value": "style-name", "description": "Filter by font style name"},
+        {"name": "--bold", "kind": "flag", "description": "Require a bold font"},
+        {"name": "--italic", "kind": "flag", "description": "Require an italic font"}
+      ]
+    },
+    {
+      "name": "+list-keybinds",
+      "description": "List configured Ghostty keybindings",
+      "options": [
+        {"name": "--default", "kind": "flag", "description": "Show default keybindings"},
+        {"name": "--docs", "kind": "flag", "description": "Include action documentation"},
+        {"name": "--plain", "kind": "flag", "description": "Disable terminal formatting"}
+      ]
+    },
+    {
+      "name": "+list-themes",
+      "description": "List Ghostty themes",
+      "options": [
+        {"name": "--path", "kind": "flag", "description": "Print each theme's full path"},
+        {"name": "--plain", "kind": "flag", "description": "Force plain output"},
+        {"name": "--color", "kind": "value", "value": "scheme", "choices": ["all", "dark", "light"], "description": "Filter by color scheme"}
+      ]
+    },
+    {
+      "name": "+list-colors",
+      "description": "List the configured terminal palette",
+      "options": [
+        {"name": "--plain", "kind": "flag", "description": "Disable terminal formatting"}
+      ]
+    },
+    {
+      "name": "+list-actions",
+      "description": "List Ghostty keybinding actions",
+      "options": [
+        {"name": "--docs", "kind": "flag", "description": "Include action documentation"}
+      ]
+    },
+    {
+      "name": "+ssh",
+      "description": "Run SSH with Ghostty integration",
+      "positional": "ssh",
+      "options": [
+        {"name": "--forward-env", "kind": "flag", "description": "Forward configured environment variables"},
+        {"name": "--terminfo", "kind": "flag", "description": "Install xterm-ghostty terminfo remotely"},
+        {"name": "--cache", "kind": "flag", "description": "Use the SSH integration cache"},
+        {"name": "--ssh", "kind": "value", "value": "program", "completion": "command", "description": "Select the wrapped SSH executable"},
+        {"name": "--verbose", "kind": "flag", "description": "Print verbose diagnostics"}
+      ]
+    },
+    {
+      "name": "+ssh-cache",
+      "description": "Manage the Ghostty SSH integration cache",
+      "options": [
+        {"name": "--clear", "kind": "flag", "description": "Clear the cache"},
+        {"name": "--add", "kind": "value", "value": "host", "description": "Add or update a cached host"},
+        {"name": "--remove", "kind": "value", "value": "host", "description": "Remove a cached host"},
+        {"name": "--prune", "kind": "value", "value": "duration", "description": "Remove entries older than a duration"}
+      ]
+    },
+    {
+      "name": "+edit-config",
+      "description": "Open the preferred Ghostty configuration file",
+      "options": []
+    },
+    {
+      "name": "+show-config",
+      "description": "Print finalized Ghostty configuration",
+      "options": [
+        {"name": "--default", "kind": "flag", "description": "Show defaults without user configuration"},
+        {"name": "--changes-only", "kind": "flag", "description": "Show only values changed from defaults"},
+        {"name": "--docs", "kind": "flag", "description": "Include configuration documentation"},
+        {"name": "--no-pager", "kind": "flag", "description": "Disable automatic paging"}
+      ]
+    },
+    {
+      "name": "+explain-config",
+      "description": "Explain a Ghostty option or keybinding action",
+      "options": [
+        {"name": "--option", "kind": "value", "value": "config-key", "description": "Explain a configuration option"},
+        {"name": "--keybind", "kind": "value", "value": "action", "description": "Explain a keybinding action"}
+      ]
+    },
+    {
+      "name": "+validate-config",
+      "description": "Validate Ghostty configuration",
+      "options": [
+        {"name": "--config-file", "kind": "value", "value": "path", "completion": "file", "description": "Validate this configuration file"}
+      ]
+    },
+    {
+      "name": "+show-face",
+      "description": "Show the font face selected for text",
+      "options": [
+        {"name": "--cp", "kind": "value", "value": "codepoint", "description": "Look up a Unicode codepoint"},
+        {"name": "--string", "kind": "value", "value": "text", "description": "Look up every codepoint in text"},
+        {"name": "--style", "kind": "value", "value": "style", "choices": ["regular", "bold", "italic", "bold_italic"], "description": "Select the font style"},
+        {"name": "--presentation", "kind": "value", "value": "presentation", "choices": ["text", "emoji"], "description": "Force text or emoji presentation"}
+      ]
+    },
+    {
+      "name": "+crash-report",
+      "description": "Show the newest Ghostty crash report",
+      "options": []
+    },
+    {
+      "name": "+boo",
+      "description": "Run Ghostty's interactive animation",
+      "options": []
+    },
+    {
+      "name": "+new-window",
+      "description": "Open a new window through application IPC",
+      "positional": "command",
+      "options": [
+        {"name": "--class", "kind": "value", "value": "application-id", "description": "Target a custom application instance"},
+        {"name": "--working-directory", "kind": "value", "value": "directory", "completion": "directory", "choices": ["home", "inherit"], "description": "Set the first pane's working directory"},
+        {"name": "--command", "kind": "value", "value": "command", "description": "Set the first pane's command"},
+        {"name": "--shell-integration", "kind": "value", "value": "mode", "choices": ["none", "detect", "bash", "elvish", "fish", "nushell", "zsh"], "description": "Select shell integration for the first pane"},
+        {"name": "--title", "kind": "value", "value": "title", "description": "Set the first pane's title"},
+        {"name": "-e", "kind": "command", "value": "program", "description": "Run a command in the first pane"}
+      ]
+    },
+    {
+      "name": "+new-tab",
+      "description": "Open a new tab through application IPC",
+      "positional": "command",
+      "options": [
+        {"name": "--class", "kind": "value", "value": "application-id", "description": "Target a custom application instance"},
+        {"name": "--surface-id", "kind": "value", "value": "surface-id", "description": "Select the target surface"},
+        {"name": "--working-directory", "kind": "value", "value": "directory", "completion": "directory", "choices": ["home", "inherit"], "description": "Set the new tab's working directory"},
+        {"name": "--command", "kind": "value", "value": "command", "description": "Set the new tab's command"},
+        {"name": "--shell-integration", "kind": "value", "value": "mode", "choices": ["none", "detect", "bash", "elvish", "fish", "nushell", "zsh"], "description": "Select shell integration for the new tab"},
+        {"name": "--title", "kind": "value", "value": "title", "description": "Set the new tab's title"},
+        {"name": "-e", "kind": "command", "value": "program", "description": "Run a command in the new tab"}
+      ]
+    },
+    {
+      "name": "+toggle-quick-terminal",
+      "description": "Toggle the quick terminal through application IPC",
+      "options": [
+        {"name": "--class", "kind": "value", "value": "application-id", "description": "Select a custom application instance"}
+      ]
+    }
+  ]
+}
