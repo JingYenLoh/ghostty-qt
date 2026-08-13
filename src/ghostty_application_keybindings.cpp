@@ -233,6 +233,11 @@ void GhosttyApplicationKeybindings::registerWorkspace(
             [this, workspace](PaneId paneId, TerminalPane *) {
                 removeSurface(workspace, paneId);
             });
+    connect(workspace, &TerminalWorkspace::paneTransferred, this,
+            [this, workspace](PaneId paneId, TerminalPane *pane, SurfaceId,
+                              TerminalWorkspace *destination) {
+                transferSurface(workspace, paneId, pane, destination);
+            });
     connect(workspace, &QObject::destroyed, this, [this, workspace] {
         removeWorkspaceSurfaces(workspace);
         workspaces_.remove(workspace);
@@ -278,6 +283,27 @@ void GhosttyApplicationKeybindings::removeSurface(TerminalWorkspace *workspace,
             return;
         }
     }
+}
+
+void GhosttyApplicationKeybindings::transferSurface(
+    TerminalWorkspace *workspace, PaneId paneId, TerminalPane *pane,
+    TerminalWorkspace *destination)
+{
+    if (workspace == nullptr || destination == nullptr || pane == nullptr
+        || !paneId.isValid()) {
+        return;
+    }
+    const auto target = std::ranges::find_if(
+        surfaces_, [workspace, paneId, pane](const SurfaceTarget &candidate) {
+            return candidate.workspaceIdentity == workspace
+                && candidate.paneId == paneId && candidate.pane == pane;
+        });
+    if (target == surfaces_.end()) return;
+    target->workspaceIdentity = destination;
+    target->workspace = destination;
+    connect(pane, &QObject::destroyed, this, [this, destination, paneId] {
+        removeSurface(destination, paneId);
+    });
 }
 
 void GhosttyApplicationKeybindings::removeWorkspaceSurfaces(
@@ -476,7 +502,13 @@ void GhosttyApplicationKeybindings::continueBroadExecution()
                     if (!stillCurrent()) return;
                 }
             } else {
-                for (const SurfaceTarget &target : surfaces) {
+                for (const SurfaceTarget &snapshotTarget : surfaces) {
+                    const auto current = std::ranges::find(
+                        surfaces_, snapshotTarget.pane,
+                        &SurfaceTarget::pane);
+                    const SurfaceTarget target = current != surfaces_.cend()
+                        ? *current
+                        : snapshotTarget;
                     if (!surfaceTargetIsLive(target)) continue;
                     (void)target.workspace->executeBroadSurfaceAction(
                         {

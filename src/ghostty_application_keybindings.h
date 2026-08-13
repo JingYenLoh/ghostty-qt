@@ -97,6 +97,9 @@ private:
     void appendSurface(TerminalWorkspace *workspace, PaneId paneId,
                        TerminalPane *pane);
     void removeSurface(TerminalWorkspace *workspace, PaneId paneId);
+    void transferSurface(TerminalWorkspace *workspace, PaneId paneId,
+                         TerminalPane *pane,
+                         TerminalWorkspace *destination);
     void removeWorkspaceSurfaces(TerminalWorkspace *workspace);
     void swapRemoveSurface(qsizetype index);
     [[nodiscard]] QVector<SurfaceTarget> surfaceSnapshot() const;

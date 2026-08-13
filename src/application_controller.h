@@ -143,6 +143,11 @@ private:
         QuickTerminal,
     };
 
+    struct TabTransferRequest {
+        QPointer<TerminalWorkspace> source;
+        PaneId paneId;
+    };
+
     struct WindowRecord {
         WindowId id;
         WindowRole role = WindowRole::Normal;
@@ -168,7 +173,10 @@ private:
                  const DesktopActivationContext &activation = {},
                  QScreen *preferredScreen = nullptr,
                  WindowRole role = WindowRole::Normal,
-                 const FirstSurfaceOverrides *firstSurfaceOverrides = nullptr);
+                 const FirstSurfaceOverrides *firstSurfaceOverrides = nullptr,
+                 std::optional<TabTransferRequest> tabTransfer = std::nullopt);
+    [[nodiscard]] bool moveTabToNewWindow(TerminalWorkspace *source,
+                                          PaneId sourcePaneId);
     [[nodiscard]] LaunchOptions
     nextWindowOptions(TerminalWorkspace *sourceWorkspace,
                       PaneId sourcePaneId) const;

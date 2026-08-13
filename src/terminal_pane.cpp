@@ -4712,6 +4712,7 @@ bool TerminalPane::performWorkspaceAction(WorkspaceActionRequest request)
     case WorkspaceAction::ActivateTabByIndex:
     case WorkspaceAction::ActivateLastTab:
     case WorkspaceAction::MoveTab:
+    case WorkspaceAction::MoveTabToNewWindow:
     case WorkspaceAction::PromptSurfaceTitle:
     case WorkspaceAction::PromptTabTitle:
     case WorkspaceAction::SetTabTitle:

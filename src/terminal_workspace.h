@@ -125,6 +125,7 @@ class TerminalWorkspace : public QQuickItem {
 
 public:
     using SurfaceIdAllocator = std::function<SurfaceId()>;
+    using TabTransferHandler = std::function<bool(PaneId)>;
 
     explicit TerminalWorkspace(QQuickItem *parent = nullptr);
     ~TerminalWorkspace() override;
@@ -149,6 +150,11 @@ public:
     // receives a stable, application-routable GHOSTTY_SURFACE_ID before its
     // terminal session starts.
     void setSurfaceIdAllocator(SurfaceIdAllocator allocator);
+    void setTabTransferHandler(TabTransferHandler handler);
+    bool initializeEmpty(
+        const LaunchOptions &options,
+        std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator,
+        GhosttyKeybindProgram keybindProgram);
     [[nodiscard]] bool armInitialSessionStart();
     void applyLaunchOptions(const LaunchOptions &options);
     void applyLaunchOptions(const LaunchOptions &options,
@@ -269,6 +275,8 @@ public:
     [[nodiscard]] SurfaceId surfaceIdForPane(PaneId paneId) const;
     [[nodiscard]] bool createApplicationTab(
         PaneId sourcePaneId, FirstSurfaceOverrides firstSurfaceOverrides);
+    [[nodiscard]] bool transferTabTo(TerminalWorkspace *destination,
+                                     PaneId sourcePaneId);
     [[nodiscard]] QString customShaderDiagnostics() const;
 
     Q_INVOKABLE void setCurrentIndex(int index);
@@ -333,6 +341,12 @@ Q_SIGNALS:
     // tree identity and immediately after that identity is retired.
     void paneCommitted(PaneId paneId, TerminalPane *pane);
     void paneRemoved(PaneId paneId, TerminalPane *pane);
+    // A live surface retained its identity while its containing tab moved to
+    // another registered workspace. Process-owned registries update this
+    // target in place rather than applying creation/removal ordering.
+    void paneTransferred(PaneId paneId, TerminalPane *pane,
+                         SurfaceId surfaceId,
+                         TerminalWorkspace *destination);
     void broadActionsRequested(const GhosttyCompiledActionChain &actions);
     void workspaceActivated();
     void toggleFullscreenRequested();
@@ -455,6 +469,7 @@ private:
         std::optional<TerminalCommand> firstSessionCommandOverride =
             std::nullopt,
         std::optional<QString> surfaceTitleOverride = std::nullopt);
+    void bindPane(PaneHandle handle);
     void setPaneOverlayComponent(PaneOverlaySlot &slot,
                                  QQmlComponent *component,
                                  const char *paneProperty,
@@ -609,6 +624,7 @@ private:
     quint64 nextTabId_ = 1;
     quint64 nextPaneId_ = 1;
     SurfaceIdAllocator surfaceIdAllocator_;
+    TabTransferHandler tabTransferHandler_;
     quint64 nextSplitId_ = 1;
     quint64 splitDividerGeneration_ = 0;
     QHash<quint64, SplitDividerItem *> splitDividers_;

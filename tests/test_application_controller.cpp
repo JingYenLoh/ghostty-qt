@@ -376,6 +376,7 @@ private Q_SLOTS:
     void initialGeometryDestructionCannotLeaveHalfRegisteredWindow_data();
     void initialGeometryDestructionCannotLeaveHalfRegisteredWindow();
     void preservesCompositeSourceAndWindowInheritancePolicies();
+    void movesLiveSplitTabToNewWindow();
     void residentProcessReloadsRecreatesAndQuitsWithZeroWindows();
     void configuredQuitWaitsForCompleteActionChain();
     void configuredCloseWindowQuitEscalatesBeforePublication();
@@ -2659,6 +2660,111 @@ void ApplicationControllerTest::preservesCompositeSourceAndWindowInheritancePoli
              secondDirectory);
     QVERIFY(staleSourceFallback->effectiveLaunchOptions().typography
             == inheriting.typography);
+}
+
+void ApplicationControllerTest::movesLiveSplitTabToNewWindow()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    ApplicationController controller(options, harness.factory(), false);
+
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    TerminalWorkspace *const source = initial->workspace;
+    TerminalPane *const retainedPane = onlyPane(source);
+    QVERIFY(retainedPane != nullptr);
+
+    // GTK refuses to detach a window's sole tab and does not create an empty
+    // replacement window as a side effect.
+    QVERIFY(!retainedPane->executeConfiguredAction(
+        QStringLiteral("move_tab_to_new_window")));
+    QCOMPARE(controller.windowCount(), 1);
+    QCOMPARE(harness.calls, 1);
+
+    source->newTab();
+    QCOMPARE(source->tabCount(), 2);
+    QList<TerminalPane *> panes = source->findChildren<TerminalPane *>();
+    QCOMPARE(panes.size(), 2);
+    TerminalPane *const movedPane = panes.constLast();
+    QVERIFY(movedPane != retainedPane);
+    QVERIFY(movedPane->executeConfiguredAction(
+        QStringLiteral("new_split:right")));
+    panes = source->findChildren<TerminalPane *>();
+    QCOMPARE(panes.size(), 3);
+
+    TerminalPane *splitPane = nullptr;
+    for (TerminalPane *const pane : std::as_const(panes)) {
+        if (pane != retainedPane && pane != movedPane) splitPane = pane;
+    }
+    QVERIFY(splitPane != nullptr);
+    const QPointer<TerminalPane> guardedMoved(movedPane);
+    const QPointer<TerminalPane> guardedSplit(splitPane);
+    const QPointer<TerminalController> movedController(
+        movedPane->findChild<TerminalController *>());
+    const QPointer<TerminalController> splitController(
+        splitPane->findChild<TerminalController *>());
+    QVERIFY(movedController != nullptr);
+    QVERIFY(splitController != nullptr);
+
+    QVector<WorkspaceSurfaceSnapshot> expectedSurfaces;
+    for (const WorkspaceSurfaceSnapshot &surface : source->surfaceSnapshot()) {
+        if (surface.paneId != PaneId(1)) expectedSurfaces.append(surface);
+    }
+    QCOMPARE(expectedSurfaces.size(), 2);
+
+    harness.failOnCall = 2;
+    QSignalSpy failed(&controller,
+                      &ApplicationController::windowCreationFailed);
+    QVERIFY(!movedPane->executeConfiguredAction(
+        QStringLiteral("move_tab_to_new_window")));
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(controller.windowCount(), 1);
+    QCOMPARE(source->tabCount(), 2);
+    QCOMPARE(source->findChildren<TerminalPane *>().size(), 3);
+    harness.failOnCall = 0;
+
+    QSignalSpy created(&controller, &ApplicationController::windowCreated);
+    QVERIFY(movedPane->executeConfiguredAction(
+        QStringLiteral("move_tab_to_new_window")));
+    QCOMPARE(created.count(), 1);
+    QCOMPARE(controller.windowCount(), 2);
+    QCOMPARE(source->tabCount(), 1);
+    QCOMPARE(source->findChildren<TerminalPane *>().size(), 1);
+
+    const ApplicationWindow destination = controller.windows().constLast();
+    QVERIFY(destination.workspace != source);
+    QCOMPARE(destination.workspace->tabCount(), 1);
+    QCOMPARE(destination.workspace->findChildren<TerminalPane *>().size(), 2);
+    QCOMPARE(destination.workspace->surfaceSnapshot(), expectedSurfaces);
+    QCOMPARE(guardedMoved->parent(), destination.workspace);
+    QCOMPARE(guardedMoved->parentItem(), destination.workspace);
+    QCOMPARE(guardedSplit->parent(), destination.workspace);
+    QCOMPARE(guardedSplit->parentItem(), destination.workspace);
+    QCOMPARE(guardedMoved->findChild<TerminalController *>(),
+             movedController.data());
+    QCOMPARE(guardedSplit->findChild<TerminalController *>(),
+             splitController.data());
+
+    // Rebound surface actions mutate the destination tree and allocate above
+    // every retained stable ID; the source topology is unaffected.
+    QVERIFY(guardedMoved->executeConfiguredAction(
+        QStringLiteral("new_split:right")));
+    QCOMPARE(destination.workspace->findChildren<TerminalPane *>().size(), 3);
+    QVERIFY(std::ranges::contains(destination.workspace->surfaceSnapshot(),
+                                  PaneId(4),
+                                  &WorkspaceSurfaceSnapshot::paneId));
+    QCOMPARE(source->findChildren<TerminalPane *>().size(), 1);
+
+    // The process-wide surface registry follows the retained surface ID to
+    // its new window, so later remote requests do not fall back to the source.
+    QVERIFY(controller.activateNewTab({
+        .surfaceId = expectedSurfaces.constFirst().surfaceId,
+        .overrides = {
+            .titleOverride = QStringLiteral("routed after transfer"),
+        },
+    }));
+    QCOMPARE(destination.workspace->tabCount(), 2);
+    QCOMPARE(source->tabCount(), 1);
 }
 
 void ApplicationControllerTest::residentProcessReloadsRecreatesAndQuitsWithZeroWindows()

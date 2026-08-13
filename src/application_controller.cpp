@@ -506,7 +506,8 @@ bool ApplicationController::activateQuickTerminal(
 std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
     LaunchOptions options, const DesktopActivationContext &activation,
     QScreen *preferredScreen, WindowRole role,
-    const FirstSurfaceOverrides *firstSurfaceOverrides)
+    const FirstSurfaceOverrides *firstSurfaceOverrides,
+    std::optional<TabTransferRequest> tabTransfer)
 {
     if (windowCreationInProgress_) {
         return std::unexpected(QStringLiteral(
@@ -652,15 +653,19 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
             return controller != nullptr ? controller->allocateSurfaceId()
                                          : SurfaceId{};
         });
-    const bool initialized = guardedWorkspace->initialize(
-        withoutInitialCommand(options), initialSessionStartMode,
-        initialSessionCoordinator_, requestedKeybindProgram,
-        firstSurfaceOverrides != nullptr ? *firstSurfaceOverrides
-                                         : FirstSurfaceOverrides{});
+    const bool initialized = tabTransfer.has_value()
+        ? guardedWorkspace->initializeEmpty(
+              withoutInitialCommand(options), initialSessionCoordinator_,
+              requestedKeybindProgram)
+        : guardedWorkspace->initialize(
+              withoutInitialCommand(options), initialSessionStartMode,
+              initialSessionCoordinator_, requestedKeybindProgram,
+              firstSurfaceOverrides != nullptr ? *firstSurfaceOverrides
+                                               : FirstSurfaceOverrides{});
     // The initial-window request and first successful session initialization
     // are independent one-shot decisions. Reaching workspace initialization
     // handles startup even if presentation later destroys the GUI pair.
-    if (controllerGuard != nullptr && initialized
+    if (controllerGuard != nullptr && initialized && !tabTransfer.has_value()
         && !controllerGuard->startupWindowHandled_) {
         controllerGuard->startupWindowHandled_ = true;
     }
@@ -749,6 +754,22 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
             "its initial state"));
     }
 
+    if (tabTransfer.has_value()) {
+        TerminalWorkspace *const source = tabTransfer->source;
+        if (!containsWorkspace(source)
+            || !source->transferTabTo(guardedWorkspace,
+                                      tabTransfer->paneId)) {
+            discardCreated();
+            return std::unexpected(QStringLiteral(
+                "Could not transfer the selected tab to its new window"));
+        }
+        if (!pairIsValid()) {
+            discardCreated();
+            return std::unexpected(QStringLiteral(
+                "The application window became invalid during tab transfer"));
+        }
+    }
+
     const WindowPresentationMode presentationMode = options.fullscreen
         ? WindowPresentationMode::Fullscreen
         : (options.maximize ? WindowPresentationMode::Maximized
@@ -759,7 +780,8 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
         return std::unexpected(QStringLiteral(
             "The application window became invalid while being shown"));
     }
-    if (initialSessionStartMode == TerminalSessionStartMode::Deferred
+    if (!tabTransfer.has_value()
+        && initialSessionStartMode == TerminalSessionStartMode::Deferred
         && !guardedWorkspace->armInitialSessionStart()) {
         discardCreated();
         return std::unexpected(QStringLiteral(
@@ -995,6 +1017,27 @@ bool ApplicationController::dispatch(ApplicationAction action,
     case ApplicationAction::Quit: requestApplicationQuit(); return true;
     }
     return false;
+}
+
+bool ApplicationController::moveTabToNewWindow(
+    TerminalWorkspace *source, PaneId sourcePaneId)
+{
+    if (!containsWorkspace(source) || !sourcePaneId.isValid()
+        || source->tabCount() <= 1 || quitState_ != QuitState::Idle
+        || lifetime_.hasRequestedQuit()) {
+        return false;
+    }
+    QScreen *const preferredScreen =
+        source->window() != nullptr ? source->window()->screen() : nullptr;
+    auto created = createWindow(
+        nextWindowOptions(source, sourcePaneId), {}, preferredScreen,
+        WindowRole::Normal, nullptr,
+        TabTransferRequest{QPointer(source), sourcePaneId});
+    if (!created.has_value()) {
+        Q_EMIT windowCreationFailed(created.error());
+        return false;
+    }
+    return true;
 }
 
 bool ApplicationController::dispatch(WindowNavigationAction action)
@@ -1738,6 +1781,18 @@ void ApplicationController::registerWindow(
                     surfaceRegistry_.remove(surfaceId);
                 }
             });
+    connect(workspace, &TerminalWorkspace::paneTransferred, this,
+            [this](PaneId paneId, TerminalPane *, SurfaceId surfaceId,
+                   TerminalWorkspace *destination) {
+                const WindowRecord *const destinationRecord =
+                    recordForWorkspace(destination);
+                if (surfaceId.isValid() && destinationRecord != nullptr
+                    && destinationRecord->workspace != nullptr
+                    && destinationRecord->workspace->containsPane(paneId)) {
+                    surfaceRegistry_.insert(
+                        surfaceId, {destinationRecord->id, paneId});
+                }
+            });
     connect(workspace, &QObject::destroyed, this,
             [this, workspace, guardedWindow = QPointer(window)] {
                 workspaceDestroyed(workspace, guardedWindow);
@@ -1785,6 +1840,13 @@ void ApplicationController::registerWindow(
     // and the connection above keeps the same host in sync with reloads and
     // its per-window runtime override.
     syncWindowDecoration(window, workspace);
+
+    workspace->setTabTransferHandler(
+        [controller = QPointer(this), guarded = QPointer(workspace)](
+            PaneId paneId) {
+            return controller != nullptr && guarded != nullptr
+                && controller->moveTabToNewWindow(guarded, paneId);
+        });
 
     connect(workspace, &TerminalWorkspace::applicationActionRequested, this,
             [this, guarded = QPointer(workspace)](ApplicationAction action,

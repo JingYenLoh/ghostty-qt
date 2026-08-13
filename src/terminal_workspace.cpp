@@ -486,6 +486,11 @@ void TerminalWorkspace::setSurfaceIdAllocator(SurfaceIdAllocator allocator)
     surfaceIdAllocator_ = std::move(allocator);
 }
 
+void TerminalWorkspace::setTabTransferHandler(TabTransferHandler handler)
+{
+    tabTransferHandler_ = std::move(handler);
+}
+
 void TerminalWorkspace::setInspectorComponent(QQmlComponent *component)
 {
     setPaneOverlayComponent(inspector_, component, kInspectorProperty,
@@ -810,6 +815,18 @@ bool TerminalWorkspace::initialize(
         deferredInitialPane_ = initialPane.pane;
         deferredInitialPaneId_ = initialPane.id;
     }
+    return true;
+}
+
+bool TerminalWorkspace::initializeEmpty(
+    const LaunchOptions &options,
+    std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator,
+    GhosttyKeybindProgram keybindProgram)
+{
+    if (initialized_) return false;
+    initialized_ = true;
+    initialSessionCoordinator_ = std::move(initialSessionCoordinator);
+    applyLaunchOptions(options, std::move(keybindProgram));
     return true;
 }
 
@@ -1297,6 +1314,14 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
                            ? request.context.tabId
                            : tabIdForPane(request.context.paneId),
                        request.context.value);
+    case WorkspaceAction::MoveTabToNewWindow:
+        if (!request.context.paneId.isValid()
+            || paneForId(request.context.paneId) == nullptr
+            || !contextMatchesPane() || tabs_.size() <= 1
+            || tabTransferHandler_ == nullptr) {
+            return false;
+        }
+        return tabTransferHandler_(request.context.paneId);
     case WorkspaceAction::SetSurfaceTitle: {
         TerminalPane *pane = paneForId(request.context.paneId);
         if (pane == nullptr || !contextMatchesPane()) return false;
@@ -1529,6 +1554,40 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
             });
     });
     pane->setVisible(false);
+    bindPane({paneId, pane});
+    // Parent and overlay publication can execute arbitrary QML. The pending
+    // registry makes this pane participate in any nested config reload before
+    // its stable ID is inserted into the tab tree.
+    detachedPane.release();
+    const auto validateOwnership = [workspaceGuard,
+                                    paneGuard](bool requireVisualParent) {
+        const bool valid = workspaceGuard != nullptr && paneGuard != nullptr
+            && paneGuard->parent() == workspaceGuard
+            && (!requireVisualParent
+                || paneGuard->parentItem() == workspaceGuard);
+        if (!valid && paneGuard != nullptr) delete paneGuard.data();
+        return valid;
+    };
+    pane->setParent(this);
+    if (!validateOwnership(false)) return {};
+    pane->setParentItem(this);
+    if (!validateOwnership(true)) return {};
+    pane->setCustomShaderStageComponent(customShaderStageComponent_);
+    if (!validateOwnership(true)) return {};
+    if (!attachPaneOverlays(paneGuard)) {
+        (void)validateOwnership(true);
+        return {};
+    }
+    if (!validateOwnership(true)) return {};
+    surfaceIds_.insert(paneId, surfaceId);
+    return {paneId, paneGuard};
+}
+
+void TerminalWorkspace::bindPane(PaneHandle handle)
+{
+    const PaneId paneId = handle.id;
+    TerminalPane *const pane = handle.pane;
+    if (!handle.isValid()) return;
     pane->setWorkspaceActionHandler(
         [this, paneId](WorkspaceActionRequest request) {
             request.context.tabId = tabIdForPane(paneId);
@@ -1731,33 +1790,6 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                 beginContextMenu({paneId, pane}, windowPosition,
                                  selectionAvailable);
             });
-
-    // Parent and overlay publication can execute arbitrary QML. The pending
-    // registry makes this pane participate in any nested config reload before
-    // its stable ID is inserted into the tab tree.
-    detachedPane.release();
-    const auto validateOwnership = [workspaceGuard,
-                                    paneGuard](bool requireVisualParent) {
-        const bool valid = workspaceGuard != nullptr && paneGuard != nullptr
-            && paneGuard->parent() == workspaceGuard
-            && (!requireVisualParent
-                || paneGuard->parentItem() == workspaceGuard);
-        if (!valid && paneGuard != nullptr) delete paneGuard.data();
-        return valid;
-    };
-    pane->setParent(this);
-    if (!validateOwnership(false)) return {};
-    pane->setParentItem(this);
-    if (!validateOwnership(true)) return {};
-    pane->setCustomShaderStageComponent(customShaderStageComponent_);
-    if (!validateOwnership(true)) return {};
-    if (!attachPaneOverlays(paneGuard)) {
-        (void)validateOwnership(true);
-        return {};
-    }
-    if (!validateOwnership(true)) return {};
-    surfaceIds_.insert(paneId, surfaceId);
-    return {paneId, paneGuard};
 }
 
 void TerminalWorkspace::newTab()
@@ -1964,6 +1996,211 @@ bool TerminalWorkspace::moveTab(TabId tabId, qint64 delta)
     Q_EMIT tabTitlesChanged();
     if (currentIndex_ != previousCurrentIndex) {
         Q_EMIT currentIndexChanged();
+    }
+    return true;
+}
+
+bool TerminalWorkspace::transferTabTo(TerminalWorkspace *destination,
+                                      PaneId sourcePaneId)
+{
+    if (destination == nullptr || destination == this || !initialized_
+        || !destination->initialized_ || destination->tabCount() != 0
+        || tabs_.size() <= 1 || topologyMutation_
+        || destination->topologyMutation_
+        || windowCloseState_ != WindowCloseState::Open
+        || destination->windowCloseState_ != WindowCloseState::Open
+        || !std::holds_alternative<std::monostate>(deferredRemoval_)
+        || !std::holds_alternative<std::monostate>(
+            destination->deferredRemoval_)) {
+        return false;
+    }
+
+    const int sourceIndex = tabIndexForPane(sourcePaneId);
+    if (sourceIndex < 0) return false;
+    Tab *const sourceTab = tabs_[static_cast<std::size_t>(sourceIndex)].get();
+    if (sourceTab == nullptr || sourceTab->root == nullptr) return false;
+
+    std::vector<PaneHandle> panes;
+    sourceTab->root->collectPanes(panes);
+    if (panes.empty()
+        || std::ranges::any_of(panes, [this](const PaneHandle &handle) {
+               return !handle.isValid()
+                   || paneForId(handle.id) != handle.pane
+                   || !surfaceIds_.value(handle.id).isValid();
+           })) {
+        return false;
+    }
+
+    const QPointer<TerminalWorkspace> sourceGuard(this);
+    const QPointer<TerminalWorkspace> destinationGuard(destination);
+    const bool previousSourceMutation =
+        std::exchange(topologyMutation_, true);
+    const bool previousDestinationMutation =
+        std::exchange(destination->topologyMutation_, true);
+    const auto restoreMutations = qScopeGuard(
+        [sourceGuard, destinationGuard, previousSourceMutation,
+         previousDestinationMutation] {
+            if (sourceGuard != nullptr) {
+                sourceGuard->topologyMutation_ = previousSourceMutation;
+            }
+            if (destinationGuard != nullptr) {
+                destinationGuard->topologyMutation_ =
+                    previousDestinationMutation;
+            }
+        });
+
+    for (const PaneHandle &handle : panes) {
+        resolvePendingPaneRemoval(handle);
+        if (sourceGuard == nullptr || destinationGuard == nullptr) return false;
+    }
+    const TabId transferredTabId = sourceTab->id;
+    resolvePendingTabRemoval(transferredTabId);
+    if (sourceGuard == nullptr || destinationGuard == nullptr) return false;
+
+    const bool sourceTabBarWasVisible = tabBarVisible();
+    const bool destinationTabBarWasVisible = destination->tabBarVisible();
+    const TabId selectedTabId = currentTabId();
+    const bool transferredSelection = selectedTabId == transferredTabId;
+    const QString previousSubtitle = currentSubtitle();
+    const int previousCurrentIndex = currentIndex_;
+
+    updateTabVisibility(*sourceTab, false);
+    if (transferredSelection) updateSplitDividers(nullptr);
+
+    std::unique_ptr<Tab> transferred =
+        std::move(tabs_[static_cast<std::size_t>(sourceIndex)]);
+    tabs_.erase(tabs_.begin() + sourceIndex);
+    currentIndex_ = transferredSelection
+        ? std::min(sourceIndex, static_cast<int>(tabs_.size()) - 1)
+        : tabIndexForId(selectedTabId);
+
+    destination->tabs_.push_back(std::move(transferred));
+    destination->currentIndex_ = 0;
+    destination->initialTabCreated_ = true;
+    Tab &destinationTab = *destination->tabs_.front();
+
+    const auto advanceCounter = [](quint64 &counter, quint64 retained) {
+        if (retained < std::numeric_limits<quint64>::max()) {
+            counter = std::max(counter, retained + 1);
+        }
+    };
+    advanceCounter(destination->nextTabId_, destinationTab.id.value());
+    const auto retainSplitIds = [&](const auto &self, const Node *node)
+        -> void {
+        if (node == nullptr) return;
+        if (!node->isLeaf()) {
+            advanceCounter(destination->nextSplitId_, node->splitId);
+            self(self, node->first.get());
+            self(self, node->second.get());
+        }
+    };
+    retainSplitIds(retainSplitIds, destinationTab.root.get());
+
+    struct TransferredSurface {
+        PaneHandle handle;
+        SurfaceId surfaceId;
+    };
+    std::vector<TransferredSurface> transferredSurfaces;
+    transferredSurfaces.reserve(panes.size());
+    for (const PaneHandle &handle : panes) {
+        const SurfaceId surfaceId = surfaceIds_.take(handle.id);
+        destination->surfaceIds_.insert(handle.id, surfaceId);
+        advanceCounter(destination->nextPaneId_, handle.id.value());
+        if (const auto diagnostic = customShaderDiagnostics_.find(handle.id);
+            diagnostic != customShaderDiagnostics_.end()) {
+            destination->customShaderDiagnostics_.insert(handle.id,
+                                                          diagnostic.value());
+            customShaderDiagnostics_.erase(diagnostic);
+        }
+
+        QObject::disconnect(handle.pane, nullptr, this, nullptr);
+        handle.pane->setParent(destination);
+        handle.pane->setParentItem(destination);
+        handle.pane->setCustomShaderStageComponent(
+            destination->customShaderStageComponent_);
+        destination->bindPane(handle);
+        transferredSurfaces.push_back({handle, surfaceId});
+    }
+
+    // Publish retained surface routing before either model announces its row
+    // change. This mirrors paneCommitted: process registries see a complete
+    // stable tree before QML can react to its presentation.
+    for (const TransferredSurface &surface : transferredSurfaces) {
+        Q_EMIT paneTransferred(surface.handle.id, surface.handle.pane,
+                               surface.surfaceId, destination);
+        if (sourceGuard == nullptr || destinationGuard == nullptr) return true;
+    }
+
+    const bool sourceModelRemoved = tabModel_.removeAt(sourceIndex);
+    if (sourceGuard == nullptr || destinationGuard == nullptr) return false;
+    Q_ASSERT(sourceModelRemoved);
+    if (!sourceModelRemoved) return false;
+
+    const bool destinationModelInserted =
+        destination->tabModel_.insert(0,
+                                      destination->tabListEntry(destinationTab));
+    if (sourceGuard == nullptr || destinationGuard == nullptr) return false;
+    Q_ASSERT(destinationModelInserted);
+    if (!destinationModelInserted) return false;
+
+    if (Tab *const selected = currentTab(); selected != nullptr) {
+        updateTabVisibility(*selected, true);
+        layoutCurrentTab();
+        if (transferredSelection) {
+            if (TerminalPane *const active = paneForId(selected->activePaneId);
+                active != nullptr) {
+                active->focusTerminal();
+            }
+        }
+    }
+    destination->updateTabVisibility(destinationTab, true);
+    destination->layoutCurrentTab();
+    if (TerminalPane *const active =
+            destination->paneForId(destinationTab.activePaneId);
+        active != nullptr) {
+        active->focusTerminal();
+    }
+
+    Q_EMIT tabTitlesChanged();
+    if (sourceGuard == nullptr || destinationGuard == nullptr) return true;
+    if (tabBarVisible() != sourceTabBarWasVisible) {
+        Q_EMIT tabBarVisibleChanged();
+        if (sourceGuard == nullptr || destinationGuard == nullptr) return true;
+    }
+    if (currentIndex_ != previousCurrentIndex) {
+        Q_EMIT currentIndexChanged();
+        if (sourceGuard == nullptr || destinationGuard == nullptr) return true;
+    }
+    if (transferredSelection) {
+        Q_EMIT currentTitleChanged();
+        if (sourceGuard == nullptr || destinationGuard == nullptr) return true;
+        if (currentSubtitle() != previousSubtitle) {
+            Q_EMIT currentSubtitleChanged();
+            if (sourceGuard == nullptr || destinationGuard == nullptr)
+                return true;
+        }
+    }
+
+    Q_EMIT destination->tabTitlesChanged();
+    if (sourceGuard == nullptr || destinationGuard == nullptr) return true;
+    if (destination->tabBarVisible() != destinationTabBarWasVisible) {
+        Q_EMIT destination->tabBarVisibleChanged();
+        if (sourceGuard == nullptr || destinationGuard == nullptr) return true;
+    }
+    Q_EMIT destination->currentIndexChanged();
+    if (sourceGuard == nullptr || destinationGuard == nullptr) return true;
+    Q_EMIT destination->currentTitleChanged();
+    if (sourceGuard == nullptr || destinationGuard == nullptr) return true;
+    Q_EMIT destination->currentSubtitleChanged();
+    if (sourceGuard == nullptr || destinationGuard == nullptr) return true;
+
+    if (!customShaderDiagnostics_.isEmpty()
+        || !destination->customShaderDiagnostics_.isEmpty()) {
+        Q_EMIT customShaderDiagnosticsChanged(customShaderDiagnostics());
+        if (sourceGuard == nullptr || destinationGuard == nullptr) return true;
+        Q_EMIT destination->customShaderDiagnosticsChanged(
+            destination->customShaderDiagnostics());
+        if (sourceGuard == nullptr || destinationGuard == nullptr) return true;
     }
     return true;
 }

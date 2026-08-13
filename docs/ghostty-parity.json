@@ -1381,8 +1381,8 @@
           "note": "Moves the source surface's tab by a signed cyclic offset while retaining stable tab identity and selection."
         },
         "move_tab_to_new_window": {
-          "status": "planned",
-          "note": "Exact parity requires detaching the selected tab's complete split tree and live sessions and adopting it into a new window without restarting PTYs. The current workspace owns tabs and panes per window and has no cross-workspace transfer transaction yet."
+          "status": "supported",
+          "note": "Moves the source surface's complete tab and split tree into a new window while retaining its live PTYs plus stable tab, pane, split, and surface identities. A sole tab is left in place, matching Ghostty's GTK behavior."
         },
         "navigate_search": {
           "status": "partial",

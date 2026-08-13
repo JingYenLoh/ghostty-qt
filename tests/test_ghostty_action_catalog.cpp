@@ -472,6 +472,7 @@ void GhosttyActionCatalogTest::translatesParameterlessActions()
         {"previous_tab", WorkspaceAction::ChangeTabRelative, -1},
         {"next_tab", WorkspaceAction::ChangeTabRelative, 1},
         {"last_tab", WorkspaceAction::ActivateLastTab, 123},
+        {"move_tab_to_new_window", WorkspaceAction::MoveTabToNewWindow, 123},
         {"equalize_splits", WorkspaceAction::EqualizeSplits, 123},
         {"toggle_split_zoom", WorkspaceAction::ToggleSplitZoom, 123},
         {"toggle_fullscreen", WorkspaceAction::ToggleFullscreen, 123},

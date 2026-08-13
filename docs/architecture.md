@@ -382,6 +382,14 @@ The workspace owns:
 QML consumes a `QAbstractListModel` and typed properties. It does not mutate the
 split tree directly.
 
+`move_tab_to_new_window` creates and registers an empty workspace before
+transferring the selected tab as one live ownership transaction. The tab's
+recursive tree, panes, PTYs, overlays, and stable tab/pane/split/surface IDs are
+retained; only QObject/scene ownership and workspace signal routing are
+rebound. Process-wide surface and keybinding registries retarget those same
+entries in place, preserving Ghostty's surface order for `all:` and `global:`
+actions. The source refuses to transfer its sole tab.
+
 Multiple windows are process-owned. The application registry pairs stable
 window and pane IDs for navigation, command-palette rows, notifications, and
 D-Bus activation. A hidden quick terminal remains a retained LayerShellQt
