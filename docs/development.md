@@ -106,12 +106,17 @@ ordinary hosts.
 
 ## Formatting
 
-The repository uses `.clang-format`; version 18 or newer is recommended.
-Format changed lines with:
+Format every supported tracked file with:
 
 ```sh
-./scripts/check-format.sh --fix
+./scripts/format.sh --all
 ```
+
+The formatter driver uses clang-format for C/C++, Ruff for Python, qmlformat
+for QML, the project Zig tool for Zig, shfmt for shell, jq for JSON, xmllint
+for XML/SVG, and Gersemi for CMake. Gersemi is pinned and run through `uvx`
+when no standalone `gersemi` executable is available. Check the entire tree
+without modifying it with `./scripts/format.sh --check`.
 
 Enable the tracked pre-commit hook once per checkout:
 
@@ -119,20 +124,11 @@ Enable the tracked pre-commit hook once per checkout:
 git config core.hooksPath .githooks
 ```
 
-The hook checks staged changed C/C++ lines without modifying the worktree.
-Other useful modes are:
-
-```sh
-./scripts/check-format.sh --staged
-./scripts/check-format.sh --diff
-```
-
-Review and stage formatting changes again after `--fix`, because it deliberately
-does not alter the index.
-
-For Python maintenance, use Ruff rather than Black. The repository does not
-currently define a repo-wide automated Ruff gate, so do not document or assume
-one until its configuration is checked in.
+The hook automatically formats supported staged files. It updates the index
+directly, preserving unrelated unstaged edits in partially staged files. When
+the worktree copy still matches the staged content, the hook updates it too so
+the index and worktree remain synchronized. Review the resulting staged diff
+before committing. For Python maintenance, use Ruff rather than Black.
 
 ## Performance work
 

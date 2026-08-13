@@ -3,4 +3,4 @@
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
-exec "$root/scripts/check-format.sh" --staged
+exec "$root/scripts/format.sh" --staged
