@@ -528,6 +528,7 @@ private Q_SLOTS:
     void broadTabTitlePromptsQueueEverySurfaceAndSurviveRemoval();
     void newTabPositionReloadsAndKeepsBroadOrder();
     void tabBarVisibilityTracksPolicyAndCount();
+    void toolbarVisibilityReloadsAsPresentationPolicy();
     void tabsLocationReloadsAsPresentationPolicy();
     void splitDirectionsPlaceAndFocusNewPane_data();
     void splitDirectionsPlaceAndFocusNewPane();
@@ -11904,6 +11905,43 @@ void TerminalWorkspaceTest::tabBarVisibilityTracksPolicyAndCount()
     QVERIFY(workspace.tabBarVisible());
     QCOMPARE(visibilityChanged.count(), 7);
     QTRY_COMPARE_WITH_TIMEOUT(quit.count(), 1, 1000);
+}
+
+void TerminalWorkspaceTest::toolbarVisibilityReloadsAsPresentationPolicy()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.windowShowToolbar = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    QSignalSpy visibilityChanged(&workspace,
+                                 &TerminalWorkspace::toolbarVisibleChanged);
+    QVERIFY(workspace.toolbarVisible());
+
+    workspace.setToolbarVisible(false);
+    QVERIFY(!workspace.toolbarVisible());
+    QVERIFY(!workspace.effectiveLaunchOptions().windowShowToolbar);
+    QCOMPARE(visibilityChanged.count(), 1);
+
+    workspace.setToolbarVisible(false);
+    QCOMPARE(visibilityChanged.count(), 1);
+
+    workspace.applyLaunchOptions(options);
+    QVERIFY(workspace.toolbarVisible());
+    QCOMPARE(visibilityChanged.count(), 2);
+
+    LaunchOptions reloaded = options;
+    reloaded.windowShowToolbar = false;
+    workspace.applyLaunchOptions(reloaded);
+    QVERIFY(!workspace.toolbarVisible());
+    QCOMPARE(visibilityChanged.count(), 3);
+
+    workspace.applyLaunchOptions(reloaded);
+    QCOMPARE(visibilityChanged.count(), 3);
 }
 
 void TerminalWorkspaceTest::tabsLocationReloadsAsPresentationPolicy()

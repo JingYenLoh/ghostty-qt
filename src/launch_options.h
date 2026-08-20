@@ -184,6 +184,9 @@ struct LaunchOptions {
     DragHandleMode dragHandle = DragHandleMode::Auto;
     // Qt-owned placement for the stable window toolbar and tab strip.
     TabsLocation tabsLocation = TabsLocation::Top;
+    // Qt-owned visibility for the action toolbar. The tab strip remains
+    // independently controlled by windowShowTabBar.
+    bool windowShowToolbar = true;
     // Qt-owned tab presentation and terminal-surface precision gesture
     // policies. Discrete horizontal wheel input remains terminal input.
     bool wideTabs = true;

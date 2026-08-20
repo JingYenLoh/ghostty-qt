@@ -46,6 +46,11 @@ action retains Ghostty's standard-file behavior. See
 - Precision horizontal scrolling over a terminal changes tabs by default.
   Disable `horizontal-tab-scroll` to forward it to the terminal. Discrete
   horizontal wheel input is always forwarded as buttons 6/7.
+- The toolbar is visible by default. Toggle the checkable **Show Toolbar** item
+  in the toolbar or terminal context menu for the current window, or set
+  `window-show-toolbar = false` for a persistent application-wide default.
+  Tab-strip visibility remains controlled independently by
+  `window-show-tab-bar`.
 - `background-blur` uses KWin's whole-window blur effect when built with KF6
   WindowSystem. Other compositors ignore it.
 - `custom-shader` requires Qt Quick's OpenGL or Vulkan RHI backend. Unsupported

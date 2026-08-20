@@ -20,6 +20,7 @@ enum class TabsLocation {
 struct FrontendConfigValues {
     SingleInstanceMode singleInstanceMode = SingleInstanceMode::Detect;
     TabsLocation tabsLocation = TabsLocation::Top;
+    bool windowShowToolbar = true;
     bool wideTabs = true;
     bool horizontalTabScroll = true;
     QuickTerminalLayerShellOptions quickTerminalLayerShell;

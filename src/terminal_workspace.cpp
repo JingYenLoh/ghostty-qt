@@ -890,6 +890,7 @@ void TerminalWorkspace::applyLaunchOptions(const LaunchOptions &options,
     const QPointer<TerminalWorkspace> guard(this);
     const bool wasTabBarVisible = tabBarVisible();
     const bool wasTabBarAtBottom = tabBarAtBottom();
+    const bool wasToolbarVisible = toolbarVisible();
     const bool hadWideTabs = wideTabs();
     const WindowDecorationMode previousWindowDecoration = windowDecoration();
     const QColor previousChromeBackground = chromeBackground();
@@ -925,6 +926,10 @@ void TerminalWorkspace::applyLaunchOptions(const LaunchOptions &options,
         Q_EMIT tabsLocationChanged();
         if (!stillCurrentUpdate()) return;
     }
+    if (toolbarVisible() != wasToolbarVisible) {
+        Q_EMIT toolbarVisibleChanged();
+        if (!stillCurrentUpdate()) return;
+    }
     if (wideTabs() != hadWideTabs) {
         Q_EMIT wideTabsChanged();
         if (!stillCurrentUpdate()) return;
@@ -944,6 +949,13 @@ void TerminalWorkspace::applyLaunchOptions(const LaunchOptions &options,
         if (!stillCurrentUpdate()) return;
     }
     reevaluatePendingClose();
+}
+
+void TerminalWorkspace::setToolbarVisible(bool visible)
+{
+    if (toolbarVisible() == visible) return;
+    effectiveOptions_.windowShowToolbar = visible;
+    Q_EMIT toolbarVisibleChanged();
 }
 
 bool TerminalWorkspace::tabBarVisible() const

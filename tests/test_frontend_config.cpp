@@ -86,6 +86,7 @@ void FrontendConfigTest::parsesDefaultsAndFullLineComments()
              qPrintable(parsed ? QString{} : parsed.error()));
     QCOMPARE(parsed->singleInstanceMode, SingleInstanceMode::Detect);
     QCOMPARE(parsed->tabsLocation, TabsLocation::Top);
+    QVERIFY(parsed->windowShowToolbar);
     QVERIFY(parsed->wideTabs);
     QVERIFY(parsed->horizontalTabScroll);
     QCOMPARE(parsed->quickTerminalLayerShell.layer, QuickTerminalLayer::Top);
@@ -104,6 +105,7 @@ void FrontendConfigTest::parsesEveryValue_data()
     QTest::addColumn<QByteArray>("contents");
     QTest::addColumn<SingleInstanceMode>("singleInstance");
     QTest::addColumn<TabsLocation>("tabsLocation");
+    QTest::addColumn<bool>("windowShowToolbar");
     QTest::addColumn<bool>("wideTabs");
     QTest::addColumn<bool>("horizontalTabScroll");
     QTest::addColumn<int>("quickTerminalLayer");
@@ -116,6 +118,7 @@ void FrontendConfigTest::parsesEveryValue_data()
     QTest::newRow("false-top-wide-scroll-background")
         << QByteArray("single-instance = false\n"
                       "tabs-location = top\n"
+                      "window-show-toolbar = true\n"
                       "wide-tabs = true\n"
                       "horizontal-tab-scroll = true\n"
                       "quick-terminal-layer = background\n"
@@ -125,13 +128,14 @@ void FrontendConfigTest::parsesEveryValue_data()
                       "pane-enter-transition-duration = 0ms\n"
                       "pane-exit-transition-duration = 10000ms\n")
         << SingleInstanceMode::Disabled << TabsLocation::Top << true << true
-        << static_cast<int>(QuickTerminalLayer::Background)
+        << true << static_cast<int>(QuickTerminalLayer::Background)
         << QStringLiteral("background-terminal")
         << QStringLiteral("enter-a.glsl") << QStringLiteral("exit-a.glsl")
         << qint64(0) << qint64(10000);
     QTest::newRow("true-bottom-compact-scroll-bottom")
         << QByteArray("single-instance = true\n"
                       "tabs-location = bottom\n"
+                      "window-show-toolbar = false\n"
                       "wide-tabs = false\n"
                       "horizontal-tab-scroll = true\n"
                       "quick-terminal-layer = bottom\n"
@@ -140,13 +144,14 @@ void FrontendConfigTest::parsesEveryValue_data()
                       "pane-exit-transition-shader = exit-b.glsl\n"
                       "pane-enter-transition-duration = 180ms\n"
                       "pane-exit-transition-duration = 220ms\n")
-        << SingleInstanceMode::Enabled << TabsLocation::Bottom << false << true
-        << static_cast<int>(QuickTerminalLayer::Bottom)
+        << SingleInstanceMode::Enabled << TabsLocation::Bottom << false << false
+        << true << static_cast<int>(QuickTerminalLayer::Bottom)
         << QStringLiteral("bottom-terminal") << QStringLiteral("enter-b.glsl")
         << QStringLiteral("exit-b.glsl") << qint64(180) << qint64(220);
     QTest::newRow("detect-bottom-wide-no-scroll-top")
         << QByteArray("single-instance = detect\n"
                       "tabs-location = bottom\n"
+                      "window-show-toolbar = false\n"
                       "wide-tabs = true\n"
                       "horizontal-tab-scroll = false\n"
                       "quick-terminal-layer = top\n"
@@ -155,13 +160,14 @@ void FrontendConfigTest::parsesEveryValue_data()
                       "pane-exit-transition-shader = exit-c.glsl\n"
                       "pane-enter-transition-duration = 1ms\n"
                       "pane-exit-transition-duration = 9999ms\n")
-        << SingleInstanceMode::Detect << TabsLocation::Bottom << true << false
-        << static_cast<int>(QuickTerminalLayer::Top)
+        << SingleInstanceMode::Detect << TabsLocation::Bottom << false << true
+        << false << static_cast<int>(QuickTerminalLayer::Top)
         << QStringLiteral("top-terminal") << QStringLiteral("enter-c.glsl")
         << QStringLiteral("exit-c.glsl") << qint64(1) << qint64(9999);
     QTest::newRow("detect-top-compact-no-scroll-overlay")
         << QByteArray("single-instance = detect\n"
                       "tabs-location = top\n"
+                      "window-show-toolbar = true\n"
                       "wide-tabs = false\n"
                       "horizontal-tab-scroll = false\n"
                       "quick-terminal-layer = overlay\n"
@@ -170,8 +176,8 @@ void FrontendConfigTest::parsesEveryValue_data()
                       "pane-exit-transition-shader = exit-d.glsl\n"
                       "pane-enter-transition-duration = 300ms\n"
                       "pane-exit-transition-duration = 0ms\n")
-        << SingleInstanceMode::Detect << TabsLocation::Top << false << false
-        << static_cast<int>(QuickTerminalLayer::Overlay)
+        << SingleInstanceMode::Detect << TabsLocation::Top << true << false
+        << false << static_cast<int>(QuickTerminalLayer::Overlay)
         << QStringLiteral("overlay-terminal") << QStringLiteral("enter-d.glsl")
         << QStringLiteral("exit-d.glsl") << qint64(300) << qint64(0);
 }
@@ -181,6 +187,7 @@ void FrontendConfigTest::parsesEveryValue()
     QFETCH(QByteArray, contents);
     QFETCH(SingleInstanceMode, singleInstance);
     QFETCH(TabsLocation, tabsLocation);
+    QFETCH(bool, windowShowToolbar);
     QFETCH(bool, wideTabs);
     QFETCH(bool, horizontalTabScroll);
     QFETCH(int, quickTerminalLayer);
@@ -195,6 +202,7 @@ void FrontendConfigTest::parsesEveryValue()
              qPrintable(parsed ? QString{} : parsed.error()));
     QCOMPARE(parsed->singleInstanceMode, singleInstance);
     QCOMPARE(parsed->tabsLocation, tabsLocation);
+    QCOMPARE(parsed->windowShowToolbar, windowShowToolbar);
     QCOMPARE(parsed->wideTabs, wideTabs);
     QCOMPARE(parsed->horizontalTabScroll, horizontalTabScroll);
     QCOMPARE(static_cast<int>(parsed->quickTerminalLayerShell.layer),
@@ -214,6 +222,7 @@ void FrontendConfigTest::acceptsWhitespaceCrLfAndBom()
     const QByteArray contents = QByteArray::fromHex("efbbbf")
         + QByteArray("\tsingle-instance\t=\ttrue\t\r\n"
                      " tabs-location = bottom \r\n"
+                     " window-show-toolbar = false \r\n"
                      " wide-tabs = false \r\n"
                      " horizontal-tab-scroll = false \r\n"
                      " quick-terminal-layer = overlay \r\n"
@@ -227,6 +236,7 @@ void FrontendConfigTest::acceptsWhitespaceCrLfAndBom()
              qPrintable(parsed ? QString{} : parsed.error()));
     QCOMPARE(parsed->singleInstanceMode, SingleInstanceMode::Enabled);
     QCOMPARE(parsed->tabsLocation, TabsLocation::Bottom);
+    QVERIFY(!parsed->windowShowToolbar);
     QVERIFY(!parsed->wideTabs);
     QVERIFY(!parsed->horizontalTabScroll);
     QCOMPARE(parsed->quickTerminalLayerShell.layer,
@@ -259,6 +269,9 @@ void FrontendConfigTest::rejectsInvalidDocuments_data()
         << QStringLiteral("expected false, true, or detect");
     QTest::newRow("tabs-location") << QByteArray("tabs-location = left\n")
                                    << QStringLiteral("expected top or bottom");
+    QTest::newRow("window-show-toolbar")
+        << QByteArray("window-show-toolbar = yes\n")
+        << QStringLiteral("expected true or false");
     QTest::newRow("wide-tabs") << QByteArray("wide-tabs = yes\n")
                                << QStringLiteral("expected true or false");
     QTest::newRow("horizontal-tab-scroll")

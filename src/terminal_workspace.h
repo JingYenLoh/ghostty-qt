@@ -92,6 +92,8 @@ class TerminalWorkspace : public QQuickItem {
         bool tabBarVisible READ tabBarVisible NOTIFY tabBarVisibleChanged)
     Q_PROPERTY(
         bool tabBarAtBottom READ tabBarAtBottom NOTIFY tabsLocationChanged)
+    Q_PROPERTY(bool toolbarVisible READ toolbarVisible WRITE setToolbarVisible
+                   NOTIFY toolbarVisibleChanged)
     Q_PROPERTY(bool wideTabs READ wideTabs NOTIFY wideTabsChanged)
     Q_PROPERTY(QQmlComponent *inspectorComponent READ inspectorComponent WRITE
                    setInspectorComponent NOTIFY inspectorComponentChanged)
@@ -175,6 +177,8 @@ public:
     {
         return effectiveOptions_.tabsLocation == TabsLocation::Bottom;
     }
+    bool toolbarVisible() const { return effectiveOptions_.windowShowToolbar; }
+    void setToolbarVisible(bool visible);
     bool wideTabs() const { return effectiveOptions_.wideTabs; }
     [[nodiscard]] const LaunchOptions &effectiveLaunchOptions() const
     {
@@ -310,6 +314,7 @@ Q_SIGNALS:
     void windowAppearanceChanged();
     void tabBarVisibleChanged();
     void tabsLocationChanged();
+    void toolbarVisibleChanged();
     void wideTabsChanged();
     void currentIndexChanged();
     void closeConfirmationRequested(quint64 confirmationId,

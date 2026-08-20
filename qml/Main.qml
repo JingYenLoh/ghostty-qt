@@ -22,7 +22,7 @@ ApplicationWindow {
     property int previousVisibility: Window.Hidden
     property size initialNormalSize: Qt.size(0, 0)
     property bool initialNormalSizePending: false
-    readonly property bool terminalHeaderVisible: !window.quickTerminal || workspace.tabBarVisible
+    readonly property bool terminalHeaderVisible: workspace.tabBarVisible || (!window.quickTerminal && workspace.toolbarVisible)
     // ApplicationController sizes the client area in terminal cells before
     // the first pane is constructed. Keep the frontend chrome contract typed
     // and explicit instead of guessing it from a partially laid-out item tree.
@@ -121,6 +121,17 @@ ApplicationWindow {
         icon.source: Qt.resolvedUrl("icons/window-close.svg")
         enabled: !window.quickTerminal && workspace.tabCount > 0
         onTriggered: workspace.closeActivePane()
+    }
+
+    Action {
+        id: showToolbarAction
+        objectName: "showToolbarAction"
+        text: qsTr("Show Toolbar")
+        icon.name: "view-visible"
+        checkable: true
+        checked: workspace.toolbarVisible
+        enabled: !window.quickTerminal
+        onTriggered: workspace.toolbarVisible = !workspace.toolbarVisible
     }
 
     Component {
@@ -350,14 +361,14 @@ ApplicationWindow {
                 id: windowSubtitle
                 objectName: "windowSubtitle"
                 Layout.maximumWidth: 320
-                visible: !window.quickTerminal && workspace.currentSubtitle.length > 0
+                visible: !window.quickTerminal && workspace.toolbarVisible && workspace.currentSubtitle.length > 0
                 text: workspace.currentSubtitle
                 elide: Text.ElideMiddle
                 color: workspace.chromeForeground
             }
 
             ToolSeparator {
-                visible: !window.quickTerminal && (tabs.visible || windowSubtitle.visible)
+                visible: !window.quickTerminal && workspace.toolbarVisible && (tabs.visible || windowSubtitle.visible)
                 orientation: Qt.Vertical
                 Layout.fillHeight: true
             }
@@ -365,7 +376,7 @@ ApplicationWindow {
             RowLayout {
                 id: toolbarActions
                 objectName: "windowToolbarActions"
-                visible: !window.quickTerminal
+                visible: !window.quickTerminal && workspace.toolbarVisible
                 spacing: 0
                 Layout.fillWidth: false
                 Layout.fillHeight: false
@@ -399,6 +410,24 @@ ApplicationWindow {
                     toolTipText: qsTr("Close Pane")
                 }
             }
+        }
+
+        TapHandler {
+            acceptedButtons: Qt.RightButton
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            onTapped: function (eventPoint) {
+                windowToolbarContextMenu.popup(windowHeader, eventPoint.position.x, eventPoint.position.y);
+            }
+        }
+    }
+
+    Menu {
+        id: windowToolbarContextMenu
+        objectName: "windowToolbarContextMenu"
+        popupType: Popup.Item
+
+        MenuItem {
+            action: showToolbarAction
         }
     }
 
@@ -516,6 +545,16 @@ ApplicationWindow {
         }
 
         MenuSeparator {}
+
+        MenuItem {
+            objectName: "terminalContextMenuShowToolbar"
+            action: showToolbarAction
+            visible: !window.quickTerminal
+        }
+
+        MenuSeparator {
+            visible: !window.quickTerminal
+        }
 
         Menu {
             objectName: "terminalContextMenuSplit"

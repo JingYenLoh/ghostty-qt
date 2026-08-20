@@ -867,6 +867,7 @@ void GhosttyConfigProcessLoaderTest::realHelperAppliesMixedFrontendOverrides()
     ConfigFixture::writeFile(
         frontendPath,
         QByteArrayLiteral("tabs-location = bottom\n"
+                          "window-show-toolbar = false\n"
                           "quick-terminal-layer = overlay\n"
                           "font-size = 20\n"
                           "maximize = true\n"

@@ -414,6 +414,7 @@ applyFrontendConfigSnapshot(LaunchOptions result,
                             const FrontendConfigSnapshot &snapshot)
 {
     result.tabsLocation = snapshot.values.tabsLocation;
+    result.windowShowToolbar = snapshot.values.windowShowToolbar;
     result.wideTabs = snapshot.values.wideTabs;
     result.horizontalTabScroll = snapshot.values.horizontalTabScroll;
     result.quickTerminalLayerShell = snapshot.values.quickTerminalLayerShell;

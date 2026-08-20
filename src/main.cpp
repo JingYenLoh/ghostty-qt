@@ -1621,7 +1621,15 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
         rootObject->findChild<QObject *>(QStringLiteral("windowTabBar"));
     QObject *const windowToolbar =
         rootObject->findChild<QObject *>(QStringLiteral("windowToolbar"));
-    if (tabBar == nullptr || windowToolbar == nullptr) {
+    QObject *const toolbarActions = rootObject->findChild<QObject *>(
+        QStringLiteral("windowToolbarActions"));
+    QObject *const showToolbarAction =
+        rootObject->findChild<QObject *>(QStringLiteral("showToolbarAction"));
+    QObject *const contextMenuShowToolbar = rootObject->findChild<QObject *>(
+        QStringLiteral("terminalContextMenuShowToolbar"));
+    if (tabBar == nullptr || windowToolbar == nullptr
+        || toolbarActions == nullptr || showToolbarAction == nullptr
+        || contextMenuShowToolbar == nullptr) {
         qCritical() << "Tab-bar test hook could not find the QML controls";
         return false;
     }
@@ -1639,7 +1647,8 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
         workspace->applyLaunchOptions(options);
     };
     const auto exercise = [rootObject, workspace, tabBar, windowToolbar,
-                           applyMode, applyWideTabs] {
+                           toolbarActions, showToolbarAction,
+                           contextMenuShowToolbar, applyMode, applyWideTabs] {
         auto *const timer = new QTimer(workspace);
         timer->setSingleShot(true);
         const auto stage = std::make_shared<int>(0);
@@ -1647,7 +1656,8 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
 
         QObject::connect(
             timer, &QTimer::timeout, workspace,
-            [rootObject, workspace, tabBar, windowToolbar, applyMode,
+            [rootObject, workspace, tabBar, windowToolbar, toolbarActions,
+             showToolbarAction, contextMenuShowToolbar, applyMode,
              applyWideTabs, timer, stage, quitObserved] {
                 switch (*stage) {
                 case 0:
@@ -1708,25 +1718,92 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
                                                "always with one tab")) {
                         return;
                     }
-                    applyMode(WindowShowTabBar::Never);
-                    break;
-                case 6:
-                    if (!verifyTabBarTestState(workspace, tabBar, 1, false,
-                                               "never with one tab")) {
+                    if (!QMetaObject::invokeMethod(showToolbarAction,
+                                                   "trigger")) {
+                        qCritical()
+                            << "Tab-bar test hook could not hide the toolbar";
+                        QCoreApplication::exit(1);
                         return;
                     }
-                    if (!windowToolbar->property("visible").toBool()) {
+                    break;
+                case 6:
+                    if (!verifyTabBarTestState(
+                            workspace, tabBar, 1, true,
+                            "always with hidden action toolbar")
+                        || workspace->toolbarVisible()
+                        || !windowToolbar->property("visible").toBool()
+                        || toolbarActions->property("visible").toBool()
+                        || showToolbarAction->property("checked").toBool()) {
                         qCritical()
-                            << "Tab-bar test hook hid the surrounding toolbar";
+                            << "Tab-bar test hook did not keep the tab strip "
+                               "independent from the hidden action toolbar";
+                        QCoreApplication::exit(1);
+                        return;
+                    }
+                    applyMode(WindowShowTabBar::Never);
+                    break;
+                case 7:
+                    if (!verifyTabBarTestState(workspace, tabBar, 1, false,
+                                               "never with hidden toolbar")
+                        || workspace->toolbarVisible()
+                        || windowToolbar->property("visible").toBool()
+                        || toolbarActions->property("visible").toBool()
+                        || showToolbarAction->property("checked").toBool()
+                        || rootObject->property("terminalChromeHeight").toReal()
+                            != 0.0) {
+                        qCritical().nospace()
+                            << "Tab-bar test hook did not hide the toolbar: "
+                            << "workspace=" << workspace->toolbarVisible()
+                            << ", toolbar="
+                            << windowToolbar->property("visible").toBool()
+                            << ", actions="
+                            << toolbarActions->property("visible").toBool()
+                            << ", checked="
+                            << showToolbarAction->property("checked").toBool()
+                            << ", restore-action="
+                            << (contextMenuShowToolbar != nullptr);
                         QCoreApplication::exit(1);
                         return;
                     }
                     applyMode(WindowShowTabBar::Auto);
+                    if (!QMetaObject::invokeMethod(showToolbarAction,
+                                                   "trigger")) {
+                        qCritical()
+                            << "Tab-bar test hook could not restore the toolbar";
+                        QCoreApplication::exit(1);
+                        return;
+                    }
                     break;
-                case 7:
+                case 8:
+                    if (!verifyTabBarTestState(workspace, tabBar, 1, false,
+                                               "auto with restored toolbar")
+                        || !workspace->toolbarVisible()
+                        || !windowToolbar->property("visible").toBool()
+                        || !toolbarActions->property("visible").toBool()
+                        || !showToolbarAction->property("checked").toBool()
+                        || rootObject->property("terminalChromeHeight").toReal()
+                            <= 0.0
+                        || !verifyToolbarActionGeometry(
+                            rootObject, windowToolbar,
+                            "restored toolbar before shutdown")) {
+                        qCritical()
+                            << "Tab-bar test hook did not restore the toolbar";
+                        QCoreApplication::exit(1);
+                        return;
+                    }
+                    applyMode(WindowShowTabBar::Never);
+                    break;
+                case 9:
                     if (!verifyTabBarTestState(
                             workspace, tabBar, 1, false,
-                            "auto restored before shutdown")) {
+                            "never with visible action toolbar")
+                        || !workspace->toolbarVisible()
+                        || !windowToolbar->property("visible").toBool()
+                        || !toolbarActions->property("visible").toBool()) {
+                        qCritical()
+                            << "Tab-bar test hook coupled tab and toolbar "
+                               "visibility";
+                        QCoreApplication::exit(1);
                         return;
                     }
                     QObject::connect(
@@ -1753,7 +1830,7 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
                 }
 
                 ++*stage;
-                timer->start(*stage == 8 ? 1000 : 0);
+                timer->start(*stage == 10 ? 1000 : 0);
             });
         timer->start(0);
     };

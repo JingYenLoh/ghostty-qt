@@ -498,6 +498,7 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.windowNewTabPosition, WindowNewTabPosition::Current);
     QCOMPARE(options.windowShowTabBar, WindowShowTabBar::Auto);
     QCOMPARE(options.tabsLocation, TabsLocation::Top);
+    QVERIFY(options.windowShowToolbar);
     QVERIFY(options.wideTabs);
     QVERIFY(options.horizontalTabScroll);
     QCOMPARE(options.quickTerminalLayerShell.layer, QuickTerminalLayer::Top);
@@ -550,10 +551,12 @@ void LaunchOptionsTest::parsesActivationBootstrapOptions()
     FrontendConfigSnapshot frontend;
     frontend.values.singleInstanceMode = SingleInstanceMode::Disabled;
     frontend.values.tabsLocation = TabsLocation::Bottom;
+    frontend.values.windowShowToolbar = false;
     const LaunchOptions configured =
         resolveLaunchOptions(*service, &contradictory, &frontend);
     QCOMPARE(configured.singleInstanceMode, SingleInstanceMode::Enabled);
     QCOMPARE(configured.tabsLocation, TabsLocation::Bottom);
+    QVERIFY(!configured.windowShowToolbar);
     QVERIFY(!configured.initialWindow);
 
     const auto detect = parseLaunchOptions({
@@ -2006,6 +2009,7 @@ void LaunchOptionsTest::mapsFrontendConfigurationPrecedence()
     const LaunchOptions builtIns =
         resolveLaunchOptions(*parsed, nullptr, nullptr);
     QCOMPARE(builtIns.tabsLocation, TabsLocation::Top);
+    QVERIFY(builtIns.windowShowToolbar);
     QVERIFY(builtIns.wideTabs);
     QVERIFY(builtIns.horizontalTabScroll);
     QCOMPARE(builtIns.quickTerminalLayerShell.layer, QuickTerminalLayer::Top);
@@ -2022,6 +2026,7 @@ void LaunchOptionsTest::mapsFrontendConfigurationPrecedence()
         resolveLaunchOptions(*parsed, &shared, nullptr);
     QCOMPARE(sharedOnly.windowDecoration, WindowDecorationMode::None);
     QCOMPARE(sharedOnly.tabsLocation, TabsLocation::Top);
+    QVERIFY(sharedOnly.windowShowToolbar);
     QVERIFY(sharedOnly.wideTabs);
     QVERIFY(sharedOnly.horizontalTabScroll);
     QCOMPARE(sharedOnly.quickTerminalLayerShell,
@@ -2030,6 +2035,7 @@ void LaunchOptionsTest::mapsFrontendConfigurationPrecedence()
 
     FrontendConfigSnapshot frontend;
     frontend.values.tabsLocation = TabsLocation::Bottom;
+    frontend.values.windowShowToolbar = false;
     frontend.values.wideTabs = false;
     frontend.values.horizontalTabScroll = false;
     frontend.values.quickTerminalLayerShell = {
@@ -2049,6 +2055,7 @@ void LaunchOptionsTest::mapsFrontendConfigurationPrecedence()
         resolveLaunchOptions(*parsed, &shared, &frontend);
     QCOMPARE(configured.windowDecoration, WindowDecorationMode::None);
     QCOMPARE(configured.tabsLocation, TabsLocation::Bottom);
+    QVERIFY(!configured.windowShowToolbar);
     QVERIFY(!configured.wideTabs);
     QVERIFY(!configured.horizontalTabScroll);
     QCOMPARE(configured.quickTerminalLayerShell,
@@ -2077,6 +2084,7 @@ void LaunchOptionsTest::mapsFrontendConfigurationPrecedence()
     const LaunchOptions overridden =
         resolveLaunchOptions(*explicitCli, &shared, &frontend);
     QCOMPARE(overridden.tabsLocation, TabsLocation::Bottom);
+    QVERIFY(!overridden.windowShowToolbar);
     QVERIFY(!overridden.wideTabs);
     QVERIFY(!overridden.horizontalTabScroll);
     QCOMPARE(overridden.quickTerminalLayerShell,
@@ -2085,11 +2093,13 @@ void LaunchOptionsTest::mapsFrontendConfigurationPrecedence()
     QVERIFY(overridden.singleInstanceModeExplicit);
 
     frontend.values.tabsLocation = TabsLocation::Top;
+    frontend.values.windowShowToolbar = true;
     frontend.values.wideTabs = true;
     frontend.values.horizontalTabScroll = true;
     const LaunchOptions reapplied =
         applyFrontendConfigSnapshot(*parsed, frontend);
     QCOMPARE(reapplied.tabsLocation, TabsLocation::Top);
+    QVERIFY(reapplied.windowShowToolbar);
     QVERIFY(reapplied.wideTabs);
     QVERIFY(reapplied.horizontalTabScroll);
     QCOMPARE(reapplied.quickTerminalLayerShell,
@@ -2340,6 +2350,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.windowInheritFontSize = false;
     frontendOnlyChanged.windowNewTabPosition = WindowNewTabPosition::End;
     frontendOnlyChanged.windowShowTabBar = WindowShowTabBar::Never;
+    frontendOnlyChanged.windowShowToolbar = false;
     frontendOnlyChanged.wideTabs = false;
     frontendOnlyChanged.horizontalTabScroll = false;
     frontendOnlyChanged.windowDecoration = WindowDecorationMode::None;

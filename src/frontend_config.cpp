@@ -49,6 +49,7 @@ bool isFrontendKey(QByteArrayView key)
 {
     return key == QByteArrayView("single-instance")
         || key == QByteArrayView("tabs-location")
+        || key == QByteArrayView("window-show-toolbar")
         || key == QByteArrayView("wide-tabs")
         || key == QByteArrayView("horizontal-tab-scroll")
         || key == QByteArrayView("quick-terminal-layer")
@@ -229,7 +230,8 @@ parseFrontendConfig(QByteArrayView contents, QStringView sourceName)
                         .arg(value)));
             }
             values.tabsLocation = *parsed;
-        } else if (key == QLatin1StringView("wide-tabs")
+        } else if (key == QLatin1StringView("window-show-toolbar")
+                   || key == QLatin1StringView("wide-tabs")
                    || key == QLatin1StringView("horizontal-tab-scroll")) {
             const std::optional<bool> parsed = parseBoolean(value);
             if (!parsed) {
@@ -239,7 +241,9 @@ parseFrontendConfig(QByteArrayView contents, QStringView sourceName)
                         "invalid %1 value '%2'; expected true or false")
                         .arg(key, value)));
             }
-            if (key == QLatin1StringView("wide-tabs")) {
+            if (key == QLatin1StringView("window-show-toolbar")) {
+                values.windowShowToolbar = *parsed;
+            } else if (key == QLatin1StringView("wide-tabs")) {
                 values.wideTabs = *parsed;
             } else {
                 values.horizontalTabScroll = *parsed;

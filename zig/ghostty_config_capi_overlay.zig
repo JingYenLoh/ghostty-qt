@@ -24,6 +24,7 @@ const maximum_frontend_config_size = 1024 * 1024;
 const frontend_config_keys = std.StaticStringMap(void).initComptime(.{
     .{"single-instance"},
     .{"tabs-location"},
+    .{"window-show-toolbar"},
     .{"wide-tabs"},
     .{"horizontal-tab-scroll"},
     .{"quick-terminal-layer"},

@@ -31,7 +31,7 @@ process, while a fresh launch samples the newest value. An explicit
 
 ## Mixed grammar
 
-Each non-comment line is routed by key ownership. The ten Qt-owned keys below
+Each non-comment line is routed by key ownership. The eleven Qt-owned keys below
 use a strict UTF-8 scalar assignment:
 
 ```text
@@ -68,6 +68,7 @@ For example:
 # Qt application policy
 single-instance = detect
 tabs-location = bottom
+window-show-toolbar = false
 wide-tabs = false
 horizontal-tab-scroll = true
 quick-terminal-layer = overlay
@@ -89,6 +90,7 @@ background-opacity = 0.95
 | --- | --- | --- | --- |
 | `single-instance` | `false`, `true`, `detect` | `detect` | Controls whether an eligible source-less launch participates in the process-wide `org.freedesktop.Application` endpoint. `detect` enables arbitration unless the launching environment advertises `TERM_PROGRAM`. The decision for an already-running process is fixed at startup; a fresh launcher reads the latest file. |
 | `tabs-location` | `top`, `bottom` | `top` | Places the stable Qt toolbar and tab strip above or below the terminal content. A successful reload moves existing windows and becomes the default for future windows without recreating panes or changing window size. |
+| `window-show-toolbar` | `false`, `true` | `true` | Shows the window subtitle and the New Tab, Split, and Close Pane toolbar actions. The checkable **Show Toolbar** item in the toolbar and terminal context menus changes the current window without rewriting this file. A successful configuration reload applies the configured value to existing windows. The tab strip remains independently controlled by Ghostty's `window-show-tab-bar`; when both are hidden, the header collapses completely. |
 | `wide-tabs` | `false`, `true` | `true` | When true, tabs have equal widths and fill the available tab strip; when false, each tab uses its compact content-based width. A successful reload resizes retained tabs without recreating panes. |
 | `horizontal-tab-scroll` | `false`, `true` | `true` | When true, precision horizontal scrolling over a terminal surface accumulates toward a 120-pixel gesture and changes one tab per threshold (`left` selects the next tab and `right` the previous); incomplete gestures reset after 500 milliseconds. When false, precision horizontal input is forwarded to the terminal. Discrete horizontal wheel input is always forwarded as buttons 6/7. |
 | `quick-terminal-layer` | `background`, `bottom`, `top`, `overlay` | `top` | Selects the Wayland layer for the LayerShellQt quick terminal. A successful reload changes the retained native layer surface when the compositor supports layer-shell protocol version 2 or newer. |
