@@ -817,6 +817,31 @@ void GhosttyCliDelegationTest::exercisesPinnedSshTerminfoCache()
         QByteArrayLiteral("Setting up xterm-ghostty")));
     QVERIFY(
         !QFileInfo::exists(cacheDecoy + QStringLiteral("/ghostty/ssh_cache")));
+
+    // The cache key now includes a content-derived terminfo version. A host
+    // entry from an older bundled definition must be refreshed instead of
+    // suppressing the upload indefinitely.
+    auto staleContents = readFile(cachePath);
+    QVERIFY(staleContents.has_value());
+    const qsizetype versionSeparator = staleContents->lastIndexOf('|');
+    const qsizetype lineEnd = staleContents->lastIndexOf('\n');
+    QVERIFY(versionSeparator >= 0);
+    QVERIFY(lineEnd > versionSeparator);
+    staleContents->replace(versionSeparator + 1, lineEnd - versionSeparator - 1,
+                           QByteArrayLiteral("stale-version"));
+    QVERIFY(writeFile(cachePath, *staleContents));
+
+    clearArtifacts();
+    auto refreshed = runSsh();
+    QVERIFY2(refreshed.has_value(),
+             qPrintable(refreshed.has_value() ? QString{} : refreshed.error()));
+    QCOMPARE(refreshed->exitStatus, QProcess::NormalExit);
+    QCOMPARE(refreshed->exitCode, 0);
+    QCOMPARE(readFile(phaseLog),
+             std::optional<QByteArray>("resolve\ninstall\nfinal\n"));
+    const auto refreshedCache = readFile(cachePath);
+    QVERIFY(refreshedCache.has_value());
+    QVERIFY(!refreshedCache->contains(QByteArrayLiteral("stale-version")));
 #endif
 }
 
@@ -1027,7 +1052,11 @@ void GhosttyCliDelegationTest::editConfigUsesPinnedEditorContract()
              QByteArrayLiteral("visual-won"));
     QCOMPARE(preferredReport->standardInput, standardInput);
     QVERIFY(isRegularFile(preferredPath));
-    QCOMPARE(QFileInfo(preferredPath).size(), qint64{0});
+    const auto preferredContents = readFile(preferredPath);
+    QVERIFY(preferredContents.has_value());
+    QVERIFY(preferredContents->startsWith(
+        QByteArrayLiteral("# This is the configuration file for Ghostty.")));
+    QVERIFY(preferredContents->contains(QFile::encodeName(preferredPath)));
 
     const QString legacyHome =
         temporary.filePath(QStringLiteral("legacy config home's files"));
@@ -1105,7 +1134,12 @@ void GhosttyCliDelegationTest::editConfigUsesPinnedEditorContract()
              directMissingEditor->standardOutput);
     QCOMPARE(missingEditor->standardError, directMissingEditor->standardError);
     QVERIFY(isRegularFile(missingEditorPath));
-    QCOMPARE(QFileInfo(missingEditorPath).size(), qint64{0});
+    const auto missingEditorContents = readFile(missingEditorPath);
+    QVERIFY(missingEditorContents.has_value());
+    QVERIFY(missingEditorContents->startsWith(
+        QByteArrayLiteral("# This is the configuration file for Ghostty.")));
+    QVERIFY(
+        missingEditorContents->contains(QFile::encodeName(missingEditorPath)));
 #endif
 }
 

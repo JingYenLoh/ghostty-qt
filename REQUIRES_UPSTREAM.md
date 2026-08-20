@@ -18,7 +18,7 @@ limited to finalized configuration and launch preparation.
 
 Unless a section records a newer comparison, the contracts below were checked
 against official pinned Ghostty commit
-`c54ec80c55a045312f7c97d66b32c8043526f03c` on 2026-08-13.
+`9ae02a326f62bd88f7f5508cf1807c67e7775cb5` on 2026-08-20.
 
 Most items share this landing procedure once an official upstream commit
 provides the contract:
@@ -628,7 +628,8 @@ boundaries, and uses a narrow printable-ASCII RHI batch where one-glyph-per-cell
 placement is proven. This provides useful font, feature, variation, mapping,
 and ligature behavior without claiming Ghostty's authoritative face or glyph
 plan. The affected typography keys remain partial in the parity ledger.
-Implementation and caching details belong in `docs/architecture.md` and
+Implementation and caching details belong in `docs/architecture.md`; future
+optimization candidates and their measurement gates belong in
 `docs/performance.md`.
 
 ### Why ghostty-qt does not copy Ghostty's private font stack
@@ -880,7 +881,7 @@ of its formatter paths can express that clipboard contract:
   `ghostty_terminal_get`, but the public formatter cannot consume them.
 
 This remains verified against the official pinned submodule commit
-`c54ec80c55a045312f7c97d66b32c8043526f03c` on 2026-08-13.
+`9ae02a326f62bd88f7f5508cf1807c67e7775cb5` on 2026-08-20.
 
 ### Why ghostty-qt does not approximate styled copies
 

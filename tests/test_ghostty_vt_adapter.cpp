@@ -161,6 +161,7 @@ private Q_SLOTS:
     void cullsOpaqueKittyGraphicsWithoutDeletingHistory();
     void decodesKittyPngPayloads();
     void respondsToEnquiryWithConfiguredBytes();
+    void reportsInBandSizeChanges();
     void reportsConfiguredColorSchemeAndLiveChanges();
     void appliesConstructionPoliciesToPublicTerminal();
     void observesActiveScreenBottomAnchorChanges();
@@ -1142,6 +1143,43 @@ void GhosttyVtAdapterTest::respondsToEnquiryWithConfiguredBytes()
     adapter->setEnquiryResponse({});
     adapter->writeVt(QByteArray(1, '\x05'));
     QCOMPARE(writes.size(), 2);
+}
+
+void GhosttyVtAdapterTest::reportsInBandSizeChanges()
+{
+    QVector<QByteArray> writes;
+    GhosttyVtAdapter::Options options;
+    options.geometry = {
+        .columns = 80,
+        .rows = 24,
+        .cellWidthPixels = 10,
+        .cellHeightPixels = 20,
+    };
+    auto adapter = GhosttyVtAdapter::create(
+        options, {.writePty = [&writes](QByteArrayView data) {
+            writes.append(data.toByteArray());
+        }});
+    QVERIFY(adapter != nullptr);
+
+    adapter->writeVt(QByteArrayLiteral("\x1b[?2048h"));
+    QCOMPARE(writes,
+             QVector<QByteArray>{QByteArrayLiteral("\x1b[48;24;80;480;800t")});
+
+    writes.clear();
+    GhosttyVtAdapter::Geometry resized = options.geometry;
+    resized.columns = 100;
+    resized.rows = 40;
+    resized.cellWidthPixels = 9;
+    resized.cellHeightPixels = 18;
+    QVERIFY(adapter->resize(resized));
+    QCOMPARE(writes,
+             QVector<QByteArray>{QByteArrayLiteral("\x1b[48;40;100;720;900t")});
+
+    adapter->writeVt(QByteArrayLiteral("\x1b[?2048l"));
+    writes.clear();
+    resized.columns = 90;
+    QVERIFY(adapter->resize(resized));
+    QVERIFY(writes.isEmpty());
 }
 
 void GhosttyVtAdapterTest::reportsConfiguredColorSchemeAndLiveChanges()
@@ -3130,7 +3168,9 @@ void GhosttyVtAdapterTest::encodesUsingTerminalModes()
     releasedA.pressed = false;
     const GhosttyVtAdapter::EncodedKey encodedRelease =
         adapter->encodeKey(releasedA);
-    QVERIFY(!encodedRelease.bytes.isEmpty());
+    // Kitty release events without a representable key sequence must not
+    // replay their fallback text and insert the character a second time.
+    QVERIFY(encodedRelease.bytes.isEmpty());
     QVERIFY(!encodedRelease.modifier);
     QVERIFY(!encodedRelease.escape);
 

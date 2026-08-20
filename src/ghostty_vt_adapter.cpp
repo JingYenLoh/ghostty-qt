@@ -69,6 +69,40 @@ constexpr qsizetype maximumPendingProgressReports = 256;
 constexpr uint32_t kittyUnicodePlaceholder = 0x10eeeeU;
 constexpr int kittyMaximumDecodedImageMegabytes = 400;
 
+bool appendFormatterBytes(void *userdata, const uint8_t *data,
+                          size_t length) noexcept
+{
+    auto *output = static_cast<QByteArray *>(userdata);
+    if (output == nullptr || data == nullptr || length == 0
+        || length > static_cast<size_t>(QByteArray::maxSize())
+        || static_cast<size_t>(output->size())
+            > static_cast<size_t>(QByteArray::maxSize()) - length) {
+        return false;
+    }
+
+    try {
+        output->append(reinterpret_cast<const char *>(data),
+                       static_cast<qsizetype>(length));
+    } catch (...) {
+        return false;
+    }
+    return true;
+}
+
+[[nodiscard]] std::optional<QByteArray>
+formatToByteArray(GhosttyFormatter formatter)
+{
+    QByteArray output;
+    const GhosttyWriter writer{
+        .write = &appendFormatterBytes,
+        .userdata = &output,
+    };
+    if (ghostty_formatter_format(formatter, writer) != GHOSTTY_SUCCESS) {
+        return std::nullopt;
+    }
+    return output;
+}
+
 [[nodiscard]] constexpr bool isUnicodeScalar(uint32_t codepoint) noexcept
 {
     return codepoint <= 0x10ffffU
@@ -1855,31 +1889,13 @@ public:
         const auto formatterCleanup =
             qScopeGuard([formatter] { ghostty_formatter_free(formatter); });
 
-        size_t required = 0;
-        GhosttyResult result =
-            ghostty_formatter_format_buf(formatter, nullptr, 0, &required);
-        if ((result != GHOSTTY_OUT_OF_SPACE && result != GHOSTTY_SUCCESS)
-            || required
-                > static_cast<size_t>(std::numeric_limits<qsizetype>::max())) {
+        auto output = formatToByteArray(formatter);
+        if (!output.has_value()) {
             return withoutBytes(PlainFileSnapshotStatus::Failed);
         }
-        if (required == 0) {
-            return withoutBytes(PlainFileSnapshotStatus::Ready);
-        }
-
-        QByteArray output(static_cast<qsizetype>(required), Qt::Uninitialized);
-        size_t written = 0;
-        result = ghostty_formatter_format_buf(
-            formatter, reinterpret_cast<uint8_t *>(output.data()),
-            static_cast<size_t>(output.size()), &written);
-        if (result != GHOSTTY_SUCCESS
-            || written > static_cast<size_t>(output.size())) {
-            return withoutBytes(PlainFileSnapshotStatus::Failed);
-        }
-        output.resize(static_cast<qsizetype>(written));
         return {
             .status = PlainFileSnapshotStatus::Ready,
-            .bytes = std::move(output),
+            .bytes = std::move(*output),
         };
     }
 
@@ -4253,15 +4269,24 @@ public:
         GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FULL;
         uint16_t columns = 0;
         uint16_t rows = 0;
-        if (ghostty_render_state_get(renderState_,
-                                     GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty)
-                != GHOSTTY_SUCCESS
-            || ghostty_render_state_get(
-                   renderState_, GHOSTTY_RENDER_STATE_DATA_COLS, &columns)
-                != GHOSTTY_SUCCESS
-            || ghostty_render_state_get(renderState_,
-                                        GHOSTTY_RENDER_STATE_DATA_ROWS, &rows)
-                != GHOSTTY_SUCCESS) {
+        GhosttyRenderStateCursor cursor{};
+        cursor.size = sizeof(cursor);
+        constexpr std::array stateFields{
+            GHOSTTY_RENDER_STATE_DATA_DIRTY,
+            GHOSTTY_RENDER_STATE_DATA_COLS,
+            GHOSTTY_RENDER_STATE_DATA_ROWS,
+            GHOSTTY_RENDER_STATE_DATA_CURSOR,
+        };
+        std::array<void *, stateFields.size()> stateValues{
+            &dirty,
+            &columns,
+            &rows,
+            &cursor,
+        };
+        if (ghostty_render_state_get_multi(renderState_, stateFields.size(),
+                                           stateFields.data(),
+                                           stateValues.data(), nullptr)
+            != GHOSTTY_SUCCESS) {
             return RenderResult::Retry;
         }
 
@@ -4280,7 +4305,9 @@ public:
         // global state, including colors, changed. Keep the raw colors needed
         // for partial cell materialization with the last published full frame.
         if (fullFrame) {
-            if (ghostty_render_state_colors_get(renderState_, &refreshedColors)
+            if (ghostty_render_state_get(renderState_,
+                                         GHOSTTY_RENDER_STATE_DATA_COLORS,
+                                         &refreshedColors)
                 != GHOSTTY_SUCCESS) {
                 return RenderResult::Retry;
             }
@@ -4320,56 +4347,17 @@ public:
             metadata.cursorColor = publishedMetadata_.cursorColor;
         }
 
-        if (ghostty_render_state_get(renderState_,
-                                     GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE,
-                                     &metadata.cursorVisible)
-                != GHOSTTY_SUCCESS
-            || ghostty_render_state_get(
-                   renderState_, GHOSTTY_RENDER_STATE_DATA_CURSOR_BLINKING,
-                   &metadata.cursorBlinking)
-                != GHOSTTY_SUCCESS) {
-            return RenderResult::Retry;
-        }
-        bool cursorInViewport = false;
-        if (ghostty_render_state_get(
-                renderState_,
-                GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE,
-                &cursorInViewport)
-            != GHOSTTY_SUCCESS) {
-            return RenderResult::Retry;
-        }
-        metadata.cursorVisible = metadata.cursorVisible && cursorInViewport;
-        uint16_t cursorColumn = 0;
-        uint16_t cursorRow = 0;
-        bool cursorOnWideTail = false;
-        GhosttyRenderStateCursorVisualStyle cursorStyle =
-            GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK;
-        if (cursorInViewport) {
-            if (ghostty_render_state_get(
-                    renderState_, GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X,
-                    &cursorColumn)
-                    != GHOSTTY_SUCCESS
-                || ghostty_render_state_get(
-                       renderState_,
-                       GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y, &cursorRow)
-                    != GHOSTTY_SUCCESS
-                || ghostty_render_state_get(
-                       renderState_,
-                       GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL,
-                       &cursorOnWideTail)
-                    != GHOSTTY_SUCCESS) {
-                return RenderResult::Retry;
-            }
-        }
-        if (ghostty_render_state_get(
-                renderState_, GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE,
-                &cursorStyle)
-            != GHOSTTY_SUCCESS) {
-            return RenderResult::Retry;
-        }
+        const bool cursorInViewport = cursor.viewport_has_value;
+        metadata.cursorVisible = cursor.visible && cursorInViewport;
+        metadata.cursorBlinking = cursor.blinking;
+        const uint16_t cursorColumn =
+            cursorInViewport ? cursor.viewport_x : uint16_t{};
+        const uint16_t cursorRow =
+            cursorInViewport ? cursor.viewport_y : uint16_t{};
+        const bool cursorOnWideTail = cursorInViewport && cursor.wide_tail;
         metadata.cursorColumn = static_cast<int>(cursorColumn);
         metadata.cursorRow = static_cast<int>(cursorRow);
-        metadata.cursorStyle = static_cast<int>(cursorStyle);
+        metadata.cursorStyle = static_cast<int>(cursor.visual_style);
         if (metadata.cursorVisible && cursorOnWideTail
             && metadata.cursorColumn > 0) {
             --metadata.cursorColumn;
@@ -4404,8 +4392,16 @@ public:
             && !cursorOnWideTail && metadata.cursorColumn >= 0
             && metadata.cursorColumn < metadata.columns
             && metadata.cursorRow >= 0 && metadata.cursorRow < metadata.rows;
-        const bool visitRows = fullFrame
-            || dirty == GHOSTTY_RENDER_STATE_DIRTY_PARTIAL || inspectCursorCell;
+        bool cursorCellResolved = !inspectCursorCell;
+        if (inspectCursorCell && hasPublishedFrame_
+            && publishedMetadata_.cursorVisible
+            && metadata.cursorColumn == publishedMetadata_.cursorColumn
+            && metadata.cursorRow == publishedMetadata_.cursorRow) {
+            metadata.cursorColumnSpan = publishedMetadata_.cursorColumnSpan;
+            cursorCellResolved = true;
+        }
+
+        const bool visitRows = dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE;
         if (visitRows) {
             if (ghostty_render_state_get(renderState_,
                                          GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR,
@@ -4414,32 +4410,25 @@ public:
                 return RenderResult::Retry;
             }
 
-            int rowIndex = 0;
-            while (rowIndex < metadata.rows
-                   && ghostty_render_state_row_iterator_next(rowIterator_)) {
-                bool rowDirty = false;
-                if (ghostty_render_state_row_get(
-                        rowIterator_, GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY,
-                        &rowDirty)
-                    != GHOSTTY_SUCCESS) {
+            int previousRow = -1;
+            uint16_t rowY = 0;
+            while (ghostty_render_state_row_iterator_next_dirty(rowIterator_,
+                                                                &rowY)) {
+                const int rowIndex = static_cast<int>(rowY);
+                if (rowIndex <= previousRow || rowIndex >= metadata.rows) {
                     return RenderResult::Retry;
                 }
-                const bool copyRow = fullFrame || rowDirty;
+                previousRow = rowIndex;
                 const bool cursorRowNeedsInspection =
                     inspectCursorCell && rowIndex == metadata.cursorRow;
-                if (!copyRow && !cursorRowNeedsInspection) {
-                    ++rowIndex;
-                    continue;
-                }
 
                 GhosttyRenderStateRowSelection rowSelection{};
                 rowSelection.size = sizeof(rowSelection);
-                const bool hasSelection = copyRow
-                    && ghostty_render_state_row_get(
-                           rowIterator_,
-                           GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION,
-                           &rowSelection)
-                        == GHOSTTY_SUCCESS;
+                const bool hasSelection =
+                    ghostty_render_state_row_get(
+                        rowIterator_, GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION,
+                        &rowSelection)
+                    == GHOSTTY_SUCCESS;
                 if (ghostty_render_state_row_get(
                         rowIterator_, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
                         &rowCells_)
@@ -4449,50 +4438,24 @@ public:
 
                 TerminalRowUpdate rowUpdate;
                 rowUpdate.row = rowIndex;
-                if (copyRow) {
-                    rowUpdate.cells.resize(metadata.columns);
-                    GhosttyRow rawRow = 0;
-                    GhosttyRowSemanticPrompt semanticPrompt =
-                        GHOSTTY_ROW_SEMANTIC_NONE;
-                    if (ghostty_render_state_row_get(
-                            rowIterator_, GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
-                            &rawRow)
-                            != GHOSTTY_SUCCESS
-                        || ghostty_row_get(rawRow,
-                                           GHOSTTY_ROW_DATA_SEMANTIC_PROMPT,
-                                           &semanticPrompt)
-                            != GHOSTTY_SUCCESS) {
-                        return RenderResult::Retry;
-                    }
-                    rowUpdate.presentation.paddingExtensionSafe =
-                        semanticPrompt == GHOSTTY_ROW_SEMANTIC_NONE;
+                rowUpdate.cells.resize(metadata.columns);
+                GhosttyRow rawRow = 0;
+                GhosttyRowSemanticPrompt semanticPrompt =
+                    GHOSTTY_ROW_SEMANTIC_NONE;
+                if (ghostty_render_state_row_get(
+                        rowIterator_, GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
+                        &rawRow)
+                        != GHOSTTY_SUCCESS
+                    || ghostty_row_get(rawRow, GHOSTTY_ROW_DATA_SEMANTIC_PROMPT,
+                                       &semanticPrompt)
+                        != GHOSTTY_SUCCESS) {
+                    return RenderResult::Retry;
                 }
+                rowUpdate.presentation.paddingExtensionSafe =
+                    semanticPrompt == GHOSTTY_ROW_SEMANTIC_NONE;
                 int columnIndex = 0;
                 while (columnIndex < metadata.columns
                        && ghostty_render_state_row_cells_next(rowCells_)) {
-                    if (!copyRow) {
-                        if (columnIndex != metadata.cursorColumn) {
-                            ++columnIndex;
-                            continue;
-                        }
-                        GhosttyCell rawCell = 0;
-                        GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
-                        if (ghostty_render_state_row_cells_get(
-                                rowCells_,
-                                GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
-                                &rawCell)
-                                != GHOSTTY_SUCCESS
-                            || ghostty_cell_get(rawCell, GHOSTTY_CELL_DATA_WIDE,
-                                                &wide)
-                                != GHOSTTY_SUCCESS) {
-                            return RenderResult::Retry;
-                        }
-                        metadata.cursorColumnSpan =
-                            wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : 1;
-                        columnIndex = metadata.columns;
-                        break;
-                    }
-
                     GhosttyCell rawCell = 0;
                     GhosttyStyle style{};
                     style.size = sizeof(style);
@@ -4542,6 +4505,7 @@ public:
                         && columnIndex == metadata.cursorColumn) {
                         metadata.cursorColumnSpan =
                             wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : 1;
+                        cursorCellResolved = true;
                     }
 
                     TerminalCell &cell = rowUpdate.cells[columnIndex];
@@ -4717,12 +4681,62 @@ public:
                 if (columnIndex != metadata.columns) {
                     return RenderResult::Retry;
                 }
-                if (copyRow) {
-                    update.dirtyRows.append(std::move(rowUpdate));
-                }
-                ++rowIndex;
+                update.dirtyRows.append(std::move(rowUpdate));
             }
-            if (rowIndex != metadata.rows) {
+            if (fullFrame && update.dirtyRows.size() != metadata.rows) {
+                return RenderResult::Retry;
+            }
+        }
+
+        // Cursor shape depends on the leading cell width. Reuse the prior
+        // result while the cursor stays put; if it moved without its row being
+        // dirty, perform one targeted contiguous lookup as a correctness
+        // fallback. Ordinary partial frames never scan clean rows.
+        if (!cursorCellResolved) {
+            if (ghostty_render_state_get(renderState_,
+                                         GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR,
+                                         &rowIterator_)
+                != GHOSTTY_SUCCESS) {
+                return RenderResult::Retry;
+            }
+            for (int rowIndex = 0; rowIndex <= metadata.cursorRow; ++rowIndex) {
+                if (!ghostty_render_state_row_iterator_next(rowIterator_)) {
+                    return RenderResult::Retry;
+                }
+                if (rowIndex != metadata.cursorRow) {
+                    continue;
+                }
+                if (ghostty_render_state_row_get(
+                        rowIterator_, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
+                        &rowCells_)
+                    != GHOSTTY_SUCCESS) {
+                    return RenderResult::Retry;
+                }
+                for (int columnIndex = 0; columnIndex <= metadata.cursorColumn;
+                     ++columnIndex) {
+                    if (!ghostty_render_state_row_cells_next(rowCells_)) {
+                        return RenderResult::Retry;
+                    }
+                    if (columnIndex != metadata.cursorColumn) {
+                        continue;
+                    }
+                    GhosttyCell rawCell = 0;
+                    GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
+                    if (ghostty_render_state_row_cells_get(
+                            rowCells_, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
+                            &rawCell)
+                            != GHOSTTY_SUCCESS
+                        || ghostty_cell_get(rawCell, GHOSTTY_CELL_DATA_WIDE,
+                                            &wide)
+                            != GHOSTTY_SUCCESS) {
+                        return RenderResult::Retry;
+                    }
+                    metadata.cursorColumnSpan =
+                        wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : 1;
+                    cursorCellResolved = true;
+                }
+            }
+            if (!cursorCellResolved) {
                 return RenderResult::Retry;
             }
         }
@@ -4771,49 +4785,7 @@ public:
             update.kittyGraphics = *kittySnapshot;
         }
 
-        const auto setRowsDirty =
-            [this](const QVector<TerminalRowUpdate> &rowUpdates, bool value) {
-                if (rowUpdates.isEmpty()) {
-                    return true;
-                }
-                if (ghostty_render_state_get(
-                        renderState_, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR,
-                        &rowIterator_)
-                    != GHOSTTY_SUCCESS) {
-                    return false;
-                }
-                qsizetype target = 0;
-                int rowIndex = 0;
-                while (
-                    target < rowUpdates.size()
-                    && ghostty_render_state_row_iterator_next(rowIterator_)) {
-                    if (rowIndex == rowUpdates.at(target).row) {
-                        if (ghostty_render_state_row_set(
-                                rowIterator_,
-                                GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY, &value)
-                            != GHOSTTY_SUCCESS) {
-                            return false;
-                        }
-                        ++target;
-                    }
-                    ++rowIndex;
-                }
-                return target == rowUpdates.size();
-            };
-
-        const bool clean = false;
-        if (!setRowsDirty(update.dirtyRows, clean)) {
-            const bool dirtyRow = true;
-            setRowsDirty(update.dirtyRows, dirtyRow);
-            return RenderResult::Retry;
-        }
-        const GhosttyRenderStateDirty cleanState =
-            GHOSTTY_RENDER_STATE_DIRTY_FALSE;
-        if (ghostty_render_state_set(
-                renderState_, GHOSTTY_RENDER_STATE_OPTION_DIRTY, &cleanState)
-            != GHOSTTY_SUCCESS) {
-            const bool dirtyRow = true;
-            setRowsDirty(update.dirtyRows, dirtyRow);
+        if (ghostty_render_state_clean(renderState_) != GHOSTTY_SUCCESS) {
             return RenderResult::Retry;
         }
 

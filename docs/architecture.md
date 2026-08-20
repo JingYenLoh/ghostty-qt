@@ -296,7 +296,7 @@ remain attached through the exit clock and one bounded final-frame grace. Pane,
 tab, and whole-window close all use the same path; unsupported or inactive
 rendering fails open to immediate structural removal.
 
-Renderer measurement and qualification are documented in
+Future renderer experiments and their qualification gates are documented in
 [Performance](performance.md).
 
 ## Input
@@ -558,6 +558,6 @@ OpenGL/Vulkan tests and the renderer qualification tools cover the RHI path;
 final compositor behavior remains a host-level validation boundary.
 
 Run and filter tests using the workflows in
-[Development and CI](development.md). Performance invariants, benchmarks, and
-RenderDoc qualification are documented separately in
+[Development and CI](development.md). Future performance experiments and their
+benchmark and GPU-qualification entry points are documented separately in
 [Performance](performance.md).

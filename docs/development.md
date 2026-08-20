@@ -132,10 +132,9 @@ before committing. For Python maintenance, use Ruff rather than Black.
 
 ## Performance work
 
-Performance targets are opt-in and excluded from CTest. Their build commands,
-benchmark selection, renderer qualification, RenderDoc capture, comparison
-policy, and measured optimization backlog are in
-[Performance](performance.md).
+Performance targets are opt-in and excluded from CTest. Future optimization
+candidates and the benchmark, renderer-qualification, and profiling entry
+points required to evaluate them are in [Performance](performance.md).
 
 ## Configuration-helper boundary
 

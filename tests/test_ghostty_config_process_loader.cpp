@@ -251,6 +251,7 @@ private Q_SLOTS:
     void realHelperExportsShellIntegration();
     void realHelperExportsEnvironment();
     void realHelperExportsCommands();
+    void realHelperExportsHexEscapedInputBytes();
     void realHelperExportsAbnormalCommandExitRuntime();
     void realHelperExportsScrollbackCompression();
     void realHelperExportsDesktopNotifications();
@@ -2255,6 +2256,31 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsCommands()
     QVERIFY(result->values.ordinaryCommand->defaultShell);
     QVERIFY(!result->values.initialCommand.has_value());
     QVERIFY(!result->values.waitAfterCommand);
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsHexEscapedInputBytes()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral(
+            R"(input = raw:\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\x00\xff
+)"));
+
+    const auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.initialInput.size(), qsizetype{1});
+    const auto *raw = std::get_if<TerminalInitialInputs::Raw>(
+        &result->values.initialInput.constFirst());
+    QVERIFY(raw != nullptr);
+    QCOMPARE(raw->bytes, QByteArray::fromHex("e697a5e69cace8aa9e00ff"));
 }
 
 void GhosttyConfigProcessLoaderTest::

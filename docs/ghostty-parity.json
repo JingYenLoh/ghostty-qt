@@ -603,7 +603,7 @@
         },
         "input": {
           "status": "supported",
-          "note": "The strict helper exports Ghostty's finalized ordered raw/path variants as lossless byte arrays. Before creating launch pipes or forking, SessionWorker resolves every path relative to the frontend process working directory, requires a regular readable file, and reads at most the exact 10 MiB limit; any failure aborts the entire pane without a child or cgroup move. Distinct chunks retain source order and are queued before started is published, so later GUI input cannot overtake them. Reload affects only subsequently constructed panes, including leaving an already deferred pane's immutable launch snapshot unchanged."
+          "note": "The strict helper exports Ghostty's finalized ordered raw/path variants as lossless byte arrays. Zig-style hex escapes preserve their exact byte values, including multi-byte UTF-8, NUL, and non-UTF-8 bytes, while Unicode escapes retain codepoint semantics. Before creating launch pipes or forking, SessionWorker resolves every path relative to the frontend process working directory, requires a regular readable file, and reads at most the exact 10 MiB limit; any failure aborts the entire pane without a child or cgroup move. Distinct chunks retain source order and are queued before started is published, so later GUI input cannot overtake them. Reload affects only subsequently constructed panes, including leaving an already deferred pane's immutable launch snapshot unchanged."
         },
         "initial-command": {
           "status": "supported",
@@ -620,7 +620,7 @@
         },
         "keybind": {
           "status": "partial",
-          "note": "A private versioned export carries Ghostty's finalized root and named-table bindings. Per-surface table stacks, shared-prefix sequences, physical/Unicode/catch-all triggers, chains, local flags, stage-time VT encoding, invalid replay, application-wide all/global dispatch, and Linux XDG portal registration are implemented for the supported action subset. XKB-resolved semantic keypad identities keep NumLock-off navigation distinct from the numeric identities at the same hardware locations, including canonical/W3C and legacy kp_* trigger spellings. Qt preedit composition is snapshotted across root and pane dispatch plus deferred replay; active-composition non-modifier keys bypass binding tries and carry Ghostty's composing flag, preventing duplicate legacy/Kitty bytes while retaining modifier reporting and delivering the later IME commit once. Selection-dependent copy, search, endpoint adjustment, and viewport movement use correlated worker-authoritative performability across separate input events; local and broad chains wait for ordered GUI effects before continuing. Portal registration intentionally matches the pinned GTK frontend's root/direct/single-action restriction."
+          "note": "A private versioned export carries Ghostty's finalized root and named-table bindings. Per-surface table stacks, shared-prefix sequences, physical/Unicode/catch-all triggers, chains, local flags, stage-time VT encoding, invalid replay, application-wide all/global dispatch, and Linux XDG portal registration are implemented for the supported action subset. XKB-resolved semantic keypad identities keep NumLock-off navigation distinct from the numeric identities at the same hardware locations, including canonical/W3C and legacy kp_* trigger spellings. Qt preedit composition is snapshotted across root and pane dispatch plus deferred replay; active-composition non-modifier keys bypass binding tries and carry Ghostty's composing flag, preventing duplicate legacy/Kitty bytes while retaining modifier reporting and delivering the later IME commit once. Kitty release events never replay otherwise-unrepresentable fallback text. Selection-dependent copy, search, endpoint adjustment, and viewport movement use correlated worker-authoritative performability across separate input events; local and broad chains wait for ordered GUI effects before continuing. Portal registration intentionally matches the pinned GTK frontend's root/direct/single-action restriction."
         },
         "link": {
           "status": "blocked_upstream",
@@ -1656,7 +1656,7 @@
         },
         "edit-config": {
           "status": "supported",
-          "note": "Delegates the pinned Linux implementation before Qt starts: standard config loading and preferred-file creation, non-empty VISUAL then EDITOR selection, preferred/non-empty legacy path choice, shell-escaped path construction, /bin/sh replacement, raw streams, and editor exit status are preserved. The pinned implementation currently leaves a newly created file empty despite its template-writing intent. This is distinct from the GUI open_config action."
+          "note": "Delegates the pinned Linux implementation before Qt starts: standard config loading and preferred-file creation with the flushed path-specific configuration template, non-empty VISUAL then EDITOR selection, preferred/non-empty legacy path choice, shell-escaped path construction, /bin/sh replacement, raw streams, and editor exit status are preserved. This is distinct from the GUI open_config action."
         },
         "explain-config": {
           "status": "supported",
@@ -1708,11 +1708,11 @@
         },
         "ssh": {
           "status": "supported",
-          "note": "Delegates the pinned +ssh wrapper through the relocatable embedded-runtime helper before Qt starts. Ghostty owns wrapper-option parsing, destination resolution, exact wrapped-SSH arguments and streams, TERM and SendEnv forwarding, encoded xterm-ghostty installation and fallback, standard XDG-state cache integration, and child exit or signal-status mapping. Tests cover the action boundary, binary streams, environment and cwd inheritance, arbitrary exit and signal status, install failure, successful upload, cache write, and cached install suppression without network access. Automatic Bash, Elvish, Fish, Nushell, and Zsh wrappers invoke this same action through the staged shell-integration resources."
+          "note": "Delegates the pinned +ssh wrapper through the relocatable embedded-runtime helper before Qt starts. Ghostty owns wrapper-option parsing, destination resolution, exact wrapped-SSH arguments and streams, TERM and SendEnv forwarding, direct installation of the embedded xterm-ghostty definition and fallback, versioned standard XDG-state cache integration, and child exit or signal-status mapping. A cache hit is valid only for the content-derived bundled terminfo version, so an upstream definition change refreshes the remote entry. Tests cover the action boundary, binary streams, environment and cwd inheritance, arbitrary exit and signal status, install failure, successful upload, cache write, matching-version suppression, and stale-version reinstall without network access. Automatic Bash, Elvish, Fish, Nushell, and Zsh wrappers invoke this same action through the staged shell-integration resources."
         },
         "ssh-cache": {
           "status": "supported",
-          "note": "Delegates the pinned +ssh-cache manager through the relocatable embedded-runtime helper before Qt starts. Ghostty owns the standard XDG-state path, list, exact and bare-host query, add/update, remove, prune, and clear grammar, validation, 0600 repair, atomic on-disk updates, streams, and exit status. Tests use an isolated repository-local state directory; no Qt cache namespace or frontend reimplementation is introduced."
+          "note": "Delegates the pinned +ssh-cache manager through the relocatable embedded-runtime helper before Qt starts. Ghostty owns the standard XDG-state path, content-derived terminfo version field, list, exact and bare-host query, add/update, remove, prune, and clear grammar, validation, 0600 repair, atomic on-disk updates, streams, and exit status. Tests use an isolated repository-local state directory; no Qt cache namespace or frontend reimplementation is introduced."
         },
         "toggle-quick-terminal": {
           "status": "supported",

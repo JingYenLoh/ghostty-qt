@@ -73,7 +73,7 @@ for the intentional upgrade procedure.
 
 Exact upstream contracts and acceptance criteria live in
 [Features requiring upstream Ghostty APIs](../REQUIRES_UPSTREAM.md).
-Renderer state, benchmarks, and optimization work are summarized in
+Future optimization candidates and their measurement gates are tracked in
 [Performance](performance.md).
 
 ## Scope exclusions
