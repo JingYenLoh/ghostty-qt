@@ -3,3 +3,6 @@
 
 # 2026-08-13: Format repository sources
 a5df1e4cfeee464780cbb0292e97589512af755f
+
+# 2026-08-23: Reorganize C++ sources by domain
+3b085ba927cac22423ab37dcb85c40d18936376f
