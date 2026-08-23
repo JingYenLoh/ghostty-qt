@@ -413,6 +413,7 @@ void GhosttyShellIntegrationTest::reportsHelperProcessFailures()
     QVERIFY(
         writeExecutableScript(failingHelper,
                               QByteArrayLiteral("#!/bin/sh\n"
+                                                "IFS= read -r request || :\n"
                                                 "printf 'fixture failure' >&2\n"
                                                 "exit 7\n")));
     auto failed = prepareGhosttyShellIntegration(
