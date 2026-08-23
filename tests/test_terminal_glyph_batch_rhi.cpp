@@ -1,4 +1,4 @@
-#include "terminal_glyph_batch.h"
+#include "terminal/rendering/terminal_glyph_batch.h"
 
 #include <QGuiApplication>
 #include <QImage>

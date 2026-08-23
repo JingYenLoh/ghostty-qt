@@ -1,4 +1,4 @@
-#include "ghostty_global_shortcut_portal.h"
+#include "desktop/ghostty_global_shortcut_portal.h"
 #include "private_session_bus.h"
 
 #include <QDBusArgument>

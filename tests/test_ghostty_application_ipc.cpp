@@ -1,4 +1,4 @@
-#include "ghostty_application_ipc.h"
+#include "app/ghostty_application_ipc.h"
 #include "private_session_bus.h"
 
 #include <QDBusMessage>

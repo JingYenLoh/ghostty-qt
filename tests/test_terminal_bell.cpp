@@ -1,4 +1,4 @@
-#include "terminal_bell.h"
+#include "terminal/core/terminal_bell.h"
 
 #include <QList>
 #include <QStringList>

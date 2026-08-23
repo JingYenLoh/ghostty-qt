@@ -1,4 +1,4 @@
-#include "initial_session_coordinator.h"
+#include "session/initial_session_coordinator.h"
 
 #include <QSignalSpy>
 #include <QTest>

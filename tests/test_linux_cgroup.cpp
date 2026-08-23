@@ -1,4 +1,4 @@
-#include "linux_cgroup.h"
+#include "desktop/linux_cgroup.h"
 #include "private_session_bus.h"
 
 #include <QDBusArgument>

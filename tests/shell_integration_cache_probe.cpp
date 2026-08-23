@@ -1,4 +1,4 @@
-#include "ghostty_shell_integration_p.h"
+#include "session/ghostty_shell_integration_p.h"
 
 #include <QCoreApplication>
 #include <QDebug>

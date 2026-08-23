@@ -1,4 +1,4 @@
-#include "quick_terminal.h"
+#include "desktop/quick_terminal.h"
 
 #include <QTest>
 

@@ -1,4 +1,4 @@
-#include "terminal_glyph_plan.h"
+#include "terminal/core/terminal_glyph_plan.h"
 
 #include <QFontDatabase>
 #include <QGlyphRun>

@@ -1,4 +1,4 @@
-#include "desktop_quick_controls_style.h"
+#include "desktop/desktop_quick_controls_style.h"
 
 #include <QCoreApplication>
 #include <QDir>

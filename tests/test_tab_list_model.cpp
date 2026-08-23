@@ -1,4 +1,4 @@
-#include "tab_list_model.h"
+#include "workspace/tab_list_model.h"
 
 #include <QSignalSpy>
 #include <QTest>

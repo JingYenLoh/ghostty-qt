@@ -1,4 +1,4 @@
-#include "renderer_graphics_library_manifest.h"
+#include "terminal/rendering/renderer_graphics_library_manifest.h"
 
 #include <QCryptographicHash>
 #include <QDir>

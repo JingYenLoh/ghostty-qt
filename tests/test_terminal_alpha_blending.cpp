@@ -1,6 +1,6 @@
-#include "terminal_alpha_blending.h"
-#include "terminal_custom_shader_compiler.h"
-#include "terminal_custom_shader_qsg.h"
+#include "terminal/rendering/terminal_alpha_blending.h"
+#include "terminal/rendering/terminal_custom_shader_compiler.h"
+#include "terminal/rendering/terminal_custom_shader_qsg.h"
 
 #include <QTest>
 #include <rhi/qshader.h>

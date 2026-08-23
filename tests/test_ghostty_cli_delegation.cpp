@@ -1,4 +1,4 @@
-#include "ghostty_cli_delegation.h"
+#include "app/ghostty_cli_delegation.h"
 
 #include <QByteArrayView>
 #include <QDir>

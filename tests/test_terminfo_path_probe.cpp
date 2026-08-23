@@ -1,4 +1,4 @@
-#include "terminfo_paths.h"
+#include "session/terminfo_paths.h"
 
 #include <QCoreApplication>
 #include <QTextStream>

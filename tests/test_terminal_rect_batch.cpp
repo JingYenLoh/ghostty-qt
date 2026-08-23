@@ -1,4 +1,4 @@
-#include "terminal_rect_batch.h"
+#include "terminal/rendering/terminal_rect_batch.h"
 
 #include <QSGGeometry>
 #include <QSGGeometryNode>

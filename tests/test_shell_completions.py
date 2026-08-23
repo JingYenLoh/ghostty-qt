@@ -95,7 +95,9 @@ class ShellCompletionTest(unittest.TestCase):
         run([sys.executable, str(GENERATOR), "--check"])
 
     def test_actions_match_frontend_catalog_and_parity_manifest(self) -> None:
-        header = (ROOT / "src" / "ghostty_cli_delegation.h").read_text(encoding="utf-8")
+        header = (ROOT / "src" / "app" / "ghostty_cli_delegation.h").read_text(
+            encoding="utf-8"
+        )
         catalog = re.findall(r'\{"(\+[a-z0-9-]+)"\s*,', header)
         spec_actions = [action["name"] for action in self.spec["actions"]]
         self.assertEqual(catalog, spec_actions)
@@ -136,7 +138,9 @@ class ShellCompletionTest(unittest.TestCase):
             self.assertEqual(expected, actual, action["name"])
 
     def test_top_level_options_match_public_frontend_parser(self) -> None:
-        source = (ROOT / "src" / "launch_options.cpp").read_text(encoding="utf-8")
+        source = (ROOT / "src" / "app" / "launch_options.cpp").read_text(
+            encoding="utf-8"
+        )
         constructors = re.findall(
             r"(?:const\s+)?QCommandLineOption\s+(\w+)\s*\(\s*"
             r"(\{[^}]+\}|QStringLiteral\(\"[^\"]+\"\))\s*,",

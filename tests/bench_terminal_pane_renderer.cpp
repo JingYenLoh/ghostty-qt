@@ -1,11 +1,11 @@
-#include "launch_options.h"
+#include "app/launch_options.h"
 #include "renderdoc_capture.h"
-#include "terminal_cell_metrics.h"
-#include "terminal_controller.h"
-#include "terminal_kitty_graphics.h"
-#include "terminal_pane.h"
-#include "terminal_pane_render_probe_p.h"
-#include "terminal_types.h"
+#include "session/terminal_controller.h"
+#include "terminal/core/terminal_cell_metrics.h"
+#include "terminal/model/terminal_types.h"
+#include "terminal/rendering/terminal_kitty_graphics.h"
+#include "workspace/terminal_pane.h"
+#include "workspace/terminal_pane_render_probe_p.h"
 
 #include <QCommandLineOption>
 #include <QCommandLineParser>

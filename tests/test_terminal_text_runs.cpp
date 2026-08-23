@@ -1,5 +1,5 @@
-#include "terminal_text_grid_fit.h"
-#include "terminal_text_runs.h"
+#include "terminal/core/terminal_text_grid_fit.h"
+#include "terminal/core/terminal_text_runs.h"
 
 #include <QFontDatabase>
 #include <QGlyphRun>

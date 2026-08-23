@@ -1,5 +1,5 @@
-#include "terminal_alpha_blending.h"
-#include "terminal_backdrop_p.h"
+#include "terminal/rendering/terminal_alpha_blending.h"
+#include "terminal/rendering/terminal_backdrop_p.h"
 
 #include <QCommandLineOption>
 #include <QCommandLineParser>

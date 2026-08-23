@@ -1,5 +1,5 @@
-#include "tab_list_model.h"
-#include "workspace_action.h"
+#include "workspace/tab_list_model.h"
+#include "workspace/workspace_action.h"
 
 #include <QTest>
 

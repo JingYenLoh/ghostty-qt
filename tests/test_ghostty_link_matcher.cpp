@@ -1,4 +1,4 @@
-#include "ghostty_link_matcher.h"
+#include "session/ghostty_link_matcher.h"
 
 #include <QTest>
 
@@ -43,8 +43,8 @@ void GhosttyLinkMatcherTest::matchesGhosttySchemesAndPaths()
 void GhosttyLinkMatcherTest::locatesSuccessiveMatchesByUtf8ByteOffset()
 {
     GhosttyLinkMatcher matcher;
-    const QByteArray input =
-        QByteArray::fromStdString("π https://example.com 与 ./src/main.cpp");
+    const QByteArray input = QByteArray::fromStdString(
+        "π https://example.com 与 ./src/app/main.cpp");
 
     const qsizetype urlByte = input.indexOf("example") + 2;
     GhosttyLinkMatch match;
@@ -57,7 +57,7 @@ void GhosttyLinkMatcherTest::locatesSuccessiveMatchesByUtf8ByteOffset()
     QCOMPARE(matcher.matchAt(input, pathByte, &match),
              GhosttyLinkMatchResult::Match);
     QCOMPARE(input.sliced(match.beginByte, match.endByte - match.beginByte),
-             QByteArray("./src/main.cpp"));
+             QByteArray("./src/app/main.cpp"));
 
     QCOMPARE(matcher.matchAt(input, 0, &match),
              GhosttyLinkMatchResult::NoMatch);

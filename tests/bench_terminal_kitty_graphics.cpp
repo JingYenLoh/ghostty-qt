@@ -1,5 +1,5 @@
-#include "ghostty_vt_adapter.h"
-#include "terminal_kitty_image_materialization.h"
+#include "terminal/adapter/ghostty_vt_adapter.h"
+#include "terminal/adapter/terminal_kitty_image_materialization.h"
 
 #include <QByteArray>
 #include <QByteArrayView>

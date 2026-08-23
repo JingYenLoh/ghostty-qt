@@ -1,13 +1,13 @@
-#include "ghostty_application_keybindings.h"
-#include "initial_session_coordinator.h"
-#include "launch_options.h"
-#include "terminal_cell_metrics.h"
-#include "terminal_controller.h"
-#include "terminal_geometry.h"
-#include "terminal_pane.h"
-#include "terminal_pane_render_probe_p.h"
-#include "terminal_typography.h"
-#include "terminal_workspace.h"
+#include "app/launch_options.h"
+#include "input/ghostty_application_keybindings.h"
+#include "session/initial_session_coordinator.h"
+#include "session/terminal_controller.h"
+#include "terminal/core/terminal_cell_metrics.h"
+#include "terminal/core/terminal_geometry.h"
+#include "terminal/model/terminal_typography.h"
+#include "workspace/terminal_pane.h"
+#include "workspace/terminal_pane_render_probe_p.h"
+#include "workspace/terminal_workspace.h"
 
 #include <QAccessible>
 #include <QClipboard>

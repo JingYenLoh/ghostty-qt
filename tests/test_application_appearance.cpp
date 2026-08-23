@@ -1,4 +1,4 @@
-#include "application_appearance.h"
+#include "app/application_appearance.h"
 
 #include <QTest>
 

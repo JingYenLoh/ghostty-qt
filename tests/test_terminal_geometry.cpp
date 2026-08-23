@@ -1,4 +1,4 @@
-#include "terminal_geometry.h"
+#include "terminal/core/terminal_geometry.h"
 
 #include <QTest>
 

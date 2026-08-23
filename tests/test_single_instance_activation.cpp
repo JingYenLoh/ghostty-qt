@@ -1,6 +1,6 @@
-#include "ghostty_application_ipc.h"
+#include "app/ghostty_application_ipc.h"
+#include "desktop/single_instance_activation.h"
 #include "private_session_bus.h"
-#include "single_instance_activation.h"
 
 #include <QDBusContext>
 #include <QDBusError>

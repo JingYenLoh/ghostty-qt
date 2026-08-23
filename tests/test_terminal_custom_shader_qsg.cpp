@@ -1,6 +1,6 @@
-#include "terminal_custom_shader_compiler.h"
-#include "terminal_custom_shader_pipeline.h"
-#include "terminal_custom_shader_qsg.h"
+#include "terminal/rendering/terminal_custom_shader_compiler.h"
+#include "terminal/rendering/terminal_custom_shader_pipeline.h"
+#include "terminal/rendering/terminal_custom_shader_qsg.h"
 
 #include <QDir>
 #include <QFile>

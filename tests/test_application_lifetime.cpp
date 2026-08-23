@@ -1,4 +1,4 @@
-#include "application_lifetime.h"
+#include "app/application_lifetime.h"
 
 #include <QGuiApplication>
 #include <QSignalSpy>

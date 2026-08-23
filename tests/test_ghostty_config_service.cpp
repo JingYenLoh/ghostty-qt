@@ -1,4 +1,4 @@
-#include "ghostty_config_service.h"
+#include "config/ghostty_config_service.h"
 
 #include "ghostty_config_snapshot_fixture.h"
 

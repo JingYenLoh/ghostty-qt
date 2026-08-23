@@ -1,4 +1,4 @@
-#include "terminal_inspector_event_model.h"
+#include "terminal/inspector/terminal_inspector_event_model.h"
 
 #include <QAbstractItemModelTester>
 #include <QSignalSpy>

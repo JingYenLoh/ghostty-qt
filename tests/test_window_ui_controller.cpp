@@ -1,4 +1,4 @@
-#include "window_ui_controller.h"
+#include "workspace/window_ui_controller.h"
 
 #include <QAbstractItemModel>
 #include <QSignalSpy>

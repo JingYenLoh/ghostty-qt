@@ -1,4 +1,4 @@
-#include "ghostty_vt_adapter.h"
+#include "terminal/adapter/ghostty_vt_adapter.h"
 
 #include <QByteArray>
 #include <QCommandLineOption>

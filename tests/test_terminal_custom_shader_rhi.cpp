@@ -1,7 +1,7 @@
-#include "terminal_custom_shader_compiler.h"
-#include "terminal_custom_shader_pipeline.h"
-#include "terminal_custom_shader_qsg.h"
-#include "terminal_rect_batch.h"
+#include "terminal/rendering/terminal_custom_shader_compiler.h"
+#include "terminal/rendering/terminal_custom_shader_pipeline.h"
+#include "terminal/rendering/terminal_custom_shader_qsg.h"
+#include "terminal/rendering/terminal_rect_batch.h"
 
 #include <QColor>
 #include <QDir>

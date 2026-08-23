@@ -1,5 +1,5 @@
-#include "terminal_kitty_graphics.h"
-#include "terminal_kitty_graphics_qsg.h"
+#include "terminal/rendering/terminal_kitty_graphics.h"
+#include "terminal/rendering/terminal_kitty_graphics_qsg.h"
 
 #include <QFile>
 #include <QTest>

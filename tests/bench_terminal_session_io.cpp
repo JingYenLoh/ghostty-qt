@@ -1,4 +1,4 @@
-#include "session_worker.h"
+#include "session/session_worker.h"
 
 #include <QCommandLineOption>
 #include <QCommandLineParser>

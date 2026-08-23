@@ -1,0 +1,823 @@
+#pragma once
+
+#include "app/application_action.h"
+#include "app/launch_options.h"
+#include "input/ghostty_keybind_set.h"
+#include "input/key_event_snapshot.h"
+#include "input/keyboard_layout.h"
+#include "input/modifier_remap.h"
+#include "support/revision_counter.h"
+#include "terminal/core/terminal_bell.h"
+#include "terminal/core/terminal_cell_metrics.h"
+#include "terminal/core/terminal_geometry.h"
+#include "terminal/inspector/terminal_inspector_model.h"
+#include "terminal/model/terminal_action_result.h"
+#include "terminal/model/terminal_desktop_notification.h"
+#include "terminal/model/terminal_progress_report.h"
+#include "terminal/model/terminal_types.h"
+#include "terminal/rendering/terminal_backdrop.h"
+#include "terminal/rendering/terminal_custom_shader_compiler.h"
+#include "terminal/rendering/terminal_custom_shader_pipeline.h"
+#include "terminal/rendering/terminal_custom_shader_qsg.h"
+#include "workspace/window_navigation_action.h"
+#include "workspace/workspace_action.h"
+
+#include <QBitArray>
+#include <QByteArray>
+#include <QFont>
+#include <QHash>
+#include <QMetaObject>
+#include <QMutex>
+#include <QPoint>
+#include <QPointer>
+#include <QQuickItem>
+#include <QRectF>
+#include <QSet>
+#include <QSize>
+#include <QString>
+#include <QStringList>
+#include <QUrl>
+#include <QtQmlIntegration/qqmlintegration.h>
+
+#include <chrono>
+#include <deque>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <variant>
+
+class QChronoTimer;
+class QDragEnterEvent;
+class QDragMoveEvent;
+class QDropEvent;
+class QFocusEvent;
+class QEvent;
+class QHoverEvent;
+class QInputMethodEvent;
+class QKeyEvent;
+class QMouseEvent;
+class QSGNode;
+class QTimer;
+class QWheelEvent;
+class QQuickWindow;
+class QQmlComponent;
+class GhosttyApplicationKeybindings;
+class InitialSessionCoordinator;
+class TerminalController;
+class TerminalPane;
+class TerminalPaneRenderItem;
+
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+[[nodiscard]] bool
+terminalPaneDelegatedPaintNodeTeardownForTest(TerminalPane *pane);
+void terminalPaneForceExitTransitionForTest(TerminalPane *pane,
+                                            std::chrono::milliseconds duration);
+#endif
+
+class TerminalPane final : public QQuickItem,
+                           public TerminalCustomShaderUniformProvider {
+    Q_OBJECT
+    Q_INTERFACES(TerminalCustomShaderUniformProvider)
+    QML_NAMED_ELEMENT(TerminalPane)
+    QML_UNCREATABLE("TerminalPane instances are owned by TerminalWorkspace")
+    Q_PROPERTY(QString title READ title NOTIFY titleChanged)
+    Q_PROPERTY(QString currentDirectory READ currentDirectory NOTIFY
+                   currentDirectoryChanged)
+    Q_PROPERTY(
+        qreal fontPointSize READ fontPointSize NOTIFY fontPointSizeChanged)
+    Q_PROPERTY(QStringList activeKeyTables READ activeKeyTables NOTIFY
+                   activeKeyTablesChanged)
+    Q_PROPERTY(QStringList pendingKeySequence READ pendingKeySequence NOTIFY
+                   pendingKeySequenceChanged)
+    Q_PROPERTY(
+        QString linkPreviewText READ linkPreviewText NOTIFY linkPreviewChanged)
+    Q_PROPERTY(
+        QRectF linkPreviewRect READ linkPreviewRect NOTIFY linkPreviewChanged)
+    Q_PROPERTY(
+        bool searchUiActive READ searchUiActive NOTIFY searchUiActiveChanged)
+    Q_PROPERTY(
+        QString searchUiText READ searchUiText NOTIFY searchUiTextChanged)
+    Q_PROPERTY(QString searchMatchLabel READ searchMatchLabel NOTIFY
+                   searchMatchLabelChanged)
+    Q_PROPERTY(bool readOnly READ isReadOnly NOTIFY readOnlyChanged)
+    Q_PROPERTY(bool abnormalExitVisible READ abnormalExitVisible NOTIFY
+                   abnormalExitChanged)
+    Q_PROPERTY(QString abnormalExitText READ abnormalExitText NOTIFY
+                   abnormalExitChanged)
+    Q_PROPERTY(bool resizeOverlayVisible READ resizeOverlayVisible NOTIFY
+                   resizeOverlayVisibleChanged)
+    Q_PROPERTY(QString resizeOverlayText READ resizeOverlayText NOTIFY
+                   resizeOverlayTextChanged)
+    Q_PROPERTY(QRectF resizeOverlayRect READ resizeOverlayRect NOTIFY
+                   resizeOverlayRectChanged)
+    Q_PROPERTY(
+        bool scrollbarVisible READ scrollbarVisible NOTIFY scrollbarChanged)
+    Q_PROPERTY(
+        qreal scrollbarPosition READ scrollbarPosition NOTIFY scrollbarChanged)
+    Q_PROPERTY(qreal scrollbarSize READ scrollbarSize NOTIFY scrollbarChanged)
+    Q_PROPERTY(bool progressVisible READ progressVisible NOTIFY progressChanged)
+    Q_PROPERTY(int progressValue READ progressValue NOTIFY progressChanged)
+    Q_PROPERTY(bool progressIndeterminate READ progressIndeterminate NOTIFY
+                   progressChanged)
+    Q_PROPERTY(bool progressError READ progressError NOTIFY progressChanged)
+    Q_PROPERTY(bool progressPaused READ progressPaused NOTIFY progressChanged)
+    Q_PROPERTY(qreal progressActivityPosition READ progressActivityPosition
+                   NOTIFY progressChanged)
+    Q_PROPERTY(bool bellRinging READ bellRinging NOTIFY bellChanged)
+    Q_PROPERTY(bool bellBorderVisible READ bellBorderVisible NOTIFY bellChanged)
+    Q_PROPERTY(TerminalInspectorModel *inspectorModel READ inspectorModel NOTIFY
+                   inspectorModelChanged)
+    Q_PROPERTY(bool inspectorVisible READ inspectorVisible NOTIFY
+                   inspectorModelChanged)
+    Q_PROPERTY(bool inspectorCellPicking READ inspectorCellPicking NOTIFY
+                   inspectorCellPickingChanged)
+
+public:
+    explicit TerminalPane(
+        const LaunchOptions &options, QQuickItem *parent = nullptr,
+        std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt,
+        TerminalSessionStartMode startMode =
+            TerminalSessionStartMode::Immediate,
+        std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator =
+            {},
+        std::optional<GhosttyKeybindProgram> keybindProgram = std::nullopt,
+        std::optional<TerminalCommand> firstSessionCommandOverride =
+            std::nullopt);
+    ~TerminalPane() override;
+
+    QString title() const;
+    // The application-visible surface title intentionally excludes the Qt
+    // launch fallback and any containing-tab override. Clipboard and prompt
+    // actions consume this exact layer.
+    [[nodiscard]] std::optional<QString> effectiveSurfaceTitle() const;
+    [[nodiscard]] const std::optional<QString> &surfaceTitleOverride() const
+    {
+        return surfaceTitleOverride_;
+    }
+    QString currentDirectory() const;
+    [[nodiscard]] const QByteArray &currentDirectoryBytes() const;
+    qreal fontPointSize() const;
+    QStringList activeKeyTables() const;
+    QStringList pendingKeySequence() const;
+    QString linkPreviewText() const;
+    QRectF linkPreviewRect() const;
+    bool searchUiActive() const { return searchUiActive_; }
+    QString searchUiText() const { return searchUiText_; }
+    QString searchMatchLabel() const { return searchMatchLabel_; }
+    bool isRunning() const;
+    bool hasActiveProcess() const;
+    bool isReadOnly() const;
+    bool abnormalExitVisible() const { return abnormalExitVisible_; }
+    QString abnormalExitText() const { return abnormalExitText_; }
+    bool resizeOverlayVisible() const { return resizeOverlayVisible_; }
+    QString resizeOverlayText() const { return resizeOverlayText_; }
+    QRectF resizeOverlayRect() const;
+    bool scrollbarVisible() const { return scrollbarVisible_; }
+    qreal scrollbarPosition() const { return scrollbarPosition_; }
+    qreal scrollbarSize() const { return scrollbarSize_; }
+    bool progressVisible() const { return progressVisible_; }
+    int progressValue() const { return progressValue_; }
+    bool progressIndeterminate() const { return progressIndeterminate_; }
+    bool progressError() const { return progressError_; }
+    bool progressPaused() const { return progressPaused_; }
+    qreal progressActivityPosition() const
+    {
+        return static_cast<qreal>(progressActivityStep_) / 10.0;
+    }
+    [[nodiscard]] int tabProgress() const
+    {
+        return progressVisible_ && !progressIndeterminate_ ? progressValue_
+                                                           : -1;
+    }
+    bool bellRinging() const { return bellRinging_; }
+    bool bellTitleVisible() const
+    {
+        return bellRinging_ && options_.bellFeatures.title;
+    }
+    bool bellBorderVisible() const
+    {
+        return bellRinging_ && options_.bellFeatures.border;
+    }
+    TerminalInspectorModel *inspectorModel() const
+    {
+        return inspectorModel_.data();
+    }
+    bool inspectorVisible() const { return inspectorModel_ != nullptr; }
+    bool inspectorCellPicking() const { return inspectorCellPicking_; }
+    bool controlInspector(WorkspaceFrontendActions::InspectorMode mode);
+    LaunchOptions splitLaunchOptions(const LaunchOptions &base) const;
+    LaunchOptions tabLaunchOptions(const LaunchOptions &base) const;
+    LaunchOptions windowLaunchOptions(const LaunchOptions &base) const;
+    void applyRuntimeOptions(const LaunchOptions &options);
+    void applyRuntimeOptions(const LaunchOptions &options,
+                             GhosttyKeybindProgram keybindProgram);
+    [[nodiscard]] const GhosttyKeybindProgram &keybindProgram() const noexcept
+    {
+        return keybinds_.program();
+    }
+    // The workspace owns split topology; the pane owns actual focus and
+    // search visibility, which complete Ghostty's dimming predicate.
+    void setSplit(bool split);
+    void beginShutdown();
+    // Returns true when destruction must be deferred until
+    // exitTransitionFinished. Unsupported/inactive shaders fail open so pane
+    // lifecycle can never be stranded behind a render backend.
+    [[nodiscard]] bool beginExitTransition();
+    // ApplicationController arms only the first pane of a window that was
+    // presented maximized/fullscreen. The actual start remains queued until
+    // Qt reports a stable exposed viewport.
+    [[nodiscard]] bool
+    armDeferredSessionStart(std::function<QSizeF()> viewportSizeProvider = {});
+    void setWorkspaceActionHandler(
+        std::function<bool(WorkspaceActionRequest)> handler);
+    // Dependency injection keeps external URL launches out of automated
+    // tests while production defaults to QDesktopServices::openUrl.
+    void setUrlOpener(std::function<bool(const QUrl &)> opener);
+    // Each pane owns an independent player so simultaneous split/tab bells do
+    // not interrupt one another. Injection keeps audio devices out of tests.
+    void setBellPlaybackDevice(std::unique_ptr<TerminalBellDevice> device);
+
+    [[nodiscard]] TerminalCustomShaderUniformSnapshot
+    terminalCustomShaderUniformSnapshot(int stageIndex) const override;
+    void terminalCustomShaderEffectAttached(TerminalCustomShaderEffect *effect,
+                                            int stageIndex) override;
+    void terminalCustomShaderEffectDetached(TerminalCustomShaderEffect *effect,
+                                            int stageIndex) override;
+    void terminalCustomShaderPipelineAttached(
+        TerminalCustomShaderPipelineEffect *effect) override;
+    void terminalCustomShaderPipelineDetached(
+        TerminalCustomShaderPipelineEffect *effect) override;
+
+    void focusTerminal();
+    [[nodiscard]] bool requestIoCrash();
+    void setSurfaceTitle(QString title);
+    void setSurfaceTitleOverride(std::optional<QString> title);
+    void copySelection();
+    void pasteText(const QString &text);
+    void confirmPaste(quint64 requestId);
+    void cancelPaste(quint64 requestId);
+    // `clipboard-write = ask` can remember a decision for this pane. The
+    // pane-local mutation lasts until a configuration reload replaces it,
+    // matching Ghostty's per-split behavior.
+    void rememberTerminalClipboardAccess(TerminalClipboardAccess access);
+    void zoomIn();
+    void zoomOut();
+    void resetZoom();
+    Q_INVOKABLE void setSearchUiText(const QString &text);
+    Q_INVOKABLE bool endSearchUi();
+    Q_INVOKABLE bool navigateSearch(int direction);
+    Q_INVOKABLE void scrollbarMoveTo(qreal position);
+    Q_INVOKABLE void dismissAbnormalExit();
+    Q_INVOKABLE void closeInspector();
+    // Process-wide `all:`/`global:` dispatch reuses the same exact pane action
+    // implementation as a focused local binding.
+    bool executeConfiguredAction(QStringView action);
+    bool executeConfiguredAction(const GhosttyConfiguredAction &action);
+
+Q_SIGNALS:
+    void activated(TerminalPane *pane);
+    void titleChanged();
+    void currentDirectoryChanged();
+    void fontPointSizeChanged();
+    void activeKeyTablesChanged();
+    void pendingKeySequenceChanged();
+    void linkPreviewChanged();
+    void searchUiActiveChanged();
+    void searchUiTextChanged();
+    void searchMatchLabelChanged();
+    void searchUiFocusRequested();
+    void processStateChanged();
+    void readOnlyChanged(bool readOnly);
+    void abnormalExitChanged();
+    void resizeOverlayVisibleChanged();
+    void resizeOverlayTextChanged();
+    void resizeOverlayRectChanged();
+    void scrollbarChanged();
+    void progressChanged();
+    void bellChanged();
+    void inspectorModelChanged();
+    void inspectorCellPickingChanged();
+    void inspectorCellPicked(int viewportColumn, int viewportRow,
+                             quint64 contentRevision);
+    void keyboardTraceDecision(const TerminalKeyboardTraceDecision &decision);
+    void bellRang(TerminalPane *pane);
+    void customShaderDiagnosticChanged(const QString &diagnostic);
+    void requestNewTab();
+    void requestSplit(WorkspaceAction action);
+    void requestClose();
+    void requestCloseTab(CloseTabMode mode);
+    void requestNavigate(int direction);
+    void requestTabChange(int delta);
+    void requestCloseWindow();
+    void applicationActionRequested(ApplicationAction action);
+    void windowNavigationRequested(WindowNavigationAction action);
+    void frontendActionRequested(const WorkspaceFrontendActionRequest &request);
+    void broadActionsRequested(const GhosttyCompiledActionChain &actions);
+    void contextMenuRequested(const QPointF &windowPosition,
+                              bool selectionAvailable);
+    void unsafePasteRequested(quint64 requestId, const QString &text,
+                              TerminalPane *pane);
+    void terminalClipboardWriteRequested(
+        const TerminalClipboardWriteRequest &request, TerminalPane *pane);
+    void desktopNotificationRequested(
+        const TerminalDesktopNotification &notification, TerminalPane *pane);
+    void
+    selectionClipboardWriteRequested(const QString &text,
+                                     TerminalClipboardDestination destination,
+                                     TerminalPane *pane);
+    void standardClipboardCommitted(bool empty);
+    void sessionEnded(TerminalPane *pane, int exitCode, int signalNumber);
+    void exitTransitionFinished();
+
+protected:
+    QSGNode *updatePaintNode(QSGNode *oldNode,
+                             UpdatePaintNodeData *updateData) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    void geometryChange(const QRectF &newGeometry,
+                        const QRectF &oldGeometry) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
+    void inputMethodEvent(QInputMethodEvent *event) override;
+    QVariant inputMethodQuery(Qt::InputMethodQuery query) const override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void mouseUngrabEvent() override;
+    void hoverEnterEvent(QHoverEvent *event) override;
+    void hoverMoveEvent(QHoverEvent *event) override;
+    void hoverLeaveEvent(QHoverEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dragMoveEvent(QDragMoveEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
+    void focusInEvent(QFocusEvent *event) override;
+    void focusOutEvent(QFocusEvent *event) override;
+
+private:
+    friend class TerminalInspectorModel;
+    friend class GhosttyApplicationKeybindings;
+    friend class TerminalPaneRenderItem;
+    friend class TerminalWorkspace;
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+    friend bool
+    terminalPaneDelegatedPaintNodeTeardownForTest(TerminalPane *pane);
+    friend void
+    terminalPaneForceExitTransitionForTest(TerminalPane *pane,
+                                           std::chrono::milliseconds duration);
+#endif
+
+    enum class KeyHandling {
+        PassThrough,
+        ConsumePress,
+        ConsumePressAndRelease,
+    };
+
+    using ConfiguredActionCompletion =
+        std::function<void(TerminalActionExecutionResult)>;
+    struct PendingTerminalActionCompletion {
+        ConfiguredActionCompletion completion;
+        quint64 epoch = 0;
+    };
+    struct DeferredKeyInput {
+        KeyEventSnapshot event;
+        KeyboardLayoutTranslation layout;
+        bool composing = false;
+        quint64 focusEpoch = 0;
+        quint64 pointerActivityEpoch = 0;
+    };
+    using DeferredPaneInput =
+        std::variant<DeferredKeyInput, TerminalInputMethodInput>;
+
+    struct PendingLocalActionChain {
+        GhosttyCompiledActionChain chain;
+        qsizetype nextEntry = 0;
+        bool performed = false;
+        quint64 sequenceToken = 0;
+        TerminalKeyInput currentInput;
+        quint64 keyIdentity = 0;
+        quint64 keyFocusEpoch = 0;
+        quint64 pointerActivityEpoch = 0;
+        bool consumed = true;
+        bool performable = false;
+        bool ownsKeyDeferral = false;
+        bool startingAction = false;
+        std::optional<TerminalActionExecutionResult> earlyResult;
+    };
+    struct ExecutingSequence {
+        quint64 token = 0;
+        TerminalKeyInput traceInput;
+    };
+    [[nodiscard]] bool updateMetrics();
+    [[nodiscard]] bool updateMetrics(const TerminalTypography &typography,
+                                     qreal pointSize);
+    void refreshResolvedFonts();
+    void updateTerminalSize();
+    void noteTerminalGridSize(const TerminalSessionGeometry &geometry);
+    void scheduleResizeOverlay();
+    void cancelPendingResizeOverlay();
+    void showPendingResizeOverlay();
+    void hideResizeOverlay();
+    void restartResizeOverlayTimer();
+    void handleProgressReport(const TerminalProgressReport &report);
+    void hideProgressPresentation();
+    void advanceProgressActivity();
+    [[nodiscard]] std::optional<TerminalSessionGeometry> currentSessionGeometry(
+        std::optional<QSizeF> viewportSize = std::nullopt) const;
+    [[nodiscard]] std::optional<TerminalViewportLayout> currentViewportLayout(
+        std::optional<QSizeF> viewportSize = std::nullopt) const;
+    void watchWindow(QQuickWindow *quickWindow);
+    void disconnectDeferredSessionWindowSignals();
+    void scheduleDeferredSessionStart();
+    void tryDeferredSessionStart();
+    void markTextRowsChangedLocked(const TerminalUpdate &update);
+    void markSolidRowsChangedLocked(const TerminalUpdate &update);
+    enum class MaskRowImpact : quint8 {
+        SolidOnly,
+        TextAndSolid
+    };
+    void markMaskRowsChangedLocked(const QBitArray &oldMask, int oldColumns,
+                                   int oldRows, const QBitArray &newMask,
+                                   int newColumns, int newRows,
+                                   MaskRowImpact impact);
+    [[nodiscard]] bool syncCursorBlink(bool resetPhase);
+    void refreshBackgroundImage();
+    void setFontPointSize(qreal points);
+    void beginKeyEventDeferral() noexcept;
+    void endKeyEventDeferral();
+    void beginKeyEventDispatch() noexcept;
+    void endKeyEventDispatch();
+    [[nodiscard]] bool keyInputComposing(const QKeyEvent &event);
+    [[nodiscard]] bool inputMethodComposing() const noexcept
+    {
+        return inputMethodComposing_;
+    }
+    void clearInputMethodComposition();
+    void cancelKeySequenceForInputMethod();
+    [[nodiscard]] bool deferKeyEventIfNeeded(const QKeyEvent &event);
+    void deferKeyEvent(const QKeyEvent &event);
+    void drainDeferredKeyEvents();
+    KeyHandling handleShortcut(QKeyEvent *event,
+                               const QPointer<TerminalPane> &guard,
+                               quint64 pointerActivityEpoch,
+                               const TerminalKeyInput &currentInput);
+    KeyHandling handleConfiguredShortcut(QKeyEvent *event,
+                                         const QPointer<TerminalPane> &guard,
+                                         quint64 pointerActivityEpoch,
+                                         const TerminalKeyInput &currentInput);
+    [[nodiscard]] bool resolveActiveSequence(
+        TerminalSequenceResolution resolution,
+        std::optional<TerminalKeyInput> current = std::nullopt);
+    [[nodiscard]] bool
+    resolveSequenceToken(quint64 token, TerminalSequenceResolution resolution,
+                         std::optional<TerminalKeyInput> current = std::nullopt,
+                         TerminalKeyInput traceInput = {});
+    [[nodiscard]] bool resolveExecutingSequence(
+        TerminalSequenceResolution resolution,
+        std::optional<TerminalKeyInput> current = std::nullopt);
+    [[nodiscard]] bool
+    performConfiguredAction(const GhosttyConfiguredAction &action);
+    [[nodiscard]] TerminalActionExecutionStart
+    startConfiguredAction(const GhosttyConfiguredAction &action,
+                          ConfiguredActionCompletion completion);
+    [[nodiscard]] bool
+    commitConfiguredActionResult(const TerminalActionExecutionResult &result);
+    [[nodiscard]] quint64 nextTerminalActionRequestId();
+    void advanceTerminalActionEpoch();
+    void failStaleTerminalActionCompletions();
+    void handleTerminalActionResult(const TerminalActionResult &result);
+    [[nodiscard]] std::optional<KeyHandling> continueLocalActionChain(
+        const std::shared_ptr<PendingLocalActionChain> &chain);
+    [[nodiscard]] KeyHandling
+    finishLocalActionChain(PendingLocalActionChain &chain, bool delayed);
+    [[nodiscard]] bool performPaneAction(const GhosttyPaneAction &action);
+    [[nodiscard]] bool performWorkspaceAction(WorkspaceActionRequest request);
+    int viewportPageRows() const;
+    void beginLocalSelection(const QMouseEvent &event,
+                             Qt::KeyboardModifiers modifiers);
+    void hideMouseForTerminalKey(const TerminalKeyInput &input,
+                                 quint64 pointerActivityEpoch);
+    void revealMouseAfterActivity();
+    void setMouseHiddenWhileTyping(bool hidden);
+    void setInspectorCellPicking(bool picking);
+    void setInspectorKeyboardTraceCapture(bool enabled);
+    [[nodiscard]] bool inspectorKeyboardTraceCaptureActive() const noexcept
+    {
+        return inspectorKeyboardTraceGeneration_ != 0;
+    }
+    [[nodiscard]] TerminalKeyInput
+    beginInspectorKeyboardTrace(const QKeyEvent &event, bool pressed);
+    [[nodiscard]] TerminalKeyInput
+    beginInspectorKeyboardTrace(const QKeyEvent &event, bool pressed,
+                                KeyboardLayoutTranslation layout,
+                                bool composing);
+    void publishInspectorKeyboardTrace(TerminalKeyboardTraceDecision decision);
+    void syncPointerCursor();
+    [[nodiscard]] bool revealMouseForPointerPosition(const QPointF &position);
+    [[nodiscard]] bool handlePointerMotion(const QPointF &position);
+    void sendMouse(const QPointF &position, TerminalMouseInput::Action action,
+                   Qt::MouseButton button, Qt::MouseButtons buttons,
+                   Qt::KeyboardModifiers modifiers);
+    QPoint cellAt(const QPointF &position) const;
+    std::optional<QPoint> hoverCellAt(const QPointF &position) const;
+    int normalizedMouseButton(Qt::MouseButton button) const;
+    Qt::KeyboardModifiers
+    effectivePointerModifiers(Qt::KeyboardModifiers modifiers) const;
+    bool
+    shiftBypassesMouseCapture(Qt::KeyboardModifiers modifiers) const noexcept;
+    bool hyperlinkModifiersMatch(Qt::KeyboardModifiers modifiers) const;
+    void updateHyperlinkHover(const QPointF &position,
+                              Qt::KeyboardModifiers modifiers);
+    [[nodiscard]] std::optional<QByteArray> hoveredUrlForCopy() const;
+    void updateHyperlinkModifiers(Qt::KeyboardModifiers modifiers);
+    void recomputeHyperlinkHover();
+    void refreshHyperlinkHover();
+    void refreshLinkPreview();
+    void reconcileReleasedLinkPreview(bool wasPointerCaptured,
+                                      bool forceRequery = false);
+    void clearHyperlinkDecoration();
+    void clearHyperlinkHover();
+    void cancelHyperlinkPress();
+    void cancelPendingHyperlinkActivation();
+    bool hyperlinkCellCandidate(const QPoint &cell,
+                                quint64 *contentRevision = nullptr) const;
+    void handleHyperlinkResult(quint64 contentRevision,
+                               TerminalHyperlinkState state,
+                               TerminalLinkKind kind, const QByteArray &uri,
+                               const QPoint &targetCell,
+                               const QVector<QPoint> &matchingCells);
+    void handleHyperlinkActivation(quint64 contentRevision,
+                                   TerminalLinkKind kind,
+                                   const QByteArray &uri);
+    void handleRightClickResult(const TerminalRightClickResult &result);
+    QUrl hyperlinkUrl(const QByteArray &uri, TerminalLinkKind kind) const;
+    void startSearchUi();
+    void startSearchUiWithSelection(const QString &text);
+    void setSearchUiActive(bool active);
+    void handleSearchUpdate(const TerminalSearchUpdate &searchUpdate);
+    void
+    installSearchDecorationsLocked(const TerminalSearchUpdate &searchUpdate);
+    void clearPendingSearchUpdateLocked();
+    void clearSearchDecorationsLocked();
+    void updateScrollbarState();
+    void setBellRinging(bool ringing);
+    void setCustomShaderStageComponent(QQmlComponent *component);
+    void reloadCustomShaders(const TerminalCustomShaderOptions &options);
+    void reloadPaneTransitionShaders(const TerminalCustomShaderOptions &options,
+                                     quint64 generation);
+    [[nodiscard]] bool refreshEffectiveCustomShaderStages();
+    void publishCustomShaderDiagnostic();
+    void rebuildCustomShaderStages();
+    void clearCustomShaderStages();
+    void useUnfilteredTerminalRendering();
+    void setAlphaBlendingPipelineActive(bool active);
+    void syncCustomShaderStageGeometry();
+    [[nodiscard]] bool customShaderRenderingSupported() const;
+    [[nodiscard]] std::shared_ptr<TerminalCustomShaderUniforms>
+    acquireCustomShaderUniformSnapshotLocked();
+    void refreshCustomShaderUniformBase(
+        std::optional<std::chrono::steady_clock::time_point> frameTime =
+            std::nullopt);
+    void advanceCustomShaderFrame(TerminalCustomShaderUniforms *uniforms,
+                                  std::chrono::steady_clock::time_point now);
+    void prepareCustomShaderFrame();
+    void maybeStartPaneEnterTransition();
+    void startPaneTransition(bool entering, std::chrono::milliseconds duration);
+    void
+    publishPaneTransitionUniform(std::chrono::steady_clock::time_point now);
+    [[nodiscard]] TerminalCustomShaderVec4
+    paneTransitionUniform(std::chrono::steady_clock::time_point now) const;
+    void finishPaneTransitionTimer();
+    [[nodiscard]] bool
+    customShaderTransitionRenderingReady(bool entering) const;
+    [[nodiscard]] bool updateCustomShaderEffects();
+    void syncCustomShaderPipelineDiagnostic();
+    void scheduleCustomShaderAnimationFrame();
+    [[nodiscard]] bool shouldAnimateCustomShaders() const;
+    QSGNode *updateTerminalPaintNode(QSGNode *oldNode,
+                                     UpdatePaintNodeData *updateData);
+    void requestRenderUpdate();
+
+    LaunchOptions options_;
+    // Mirrored separately so the render thread can take a value-only snapshot
+    // under renderMutex_ while live configuration updates options_.
+    TerminalAppearance appearance_;
+    TerminalAlphaBlending alphaBlending_ =
+        TerminalAlphaBlending::LinearCorrected;
+    bool alphaBlendingPipelineActive_ = false;
+    TerminalBackgroundOptions backgroundOptions_;
+    TerminalPaddingOptions paddingOptions_;
+    SplitAppearance splitAppearance_;
+    GhosttyKeybindState keybinds_;
+    ModifierRemapTracker modifierRemaps_;
+    RevisionCounter runtimeOptionsRevision_;
+    TerminalController *controller_ = nullptr;
+    // Terminal pixels live in a dedicated child so custom post-processing
+    // never captures pane-local QML overlays or input affordances.
+    QQuickItem *renderItem_ = nullptr;
+    QPointer<QQmlComponent> customShaderStageComponent_;
+    QVector<QPointer<QQuickItem>> customShaderStageItems_;
+    QVector<TerminalCustomShaderStage> userCustomShaderStages_;
+    QVector<TerminalCustomShaderStage> paneEnterCustomShaderStages_;
+    QVector<TerminalCustomShaderStage> paneExitCustomShaderStages_;
+    QVector<TerminalCustomShaderStage> customShaderStages_;
+    quint64 customShaderCompileGeneration_ = 0;
+    QString customShaderCompileDiagnostic_;
+    QString paneEnterCustomShaderDiagnostic_;
+    QString paneExitCustomShaderDiagnostic_;
+    QString customShaderRenderDiagnostic_;
+    QString customShaderDiagnostic_;
+    mutable QMutex customShaderUniformMutex_;
+    TerminalCustomShaderUniformSnapshot customShaderUniforms_ =
+        std::make_shared<const TerminalCustomShaderUniforms>();
+    QVector<std::shared_ptr<TerminalCustomShaderUniforms>>
+        customShaderUniformPool_;
+    QVector<QColor> customShaderUniformPalette_;
+    QVector<QPointer<TerminalCustomShaderEffect>> customShaderEffects_;
+    QPointer<TerminalCustomShaderPipelineEffect> customShaderPipelineEffect_;
+    QPointer<TerminalCustomShaderPipelineEffect>
+        customShaderFallbackPendingEffect_;
+    std::optional<std::chrono::steady_clock::time_point>
+        customShaderFirstFrameTime_;
+    std::optional<std::chrono::steady_clock::time_point>
+        customShaderLastFrameTime_;
+    quint64 customShaderStageGeneration_ = 0;
+    quint64 customShaderRetainedFailureGeneration_ = 0;
+    bool customShaderFramePending_ = false;
+    bool customShaderRetainedFailed_ = false;
+    bool paneEnterCustomShaderConfigured_ = false;
+    bool paneExitCustomShaderConfigured_ = false;
+    enum class PaneTransitionPhase {
+        Stable,
+        Entering,
+        Exiting,
+    };
+    PaneTransitionPhase paneTransitionPhase_ = PaneTransitionPhase::Stable;
+    std::optional<std::chrono::steady_clock::time_point>
+        paneTransitionStartTime_;
+    std::chrono::milliseconds paneEnterTransitionDuration_{};
+    std::chrono::milliseconds paneExitTransitionDuration_{};
+    bool paneEnterTransitionPending_ = false;
+    bool paneExitFinalFramePending_ = false;
+    QChronoTimer *paneTransitionTimer_ = nullptr;
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+    bool forcePaneTransitionRenderingReadyForTest_ = false;
+#endif
+    std::optional<QString> surfaceTitleOverride_;
+    TerminalCellMetrics metrics_;
+    double defaultFontPointSize_ = 12.0;
+    mutable QMutex renderMutex_;
+    TerminalFrame frame_;
+    std::shared_ptr<const TerminalBackgroundImageAsset> backgroundImageAsset_;
+    TerminalBackgroundImageRequestHandle backgroundImageRequest_;
+    std::optional<TerminalBackgroundImageRequest> backgroundImageSourceRequest_;
+    std::optional<GhosttyConfigPath> failedBackgroundImageSource_;
+    quint64 backgroundImageRequestGeneration_ = 0;
+    // Persistent generations preserve the union of row changes when Qt
+    // coalesces several GUI updates before one scene-graph synchronization.
+    QVector<quint64> textRowEpochs_;
+    quint64 textRowEpoch_ = 0;
+    QVector<quint64> solidRowEpochs_;
+    quint64 solidRowEpoch_ = 0;
+    bool hasFrame_ = false;
+    // Mirrors the row count requested from the worker. While a resize is in
+    // flight, stale frames must not make page actions use the previous height.
+    int terminalRows_ = 24;
+    bool terminalResizePending_ = false;
+    QString preedit_;
+    bool inputMethodComposing_ = false;
+    QHash<quint64, bool> keyCompositionByIdentity_;
+    QString statusMessage_;
+    bool selecting_ = false;
+    // Ghostty accumulates wheel input in physical pixels. Vertical precision
+    // and fractional discrete input share a row threshold; horizontal
+    // precision input has an independent cell-width threshold. Keep both
+    // pane-local across live configuration and cell-metric changes.
+    double pendingWheelVerticalPixels_ = 0.0;
+    double pendingWheelHorizontalPixels_ = 0.0;
+    double pendingHorizontalTabScrollPixels_ = 0.0;
+    bool manuallyZoomed_ = false;
+    bool cursorBlinkOn_ = true;
+    QTimer *cursorTimer_ = nullptr;
+    QChronoTimer *horizontalTabScrollResetTimer_ = nullptr;
+    QChronoTimer *resizeOverlayTimer_ = nullptr;
+    QChronoTimer *progressReportTimer_ = nullptr;
+    std::chrono::steady_clock::time_point resizeOverlayStartupSuppressionEnds_;
+    std::optional<QSize> resizeOverlayGrid_;
+    QString resizeOverlayText_;
+    bool resizeOverlayVisible_ = false;
+    bool resizeOverlayUpdateScheduled_ = false;
+    quint64 resizeOverlayUpdateGeneration_ = 0;
+    bool resizeOverlayShuttingDown_ = false;
+    bool scrollbarVisible_ = false;
+    qreal scrollbarPosition_ = 0.0;
+    qreal scrollbarSize_ = 1.0;
+    std::optional<quint64> pendingScrollbarRow_;
+    int progressValue_ = 0;
+    bool progressVisible_ = false;
+    bool progressIndeterminate_ = false;
+    bool progressError_ = false;
+    bool progressPaused_ = false;
+    int progressActivityStep_ = 0;
+    bool progressActivityForward_ = true;
+    std::shared_ptr<TerminalBellPlayer> bellPlayer_ =
+        std::make_shared<TerminalBellPlayer>();
+    bool bellRinging_ = false;
+    QPointer<TerminalInspectorModel> inspectorModel_;
+    quint64 nextInspectorKeyboardTraceGeneration_ = 0;
+    quint64 inspectorKeyboardTraceGeneration_ = 0;
+    quint64 nextInspectorKeyboardTraceId_ = 0;
+    bool inspectorCellPicking_ = false;
+    Qt::MouseButton inspectorCellPickConsumedButton_ = Qt::NoButton;
+    // Set for normal wait-after-command and abnormal quick exits. CLI --hold
+    // remains an indefinite frontend hold and never enters key dismissal.
+    bool waitingForExitKey_ = false;
+    bool abnormalExitVisible_ = false;
+    QString abnormalExitText_;
+    QMetaObject::Connection itemWindowConnection_;
+    QMetaObject::Connection windowActiveConnection_;
+    QMetaObject::Connection windowScreenConnection_;
+    QMetaObject::Connection windowVisibilityConnection_;
+    QMetaObject::Connection windowStateConnection_;
+    QMetaObject::Connection windowFrameSwappedConnection_;
+    QMetaObject::Connection windowSceneGraphInitializedConnection_;
+    QMetaObject::Connection customShaderFrameSwappedConnection_;
+    QPointer<QQuickWindow> observedWindow_;
+    TerminalSessionStartMode sessionStartMode_ =
+        TerminalSessionStartMode::Immediate;
+    bool deferredSessionStartArmed_ = false;
+    bool deferredSessionStartCheckQueued_ = false;
+    std::optional<TerminalSessionGeometry> deferredSessionStartCandidate_;
+    // GUI-thread cache shared by resize, input, hit testing, and IME queries.
+    // Paint uses the same pure calculation from its render-state snapshot.
+    mutable std::optional<TerminalViewportSpec> viewportLayoutCacheSpec_;
+    mutable std::optional<TerminalViewportLayout> viewportLayoutCache_;
+    std::function<QSizeF()> deferredSessionViewportSizeProvider_;
+    quint64 deferredSessionPresentedFrame_ = 0;
+    quint64 deferredSessionCandidateFrame_ = 0;
+    QSet<quint64> consumedKeys_;
+    quint64 keyFocusEpoch_ = 0;
+    std::deque<DeferredPaneInput> deferredInputs_;
+    int keyEventDeferralDepth_ = 0;
+    int keyEventDispatchDepth_ = 0;
+    bool drainingDeferredKeyEvents_ = false;
+    const QKeyEvent *replayingDeferredKeyEvent_ = nullptr;
+    std::optional<quint64> replayingDeferredPointerActivityEpoch_;
+    quint64 activeSequenceToken_ = 0;
+    QVector<ExecutingSequence> executingSequences_;
+    quint64 nextTerminalActionRequestId_ = 0;
+    quint64 terminalActionEpoch_ = 1;
+    bool terminalActionsAccepted_ = true;
+    bool shuttingDown_ = false;
+    QHash<quint64, PendingTerminalActionCompletion>
+        pendingTerminalActionCompletions_;
+    quint64 pointerActivityEpoch_ = 0;
+    bool mouseHiddenWhileTyping_ = false;
+    std::optional<QPointF> lastPointerActivityPosition_;
+    bool pointerFocusActivationDeferred_ = false;
+    bool hoverInside_ = false;
+    QPointF hoverPosition_;
+    QPoint hoverCell_{-1, -1};
+    Qt::KeyboardModifiers keyboardModifiers_ = Qt::NoModifier;
+    Qt::KeyboardModifiers hoverModifiers_ = Qt::NoModifier;
+    QPoint hyperlinkQueryCell_{-1, -1};
+    bool hyperlinkQueryPending_ = false;
+    bool hyperlinkLeaseActive_ = false;
+    bool hyperlinkQueryRejected_ = false;
+    TerminalLinkKind hoveredLinkKind_ = TerminalLinkKind::Osc8;
+    QByteArray hoveredHyperlinkUri_;
+    QPoint hoveredHyperlinkCell_{-1, -1};
+    QBitArray hoveredHyperlinkCellMask_;
+    int hoveredHyperlinkColumns_ = 0;
+    int hoveredHyperlinkRows_ = 0;
+    QString linkPreviewText_;
+    QRectF linkPreviewRect_;
+    QRectF linkPreviewGuardRect_;
+    bool linkPreviewPointerCaptured_ = false;
+    bool hyperlinkPressArmed_ = false;
+    bool hyperlinkPressDragged_ = false;
+    QPointF hyperlinkPressPosition_;
+    QPoint hyperlinkPressCell_{-1, -1};
+    TerminalLinkKind hyperlinkPressKind_ = TerminalLinkKind::Osc8;
+    QByteArray hyperlinkPressUri_;
+    quint64 hyperlinkPressRequestId_ = 0;
+    QByteArray pendingActivationUri_;
+    TerminalLinkKind pendingActivationKind_ = TerminalLinkKind::Osc8;
+    quint64 pendingActivationRequestId_ = 0;
+    QHash<quint64, QPointF> pendingRightClickWindowPositions_;
+    quint64 newestRightClickRequestId_ = 0;
+    std::function<bool(const QUrl &)> urlOpener_;
+    std::shared_ptr<std::function<bool(WorkspaceActionRequest)>>
+        workspaceActionHandler_;
+    bool searchUiActive_ = false;
+    bool split_ = false;
+    bool searchEngineActive_ = false;
+    QString searchUiText_;
+    QString searchMatchLabel_ = QStringLiteral("0/0");
+    std::optional<TerminalSearchUpdate> pendingSearchUpdate_;
+    QBitArray searchCandidateCellMask_;
+    QBitArray searchSelectedCellMask_;
+    quint64 searchDecorationRevision_ = 0;
+    int searchDecorationColumns_ = 0;
+    int searchDecorationRows_ = 0;
+};

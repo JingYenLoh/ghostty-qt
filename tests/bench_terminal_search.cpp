@@ -1,5 +1,5 @@
-#include "ghostty_vt_adapter.h"
-#include "session_worker.h"
+#include "session/session_worker.h"
+#include "terminal/adapter/ghostty_vt_adapter.h"
 
 #include <QByteArray>
 #include <QCommandLineOption>

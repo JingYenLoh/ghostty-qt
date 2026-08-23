@@ -1,4 +1,4 @@
-#include "desktop_activation.h"
+#include "desktop/desktop_activation.h"
 
 #include <QByteArray>
 #include <QTest>

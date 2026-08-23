@@ -1,6 +1,6 @@
-#include "terminal_clipboard.h"
-#include "terminal_osc8_index.h"
-#include "terminal_types.h"
+#include "terminal/core/terminal_clipboard.h"
+#include "terminal/model/terminal_osc8_index.h"
+#include "terminal/model/terminal_types.h"
 
 #include <QTest>
 

@@ -1,4 +1,4 @@
-#include "ghostty_keybind_set.h"
+#include "input/ghostty_keybind_set.h"
 
 #include <QTest>
 #include <linux/input-event-codes.h>

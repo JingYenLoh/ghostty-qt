@@ -1,4 +1,4 @@
-#include "ghostty_key_identity.h"
+#include "input/ghostty_key_identity.h"
 
 #include <QTest>
 

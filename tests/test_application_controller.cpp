@@ -1,12 +1,12 @@
-#include "application_controller.h"
-#include "ghostty_application_ipc.h"
-#include "terminal_cell_metrics.h"
-#include "terminal_controller.h"
-#include "terminal_geometry.h"
-#include "terminal_pane.h"
-#include "terminal_pane_render_probe_p.h"
-#include "terminal_workspace.h"
-#include "window_ui_controller.h"
+#include "app/application_controller.h"
+#include "app/ghostty_application_ipc.h"
+#include "session/terminal_controller.h"
+#include "terminal/core/terminal_cell_metrics.h"
+#include "terminal/core/terminal_geometry.h"
+#include "workspace/terminal_pane.h"
+#include "workspace/terminal_pane_render_probe_p.h"
+#include "workspace/terminal_workspace.h"
+#include "workspace/window_ui_controller.h"
 
 #include <LayerShellQt/Window>
 

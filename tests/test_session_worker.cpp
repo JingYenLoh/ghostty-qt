@@ -1,7 +1,7 @@
-#include "ghostty_vt_adapter.h"
-#include "session_worker.h"
-#include "terminal_types.h"
-#include "terminfo_paths.h"
+#include "session/session_worker.h"
+#include "session/terminfo_paths.h"
+#include "terminal/adapter/ghostty_vt_adapter.h"
+#include "terminal/model/terminal_types.h"
 
 #include <QDir>
 #include <QFile>

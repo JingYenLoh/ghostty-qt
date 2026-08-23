@@ -1,4 +1,4 @@
-#include "terminal_cell_metrics.h"
+#include "terminal/core/terminal_cell_metrics.h"
 
 #include <QFontDatabase>
 #include <QFontInfo>

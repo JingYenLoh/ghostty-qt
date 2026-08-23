@@ -819,17 +819,17 @@ add_test(NAME linux-cgroup COMMAND test-linux-cgroup)
 set_tests_properties(linux-cgroup PROPERTIES TIMEOUT 15)
 
 ghostty_qt_add_internal_library(ghostty-qt-render-test-support
-    ../src/terminal_inspector_event_model.cpp
-    ../src/terminal_inspector_event_model.h
-    ../src/terminal_inspector_model.cpp
-    ../src/terminal_inspector_model.h
-    ../src/terminal_pane.cpp
-    ../src/terminal_pane.h
-    ../src/terminal_pane_renderer.cpp
-    ../src/terminal_pane_renderer.h
-    ../src/terminal_pane_render_probe_p.h
-    ../src/terminal_workspace.cpp
-    ../src/terminal_workspace.h
+    ../src/terminal/inspector/terminal_inspector_event_model.cpp
+    ../src/terminal/inspector/terminal_inspector_event_model.h
+    ../src/terminal/inspector/terminal_inspector_model.cpp
+    ../src/terminal/inspector/terminal_inspector_model.h
+    ../src/workspace/terminal_pane.cpp
+    ../src/workspace/terminal_pane.h
+    ../src/workspace/terminal_pane_renderer.cpp
+    ../src/workspace/terminal_pane_renderer.h
+    ../src/workspace/terminal_pane_render_probe_p.h
+    ../src/workspace/terminal_workspace.cpp
+    ../src/workspace/terminal_workspace.h
 )
 target_compile_definitions(
     ghostty-qt-render-test-support
@@ -914,12 +914,12 @@ set_tests_properties(initial-session-coordinator PROPERTIES TIMEOUT 10)
 
 qt_add_executable(test-terminal-types
     test_terminal_types.cpp
-    ../src/terminal_actions.h
-    ../src/terminal_clipboard.h
-    ../src/terminal_clipboard_codepoint_map.h
-    ../src/terminal_osc8_index.h
-    ../src/terminal_session_options.h
-    ../src/terminal_types.h
+    ../src/terminal/model/terminal_actions.h
+    ../src/terminal/core/terminal_clipboard.h
+    ../src/terminal/model/terminal_clipboard_codepoint_map.h
+    ../src/terminal/model/terminal_osc8_index.h
+    ../src/terminal/model/terminal_session_options.h
+    ../src/terminal/model/terminal_types.h
 )
 target_include_directories(
     test-terminal-types
@@ -948,8 +948,8 @@ set_tests_properties(terminal-bell PROPERTIES TIMEOUT 10)
 
 qt_add_executable(test-terminal-inspector-events
     test_terminal_inspector_events.cpp
-    ../src/terminal_inspector_event_model.cpp
-    ../src/terminal_inspector_event_model.h
+    ../src/terminal/inspector/terminal_inspector_event_model.cpp
+    ../src/terminal/inspector/terminal_inspector_event_model.h
 )
 target_include_directories(
     test-terminal-inspector-events
@@ -1005,7 +1005,7 @@ add_test(NAME session-worker COMMAND test-session-worker)
 
 qt_add_executable(test-terminal-pane
     test_terminal_pane.cpp
-    ../src/terminal_pane_render_probe_p.h
+    ../src/workspace/terminal_pane_render_probe_p.h
 )
 target_include_directories(
     test-terminal-pane
@@ -1180,7 +1180,7 @@ if(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
         bench_terminal_pane_renderer.cpp
         renderdoc_capture.cpp
         renderdoc_capture.h
-        ../src/terminal_pane_render_probe_p.h
+        ../src/workspace/terminal_pane_render_probe_p.h
     )
     target_include_directories(
         bench-terminal-pane-renderer
@@ -1350,8 +1350,8 @@ set_tests_properties(ghostty-link-matcher-upstream-corpus PROPERTIES TIMEOUT 60)
 
 qt_add_executable(test-workspace-foundation
     test_workspace_foundation.cpp
-    ../src/workspace_action.h
-    ../src/workspace_ids.h
+    ../src/workspace/workspace_action.h
+    ../src/workspace/workspace_ids.h
 )
 target_include_directories(
     test-workspace-foundation
@@ -1366,7 +1366,7 @@ set_tests_properties(workspace-foundation PROPERTIES TIMEOUT 10)
 
 qt_add_executable(test-tab-list-model
     test_tab_list_model.cpp
-    ../src/workspace_ids.h
+    ../src/workspace/workspace_ids.h
 )
 target_include_directories(
     test-tab-list-model
@@ -1381,8 +1381,8 @@ set_tests_properties(tab-list-model PROPERTIES TIMEOUT 10)
 
 qt_add_executable(test-ghostty-action-catalog
     test_ghostty_action_catalog.cpp
-    ../src/workspace_action.h
-    ../src/workspace_ids.h
+    ../src/workspace/workspace_action.h
+    ../src/workspace/workspace_ids.h
 )
 target_link_libraries(
     test-ghostty-action-catalog
@@ -1427,8 +1427,8 @@ qt_add_executable(test-ghostty-config-service
     test_ghostty_config_service.cpp
     ghostty_config_export_fixture.h
     ghostty_config_snapshot_fixture.h
-    ../src/ghostty_config_loader.h
-    ../src/ghostty_config_snapshot.h
+    ../src/config/ghostty_config_loader.h
+    ../src/config/ghostty_config_snapshot.h
 )
 target_include_directories(
     test-ghostty-config-service
@@ -1468,8 +1468,8 @@ target_compile_options(
 
 qt_add_executable(test-ghostty-config-process-loader
     test_ghostty_config_process_loader.cpp
-    ../src/ghostty_config_loader.h
-    ../src/ghostty_config_snapshot.h
+    ../src/config/ghostty_config_loader.h
+    ../src/config/ghostty_config_snapshot.h
 )
 target_include_directories(
     test-ghostty-config-process-loader

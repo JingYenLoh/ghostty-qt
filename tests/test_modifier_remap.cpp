@@ -1,5 +1,5 @@
-#include "ghostty_application_keybindings.h"
-#include "modifier_remap.h"
+#include "input/ghostty_application_keybindings.h"
+#include "input/modifier_remap.h"
 
 #include <QCoreApplication>
 #include <QKeyEvent>

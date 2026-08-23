@@ -1,4 +1,4 @@
-#include "keyboard_layout.h"
+#include "input/keyboard_layout.h"
 
 #include <QByteArray>
 #include <QTest>

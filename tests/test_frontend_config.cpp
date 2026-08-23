@@ -1,5 +1,5 @@
-#include "frontend_config.h"
-#include "frontend_config_service.h"
+#include "config/frontend_config.h"
+#include "config/frontend_config_service.h"
 
 #include <QDir>
 #include <QFile>

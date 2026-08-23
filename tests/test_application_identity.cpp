@@ -1,4 +1,4 @@
-#include "application_identity.h"
+#include "app/application_identity.h"
 
 #include <QTest>
 

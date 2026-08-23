@@ -1,4 +1,4 @@
-#include "ghostty_config_edit.h"
+#include "config/ghostty_config_edit.h"
 
 #include <QDir>
 #include <QFile>

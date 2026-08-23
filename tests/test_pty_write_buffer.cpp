@@ -1,4 +1,4 @@
-#include "pty_write_buffer.h"
+#include "session/pty_write_buffer.h"
 
 #include <QTest>
 

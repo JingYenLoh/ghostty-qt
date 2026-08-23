@@ -1,4 +1,4 @@
-#include "window_blur_controller.h"
+#include "desktop/window_blur_controller.h"
 
 #include <QCoreApplication>
 #include <QPlatformSurfaceEvent>

@@ -1,4 +1,4 @@
-#include "terminal_custom_shader_compiler.h"
+#include "terminal/rendering/terminal_custom_shader_compiler.h"
 
 #include <QCoreApplication>
 #include <QDeadlineTimer>

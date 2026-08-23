@@ -1,4 +1,4 @@
-#include "terminal_backdrop_qsg.h"
+#include "terminal/rendering/terminal_backdrop_qsg.h"
 
 #include <QFile>
 #include <QGuiApplication>

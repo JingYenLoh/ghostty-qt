@@ -1,5 +1,5 @@
-#include "systemd_notify.h"
-#include "unique_file_descriptor.h"
+#include "desktop/systemd_notify.h"
+#include "support/unique_file_descriptor.h"
 
 #include <QCoreApplication>
 #include <QDir>

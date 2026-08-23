@@ -1,4 +1,4 @@
-#include "terminal_glyph_atlas.h"
+#include "terminal/rendering/terminal_glyph_atlas.h"
 
 #include <QFont>
 #include <QFontDatabase>

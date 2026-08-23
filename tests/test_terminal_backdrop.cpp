@@ -1,4 +1,4 @@
-#include "terminal_backdrop_p.h"
+#include "terminal/rendering/terminal_backdrop_p.h"
 
 #include <QBuffer>
 #include <QCoreApplication>

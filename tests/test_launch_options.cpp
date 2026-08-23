@@ -1,4 +1,4 @@
-#include "launch_options.h"
+#include "app/launch_options.h"
 
 #include "ghostty_config_snapshot_fixture.h"
 

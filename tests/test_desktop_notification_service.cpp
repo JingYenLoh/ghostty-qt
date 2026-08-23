@@ -1,4 +1,4 @@
-#include "desktop_notification_service.h"
+#include "desktop/desktop_notification_service.h"
 
 #include <QCoreApplication>
 #include <QSignalSpy>

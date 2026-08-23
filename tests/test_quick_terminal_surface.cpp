@@ -1,4 +1,4 @@
-#include "quick_terminal_surface.h"
+#include "desktop/quick_terminal_surface.h"
 
 #include <LayerShellQt/Window>
 

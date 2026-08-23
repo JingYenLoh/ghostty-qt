@@ -1,6 +1,6 @@
-#include "ghostty_config_process_loader.h"
+#include "config/ghostty_config_process_loader.h"
 
-#include "ghostty_config_export.h"
+#include "config/ghostty_config_export.h"
 #include "ghostty_config_export_fixture.h"
 
 #include <QColor>

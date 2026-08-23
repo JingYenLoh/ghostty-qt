@@ -1,5 +1,5 @@
-#include "ghostty_shell_integration.h"
-#include "ghostty_shell_integration_p.h"
+#include "session/ghostty_shell_integration.h"
+#include "session/ghostty_shell_integration_p.h"
 
 #include <QDir>
 #include <QFile>

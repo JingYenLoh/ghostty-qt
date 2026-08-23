@@ -1,4 +1,4 @@
-#include "ghostty_action_catalog.h"
+#include "input/ghostty_action_catalog.h"
 
 #include <QTest>
 #include <QtCore/qnamespace.h>
