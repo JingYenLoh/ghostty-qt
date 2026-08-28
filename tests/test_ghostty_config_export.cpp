@@ -364,6 +364,8 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(values.scrollbackLimitLines,
              std::optional<quint64>(quint64{9'876'543'210}));
     QCOMPARE(values.kittyImageStorageLimitBytes, quint32{123456789});
+    QCOMPARE(values.clipboardWriteLimitBytes,
+             std::optional<quint64>(quint64{9'876'543'210}));
     QVERIFY(!values.scrollbackCompression);
     QCOMPARE(values.scrollbar, ScrollbarPolicy::Never);
     QVERIFY(!values.desktopNotifications);
@@ -404,6 +406,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(values.selectionWordChars,
              QVector<quint32>({0, 0x20, 0x2502, 0x1f642}));
     QCOMPARE(values.clickRepeatIntervalMilliseconds, quint32{731});
+    QCOMPARE(values.clipboardRead, TerminalClipboardAccess::Allow);
     QCOMPARE(values.clipboardWrite, TerminalClipboardAccess::Ask);
     QVERIFY(!values.clipboardPaste.protection);
     QVERIFY(values.clipboardPaste.bracketedSafe);
@@ -603,6 +606,9 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     lowValues =
         withValue(std::move(lowValues),
                   QStringLiteral("scrollback-limit-lines"), QJsonValue::Null);
+    lowValues = withValue(std::move(lowValues),
+                          QStringLiteral("clipboard-write-limit-bytes"),
+                          QJsonValue::Null);
     lowValues =
         withValue(std::move(lowValues), QStringLiteral("env"), QJsonArray{});
 
@@ -620,6 +626,7 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     QVERIFY(!low->values.linuxCgroup.processesLimit.has_value());
     QVERIFY(!low->values.scrollbackLimitBytes.has_value());
     QVERIFY(!low->values.scrollbackLimitLines.has_value());
+    QVERIFY(!low->values.clipboardWriteLimitBytes.has_value());
     QVERIFY(low->values.environment.isEmpty());
 
     for (const qint16 value : std::to_array<qint16>({-1, 0, 20, 255})) {
@@ -982,6 +989,14 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
             return values.selectionClipboard.copyOnSelect;
         });
     verifyMappings(
+        QLatin1StringView("clipboard-read"),
+        std::to_array<std::pair<QLatin1StringView, TerminalClipboardAccess>>({
+            {QLatin1StringView("ask"), TerminalClipboardAccess::Ask},
+            {QLatin1StringView("allow"), TerminalClipboardAccess::Allow},
+            {QLatin1StringView("deny"), TerminalClipboardAccess::Deny},
+        }),
+        [](const GhosttyConfigValues &values) { return values.clipboardRead; });
+    verifyMappings(
         QLatin1StringView("clipboard-write"),
         std::to_array<std::pair<QLatin1StringView, TerminalClipboardAccess>>({
             {QLatin1StringView("ask"), TerminalClipboardAccess::Ask},
@@ -1270,7 +1285,8 @@ void GhosttyConfigExportTest::rejectsMalformedEnvelope()
                  "Ghostty structured config JSON root must be an object"));
 
     QJsonObject malformed = object();
-    malformed.insert(QStringLiteral("version"), 6);
+    malformed.insert(QStringLiteral("version"),
+                     GhosttyConfigExport::CurrentSchemaVersion + 1);
     parsed = parseGhosttyConfigExportJson(json(malformed));
     QVERIFY(!parsed);
     QCOMPARE(parsed.error(),
@@ -2071,6 +2087,13 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-clipboard-write")
         << withoutValue(object(), QStringLiteral("clipboard-write"))
         << QStringLiteral("values is missing field 'clipboard-write'");
+    QTest::newRow("missing-clipboard-write-limit-bytes")
+        << withoutValue(object(), QStringLiteral("clipboard-write-limit-bytes"))
+        << QStringLiteral(
+               "values is missing field 'clipboard-write-limit-bytes'");
+    QTest::newRow("missing-clipboard-read")
+        << withoutValue(object(), QStringLiteral("clipboard-read"))
+        << QStringLiteral("values is missing field 'clipboard-read'");
     QTest::newRow("missing-right-click-action")
         << withoutValue(object(), QStringLiteral("right-click-action"))
         << QStringLiteral("values is missing field 'right-click-action'");
@@ -2942,6 +2965,19 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withValue(object(), QStringLiteral("scrollback-limit-lines"),
                      QStringLiteral("18446744073709551616"))
         << QStringLiteral("exceeds the uint64 range");
+    QTest::newRow("clipboard-write-limit-number")
+        << withValue(object(), QStringLiteral("clipboard-write-limit-bytes"),
+                     64)
+        << QStringLiteral(
+               "values.clipboard-write-limit-bytes must be a string");
+    QTest::newRow("clipboard-write-limit-leading-zero")
+        << withValue(object(), QStringLiteral("clipboard-write-limit-bytes"),
+                     QStringLiteral("01"))
+        << QStringLiteral("canonical unsigned decimal string");
+    QTest::newRow("clipboard-write-limit-overflow")
+        << withValue(object(), QStringLiteral("clipboard-write-limit-bytes"),
+                     QStringLiteral("18446744073709551616"))
+        << QStringLiteral("exceeds the uint64 range");
     QTest::newRow("image-storage-limit-negative")
         << withValue(object(), QStringLiteral("image-storage-limit"), -1)
         << QStringLiteral(
@@ -3019,6 +3055,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
              QStringLiteral("cursor-style"),
              QStringLiteral("confirm-close-surface"),
              QStringLiteral("copy-on-select"),
+             QStringLiteral("clipboard-read"),
              QStringLiteral("clipboard-write"),
              QStringLiteral("right-click-action"),
              QStringLiteral("middle-click-action"),

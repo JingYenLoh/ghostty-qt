@@ -263,6 +263,7 @@ private Q_SLOTS:
     void realHelperExportsSelectionWordChars();
     void realHelperExportsClickRepeatInterval();
     void realHelperExportsClipboardWrite();
+    void realHelperExportsClipboardRead();
     void realHelperExportsEnquiryResponse();
     void realHelperExportsScrollToBottom();
     void realHelperExportsRightClickAction();
@@ -441,6 +442,8 @@ void GhosttyConfigProcessLoaderTest::publishesTypedSnapshotAndSourcePaths()
     QCOMPARE(result->values.scrollbackLimitLines,
              std::optional<quint64>(quint64{9'876'543'210}));
     QCOMPARE(result->values.kittyImageStorageLimitBytes, quint32{123456789});
+    QCOMPARE(result->values.clipboardWriteLimitBytes,
+             std::optional<quint64>(quint64{9'876'543'210}));
     QVERIFY(result->values.background.image.path.has_value());
     QCOMPARE(result->values.background.image.path->path,
              QStringLiteral("/fixture/background.png"));
@@ -1233,7 +1236,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
                        "fullscreen = non-native-visible-menu\n"
                        "scrollback-limit-bytes = unlimited\n"
                        "scrollback-limit-lines = 7654321\n"
-                       "image-storage-limit = 987654321\n")
+                       "image-storage-limit = 987654321\n"
+                       "clipboard-write-limit-bytes = unlimited\n")
             .arg(directory)
             .toUtf8());
 
@@ -1263,6 +1267,7 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
     QCOMPARE(result->values.scrollbackLimitLines,
              std::optional<quint64>(quint64{7'654'321}));
     QCOMPARE(result->values.kittyImageStorageLimitBytes, quint32{987654321});
+    QVERIFY(!result->values.clipboardWriteLimitBytes.has_value());
 
     ConfigFixture::writeFile(fixture.preferredPath,
                              QByteArrayLiteral("term =\n"));
@@ -2713,6 +2718,52 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsClipboardWrite()
     const auto result = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(result->values.clipboardWrite, TerminalClipboardAccess::Allow);
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("clipboard-write-limit-bytes = 9876543210\n"));
+    const auto finite = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(finite.has_value(), qPrintable(errorMessage(finite)));
+    QCOMPARE(finite->values.clipboardWriteLimitBytes,
+             std::optional<quint64>(quint64{9'876'543'210}));
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("clipboard-write-limit-bytes = unlimited\n"));
+    const auto unlimited = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(unlimited.has_value(), qPrintable(errorMessage(unlimited)));
+    QVERIFY(!unlimited->values.clipboardWriteLimitBytes.has_value());
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsClipboardRead()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+
+    for (const auto &[spelling, expected] :
+         std::to_array<std::pair<QByteArray, TerminalClipboardAccess>>({
+             {QByteArrayLiteral("ask"), TerminalClipboardAccess::Ask},
+             {QByteArrayLiteral("allow"), TerminalClipboardAccess::Allow},
+             {QByteArrayLiteral("deny"), TerminalClipboardAccess::Deny},
+         })) {
+        ConfigFixture::writeFile(fixture.preferredPath,
+                                 QByteArrayLiteral("clipboard-read = ")
+                                     + spelling + '\n');
+        const auto result = queryRealConfigExport(helperPath, fixture);
+        QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+        QCOMPARE(result->values.clipboardRead, expected);
+    }
+
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    const auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.clipboardRead, TerminalClipboardAccess::Ask);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsEnquiryResponse()

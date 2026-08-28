@@ -484,6 +484,7 @@ private Q_SLOTS:
     void readOnlyNaturalExitPromptsExactlyOnce();
     void queuesAndCorrelatesUnsafePasteConfirmations();
     void ordersAndConfirmsTerminalClipboardWrites();
+    void ordersAndConfirmsTerminalClipboardReads();
     void routesDesktopNotificationsByStablePane();
     void dropsSelectionClipboardWritesFromRetiredPanes();
     void performableTabChangeRequiresDifferentTarget();
@@ -4774,7 +4775,7 @@ void TerminalWorkspaceTest::inspectorIsPaneLocalAndUsesStableTargets()
         QStringLiteral("Primary"));
     QCOMPARE(
         authoritativeTerminal.value(QStringLiteral("modes")).toList().size(),
-        42);
+        43);
     QVERIFY(authoritativeTerminal.value(QStringLiteral("workerContentRevision"))
                 .toULongLong()
             > 0);
@@ -6727,6 +6728,100 @@ void TerminalWorkspaceTest::ordersAndConfirmsTerminalClipboardWrites()
              QStringLiteral("reentrant-stable"));
     QCOMPARE(resolved.constLast().constFirst().toULongLong(),
              reentrantConfirmationId);
+}
+
+void TerminalWorkspaceTest::ordersAndConfirmsTerminalClipboardReads()
+{
+    ShellEnvironment shell;
+    LaunchOptions options = baseOptions();
+    options.clipboardRead = TerminalClipboardAccess::Ask;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    TerminalController *const controller =
+        pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->sessionStarted(), 1000);
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    auto mimeData = std::make_unique<QMimeData>();
+    mimeData->setData(QStringLiteral("text/plain"),
+                      QByteArrayLiteral("read preview"));
+    mimeData->setData(QStringLiteral("application/x-ghostty-qt"),
+                      QByteArray("bin\0ary", 7));
+    clipboard->setMimeData(mimeData.release(), QClipboard::Clipboard);
+
+    QSignalSpy confirmations(
+        &workspace,
+        &TerminalWorkspace::terminalClipboardReadConfirmationRequested);
+    QSignalSpy resolved(
+        &workspace,
+        &TerminalWorkspace::terminalClipboardReadConfirmationResolved);
+    QSignalSpy runtimeUpdates(controller,
+                              &TerminalController::runtimeOptionsRequested);
+
+    const TerminalClipboardReadRequest first{
+        .requestId = 41,
+        .location = TerminalClipboardLocation::Standard,
+        .mimes = {QByteArrayLiteral("text/plain"),
+                  QByteArrayLiteral("application/x-ghostty-qt")},
+        .list = true,
+        .name = QByteArrayLiteral("clipboard-client"),
+        .granted = false,
+        .canRemember = true,
+        .confirmationRequired = true,
+    };
+    Q_EMIT pane->terminalClipboardReadRequested(first, pane);
+    QTRY_COMPARE_WITH_TIMEOUT(confirmations.count(), 1, 1000);
+    const quint64 confirmationId =
+        confirmations.constFirst().constFirst().toULongLong();
+    const QString preview = confirmations.constFirst().at(1).toString();
+    QVERIFY(preview.contains(QStringLiteral("clipboard-client")));
+    QVERIFY(preview.contains(QStringLiteral("read preview")));
+    QVERIFY(preview.contains(QStringLiteral("application/x-ghostty-qt")));
+
+    workspace.confirmClipboardRead(confirmationId + 1, false);
+    QCOMPARE(resolved.count(), 0);
+    workspace.confirmClipboardRead(confirmationId, true);
+    QCOMPARE(resolved.count(), 1);
+    QVERIFY(!runtimeUpdates.isEmpty());
+    QCOMPARE(qvariant_cast<TerminalSessionRuntimeOptions>(
+                 runtimeUpdates.constLast().constFirst())
+                 .clipboardRead,
+             TerminalClipboardAccess::Allow);
+
+    // A config reload replaces the remembered pane-local decision. A granted
+    // Kitty paste-event read bypasses the ask queue and therefore opens no
+    // second confirmation.
+    pane->applyRuntimeOptions(options);
+    QCOMPARE(qvariant_cast<TerminalSessionRuntimeOptions>(
+                 runtimeUpdates.constLast().constFirst())
+                 .clipboardRead,
+             TerminalClipboardAccess::Ask);
+    TerminalClipboardReadRequest granted = first;
+    granted.requestId = 42;
+    granted.granted = true;
+    granted.confirmationRequired = false;
+    Q_EMIT pane->terminalClipboardReadRequested(granted, pane);
+    QTest::qWait(20);
+    QCOMPARE(confirmations.count(), 1);
+
+    TerminalClipboardReadRequest denied = first;
+    denied.requestId = 43;
+    Q_EMIT pane->terminalClipboardReadRequested(denied, pane);
+    QTRY_COMPARE_WITH_TIMEOUT(confirmations.count(), 2, 1000);
+    const quint64 deniedId =
+        confirmations.constLast().constFirst().toULongLong();
+    workspace.cancelClipboardRead(deniedId, true);
+    QCOMPARE(qvariant_cast<TerminalSessionRuntimeOptions>(
+                 runtimeUpdates.constLast().constFirst())
+                 .clipboardRead,
+             TerminalClipboardAccess::Deny);
 }
 
 void TerminalWorkspaceTest::routesDesktopNotificationsByStablePane()

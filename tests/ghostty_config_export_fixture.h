@@ -586,7 +586,10 @@ inline QJsonObject values()
              clipboardCodepointMap(0x110000U, 0x1fffffU,
                                    clipboardCodepointReplacement(0x1fffffU)),
          }},
+        {QStringLiteral("clipboard-read"), QStringLiteral("allow")},
         {QStringLiteral("clipboard-write"), QStringLiteral("ask")},
+        {QStringLiteral("clipboard-write-limit-bytes"),
+         QStringLiteral("9876543210")},
         {QStringLiteral("clipboard-paste-protection"), false},
         {QStringLiteral("clipboard-paste-bracketed-safe"), true},
         {QStringLiteral("copy-on-select"), QStringLiteral("clipboard")},
@@ -649,7 +652,7 @@ inline QJsonObject object()
 {
     const QJsonObject baseline = keybindings();
     return {
-        {QStringLiteral("version"), 5},
+        {QStringLiteral("version"), 7},
         {QStringLiteral("values"), values()},
         {QStringLiteral("keybindings"), baseline},
         {QStringLiteral("default-keybindings"), baseline},

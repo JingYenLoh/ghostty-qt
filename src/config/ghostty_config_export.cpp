@@ -151,7 +151,9 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("confirm-close-surface"),
     QLatin1StringView("clipboard-trim-trailing-spaces"),
     QLatin1StringView("clipboard-codepoint-map"),
+    QLatin1StringView("clipboard-read"),
     QLatin1StringView("clipboard-write"),
+    QLatin1StringView("clipboard-write-limit-bytes"),
     QLatin1StringView("clipboard-paste-protection"),
     QLatin1StringView("clipboard-paste-bracketed-safe"),
     QLatin1StringView("copy-on-select"),
@@ -2439,6 +2441,15 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         return std::unexpected(std::move(parsed.error()));
     if (auto parsed = assignEnum(QLatin1StringView("clipboard-write"),
                                  result.clipboardWrite, ClipboardAccessModes);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assignEnum(QLatin1StringView("clipboard-read"),
+                                 result.clipboardRead, ClipboardAccessModes);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
+    if (auto parsed =
+            assign(QLatin1StringView("clipboard-write-limit-bytes"),
+                   result.clipboardWriteLimitBytes, readOptionalDecimalUint64);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
     if (auto parsed = assignEnum(QLatin1StringView("right-click-action"),

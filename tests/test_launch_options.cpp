@@ -216,6 +216,7 @@ GhosttyConfigSnapshot completeSnapshot()
     values.scrollbackLimitBytes = 50'000'000;
     values.scrollbackLimitLines = 75'000;
     values.kittyImageStorageLimitBytes = 123'456'789;
+    values.clipboardWriteLimitBytes = 9'876'543'210;
     values.scrollbackCompression = false;
     values.bellAudioPath = GhosttyConfigPath{
         .path = QStringLiteral("/work/bell.oga"),
@@ -241,6 +242,7 @@ GhosttyConfigSnapshot completeSnapshot()
         .bracketedSafe = true,
     };
     values.clipboardWrite = TerminalClipboardAccess::Ask;
+    values.clipboardRead = TerminalClipboardAccess::Allow;
     values.scrollToBottom = {
         .keystroke = false,
         .output = true,
@@ -485,6 +487,9 @@ void LaunchOptionsTest::defaults()
     QVERIFY(options.clipboardPaste.protection);
     QVERIFY(options.clipboardPaste.bracketedSafe);
     QCOMPARE(options.clipboardWrite, TerminalClipboardAccess::Allow);
+    QCOMPARE(options.clipboardWriteLimitBytes,
+             std::optional<quint64>(quint64{64} * 1024 * 1024));
+    QCOMPARE(options.clipboardRead, TerminalClipboardAccess::Ask);
     QVERIFY(options.scrollToBottom.keystroke);
     QVERIFY(!options.scrollToBottom.output);
     QCOMPARE(options.splitAppearance.unfocusedOpacity, 0.7);
@@ -1322,6 +1327,9 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QVERIFY(!cliResult.clipboardPaste.protection);
     QVERIFY(cliResult.clipboardPaste.bracketedSafe);
     QCOMPARE(cliResult.clipboardWrite, TerminalClipboardAccess::Ask);
+    QCOMPARE(cliResult.clipboardWriteLimitBytes,
+             std::optional<quint64>(quint64{9'876'543'210}));
+    QCOMPARE(cliResult.clipboardRead, TerminalClipboardAccess::Allow);
     QVERIFY(!cliResult.scrollToBottom.keystroke);
     QVERIFY(cliResult.scrollToBottom.output);
     QCOMPARE(cliResult.rightClickAction, RightClickAction::CopyOrPaste);
@@ -1351,6 +1359,8 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QCOMPARE(configResult.scrollbackLimits.lines,
              std::optional<quint64>(quint64{75'000}));
     QCOMPARE(configResult.kittyImageStorageLimitBytes, quint32{123'456'789});
+    QCOMPARE(configResult.clipboardWriteLimitBytes,
+             std::optional<quint64>(quint64{9'876'543'210}));
 
     for (const double unusableSize : {0.0, -2.0}) {
         GhosttyConfigSnapshot unusable = snapshot;
@@ -2249,6 +2259,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         .bracketedSafe = true,
     };
     options.clipboardWrite = TerminalClipboardAccess::Deny;
+    options.clipboardWriteLimitBytes = std::nullopt;
+    options.clipboardRead = TerminalClipboardAccess::Allow;
     options.scrollToBottom = {
         .keystroke = false,
         .output = true,
@@ -2281,6 +2293,9 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
              options.clickRepeatIntervalMilliseconds);
     QCOMPARE(runtime.clipboardPaste, options.clipboardPaste);
     QCOMPARE(runtime.clipboardWrite, options.clipboardWrite);
+    QCOMPARE(runtime.clipboardWriteLimitBytes,
+             options.clipboardWriteLimitBytes);
+    QCOMPARE(runtime.clipboardRead, options.clipboardRead);
     QCOMPARE(runtime.scrollToBottom, options.scrollToBottom);
     QCOMPARE(runtime.rightClickAction, options.rightClickAction);
     QCOMPARE(runtime.vtKamAllowed, options.vtKamAllowed);
@@ -2476,6 +2491,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.selectionClipboard = {};
     options.clipboardPaste = {};
     options.clipboardWrite = TerminalClipboardAccess::Allow;
+    options.clipboardRead = TerminalClipboardAccess::Ask;
     options.scrollToBottom = {};
     options.middleClickAction = MiddleClickAction::PrimaryPaste;
     options.vtKamAllowed = false;
@@ -2532,6 +2548,9 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     };
     QCOMPARE(launch.runtime.clipboardPaste, expectedPaste);
     QCOMPARE(launch.runtime.clipboardWrite, TerminalClipboardAccess::Deny);
+    QCOMPARE(launch.runtime.clipboardWriteLimitBytes,
+             options.clipboardWriteLimitBytes);
+    QCOMPARE(launch.runtime.clipboardRead, TerminalClipboardAccess::Allow);
     const TerminalScrollToBottomOptions expectedScrollToBottom{
         .keystroke = false,
         .output = true,

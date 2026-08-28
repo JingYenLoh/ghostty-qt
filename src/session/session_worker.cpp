@@ -1,4 +1,5 @@
 #include "session/session_worker.h"
+
 #include "desktop/desktop_activation.h"
 #include "desktop/linux_cgroup.h"
 #include "input/ghostty_key_identity.h"
@@ -6,6 +7,7 @@
 #include "session/ghostty_link_matcher.h"
 #include "session/ghostty_shell_integration.h"
 #include "session/ghostty_shell_integration_p.h"
+#include "session/terminal_clipboard_bridge.h"
 #include "session/terminfo_paths.h"
 #include "support/posix_regular_file.h"
 #include "terminal/adapter/ghostty_vt_adapter.h"
@@ -953,6 +955,14 @@ SessionWorker::SessionWorker(LinuxCgroupMover cgroupMover, QObject *parent)
     terminalFileState_->lifetime->receiver = this;
 }
 
+void SessionWorker::setClipboardBridge(
+    std::shared_ptr<TerminalClipboardBridge> bridge)
+{
+    Q_ASSERT(thread() == QThread::currentThread());
+    Q_ASSERT(vt_ == nullptr);
+    if (bridge != nullptr) clipboardBridge_ = std::move(bridge);
+}
+
 SessionWorker::~SessionWorker()
 {
     shutdown();
@@ -1123,7 +1133,9 @@ bool SessionWorker::createTerminal()
             options_.runtime.kittyImageStorageLimitBytes,
         .appearance = options_.runtime.appearance,
         .colorScheme = options_.runtime.colorScheme,
+        .clipboardReadAccess = options_.runtime.clipboardRead,
         .clipboardWriteAccess = options_.runtime.clipboardWrite,
+        .clipboardWriteLimitBytes = options_.runtime.clipboardWriteLimitBytes,
         .graphemeWidthUnicode = options_.runtime.graphemeWidthMethod
             == GraphemeWidthMethod::Unicode,
         .titleReport = options_.runtime.titleReport,
@@ -1135,6 +1147,28 @@ bool SessionWorker::createTerminal()
     };
     GhosttyVtAdapter::Callbacks callbacks;
     callbacks.writePty = [this](QByteArrayView data) { queuePtyWrite(data); };
+    if (clipboardBridge_ != nullptr) {
+        callbacks.clipboardRead =
+            [this](const TerminalClipboardReadRequest &request)
+            -> std::optional<TerminalClipboardReadReply> {
+            const quint64 requestId = clipboardBridge_->beginRead();
+            if (requestId == 0) return std::nullopt;
+            TerminalClipboardReadRequest correlated = request;
+            correlated.requestId = requestId;
+            Q_EMIT terminalClipboardReadRequested(correlated);
+            return clipboardBridge_->waitRead(requestId);
+        };
+        callbacks.clipboardWrite =
+            [this](const TerminalClipboardWriteRequest &request)
+            -> std::optional<TerminalClipboardWriteReply> {
+            const quint64 requestId = clipboardBridge_->beginWrite();
+            if (requestId == 0) return std::nullopt;
+            TerminalClipboardWriteRequest correlated = request;
+            correlated.requestId = requestId;
+            Q_EMIT terminalClipboardWriteRequested(correlated);
+            return clipboardBridge_->waitWrite(requestId);
+        };
+    }
     vt_ = GhosttyVtAdapter::create(options, std::move(callbacks));
     if (vt_ != nullptr) {
         if (!vt_->setSelectionWordChars(options_.runtime.selectionWordChars)
@@ -1163,6 +1197,10 @@ void SessionWorker::applyRuntimeOptions(
         != options.kittyImageStorageLimitBytes;
     const quint32 previousKittyImageStorageLimit =
         options_.runtime.kittyImageStorageLimitBytes;
+    const std::optional<quint64> previousClipboardWriteLimit =
+        options_.runtime.clipboardWriteLimitBytes;
+    const bool clipboardWriteLimitChanged =
+        previousClipboardWriteLimit != options.clipboardWriteLimitBytes;
     const bool linkUrlChanged = options_.runtime.linkUrl != options.linkUrl;
     const bool linkOsc8Changed = options_.runtime.linkOsc8 != options.linkOsc8;
     const QVector<quint32> previousSelectionWordChars =
@@ -1183,8 +1221,12 @@ void SessionWorker::applyRuntimeOptions(
     const bool kittyImageStorageLimitApplied = vt_ == nullptr
         || !kittyImageStorageLimitChanged
         || vt_->setKittyImageStorageLimit(options.kittyImageStorageLimitBytes);
+    const bool clipboardWriteLimitApplied = vt_ == nullptr
+        || !clipboardWriteLimitChanged
+        || vt_->setClipboardWriteLimit(options.clipboardWriteLimitBytes);
     if (vt_ != nullptr) {
         vt_->setColorScheme(options.colorScheme);
+        vt_->setClipboardReadAccess(options.clipboardRead);
         vt_->setClipboardWriteAccess(options.clipboardWrite);
         vt_->setEnquiryResponse(options.enquiryResponse);
     }
@@ -1290,6 +1332,11 @@ void SessionWorker::applyRuntimeOptions(
     } else if (vt_ != nullptr && kittyImageStorageLimitChanged) {
         markTerminalContentChanged();
         scheduleFrame();
+    }
+    if (!clipboardWriteLimitApplied) {
+        options_.runtime.clipboardWriteLimitBytes = previousClipboardWriteLimit;
+        Q_EMIT errorOccurred(QStringLiteral(
+            "Failed to apply clipboard write limit to libghostty-vt."));
     }
     if (vt_ != nullptr && appearanceChanged) {
         if (!vt_->setAppearance(options.appearance)) {
@@ -2836,7 +2883,9 @@ void SessionWorker::setFocused(bool focused)
     }
 }
 
-void SessionWorker::paste(const QString &text)
+void SessionWorker::paste(const QString &text,
+                          TerminalClipboardLocation location,
+                          bool clipboardSource)
 {
     if (text.isEmpty() || vt_ == nullptr || masterFd_ < 0) {
         return;
@@ -2849,6 +2898,8 @@ void SessionWorker::paste(const QString &text)
                           {
                               .protection = options.protection,
                               .bracketedSafe = options.bracketedSafe,
+                              .location = location,
+                              .clipboardSource = clipboardSource,
                           });
     if (prepared.disposition
         == GhosttyVtAdapter::PasteDisposition::ConfirmationRequired) {
@@ -2856,7 +2907,8 @@ void SessionWorker::paste(const QString &text)
             ++nextPasteRequestId_;
         } while (nextPasteRequestId_ == 0
                  || pendingPastes_.contains(nextPasteRequestId_));
-        pendingPastes_.insert(nextPasteRequestId_, text);
+        pendingPastes_.insert(nextPasteRequestId_,
+                              {text, location, clipboardSource});
         Q_EMIT unsafePasteConfirmationRequested(nextPasteRequestId_, text);
         return;
     }
@@ -2871,7 +2923,7 @@ void SessionWorker::confirmPaste(quint64 requestId)
     if (pending == pendingPastes_.end()) {
         return;
     }
-    const QString text = pending.value();
+    const PendingPaste request = pending.value();
     pendingPastes_.erase(pending);
     if (vt_ == nullptr || masterFd_ < 0) {
         return;
@@ -2880,14 +2932,16 @@ void SessionWorker::confirmPaste(quint64 requestId)
     const TerminalClipboardPasteOptions &options =
         options_.runtime.clipboardPaste;
     const GhosttyVtAdapter::PreparedPaste prepared = vt_->preparePaste(
-        text,
+        request.text,
         {
             .protection = options.protection,
             .bracketedSafe = options.bracketedSafe,
             .authorization = GhosttyVtAdapter::PasteAuthorization::Confirmed,
+            .location = request.location,
+            .clipboardSource = request.clipboardSource,
         });
     if (prepared.disposition == GhosttyVtAdapter::PasteDisposition::Ready) {
-        commitPaste(text, prepared.bytes);
+        commitPaste(request.text, prepared.bytes);
     }
 }
 

@@ -51,6 +51,9 @@ public:
         bool protection = true;
         bool bracketedSafe = true;
         PasteAuthorization authorization = PasteAuthorization::Initial;
+        TerminalClipboardLocation location =
+            TerminalClipboardLocation::Standard;
+        bool clipboardSource = true;
     };
 
     struct PreparedPaste {
@@ -163,8 +166,11 @@ public:
         quint64 kittyImageStorageLimitBytes = 320'000'000;
         TerminalAppearance appearance;
         TerminalColorScheme colorScheme = TerminalColorScheme::Light;
+        TerminalClipboardAccess clipboardReadAccess =
+            TerminalClipboardAccess::Ask;
         TerminalClipboardAccess clipboardWriteAccess =
             TerminalClipboardAccess::Allow;
+        std::optional<quint64> clipboardWriteLimitBytes = 64ULL * 1024 * 1024;
         bool graphemeWidthUnicode = true;
         bool titleReport = false;
         // Effective child TERM advertised through XTGETTCAP TN. An empty or
@@ -184,6 +190,12 @@ public:
         // The sink must synchronously consume or retain them.
         std::function<void(QByteArrayView)> writePty;
         std::function<QByteArray()> queryMachineHostName;
+        std::function<std::optional<TerminalClipboardReadReply>(
+            const TerminalClipboardReadRequest &)>
+            clipboardRead;
+        std::function<std::optional<TerminalClipboardWriteReply>(
+            const TerminalClipboardWriteRequest &)>
+            clipboardWrite;
     };
 
     struct RenderSnapshot {
@@ -317,7 +329,9 @@ public:
     bool setAppearance(const TerminalAppearance &appearance);
     bool setKittyImageStorageLimit(quint64 bytes);
     void setColorScheme(TerminalColorScheme scheme);
+    void setClipboardReadAccess(TerminalClipboardAccess access);
     void setClipboardWriteAccess(TerminalClipboardAccess access);
+    bool setClipboardWriteLimit(std::optional<quint64> bytes);
     void setEnquiryResponse(const QByteArray &response);
     void writeVt(QByteArrayView data);
     // Observe the active screen's final logical row at a renderer/frame
@@ -350,7 +364,7 @@ public:
     // Classification and encoding share one bracketed-mode snapshot so an
     // accepted request cannot be encoded under different terminal state.
     PreparedPaste preparePaste(const QString &text,
-                               const PastePreparationOptions &options) const;
+                               const PastePreparationOptions &options);
 
     QString selectedText(bool trim = true) const;
     // Snapshot the exact plain write_*_file range. Ready may contain zero

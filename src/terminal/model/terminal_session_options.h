@@ -134,7 +134,9 @@ struct TerminalSessionRuntimeOptions {
     quint32 clickRepeatIntervalMilliseconds = 500;
     // Terminal-originated clipboard writes are resolved by the worker using
     // the newest policy before a normalized request crosses to the GUI.
+    TerminalClipboardAccess clipboardRead = TerminalClipboardAccess::Ask;
     TerminalClipboardAccess clipboardWrite = TerminalClipboardAccess::Allow;
+    std::optional<quint64> clipboardWriteLimitBytes = 64ULL * 1024 * 1024;
     TerminalClipboardPasteOptions clipboardPaste;
     RightClickAction rightClickAction = RightClickAction::ContextMenu;
     bool linkUrl = true;

@@ -68,7 +68,7 @@ comptime {
 }
 
 /// Export one complete, finalized configuration generation as the
-/// project-private JSON v4 schema. The returned JSON or companion diagnostic
+/// project-private JSON v7 schema. The returned JSON or companion diagnostic
 /// allocation follows ghostty_string_s ownership and is released by
 /// ghostty_string_free.
 export fn ghostty_qt_config_json(
@@ -425,7 +425,7 @@ fn configJson(
     var json: std.json.Stringify = .{ .writer = &output.writer };
     try json.beginObject();
     try json.objectField("version");
-    try json.write(@as(u8, 5));
+    try json.write(@as(u8, 7));
 
     {
         var config = try loadSelectedConfig(
@@ -934,8 +934,15 @@ fn writeValues(
     try json.write(config.@"clipboard-trim-trailing-spaces");
     try json.objectField("clipboard-codepoint-map");
     try writeClipboardCodepointMap(json, &config.@"clipboard-codepoint-map");
+    try json.objectField("clipboard-read");
+    try json.write(@tagName(config.@"clipboard-read"));
     try json.objectField("clipboard-write");
     try json.write(@tagName(config.@"clipboard-write"));
+    try json.objectField("clipboard-write-limit-bytes");
+    if (config.@"clipboard-write-limit-bytes".optional()) |value|
+        try writeDecimalUint64(json, @intCast(value))
+    else
+        try json.write(null);
     try json.objectField("clipboard-paste-protection");
     try json.write(config.@"clipboard-paste-protection");
     try json.objectField("clipboard-paste-bracketed-safe");

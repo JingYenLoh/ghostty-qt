@@ -301,6 +301,9 @@ public:
                                            bool remember);
     Q_INVOKABLE void cancelClipboardWrite(quint64 confirmationId,
                                           bool remember);
+    Q_INVOKABLE void confirmClipboardRead(quint64 confirmationId,
+                                          bool remember);
+    Q_INVOKABLE void cancelClipboardRead(quint64 confirmationId, bool remember);
     Q_INVOKABLE void confirmTitlePrompt(quint64 promptId, const QString &title);
     Q_INVOKABLE void cancelTitlePrompt(quint64 promptId);
     Q_INVOKABLE bool executeContextMenuAction(quint64 requestId,
@@ -326,6 +329,9 @@ Q_SIGNALS:
     void terminalClipboardWriteConfirmationRequested(quint64 confirmationId,
                                                      const QString &preview);
     void terminalClipboardWriteConfirmationResolved(quint64 confirmationId);
+    void terminalClipboardReadConfirmationRequested(quint64 confirmationId,
+                                                    const QString &preview);
+    void terminalClipboardReadConfirmationResolved(quint64 confirmationId);
     void titlePromptRequested(quint64 promptId, const QString &heading,
                               const QString &initialTitle);
     void titlePromptResolved(quint64 promptId);
@@ -411,6 +417,13 @@ private:
     };
     struct PendingClipboardWrite {
         TerminalClipboardWriteRequest request;
+        PaneId paneId;
+        QPointer<TerminalPane> pane;
+        quint64 byteSize = 0;
+    };
+    struct PendingClipboardRead {
+        TerminalClipboardReadRequest request;
+        TerminalClipboardReadReply reply;
         PaneId paneId;
         QPointer<TerminalPane> pane;
         quint64 byteSize = 0;
@@ -593,6 +606,21 @@ private:
     void drainPendingClipboardWrites();
     static QString
     terminalClipboardWritePreview(const TerminalClipboardWrite &write);
+    static QString terminalClipboardWriteRequestPreview(
+        const TerminalClipboardWriteRequest &request);
+    void beginTerminalClipboardRead(const TerminalClipboardReadRequest &request,
+                                    PaneHandle handle);
+    void finishTerminalClipboardRead(quint64 confirmationId, bool confirmed,
+                                     bool remember);
+    void removePendingClipboardReadsForPane(PaneHandle handle);
+    void schedulePendingClipboardReadDrain();
+    void drainPendingClipboardReads();
+    static TerminalClipboardReadReply
+    readTerminalClipboard(const TerminalClipboardReadRequest &request,
+                          quint64 *byteSize);
+    static QString
+    terminalClipboardReadPreview(const TerminalClipboardReadRequest &request,
+                                 const TerminalClipboardReadReply &reply);
     void beginContextMenu(PaneHandle handle, const QPointF &windowPosition,
                           bool selectionAvailable);
     void removeContextMenuForPane(PaneHandle handle);
@@ -656,6 +684,11 @@ private:
     bool pendingClipboardWriteDrainScheduled_ = false;
     quint64 nextClipboardWriteConfirmationId_ = 0;
     quint64 activeClipboardWriteConfirmationId_ = 0;
+    std::deque<PendingClipboardRead> pendingClipboardReads_;
+    quint64 pendingClipboardReadBytes_ = 0;
+    bool pendingClipboardReadDrainScheduled_ = false;
+    quint64 nextClipboardReadConfirmationId_ = 0;
+    quint64 activeClipboardReadConfirmationId_ = 0;
     std::optional<PendingContextMenu> pendingContextMenu_;
     quint64 nextContextMenuId_ = 0;
     std::deque<PendingTitlePrompt> pendingTitlePrompts_;

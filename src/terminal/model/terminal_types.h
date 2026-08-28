@@ -869,14 +869,69 @@ struct TerminalClipboardWrite {
                            const TerminalClipboardWrite &) = default;
 };
 
+enum class TerminalClipboardWriteResult : quint8 {
+    Success,
+    Denied,
+    Unsupported,
+    Busy,
+    InvalidData,
+    IoError,
+};
+
 struct TerminalClipboardWriteRequest {
+    quint64 requestId = 0;
     TerminalClipboardWrite write;
+    QByteArray name;
+    bool granted = false;
+    bool canRemember = false;
     // This snapshots the live access policy at the point the escape sequence
-    // was consumed, preserving FIFO behavior across later config reloads.
+    // was consumed. A Kitty password grant always bypasses confirmation.
     bool confirmationRequired = false;
 
     friend bool operator==(const TerminalClipboardWriteRequest &,
                            const TerminalClipboardWriteRequest &) = default;
+};
+
+struct TerminalClipboardWriteReply {
+    TerminalClipboardWriteResult result = TerminalClipboardWriteResult::Denied;
+    bool remember = false;
+
+    friend bool operator==(const TerminalClipboardWriteReply &,
+                           const TerminalClipboardWriteReply &) = default;
+};
+
+enum class TerminalClipboardReadResult : quint8 {
+    Success,
+    Denied,
+    Unsupported,
+    Busy,
+    IoError,
+};
+
+struct TerminalClipboardReadRequest {
+    quint64 requestId = 0;
+    TerminalClipboardLocation location = TerminalClipboardLocation::Standard;
+    QVector<QByteArray> mimes;
+    bool list = false;
+    QByteArray name;
+    bool granted = false;
+    bool canRemember = false;
+    // This snapshots the live access policy when the escape sequence is
+    // consumed. A Kitty paste-event grant always bypasses confirmation.
+    bool confirmationRequired = false;
+
+    friend bool operator==(const TerminalClipboardReadRequest &,
+                           const TerminalClipboardReadRequest &) = default;
+};
+
+struct TerminalClipboardReadReply {
+    TerminalClipboardReadResult result = TerminalClipboardReadResult::Denied;
+    QVector<TerminalClipboardMimeRepresentation> contents;
+    QVector<QByteArray> available;
+    bool remember = false;
+
+    friend bool operator==(const TerminalClipboardReadReply &,
+                           const TerminalClipboardReadReply &) = default;
 };
 
 // Validates the value-only shape shared by every retained view of a render
@@ -1222,7 +1277,12 @@ Q_DECLARE_METATYPE(TerminalUpdate)
 Q_DECLARE_METATYPE(TerminalClipboardLocation)
 Q_DECLARE_METATYPE(TerminalClipboardMimeRepresentation)
 Q_DECLARE_METATYPE(TerminalClipboardWrite)
+Q_DECLARE_METATYPE(TerminalClipboardWriteResult)
 Q_DECLARE_METATYPE(TerminalClipboardWriteRequest)
+Q_DECLARE_METATYPE(TerminalClipboardWriteReply)
+Q_DECLARE_METATYPE(TerminalClipboardReadResult)
+Q_DECLARE_METATYPE(TerminalClipboardReadRequest)
+Q_DECLARE_METATYPE(TerminalClipboardReadReply)
 Q_DECLARE_METATYPE(TerminalHyperlinkState)
 Q_DECLARE_METATYPE(TerminalLinkKind)
 Q_DECLARE_METATYPE(TerminalSearchDirection)

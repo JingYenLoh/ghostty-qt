@@ -24,6 +24,7 @@
 
 class QThread;
 class SessionWorker;
+class TerminalClipboardBridge;
 class TerminalPane;
 
 class TerminalController final : public QObject {
@@ -172,7 +173,14 @@ public:
                                             int row, int modifiers,
                                             bool shiftBypassedMouseCapture);
     void setFocused(bool focused);
-    void paste(const QString &text);
+    void paste(const QString &text,
+               TerminalClipboardLocation location =
+                   TerminalClipboardLocation::Standard,
+               bool clipboardSource = true);
+    void resolveTerminalClipboardRead(quint64 requestId,
+                                      TerminalClipboardReadReply reply);
+    void resolveTerminalClipboardWrite(quint64 requestId,
+                                       TerminalClipboardWriteReply reply);
     void confirmPaste(quint64 requestId);
     void cancelPaste(quint64 requestId);
     void copySelection();
@@ -259,6 +267,8 @@ Q_SIGNALS:
                                           const QString &text);
     void terminalClipboardWriteRequested(
         const TerminalClipboardWriteRequest &request);
+    void
+    terminalClipboardReadRequested(const TerminalClipboardReadRequest &request);
     void desktopNotificationRequested(
         const TerminalDesktopNotification &notification);
     void progressReportRequested(const TerminalProgressReport &report);
@@ -290,6 +300,9 @@ Q_SIGNALS:
     void rightClickRequested(const TerminalRightClickInput &input);
     void focusRequested(bool focused);
     void pasteRequested(const QString &text);
+    void pasteWithMetadataRequested(const QString &text,
+                                    TerminalClipboardLocation location,
+                                    bool clipboardSource);
     void confirmPasteRequested(quint64 requestId);
     void cancelPasteRequested(quint64 requestId);
     void copyRequested();
@@ -383,6 +396,7 @@ private:
 
     TerminalSessionLaunchOptions launchOptions_;
     std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator_;
+    std::shared_ptr<TerminalClipboardBridge> clipboardBridge_;
     std::optional<InitialSessionCoordinator::Ticket> initialSessionTicket_;
     QThread *thread_ = nullptr;
     QPointer<SessionWorker> worker_;

@@ -266,7 +266,9 @@ struct GhosttyConfigValues {
     };
     QVector<quint32> selectionWordChars;
     quint32 clickRepeatIntervalMilliseconds = 500;
+    TerminalClipboardAccess clipboardRead = TerminalClipboardAccess::Ask;
     TerminalClipboardAccess clipboardWrite = TerminalClipboardAccess::Allow;
+    std::optional<quint64> clipboardWriteLimitBytes = 64ULL * 1024 * 1024;
     TerminalClipboardPasteOptions clipboardPaste{
         .protection = false,
         .bracketedSafe = false,

@@ -2,6 +2,7 @@
 
 #include "input/zig_string_escape.h"
 #include "session/session_worker.h"
+#include "session/terminal_clipboard_bridge.h"
 #include "support/intentional_crash.h"
 
 #include <QFileInfo>
@@ -102,7 +103,7 @@ void TerminalController::connectWorkerRequestRelays()
                        &SessionWorker::resolveRightClick);
     relayWorkerRequest(&TerminalController::focusRequested,
                        &SessionWorker::setFocused);
-    relayWorkerRequest(&TerminalController::pasteRequested,
+    relayWorkerRequest(&TerminalController::pasteWithMetadataRequested,
                        &SessionWorker::paste);
     relayWorkerRequest(&TerminalController::confirmPasteRequested,
                        &SessionWorker::confirmPaste);
@@ -181,6 +182,7 @@ TerminalController::TerminalController(
     : QObject(parent)
     , launchOptions_(options)
     , initialSessionCoordinator_(std::move(initialSessionCoordinator))
+    , clipboardBridge_(std::make_shared<TerminalClipboardBridge>())
     , baseTitle_(options.configuredTitle)
     , currentDirectory_(options.inheritWorkingDirectory
                             ? TerminalPath{}
@@ -197,8 +199,9 @@ TerminalController::TerminalController(
         TerminalSelectionPressInput, TerminalSelectionDragInput,
         QVector<QPoint>, TerminalSessionRuntimeOptions,
         TerminalClipboardDestination, TerminalClipboardWriteRequest,
-        TerminalDesktopNotification, TerminalProgressReport,
-        TerminalActionResult, TerminalWriteFileAction,
+        TerminalClipboardReadRequest, TerminalClipboardReadReply,
+        TerminalClipboardWriteReply, TerminalDesktopNotification,
+        TerminalProgressReport, TerminalActionResult, TerminalWriteFileAction,
         TerminalInspectorSnapshot, TerminalInspectorCellSnapshot,
         TerminalKeyboardTraceDecision, TerminalKeyboardTraceResult>();
 
@@ -393,6 +396,9 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
     connect(worker, &SessionWorker::terminalClipboardWriteRequested, this,
             &TerminalController::terminalClipboardWriteRequested,
             Qt::QueuedConnection);
+    connect(worker, &SessionWorker::terminalClipboardReadRequested, this,
+            &TerminalController::terminalClipboardReadRequested,
+            Qt::QueuedConnection);
     connect(worker, &SessionWorker::desktopNotificationRequested, this,
             &TerminalController::desktopNotificationRequested,
             Qt::QueuedConnection);
@@ -485,6 +491,7 @@ void TerminalController::createWorkerRuntime()
 
     thread_ = new QThread(this);
     auto *worker = new SessionWorker;
+    worker->setClipboardBridge(clipboardBridge_);
     worker_ = worker;
     worker->moveToThread(thread_);
     connectWorkerResults(worker);
@@ -697,6 +704,7 @@ void TerminalController::cancelInitialSessionRequest()
 TerminalController::~TerminalController()
 {
     closing_ = true;
+    clipboardBridge_->cancelAll();
     pendingRightClickRequestIds_.clear();
     pendingWorkerRequests_.clear();
     pendingTerminalActionRequests_.clear();
@@ -764,6 +772,7 @@ void TerminalController::applyRuntimeOptions(
 
 void TerminalController::beginShutdown()
 {
+    clipboardBridge_->cancelAll();
     setKeyboardTraceGeneration(0);
     pendingRightClickRequestIds_.clear();
     activeTerminalInspectorRequestId_ = 0;
@@ -957,9 +966,24 @@ void TerminalController::setFocused(bool focused)
     Q_EMIT focusRequested(focused);
 }
 
-void TerminalController::paste(const QString &text)
+void TerminalController::paste(const QString &text,
+                               TerminalClipboardLocation location,
+                               bool clipboardSource)
 {
     Q_EMIT pasteRequested(text);
+    Q_EMIT pasteWithMetadataRequested(text, location, clipboardSource);
+}
+
+void TerminalController::resolveTerminalClipboardRead(
+    quint64 requestId, TerminalClipboardReadReply reply)
+{
+    (void)clipboardBridge_->resolveRead(requestId, std::move(reply));
+}
+
+void TerminalController::resolveTerminalClipboardWrite(
+    quint64 requestId, TerminalClipboardWriteReply reply)
+{
+    (void)clipboardBridge_->resolveWrite(requestId, std::move(reply));
 }
 
 void TerminalController::confirmPaste(quint64 requestId)

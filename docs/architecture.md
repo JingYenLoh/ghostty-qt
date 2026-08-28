@@ -334,8 +334,10 @@ cannot activate content that has moved.
 Text paste and drag-and-drop enter the same protected-paste path. Confirmation
 is workspace-owned, correlated by stable pane ID, and applies before bytes are
 encoded. Terminal-originated clipboard writes cross back to the GUI as bounded
-owning MIME payloads and obey the configured allow/deny/ask policy. Only the
-GUI thread accesses `QClipboard` and `QMimeData`.
+owning MIME payloads and obey the configured allow/deny/ask and byte-limit
+policies. The worker waits on a cancellation-safe synchronous reply bridge so
+protocol status and Kitty session grants reflect the GUI commit. Only the GUI
+thread accesses `QClipboard` and `QMimeData`.
 
 Terminal file actions snapshot and format terminal-owned data on the worker,
 then send the owning bytes to a bounded two-job persistence pool. A
@@ -442,7 +444,7 @@ GTK-prefixed settings are not aliases for Qt settings.
 
 The complete Ghostty application parser is not part of `libghostty-vt`.
 `ghostty-qt-config-helper` therefore links a private revision-matched
-`ghostty-internal` library and exports a strict schema-v5 value projection.
+`ghostty-internal` library and exports a strict schema-v7 value projection.
 The GUI process never parses human-oriented `+show-config` output.
 
 The process boundary contains the private Zig application API and lets the main

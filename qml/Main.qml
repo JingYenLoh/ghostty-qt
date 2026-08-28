@@ -833,6 +833,73 @@ ApplicationWindow {
     }
 
     Dialog {
+        id: clipboardReadDialog
+        property var confirmationId: 0
+        objectName: "clipboardReadDialog"
+        anchors.centerIn: parent
+        width: Math.max(340, Math.min(600, window.width - 32))
+        modal: true
+        title: qsTr("Authorize Clipboard Read")
+        onAccepted: {
+            const acceptedId = confirmationId;
+            confirmationId = 0;
+            workspace.confirmClipboardRead(acceptedId, rememberClipboardReadChoice.checked);
+        }
+        onRejected: {
+            const rejectedId = confirmationId;
+            confirmationId = 0;
+            workspace.cancelClipboardRead(rejectedId, rememberClipboardReadChoice.checked);
+        }
+
+        footer: DialogButtonBox {
+            standardButtons: DialogButtonBox.Cancel | DialogButtonBox.Ok
+            Component.onCompleted: {
+                const denyButton = standardButton(DialogButtonBox.Cancel);
+                if (denyButton !== null)
+                    denyButton.text = qsTr("Deny");
+                const allowButton = standardButton(DialogButtonBox.Ok);
+                if (allowButton !== null)
+                    allowButton.text = qsTr("Allow");
+            }
+        }
+
+        ColumnLayout {
+            width: clipboardReadDialog.availableWidth
+
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("An application is attempting to read the clipboard. The content it will receive is shown below.")
+                wrapMode: Text.WordWrap
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 170
+
+                TextArea {
+                    id: clipboardReadPreview
+                    readOnly: true
+                    wrapMode: TextEdit.WrapAnywhere
+                    font.family: "monospace"
+                }
+            }
+
+            CheckBox {
+                id: rememberClipboardReadChoice
+                objectName: "rememberClipboardReadChoice"
+                text: qsTr("Remember choice for this pane")
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Reload the configuration to show this prompt again.")
+                wrapMode: Text.WordWrap
+                opacity: 0.75
+            }
+        }
+    }
+
+    Dialog {
         id: titleDialog
         objectName: "titleDialog"
         property var promptId: 0
@@ -917,6 +984,18 @@ ApplicationWindow {
                 return;
             clipboardWriteDialog.confirmationId = 0;
             clipboardWriteDialog.close();
+        }
+        function onTerminalClipboardReadConfirmationRequested(confirmationId, preview) {
+            clipboardReadDialog.confirmationId = confirmationId;
+            clipboardReadPreview.text = preview;
+            rememberClipboardReadChoice.checked = false;
+            clipboardReadDialog.open();
+        }
+        function onTerminalClipboardReadConfirmationResolved(confirmationId) {
+            if (clipboardReadDialog.confirmationId !== confirmationId)
+                return;
+            clipboardReadDialog.confirmationId = 0;
+            clipboardReadDialog.close();
         }
         function onTitlePromptRequested(promptId, heading, initialTitle) {
             titleDialog.promptId = promptId;

@@ -327,7 +327,7 @@ if(CONFIG_HELPER_NAME)
         OR progress_style_json_error
         OR progress_style_value_json_error
         OR palette_json_error
-        OR NOT structured_schema EQUAL 5
+        OR NOT structured_schema EQUAL 7
         OR NOT values_type STREQUAL "OBJECT"
         OR NOT lifetime_type STREQUAL "BOOLEAN"
         OR NOT initial_window_type STREQUAL "BOOLEAN"

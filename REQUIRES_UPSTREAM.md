@@ -772,71 +772,10 @@ reinterpreting the original text.
 ### ghostty-qt follow-up after upstream support lands
 
 After an official pinned revision exposes the completed grammar, extend the
-schema-v5 configuration export with ordered structured link rules, route their
+schema-v7 configuration export with ordered structured link rules, route their
 typed actions through the existing stable-pane pipeline, add differential
 parser/matcher/action tests, and only then promote `link` from
 `blocked_upstream`.
-
-## OSC 52 clipboard reads
-
-**Status:** `clipboard-read` is blocked on an upstream standalone terminal
-request/completion contract.
-
-Official `libghostty-vt` deliberately ignores OSC 52 payload `?`. Its public
-clipboard callback is write-only and documents that read requests are never
-forwarded; the standalone stream handler drops them before invoking the host.
-The full Ghostty stream instead normalizes selector `c`, `s`, or `p` (unknown or
-omitted selectors fall back to standard), sends a clipboard-read surface
-message, applies `clipboard-read=ask|allow|deny`, asynchronously obtains text,
-and queues an OSC 52 response even when the result is empty. At the pinned
-revision the application-runtime request reads the standard clipboard while
-retaining the normalized selector for the `c`/`s`/`p` response.
-
-Qt clipboard access is GUI-thread-only, while terminal parsing and PTY writes
-belong to `SessionWorker`. A synchronous callback alone therefore cannot
-implement this safely. Parsing OSC 52 again in C++ would duplicate Ghostty's
-fragmentation, BEL/ST, cancellation, selector, and malformed-input semantics
-and could race or duplicate the standalone parser.
-
-### Required upstream contract
-
-The public API needs a normalized read request with a stable, terminal-scoped
-identity and an asynchronous completion or cancellation operation. The request
-must expose the normalized response destination separately from any host
-clipboard source policy. Completion must accept explicit-length bytes, encode
-base64 and OSC framing in Ghostty, emit the exact empty response, and enqueue
-the resulting PTY write once in terminal order. An equivalent contract may
-return owned, fully encoded response bytes for the worker to queue, provided
-Ghostty still owns selector and framing semantics.
-
-The contract must define multiple outstanding requests, completion after
-reset, cancellation, terminal destruction, and unsupported clipboard
-destinations. Host policy remains outside the terminal: ask, allow, deny,
-remembered decisions, and which GUI clipboard supplies the data are frontend
-concerns. Denial must be able to complete without a response. The C boundary
-must not require NUL termination; even though pinned GTK obtains text, the
-protocol encoder must remain correct for empty data and arbitrary bytes.
-
-### Upstream acceptance evidence
-
-Public tests should cover `c`, `s`, `p`, omitted, and unknown selectors; BEL
-and ST; fragmented, cancelled, malformed, and repeated requests; empty,
-non-empty, embedded-NUL, and non-UTF-8 completions; exact base64/framing;
-multiple request identities completed in either order; deny/no-response;
-reset; cancellation; and safe completion after terminal close. A full-runtime
-differential test should pin the current standard-source/normalized-response
-selector behavior rather than silently changing it.
-
-### ghostty-qt follow-up after upstream support lands
-
-`SessionWorker` should copy each request into an owned event containing its
-stable `PaneId` and request identity. The GUI thread may read `QClipboard`, run
-ask/allow/deny UI, and return owned bytes; the worker validates pane and request
-liveness before completing the terminal request and queues the response with
-other PTY writes. Closing a pane cancels all of its requests. Tests must cover
-primary-selection fallback, live policy reload, concurrent panes, stale
-completion, GUI/worker thread affinity, response ordering, and exactly-once
-completion before promoting `clipboard-read`.
 
 ## Exact clipboard selection formatting
 

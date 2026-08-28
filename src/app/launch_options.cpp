@@ -217,7 +217,9 @@ toTerminalSessionRuntimeOptions(const LaunchOptions &options)
         .selectionWordChars = options.selectionWordChars,
         .clickRepeatIntervalMilliseconds =
             options.clickRepeatIntervalMilliseconds,
+        .clipboardRead = options.clipboardRead,
         .clipboardWrite = options.clipboardWrite,
+        .clipboardWriteLimitBytes = options.clipboardWriteLimitBytes,
         .clipboardPaste = options.clipboardPaste,
         .rightClickAction = options.rightClickAction,
         .linkUrl = options.linkUrl,
@@ -381,7 +383,9 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     result.selectionWordChars = config.selectionWordChars;
     result.clickRepeatIntervalMilliseconds =
         config.clickRepeatIntervalMilliseconds;
+    result.clipboardRead = config.clipboardRead;
     result.clipboardWrite = config.clipboardWrite;
+    result.clipboardWriteLimitBytes = config.clipboardWriteLimitBytes;
     result.clipboardPaste = config.clipboardPaste;
     result.scrollToBottom = config.scrollToBottom;
     result.rightClickAction = config.rightClickAction;

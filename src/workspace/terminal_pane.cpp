@@ -576,6 +576,10 @@ TerminalPane::TerminalPane(
             this, [this](const TerminalClipboardWriteRequest &request) {
                 Q_EMIT terminalClipboardWriteRequested(request, this);
             });
+    connect(controller_, &TerminalController::terminalClipboardReadRequested,
+            this, [this](const TerminalClipboardReadRequest &request) {
+                Q_EMIT terminalClipboardReadRequested(request, this);
+            });
     connect(controller_, &TerminalController::desktopNotificationRequested,
             this, [this](const TerminalDesktopNotification &notification) {
                 Q_EMIT desktopNotificationRequested(notification, this);
@@ -2438,7 +2442,9 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.clickRepeatIntervalMilliseconds =
         options.clickRepeatIntervalMilliseconds;
     updated.clipboardPaste = options.clipboardPaste;
+    updated.clipboardRead = options.clipboardRead;
     updated.clipboardWrite = options.clipboardWrite;
+    updated.clipboardWriteLimitBytes = options.clipboardWriteLimitBytes;
     updated.enquiryResponse = options.enquiryResponse;
     updated.splitAppearance = options.splitAppearance;
     updated.rightClickAction = options.rightClickAction;
@@ -4617,7 +4623,12 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                 const std::optional<QString> text =
                     readTerminalClipboard(QGuiApplication::clipboard(), source);
                 if (!text.has_value()) return false;
-                if (!text->isEmpty()) pasteText(*text);
+                if (!text->isEmpty()) {
+                    pasteText(*text,
+                              source == TerminalClipboardSource::Standard
+                                  ? TerminalClipboardLocation::Standard
+                                  : TerminalClipboardLocation::Primary);
+                }
                 return true;
             },
             [this](const PaneAction::CopyUrlToClipboard &) {
@@ -4915,7 +4926,14 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
             const QString text = readMiddleClickClipboard(
                 clipboard, options_.selectionClipboard.copyOnSelect);
             if (!text.isEmpty()) {
-                pasteText(text);
+                const TerminalClipboardSource source =
+                    terminalMiddleClickSource(
+                        options_.selectionClipboard.copyOnSelect,
+                        clipboard->supportsSelection());
+                pasteText(text,
+                          source == TerminalClipboardSource::Standard
+                              ? TerminalClipboardLocation::Standard
+                              : TerminalClipboardLocation::Primary);
             }
         }
     } else if (event->button() == Qt::RightButton) {
@@ -5465,7 +5483,7 @@ void TerminalPane::dropEvent(QDropEvent *event)
     // Accept before entering the paste path because signal handlers may
     // synchronously remove this pane.
     if (acceptTerminalDrop(event) && !content.text.isEmpty()) {
-        pasteText(content.text);
+        pasteText(content.text, TerminalClipboardLocation::Standard, false);
     }
 }
 
@@ -6128,9 +6146,11 @@ void TerminalPane::copySelection()
     controller_->copySelection();
 }
 
-void TerminalPane::pasteText(const QString &text)
+void TerminalPane::pasteText(const QString &text,
+                             TerminalClipboardLocation location,
+                             bool clipboardSource)
 {
-    controller_->paste(text);
+    controller_->paste(text, location, clipboardSource);
 }
 
 void TerminalPane::confirmPaste(quint64 requestId)
@@ -6152,6 +6172,29 @@ void TerminalPane::rememberTerminalClipboardAccess(
     }
     options_.clipboardWrite = access;
     controller_->applyRuntimeOptions(toTerminalSessionRuntimeOptions(options_));
+}
+
+void TerminalPane::rememberTerminalClipboardReadAccess(
+    TerminalClipboardAccess access)
+{
+    if (access == TerminalClipboardAccess::Ask
+        || options_.clipboardRead == access) {
+        return;
+    }
+    options_.clipboardRead = access;
+    controller_->applyRuntimeOptions(toTerminalSessionRuntimeOptions(options_));
+}
+
+void TerminalPane::resolveTerminalClipboardWrite(
+    quint64 requestId, TerminalClipboardWriteReply reply)
+{
+    controller_->resolveTerminalClipboardWrite(requestId, std::move(reply));
+}
+
+void TerminalPane::resolveTerminalClipboardRead(
+    quint64 requestId, TerminalClipboardReadReply reply)
+{
+    controller_->resolveTerminalClipboardRead(requestId, std::move(reply));
 }
 
 void TerminalPane::setFontPointSize(qreal points)

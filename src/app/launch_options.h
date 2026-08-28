@@ -148,8 +148,11 @@ struct LaunchOptions {
     // Ghostty finalizes the platform click-repeat interval in milliseconds.
     // Preserve the full u32 value so the worker can classify repeated clicks.
     quint32 clickRepeatIntervalMilliseconds = 500;
-    // Live access policy for terminal-originated writes such as OSC 52.
+    // Live access policies for terminal-originated reads and writes such as
+    // OSC 52 and Kitty's clipboard protocol.
+    TerminalClipboardAccess clipboardRead = TerminalClipboardAccess::Ask;
     TerminalClipboardAccess clipboardWrite = TerminalClipboardAccess::Allow;
+    std::optional<quint64> clipboardWriteLimitBytes = 64ULL * 1024 * 1024;
     TerminalClipboardPasteOptions clipboardPaste;
     // Live policy for returning a scrolled-back viewport to the active
     // terminal output after PTY-bound input or newly displayed output.

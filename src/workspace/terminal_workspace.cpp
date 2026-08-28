@@ -6,11 +6,13 @@
 #include "terminal/core/terminal_geometry.h"
 #include "workspace/terminal_pane.h"
 
+#include <QClipboard>
 #include <QCursor>
 #include <QDebug>
 #include <QEvent>
 #include <QGuiApplication>
 #include <QKeyEvent>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPalette>
 #include <QPointer>
@@ -73,6 +75,8 @@ constexpr auto kScrollbarProperty = "_ghosttyQtScrollbar";
 constexpr auto kBellBorderProperty = "_ghosttyQtBellBorder";
 constexpr std::size_t kMaximumPendingClipboardWrites = 64;
 constexpr quint64 kMaximumPendingClipboardWriteBytes = 64ULL * 1024 * 1024;
+constexpr std::size_t kMaximumPendingClipboardReads = 64;
+constexpr quint64 kMaximumPendingClipboardReadBytes = 64ULL * 1024 * 1024;
 
 QColor effectiveSplitDividerColor(const std::optional<QColor> &configured)
 {
@@ -96,11 +100,26 @@ quint64 nextNonzeroId(quint64 &counter) noexcept
     return counter;
 }
 
-std::optional<quint64>
-terminalClipboardWriteByteSize(const TerminalClipboardWrite &write)
+TerminalClipboardReadReply
+clipboardReadFailure(TerminalClipboardReadResult result)
 {
-    quint64 total = 0;
-    for (const TerminalClipboardMimeRepresentation &content : write.contents) {
+    TerminalClipboardReadReply reply;
+    reply.result = result;
+    return reply;
+}
+
+TerminalClipboardWriteReply
+clipboardWriteReply(TerminalClipboardWriteResult result, bool remember = false)
+{
+    return {.result = result, .remember = remember};
+}
+
+std::optional<quint64>
+terminalClipboardWriteByteSize(const TerminalClipboardWriteRequest &request)
+{
+    quint64 total = static_cast<quint64>(request.name.size());
+    for (const TerminalClipboardMimeRepresentation &content :
+         request.write.contents) {
         const quint64 mimeSize = static_cast<quint64>(content.mime.size());
         const quint64 dataSize = static_cast<quint64>(content.data.size());
         if (mimeSize > std::numeric_limits<quint64>::max() - total) {
@@ -1694,6 +1713,8 @@ void TerminalWorkspace::bindPane(PaneHandle handle)
                 if (guard == nullptr) return;
                 removePendingClipboardWritesForPane({paneId, pane});
                 if (guard == nullptr) return;
+                removePendingClipboardReadsForPane({paneId, pane});
+                if (guard == nullptr) return;
                 refreshTab(tabIdForPane(paneId));
             });
     connect(pane, &TerminalPane::processStateChanged, this, [this, paneId] {
@@ -1770,6 +1791,11 @@ void TerminalWorkspace::bindPane(PaneHandle handle)
             [this, paneId, pane](const TerminalClipboardWriteRequest &request,
                                  TerminalPane *) {
                 beginTerminalClipboardWrite(request, {paneId, pane});
+            });
+    connect(pane, &TerminalPane::terminalClipboardReadRequested, this,
+            [this, paneId, pane](const TerminalClipboardReadRequest &request,
+                                 TerminalPane *) {
+                beginTerminalClipboardRead(request, {paneId, pane});
             });
     connect(
         pane, &TerminalPane::desktopNotificationRequested, this,
@@ -2861,6 +2887,8 @@ void TerminalWorkspace::resolvePendingPaneRemoval(PaneHandle handle)
     if (guard == nullptr) return;
     removePendingClipboardWritesForPane(handle);
     if (guard == nullptr) return;
+    removePendingClipboardReadsForPane(handle);
+    if (guard == nullptr) return;
     removeTitlePrompts(TitlePromptTarget{handle.id});
     if (guard == nullptr) return;
     const PendingPaneClose *const pending =
@@ -3398,18 +3426,28 @@ void TerminalWorkspace::beginTerminalClipboardWrite(
     const TerminalClipboardWriteRequest &request, PaneHandle handle)
 {
     if (!handle.isValid() || paneForId(handle.id) != handle.pane) {
+        if (handle.pane != nullptr) {
+            handle.pane->resolveTerminalClipboardWrite(
+                request.requestId,
+                clipboardWriteReply(TerminalClipboardWriteResult::Denied));
+        }
         return;
     }
 
     const std::optional<quint64> byteSize =
-        terminalClipboardWriteByteSize(request.write);
+        terminalClipboardWriteByteSize(request);
+    const bool oversized =
+        byteSize.has_value() && *byteSize > kMaximumPendingClipboardWriteBytes;
     if (!byteSize.has_value()
         || pendingClipboardWrites_.size() >= kMaximumPendingClipboardWrites
-        || *byteSize > kMaximumPendingClipboardWriteBytes
-        || pendingClipboardWriteBytes_
-            > kMaximumPendingClipboardWriteBytes - *byteSize) {
+        || (oversized ? !pendingClipboardWrites_.empty()
+                      : pendingClipboardWriteBytes_
+                    > kMaximumPendingClipboardWriteBytes - *byteSize)) {
         qWarning() << "Dropping terminal clipboard write because the pending "
                       "queue limit was reached";
+        handle.pane->resolveTerminalClipboardWrite(
+            request.requestId,
+            clipboardWriteReply(TerminalClipboardWriteResult::Busy));
         return;
     }
 
@@ -3478,6 +3516,18 @@ QString TerminalWorkspace::terminalClipboardWritePreview(
     return QStringLiteral("Formats:\n%1").arg(formats.join(QLatin1Char('\n')));
 }
 
+QString TerminalWorkspace::terminalClipboardWriteRequestPreview(
+    const TerminalClipboardWriteRequest &request)
+{
+    const QString heading = request.name.isEmpty()
+        ? QStringLiteral("An application is requesting a clipboard write.")
+        : QStringLiteral("Application “%1” is requesting a clipboard write.")
+              .arg(escapedTerminalClipboardPreview(
+                  QString::fromUtf8(request.name), false));
+    return QStringLiteral("%1\n\n%2")
+        .arg(heading, terminalClipboardWritePreview(request.write));
+}
+
 void TerminalWorkspace::schedulePendingClipboardWriteDrain()
 {
     if (pendingClipboardWrites_.empty() || pendingClipboardWriteDrainScheduled_
@@ -3500,6 +3550,11 @@ void TerminalWorkspace::drainPendingClipboardWrites()
     while (!pendingClipboardWrites_.empty()) {
         PendingClipboardWrite &pending = pendingClipboardWrites_.front();
         if (paneForId(pending.paneId) != pending.pane) {
+            if (pending.pane != nullptr) {
+                pending.pane->resolveTerminalClipboardWrite(
+                    pending.request.requestId,
+                    clipboardWriteReply(TerminalClipboardWriteResult::Denied));
+            }
             pendingClipboardWriteBytes_ -= pending.byteSize;
             pendingClipboardWrites_.pop_front();
             continue;
@@ -3510,15 +3565,24 @@ void TerminalWorkspace::drainPendingClipboardWrites()
                 nextNonzeroId(nextClipboardWriteConfirmationId_);
             Q_EMIT terminalClipboardWriteConfirmationRequested(
                 activeClipboardWriteConfirmationId_,
-                terminalClipboardWritePreview(pending.request.write));
+                terminalClipboardWriteRequestPreview(pending.request));
             return;
         }
 
         TerminalClipboardWrite write = std::move(pending.request.write);
+        const quint64 requestId = pending.request.requestId;
+        const QPointer<TerminalPane> pane = pending.pane;
         pendingClipboardWriteBytes_ -= pending.byteSize;
         pendingClipboardWrites_.pop_front();
         const QPointer<TerminalWorkspace> guard(this);
-        (void)commitTerminalClipboardWrite(write);
+        const bool committed = commitTerminalClipboardWrite(write);
+        if (pane != nullptr) {
+            pane->resolveTerminalClipboardWrite(
+                requestId,
+                clipboardWriteReply(
+                    committed ? TerminalClipboardWriteResult::Success
+                              : TerminalClipboardWriteResult::IoError));
+        }
         if (guard == nullptr) return;
     }
 }
@@ -3564,10 +3628,21 @@ void TerminalWorkspace::finishTerminalClipboardWrite(quint64 confirmationId,
     // Applying a remembered choice emits a synchronous runtime-options
     // signal. Revalidate the stable identity because an observer can remove
     // the pane while its deleteLater QPointer is still non-null.
+    TerminalClipboardWriteResult result = TerminalClipboardWriteResult::Denied;
     if (confirmed && pane != nullptr
         && paneForId(pending.paneId) == pending.pane) {
-        (void)commitTerminalClipboardWrite(pending.request.write);
+        result = commitTerminalClipboardWrite(pending.request.write)
+            ? TerminalClipboardWriteResult::Success
+            : TerminalClipboardWriteResult::IoError;
         if (guard == nullptr) return;
+    }
+    if (pending.pane != nullptr) {
+        pending.pane->resolveTerminalClipboardWrite(
+            pending.request.requestId,
+            clipboardWriteReply(result,
+                                result == TerminalClipboardWriteResult::Success
+                                    && remember
+                                    && pending.request.canRemember));
     }
 
     Q_EMIT terminalClipboardWriteConfirmationResolved(confirmationId);
@@ -3608,6 +3683,11 @@ void TerminalWorkspace::removePendingClipboardWritesForPane(PaneHandle handle)
             ++iterator;
             continue;
         }
+        if (iterator->pane != nullptr) {
+            iterator->pane->resolveTerminalClipboardWrite(
+                iterator->request.requestId,
+                clipboardWriteReply(TerminalClipboardWriteResult::Denied));
+        }
         pendingClipboardWriteBytes_ -= iterator->byteSize;
         iterator = pendingClipboardWrites_.erase(iterator);
     }
@@ -3622,6 +3702,289 @@ void TerminalWorkspace::removePendingClipboardWritesForPane(PaneHandle handle)
     const QPointer<TerminalWorkspace> guard(this);
     Q_EMIT terminalClipboardWriteConfirmationResolved(confirmationId);
     if (guard != nullptr) schedulePendingClipboardWriteDrain();
+}
+
+TerminalClipboardReadReply TerminalWorkspace::readTerminalClipboard(
+    const TerminalClipboardReadRequest &request, quint64 *byteSize)
+{
+    Q_ASSERT(byteSize != nullptr);
+    *byteSize = 0;
+    TerminalClipboardReadReply reply;
+    reply.result = TerminalClipboardReadResult::Success;
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    const std::optional<TerminalClipboardSource> source =
+        terminalClipboardWriteTarget(request.location,
+                                     clipboard->supportsSelection());
+    if (!source.has_value()) {
+        reply.result = TerminalClipboardReadResult::Unsupported;
+        return reply;
+    }
+    const QClipboard::Mode mode = *source == TerminalClipboardSource::Standard
+        ? QClipboard::Clipboard
+        : QClipboard::Selection;
+    const QMimeData *const mimeData = clipboard->mimeData(mode);
+    if (mimeData == nullptr) {
+        reply.result = TerminalClipboardReadResult::IoError;
+        return reply;
+    }
+
+    const auto account = [byteSize](qsizetype size) {
+        if (size < 0
+            || static_cast<quint64>(size) > kMaximumPendingClipboardReadBytes
+            || *byteSize > kMaximumPendingClipboardReadBytes
+                    - static_cast<quint64>(size)) {
+            return false;
+        }
+        *byteSize += static_cast<quint64>(size);
+        return true;
+    };
+
+    if (request.list) {
+        const QStringList formats = mimeData->formats();
+        if (formats.size() > 256) {
+            reply.result = TerminalClipboardReadResult::Busy;
+            return reply;
+        }
+        reply.available.reserve(formats.size());
+        for (const QString &format : formats) {
+            QByteArray mime = format.toLatin1();
+            if (!validTerminalClipboardMimeType(mime)
+                || !account(mime.size())) {
+                reply.result = TerminalClipboardReadResult::Busy;
+                reply.available.clear();
+                return reply;
+            }
+            reply.available.append(std::move(mime));
+        }
+    }
+
+    if (request.mimes.size() > 256) {
+        reply.result = TerminalClipboardReadResult::Busy;
+        reply.available.clear();
+        return reply;
+    }
+    reply.contents.reserve(request.mimes.size());
+    for (const QByteArray &mime : request.mimes) {
+        if (!validTerminalClipboardMimeType(mime)) {
+            reply.result = TerminalClipboardReadResult::IoError;
+            reply.contents.clear();
+            reply.available.clear();
+            return reply;
+        }
+        const QString format = QString::fromLatin1(mime);
+        if (!mimeData->hasFormat(format)) continue;
+        QByteArray data = mimeData->data(format);
+        if (!account(mime.size()) || !account(data.size())) {
+            reply.result = TerminalClipboardReadResult::Busy;
+            reply.contents.clear();
+            reply.available.clear();
+            return reply;
+        }
+        reply.contents.append({mime, std::move(data)});
+    }
+    return reply;
+}
+
+QString TerminalWorkspace::terminalClipboardReadPreview(
+    const TerminalClipboardReadRequest &request,
+    const TerminalClipboardReadReply &reply)
+{
+    QString heading = request.name.isEmpty()
+        ? QStringLiteral("An application is requesting clipboard contents.")
+        : QStringLiteral("Application “%1” is requesting clipboard contents.")
+              .arg(escapedTerminalClipboardPreview(
+                  QString::fromUtf8(request.name), false));
+    TerminalClipboardWrite previewWrite{
+        .location = request.location,
+        .contents = reply.contents,
+    };
+    QString contents = terminalClipboardWritePreview(previewWrite);
+    if (reply.contents.isEmpty()) {
+        contents = QStringLiteral(
+            "(no requested clipboard representation is available)");
+    }
+    if (request.list && !reply.available.isEmpty()) {
+        QStringList formats;
+        formats.reserve(reply.available.size());
+        for (const QByteArray &mime : reply.available) {
+            formats.append(escapedTerminalClipboardPreview(
+                QString::fromLatin1(mime), false));
+        }
+        contents.append(QStringLiteral("\n\nAvailable formats:\n%1")
+                            .arg(formats.join(QLatin1Char('\n'))));
+    }
+    return QStringLiteral("%1\n\n%2").arg(heading, contents);
+}
+
+void TerminalWorkspace::beginTerminalClipboardRead(
+    const TerminalClipboardReadRequest &request, PaneHandle handle)
+{
+    const auto deny = [&request, &handle] {
+        if (handle.pane != nullptr) {
+            handle.pane->resolveTerminalClipboardRead(
+                request.requestId,
+                clipboardReadFailure(TerminalClipboardReadResult::Denied));
+        }
+    };
+    if (request.requestId == 0 || !handle.isValid()
+        || paneForId(handle.id) != handle.pane) {
+        deny();
+        return;
+    }
+
+    quint64 byteSize = 0;
+    TerminalClipboardReadReply reply =
+        readTerminalClipboard(request, &byteSize);
+    if (reply.result != TerminalClipboardReadResult::Success
+        || !request.confirmationRequired) {
+        handle.pane->resolveTerminalClipboardRead(request.requestId,
+                                                  std::move(reply));
+        return;
+    }
+    if (pendingClipboardReads_.size() >= kMaximumPendingClipboardReads
+        || byteSize > kMaximumPendingClipboardReadBytes
+        || pendingClipboardReadBytes_
+            > kMaximumPendingClipboardReadBytes - byteSize) {
+        handle.pane->resolveTerminalClipboardRead(
+            request.requestId,
+            clipboardReadFailure(TerminalClipboardReadResult::Busy));
+        return;
+    }
+
+    pendingClipboardReadBytes_ += byteSize;
+    pendingClipboardReads_.push_back({
+        .request = request,
+        .reply = std::move(reply),
+        .paneId = handle.id,
+        .pane = handle.pane,
+        .byteSize = byteSize,
+    });
+    drainPendingClipboardReads();
+}
+
+void TerminalWorkspace::schedulePendingClipboardReadDrain()
+{
+    if (pendingClipboardReads_.empty() || pendingClipboardReadDrainScheduled_
+        || activeClipboardReadConfirmationId_ != 0) {
+        return;
+    }
+    pendingClipboardReadDrainScheduled_ = true;
+    QTimer::singleShot(0, this, [this] {
+        pendingClipboardReadDrainScheduled_ = false;
+        drainPendingClipboardReads();
+    });
+}
+
+void TerminalWorkspace::drainPendingClipboardReads()
+{
+    if (activeClipboardReadConfirmationId_ != 0) return;
+    while (!pendingClipboardReads_.empty()) {
+        PendingClipboardRead &pending = pendingClipboardReads_.front();
+        if (paneForId(pending.paneId) != pending.pane) {
+            if (pending.pane != nullptr) {
+                pending.pane->resolveTerminalClipboardRead(
+                    pending.request.requestId,
+                    clipboardReadFailure(TerminalClipboardReadResult::Denied));
+            }
+            pendingClipboardReadBytes_ -= pending.byteSize;
+            pendingClipboardReads_.pop_front();
+            continue;
+        }
+        activeClipboardReadConfirmationId_ =
+            nextNonzeroId(nextClipboardReadConfirmationId_);
+        Q_EMIT terminalClipboardReadConfirmationRequested(
+            activeClipboardReadConfirmationId_,
+            terminalClipboardReadPreview(pending.request, pending.reply));
+        return;
+    }
+}
+
+void TerminalWorkspace::confirmClipboardRead(quint64 confirmationId,
+                                             bool remember)
+{
+    finishTerminalClipboardRead(confirmationId, true, remember);
+}
+
+void TerminalWorkspace::cancelClipboardRead(quint64 confirmationId,
+                                            bool remember)
+{
+    finishTerminalClipboardRead(confirmationId, false, remember);
+}
+
+void TerminalWorkspace::finishTerminalClipboardRead(quint64 confirmationId,
+                                                    bool confirmed,
+                                                    bool remember)
+{
+    if (confirmationId == 0
+        || confirmationId != activeClipboardReadConfirmationId_
+        || pendingClipboardReads_.empty()) {
+        return;
+    }
+    activeClipboardReadConfirmationId_ = 0;
+    PendingClipboardRead pending = std::move(pendingClipboardReads_.front());
+    pendingClipboardReads_.pop_front();
+    pendingClipboardReadBytes_ -= pending.byteSize;
+
+    const QPointer<TerminalWorkspace> guard(this);
+    const QPointer<TerminalPane> pane =
+        paneForId(pending.paneId) == pending.pane ? pending.pane
+                                                  : QPointer<TerminalPane>{};
+    if (pane != nullptr && remember) {
+        pane->rememberTerminalClipboardReadAccess(
+            confirmed ? TerminalClipboardAccess::Allow
+                      : TerminalClipboardAccess::Deny);
+        if (guard == nullptr) return;
+    }
+    if (pane != nullptr && paneForId(pending.paneId) == pending.pane) {
+        if (confirmed) {
+            pending.reply.remember = remember && pending.request.canRemember;
+            pane->resolveTerminalClipboardRead(pending.request.requestId,
+                                               std::move(pending.reply));
+        } else {
+            pane->resolveTerminalClipboardRead(
+                pending.request.requestId,
+                clipboardReadFailure(TerminalClipboardReadResult::Denied));
+        }
+    } else if (pending.pane != nullptr) {
+        pending.pane->resolveTerminalClipboardRead(
+            pending.request.requestId,
+            clipboardReadFailure(TerminalClipboardReadResult::Denied));
+    }
+
+    Q_EMIT terminalClipboardReadConfirmationResolved(confirmationId);
+    if (guard != nullptr) schedulePendingClipboardReadDrain();
+}
+
+void TerminalWorkspace::removePendingClipboardReadsForPane(PaneHandle handle)
+{
+    if (!handle.id.isValid() || pendingClipboardReads_.empty()) return;
+    const bool removedActive = activeClipboardReadConfirmationId_ != 0
+        && pendingClipboardReads_.front().paneId == handle.id
+        && pendingClipboardReads_.front().pane == handle.pane;
+    for (auto iterator = pendingClipboardReads_.begin();
+         iterator != pendingClipboardReads_.end();) {
+        if (iterator->paneId != handle.id || iterator->pane != handle.pane) {
+            ++iterator;
+            continue;
+        }
+        if (iterator->pane != nullptr) {
+            iterator->pane->resolveTerminalClipboardRead(
+                iterator->request.requestId,
+                clipboardReadFailure(TerminalClipboardReadResult::Denied));
+        }
+        pendingClipboardReadBytes_ -= iterator->byteSize;
+        iterator = pendingClipboardReads_.erase(iterator);
+    }
+    if (!removedActive) {
+        schedulePendingClipboardReadDrain();
+        return;
+    }
+    const quint64 confirmationId =
+        std::exchange(activeClipboardReadConfirmationId_, 0);
+    const QPointer<TerminalWorkspace> guard(this);
+    Q_EMIT terminalClipboardReadConfirmationResolved(confirmationId);
+    if (guard != nullptr) schedulePendingClipboardReadDrain();
 }
 
 QString TerminalWorkspace::tabTitlePromptInitialValue(const Tab &tab) const

@@ -448,7 +448,7 @@ void SessionWorkerTest::publishesCorrelatedInspectorSnapshots()
         snapshots.constLast().at(1).value<TerminalInspectorSnapshot>();
     QCOMPARE(ready.status, TerminalInspectorStatus::Ready);
     QVERIFY(ready.contentRevision > 0);
-    QCOMPARE(ready.modes.size(), 42);
+    QCOMPARE(ready.modes.size(), 43);
 
     worker.resetTerminal();
     worker.inspectTerminal(3);

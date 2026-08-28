@@ -90,6 +90,7 @@
         "clipboard-read",
         "clipboard-trim-trailing-spaces",
         "clipboard-write",
+        "clipboard-write-limit-bytes",
         "command",
         "command-palette-entry",
         "config-default-files",
@@ -410,15 +411,15 @@
         },
         "clipboard-paste-bracketed-safe": {
           "status": "supported",
-          "note": "The live default-true policy trusts newlines only while Ghostty reports bracketed-paste mode, still rejects an embedded end fence, and shares one mode snapshot with encoding."
+          "note": "The live default-true policy is layered over ghostty_terminal_paste: newlines are trusted only in bracketed-paste mode, an embedded end fence remains unsafe, and the accepted retry is encoded against current terminal state."
         },
         "clipboard-paste-protection": {
           "status": "supported",
-          "note": "The live default-true policy is enforced on SessionWorker. Unsafe immutable text is correlated through pane-local request IDs; confirmation re-snapshots mode, and rejected or cancelled requests do not scroll, write, or mark activity."
+          "note": "The live default-true policy uses Ghostty's terminal-state-aware paste API. Unsafe immutable text is correlated through pane-local request IDs; confirmation retries with allow_unsafe, while rejected or cancelled requests do not scroll, write, or mark activity. Clipboard pastes honor Kitty mode 5522 paste events and preserve standard versus primary location; drag-and-drop is explicitly identified as text insertion."
         },
         "clipboard-read": {
-          "status": "blocked_upstream",
-          "note": "Public libghostty-vt explicitly ignores OSC 52 clipboard-read requests instead of publishing them through the host callback. Exact Ghostty ask/allow/deny reads therefore require a new public normalized request contract; ghostty-qt does not add a parallel escape parser."
+          "status": "supported",
+          "note": "The exact ask, allow, and deny values cross the strict config wire, default to ask, and reload live. Public libghostty-vt normalizes OSC 52 and Kitty OSC 5522 requests, MIME targets, location, application name, and password-grant state. The worker deep-copies and bounds each synchronous request, then waits on a cancellation-safe bridge while the GUI snapshots QClipboard and serializes permission prompts. Granted paste-event reads and Kitty target-list-only queries bypass prompting; remembered choices are pane-local until config reload, and Kitty session grants are returned only when the protocol permits them. Standard maps only to Qt's standard clipboard, while selection and primary map only to the available Linux selection clipboard. Teardown cancels the bridge before blocking worker shutdown, and the workspace bounds pending reads to 64 requests and 64 MiB."
         },
         "clipboard-trim-trailing-spaces": {
           "status": "supported",
@@ -426,7 +427,11 @@
         },
         "clipboard-write": {
           "status": "supported",
-          "note": "The exact ask, allow, and deny values cross the strict config wire, default to allow, and reload live. Public libghostty-vt normalizes OSC 52 and OSC 1337 into ordered, owned, binary-safe requests; allow commits all MIME representations atomically, deny returns a denied result without queuing an effect or advertising DA1 feature 52, and ask advertises feature 52 but enters one bounded FIFO confirmation at a time. Standard maps only to Qt's standard clipboard, while selection and primary both map only to the available Linux selection clipboard. Stable PaneId validation discards exited or removed sources, the workspace retains at most 64 requests and 64 MiB, and an ask decision may be remembered for only its split until the next config reload."
+          "note": "The exact ask, allow, and deny values cross the strict config wire, default to allow, and reload live. Public libghostty-vt normalizes OSC 52, OSC 1337, and Kitty OSC 5522 into ordered, owned, binary-safe synchronous requests, including the Kitty application name and password-grant state. Production writes use the same cancellation-safe worker/GUI bridge as reads, so Kitty receives DONE only after the atomic Qt clipboard commit and receives EPERM, EBUSY, or EIO for the corresponding frontend result. A successful rememberable prompt can establish a Kitty session grant; a granted follow-up bypasses Ask confirmation while still reaching the embedder. Deny returns a denied result without advertising DA1 feature 52, while ask advertises it and enters one bounded FIFO confirmation at a time. Standard maps only to Qt's standard clipboard, while selection and primary both map only to the available Linux selection clipboard. Stable PaneId validation rejects exited or removed sources, the workspace retains at most 64 requests and normally 64 MiB (or one larger upstream-approved transaction), and an ask decision may be remembered for only its split until the next config reload."
+        },
+        "clipboard-write-limit-bytes": {
+          "status": "supported",
+          "note": "The optional exact uint64 value crosses strict schema-v7 as canonical decimal text, defaults to 64 MiB, maps unlimited to SIZE_MAX, and updates the public libghostty-vt terminal option live. Kitty OSC 5522 transactions that exceed the limit receive EFBIG before the embedder callback; construction, reload, finite, unlimited, and rejection paths are tested."
         },
         "command": {
           "status": "supported",
@@ -487,7 +492,7 @@
         },
         "desktop-notifications": {
           "status": "supported",
-          "note": "The finalized default-true boolean crosses strict schema v5 and applies live as application-owned LaunchOptions policy. The pinned synchronous libghostty-vt callback normalizes OSC 9 and OSC 777; its sized borrowed strings are validated, deep-copied, bounded, and preserved in callback order before crossing the queued worker/controller/pane path. The application delivers native Linux notifications through org.freedesktop.Notifications, defaults an empty title to Ghostty, matches Ghostty's process-global one-second and sequential-identical five-second limits, reuses notification IDs by body, and routes default-action clicks through revalidated stable WindowId/PaneId targets. Backend absence and stale targets are non-fatal."
+          "note": "The finalized default-true boolean crosses strict schema v6 and applies live as application-owned LaunchOptions policy. The pinned synchronous libghostty-vt callback normalizes OSC 9 and OSC 777; its sized borrowed strings are validated, deep-copied, bounded, and preserved in callback order before crossing the queued worker/controller/pane path. The application delivers native Linux notifications through org.freedesktop.Notifications, defaults an empty title to Ghostty, matches Ghostty's process-global one-second and sequential-identical five-second limits, reuses notification IDs by body, and routes default-action clicks through revalidated stable WindowId/PaneId targets. Backend absence and stale targets are non-fatal."
         },
         "enquiry-response": {
           "status": "supported",
@@ -569,7 +574,7 @@
         },
         "font-variation": {
           "status": "partial",
-          "note": "The finalized ordered regular-face axis list crosses schema v5 as exact f64 bit patterns, including non-finite values. The first matching tag is consumed before validity and range checks, matching the pinned FreeType duplicate policy, and valid axes reload live. Status remains partial because Qt narrows applied values to its float axis API and does not expose Ghostty's selected FreeType face and variation-coordinate pipeline."
+          "note": "The finalized ordered regular-face axis list crosses schema v6 as exact f64 bit patterns, including non-finite values. The first matching tag is consumed before validity and range checks, matching the pinned FreeType duplicate policy, and valid axes reload live. Status remains partial because Qt narrows applied values to its float axis API and does not expose Ghostty's selected FreeType face and variation-coordinate pipeline."
         },
         "font-variation-bold": {
           "status": "partial",
@@ -696,7 +701,7 @@
         },
         "progress-style": {
           "status": "supported",
-          "note": "The finalized default-true boolean crosses strict schema v5 as live application-owned policy. The public sized libghostty-vt callback is validated and copied into a bounded ordered effect; saturation compacts the prefix into an equivalent state transformation instead of losing the newest remove or value. Worker and controller preserve the resulting order. Every pane presents a two-pixel top overlay with normal, error, paused, determinate, and report-driven indeterminate pulse states, restarts one 15-second stale-report timer after each non-remove update, and hides on remove, expiry, session lifetime, or live disable without resurfacing merely on re-enable. Active-pane determinate values also populate the existing tab progress role."
+          "note": "The finalized default-true boolean crosses strict schema v6 as live application-owned policy. The public sized libghostty-vt callback is validated and copied into a bounded ordered effect; saturation compacts the prefix into an equivalent state transformation instead of losing the newest remove or value. Worker and controller preserve the resulting order. Every pane presents a two-pixel top overlay with normal, error, paused, determinate, and report-driven indeterminate pulse states, restarts one 15-second stale-report timer after each non-remove update, and hides on remove, expiry, session lifetime, or live disable without resurfacing merely on re-enable. Active-pane determinate values also populate the existing tab progress role."
         },
         "quit-after-last-window-closed": {
           "status": "supported",
@@ -850,7 +855,7 @@
         "gtk-single-instance": {
           "status": "not_applicable",
           "scope": "gtk_only",
-          "note": "The upstream GTK key is not consumed. The private schema-v5 export retains its raw value only as an unused compatibility field; ghostty-qt owns equivalent process arbitration through single-instance in $XDG_CONFIG_HOME/ghostty-qt/config and --single-instance."
+          "note": "The upstream GTK key is not consumed. The private schema-v7 export retains its raw value only as an unused compatibility field; ghostty-qt owns equivalent process arbitration through single-instance in $XDG_CONFIG_HOME/ghostty-qt/config and --single-instance."
         },
         "gtk-tabs-location": {
           "status": "not_applicable",
@@ -1151,7 +1156,7 @@
         },
         "working-directory": {
           "status": "supported",
-          "note": "The shared-config value supplies initial panes plus new-tab, split, and new-window fallback. Raw POSIX bytes remain lossless through strict schema-v5 export, CLI parsing, launch snapshots, worker chdir/PWD, OSC 7, controllers, and inheritance; QString is only the GUI display projection. Original-process classification preserves Ghostty's unset desktop-launch home default versus probable-CLI inherit behavior across reloads. Explicit home/tilde paths, symlink-sensitive spelling, live future-surface updates, composite source identity, NUL rejection, and pinned stale-PWD/non-fatal-chdir fallback are tested."
+          "note": "The shared-config value supplies initial panes plus new-tab, split, and new-window fallback. Raw POSIX bytes remain lossless through strict schema-v7 export, CLI parsing, launch snapshots, worker chdir/PWD, OSC 7, controllers, and inheritance; QString is only the GUI display projection. Original-process classification preserves Ghostty's unset desktop-launch home default versus probable-CLI inherit behavior across reloads. Explicit home/tilde paths, symlink-sensitive spelling, live future-surface updates, composite source identity, NUL rejection, and pinned stale-PWD/non-fatal-chdir fallback are tested."
         },
         "x11-instance-name": {
           "status": "not_applicable",

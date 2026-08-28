@@ -94,6 +94,7 @@ target_compile_options(
 ghostty_qt_add_internal_library(ghostty-qt-session-worker
     src/session/session_worker.cpp
     src/session/session_worker.h
+    src/session/terminal_clipboard_bridge.h
     src/terminal/model/terminal_action_result.h
     src/terminal/model/terminal_clipboard_codepoint_map.h
     src/terminal/model/terminal_desktop_notification.h

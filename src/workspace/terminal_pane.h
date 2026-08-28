@@ -253,13 +253,21 @@ public:
     void setSurfaceTitle(QString title);
     void setSurfaceTitleOverride(std::optional<QString> title);
     void copySelection();
-    void pasteText(const QString &text);
+    void pasteText(const QString &text,
+                   TerminalClipboardLocation location =
+                       TerminalClipboardLocation::Standard,
+                   bool clipboardSource = true);
     void confirmPaste(quint64 requestId);
     void cancelPaste(quint64 requestId);
     // `clipboard-write = ask` can remember a decision for this pane. The
     // pane-local mutation lasts until a configuration reload replaces it,
     // matching Ghostty's per-split behavior.
     void rememberTerminalClipboardAccess(TerminalClipboardAccess access);
+    void resolveTerminalClipboardWrite(quint64 requestId,
+                                       TerminalClipboardWriteReply reply);
+    void rememberTerminalClipboardReadAccess(TerminalClipboardAccess access);
+    void resolveTerminalClipboardRead(quint64 requestId,
+                                      TerminalClipboardReadReply reply);
     void zoomIn();
     void zoomOut();
     void resetZoom();
@@ -319,6 +327,9 @@ Q_SIGNALS:
                               TerminalPane *pane);
     void terminalClipboardWriteRequested(
         const TerminalClipboardWriteRequest &request, TerminalPane *pane);
+    void
+    terminalClipboardReadRequested(const TerminalClipboardReadRequest &request,
+                                   TerminalPane *pane);
     void desktopNotificationRequested(
         const TerminalDesktopNotification &notification, TerminalPane *pane);
     void

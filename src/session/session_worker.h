@@ -27,6 +27,7 @@ class QTemporaryDir;
 class QTimer;
 class GhosttyLinkMatcher;
 class GhosttyVtAdapter;
+class TerminalClipboardBridge;
 
 struct TerminalSessionIoMetrics {
     quint64 readActivations = 0;
@@ -57,6 +58,10 @@ public:
     explicit SessionWorker(QObject *parent = nullptr);
     SessionWorker(LinuxCgroupMover cgroupMover, QObject *parent);
     ~SessionWorker() override;
+
+    // Installed before the worker moves to its thread. Production shares this
+    // bridge with TerminalController; standalone tests retain the default.
+    void setClipboardBridge(std::shared_ptr<TerminalClipboardBridge> bridge);
 
     // Pure previews used by TerminalController to close the UI/worker race
     // around an immediately submitted command and close request. Execution
@@ -119,7 +124,10 @@ public Q_SLOTS:
     void sendWheel(const TerminalWheelInput &input);
     void resolveRightClick(const TerminalRightClickInput &input);
     void setFocused(bool focused);
-    void paste(const QString &text);
+    void paste(const QString &text,
+               TerminalClipboardLocation location =
+                   TerminalClipboardLocation::Standard,
+               bool clipboardSource = true);
     void confirmPaste(quint64 requestId);
     void cancelPaste(quint64 requestId);
     void copySelection();
@@ -173,6 +181,8 @@ Q_SIGNALS:
     // boundary; the workspace owns confirmation and the actual clipboard.
     void terminalClipboardWriteRequested(
         const TerminalClipboardWriteRequest &request);
+    void
+    terminalClipboardReadRequested(const TerminalClipboardReadRequest &request);
     void desktopNotificationRequested(
         const TerminalDesktopNotification &notification);
     void progressReportRequested(const TerminalProgressReport &report);
@@ -300,6 +310,7 @@ private:
 
     TerminalSessionLaunchOptions options_;
     LinuxCgroupMover cgroupMover_;
+    std::shared_ptr<TerminalClipboardBridge> clipboardBridge_;
     std::unique_ptr<GhosttyVtAdapter> vt_;
     std::unique_ptr<GhosttyLinkMatcher> linkMatcher_;
     struct HyperlinkState;
@@ -322,7 +333,13 @@ private:
     QTimer *selectionAutoscrollTimer_ = nullptr;
     std::optional<TerminalSelectionDragInput> selectionAutoscrollInput_;
     PtyWriteBuffer pendingWrites_;
-    QHash<quint64, QString> pendingPastes_;
+    struct PendingPaste {
+        QString text;
+        TerminalClipboardLocation location =
+            TerminalClipboardLocation::Standard;
+        bool clipboardSource = true;
+    };
+    QHash<quint64, PendingPaste> pendingPastes_;
     quint64 nextPasteRequestId_ = 0;
     QByteArray stagedSequenceBytes_;
     Qt::KeyboardModifiers stagedSequenceModifiers_ = Qt::NoModifier;

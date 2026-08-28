@@ -18,7 +18,9 @@ Implemented areas include PTYs and process lifecycle, retained rendering, tabs
 and recursive splits, multiple windows, quick terminal, configuration and
 keybindings, search, links, clipboard writes, shell integration, terminfo,
 desktop activation, systemd integration, custom shaders, and ordinary Kitty
-graphics placements.
+graphics placements. Terminal-requested clipboard reads and Kitty clipboard
+paste events are mediated through the same pane-local permission model as
+clipboard writes.
 
 ## Parity source of truth
 
@@ -49,10 +51,11 @@ for the intentional upgrade procedure.
 - **Search:** the frontend performs a cooperative public-grid scan. Some
   cross-boundary and exact formatting semantics differ from Ghostty's private
   search implementation.
-- **Clipboard and files:** terminal clipboard writes support
-  `allow`/`deny`/`ask`, and plain terminal-file actions work.
-  Terminal-requested reads, exact styled VT/HTML selection copies, and styled
-  VT/HTML file variants need upstream APIs.
+- **Clipboard and files:** terminal clipboard reads and writes support
+  `allow`/`deny`/`ask`, including Kitty MIME transactions, session password
+  grants, paste events, and the live `clipboard-write-limit-bytes` policy; plain
+  terminal-file actions also work. Exact styled VT/HTML selection copies and
+  styled VT/HTML file variants still need upstream APIs.
 - **Semantic and diagnostic state:** prompt navigation, semantic clearing, and
   several terminal-state queries and notification/reporting semantics remain
   partial or blocked on public libghostty state.

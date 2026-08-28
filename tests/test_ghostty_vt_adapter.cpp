@@ -166,6 +166,7 @@ private Q_SLOTS:
     void appliesConstructionPoliciesToPublicTerminal();
     void observesActiveScreenBottomAnchorChanges();
     void normalizesTerminalClipboardWritesAndPolicies();
+    void normalizesTerminalClipboardReadsAndPolicies();
     void validatesDynamicAndMacShapedOsc7Hostnames();
     void translatesCellStylesAndAppearanceMetadata();
     void preservesAuthoritativeCellCodepointsForShaping();
@@ -1483,6 +1484,33 @@ void GhosttyVtAdapterTest::normalizesTerminalClipboardWritesAndPolicies()
         effects.clipboardWrites.constFirst().write.contents.constFirst().data,
         QByteArrayLiteral("allowed"));
 
+    // The upstream transaction limit rejects an oversized Kitty write before
+    // the embedder callback, and a live increase admits a later transaction.
+    QVERIFY(adapter->setClipboardWriteLimit(4));
+    ptyWrites.clear();
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]5522;type=write:id=large\033\\"
+        "\033]5522;type=wdata:mime=dGV4dC9wbGFpbg==;SGVsbG8=\033\\"
+        "\033]5522;type=wdata\033\\"));
+    QVERIFY(adapter->takeDeferredEffects().clipboardWrites.isEmpty());
+    QVERIFY(ptyWrites.contains(
+        QByteArrayLiteral("type=write:status=EFBIG:id=large")));
+
+    QVERIFY(adapter->setClipboardWriteLimit(8));
+    ptyWrites.clear();
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]5522;type=write:id=small\033\\"
+        "\033]5522;type=wdata:mime=dGV4dC9wbGFpbg==;SGVsbG8=\033\\"
+        "\033]5522;type=wdata\033\\"));
+    effects = adapter->takeDeferredEffects();
+    QCOMPARE(effects.clipboardWrites.size(), 1);
+    QCOMPARE(
+        effects.clipboardWrites.constFirst().write.contents.constFirst().data,
+        QByteArrayLiteral("Hello"));
+    QVERIFY(ptyWrites.contains(
+        QByteArrayLiteral("type=write:status=DONE:id=small")));
+    QVERIFY(adapter->setClipboardWriteLimit(std::nullopt));
+
     // Byte accounting alone cannot bound clear requests because they carry no
     // representations. One adapter drain retains at most 64 writes, then a
     // drain restores capacity for the next request.
@@ -1500,6 +1528,132 @@ void GhosttyVtAdapterTest::normalizesTerminalClipboardWritesAndPolicies()
     }
     adapter->writeVt(QByteArrayLiteral("\033]52;c;\033\\"));
     QCOMPARE(adapter->takeDeferredEffects().clipboardWrites.size(), 1);
+}
+
+void GhosttyVtAdapterTest::normalizesTerminalClipboardReadsAndPolicies()
+{
+    QByteArray ptyWrites;
+    QVector<TerminalClipboardReadRequest> requests;
+    QVector<TerminalClipboardWriteRequest> writeRequests;
+    auto adapter = GhosttyVtAdapter::create(
+        {},
+        {
+            .writePty =
+                [&ptyWrites](QByteArrayView data) { ptyWrites.append(data); },
+            .clipboardRead =
+                [&requests](const TerminalClipboardReadRequest &request)
+                -> std::optional<TerminalClipboardReadReply> {
+                requests.append(request);
+                TerminalClipboardReadReply reply;
+                reply.result = TerminalClipboardReadResult::Success;
+                reply.contents.append({QByteArrayLiteral("text/plain"),
+                                       QByteArrayLiteral("read-value")});
+                return reply;
+            },
+            .clipboardWrite =
+                [&writeRequests](const TerminalClipboardWriteRequest &request)
+                -> std::optional<TerminalClipboardWriteReply> {
+                writeRequests.append(request);
+                if (request.name == QByteArrayLiteral("app")) {
+                    return TerminalClipboardWriteReply{
+                        .result = TerminalClipboardWriteResult::Success,
+                        .remember = !request.granted,
+                    };
+                }
+                return TerminalClipboardWriteReply{
+                    .result = TerminalClipboardWriteResult::Denied,
+                };
+            },
+        });
+    QVERIFY(adapter != nullptr);
+
+    adapter->writeVt(QByteArrayLiteral("\033]52;c;?\033\\"));
+    QCOMPARE(requests.size(), 1);
+    QCOMPARE(requests.constFirst().location,
+             TerminalClipboardLocation::Standard);
+    QCOMPARE(requests.constFirst().mimes,
+             QVector<QByteArray>{QByteArrayLiteral("text/plain")});
+    QVERIFY(requests.constFirst().confirmationRequired);
+    QVERIFY(ptyWrites.contains(QByteArrayLiteral("cmVhZC12YWx1ZQ==")));
+
+    // Kitty's target-list-only query discloses MIME names, not clipboard
+    // contents, and is served without a permission prompt.
+    ptyWrites.clear();
+    adapter->writeVt(QByteArrayLiteral("\033]5522;type=read;Lg==\033\\"));
+    QCOMPARE(requests.size(), 2);
+    QVERIFY(requests.constLast().list);
+    QVERIFY(requests.constLast().mimes.isEmpty());
+    QVERIFY(!requests.constLast().confirmationRequired);
+
+    ptyWrites.clear();
+    adapter->setClipboardReadAccess(TerminalClipboardAccess::Allow);
+    adapter->writeVt(QByteArrayLiteral("\033]52;p;?\033\\"));
+    QCOMPARE(requests.size(), 3);
+    QCOMPARE(requests.constLast().location, TerminalClipboardLocation::Primary);
+    QVERIFY(!requests.constLast().confirmationRequired);
+    QVERIFY(ptyWrites.contains(QByteArrayLiteral("cmVhZC12YWx1ZQ==")));
+
+    ptyWrites.clear();
+    adapter->setClipboardReadAccess(TerminalClipboardAccess::Deny);
+    adapter->writeVt(QByteArrayLiteral("\033]52;c;?\033\\"));
+    QCOMPARE(requests.size(), 3);
+    QVERIFY(ptyWrites.isEmpty());
+
+    // Installing the callback enables Kitty's mode-5522 paste-event path.
+    // The clipboard text is not read or exposed in the event; an explicit
+    // text insertion still follows ordinary paste framing.
+    adapter->setClipboardReadAccess(TerminalClipboardAccess::Allow);
+    adapter->writeVt(QByteArrayLiteral("\033[?5522h"));
+    const auto pasteEvent =
+        adapter->preparePaste(QStringLiteral("secret\ntext"),
+                              {.protection = true, .bracketedSafe = true});
+    QCOMPARE(pasteEvent.disposition, GhosttyVtAdapter::PasteDisposition::Ready);
+    QVERIFY(pasteEvent.bytes.contains(QByteArrayLiteral("\033]5522;")));
+    QVERIFY(pasteEvent.bytes.contains(QByteArrayLiteral("pw=")));
+    QVERIFY(!pasteEvent.bytes.contains(QByteArrayLiteral("secret")));
+    QCOMPARE(requests.size(), 3);
+
+    const auto textInsertion = adapter->preparePaste(
+        QStringLiteral("drop-text"),
+        {.protection = true, .bracketedSafe = true, .clipboardSource = false});
+    QCOMPARE(textInsertion.disposition,
+             GhosttyVtAdapter::PasteDisposition::Ready);
+    QCOMPARE(textInsertion.bytes, QByteArrayLiteral("drop-text"));
+
+    ptyWrites.clear();
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]5522;type=write:id=w\033\\"
+        "\033]5522;type=wdata:mime=dGV4dC9wbGFpbg==;dmFsdWU=\033\\"
+        "\033]5522;type=wdata\033\\"));
+    QCOMPARE(writeRequests.size(), 1);
+    QCOMPARE(writeRequests.constFirst().write.contents.constFirst().data,
+             QByteArrayLiteral("value"));
+    QVERIFY(adapter->takeDeferredEffects().clipboardWrites.isEmpty());
+    QVERIFY(
+        ptyWrites.contains(QByteArrayLiteral("type=write:status=EPERM:id=w")));
+
+    // A successful remembered password grant is returned through the C reply.
+    // The second matching request arrives granted and bypasses Ask policy.
+    adapter->setClipboardWriteAccess(TerminalClipboardAccess::Ask);
+    ptyWrites.clear();
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]5522;type=write:id=g1:pw=c2VjcmV0:name=YXBw\033\\"
+        "\033]5522;type=wdata\033\\"
+        "\033]5522;type=write:id=g2:pw=c2VjcmV0:name=YXBw\033\\"
+        "\033]5522;type=wdata\033\\"));
+    QCOMPARE(writeRequests.size(), 3);
+    QCOMPARE(writeRequests.at(1).name, QByteArrayLiteral("app"));
+    QVERIFY(!writeRequests.at(1).granted);
+    QVERIFY(writeRequests.at(1).canRemember);
+    QVERIFY(writeRequests.at(1).confirmationRequired);
+    QCOMPARE(writeRequests.at(2).name, QByteArrayLiteral("app"));
+    QVERIFY(writeRequests.at(2).granted);
+    QVERIFY(writeRequests.at(2).canRemember);
+    QVERIFY(!writeRequests.at(2).confirmationRequired);
+    QVERIFY(
+        ptyWrites.contains(QByteArrayLiteral("type=write:status=DONE:id=g1")));
+    QVERIFY(
+        ptyWrites.contains(QByteArrayLiteral("type=write:status=DONE:id=g2")));
 }
 
 void GhosttyVtAdapterTest::validatesDynamicAndMacShapedOsc7Hostnames()
@@ -2709,7 +2863,7 @@ void GhosttyVtAdapterTest::snapshotsAuthoritativeInspectorState()
     QVERIFY(!initial.defaultCursor.isValid());
     QCOMPARE(initial.effectivePalette.size(), 256);
     QCOMPARE(initial.defaultPalette.size(), 256);
-    QCOMPARE(initial.modes.size(), 42);
+    QCOMPARE(initial.modes.size(), 43);
     QCOMPARE(initial.kittyKeyboardFlags, quint8{0});
     QVERIFY(initial.kittyGraphicsAvailable);
     QCOMPARE(initial.kittyImageStorageLimitBytes, quint64{123'456});
@@ -2728,7 +2882,7 @@ void GhosttyVtAdapterTest::snapshotsAuthoritativeInspectorState()
         {false, 1016}, {false, 1035}, {false, 1036}, {false, 1039},
         {false, 1045}, {false, 1047}, {false, 1048}, {false, 1049},
         {false, 2004}, {false, 2026}, {false, 2027}, {false, 2031},
-        {false, 2033}, {false, 2048},
+        {false, 2033}, {false, 2048}, {false, 5522},
     };
     std::set<std::pair<bool, quint16>> actualModes;
     for (const TerminalInspectorModeState &mode : initial.modes) {
