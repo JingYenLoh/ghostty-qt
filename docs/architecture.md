@@ -141,10 +141,13 @@ A `QSocketNotifier` drives output reads. One activation:
 4. schedules a coalesced frame publication;
 5. yields after a bounded amount of work so control requests can run.
 
-Ordinary activations process at most 1 MiB and continue on the event loop when
-more data remains. Final shutdown uses a larger bounded drain to retain output
-written immediately before child exit. The frame timer coalesces bursts over
-8 ms instead of publishing one update per read.
+Ordinary activations process at most 1 MiB or four milliseconds of parser work.
+When either limit is reached, the read notifier remains disabled until one
+queued continuation begins; this prevents a continuously readable PTY from
+starving timers and control requests. Final shutdown uses a larger bounded
+drain without the interactive time budget to retain output written immediately
+before child exit. The frame timer coalesces bursts over 8 ms instead of
+publishing one update per read.
 
 ### PTY writes
 

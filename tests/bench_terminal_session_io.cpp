@@ -362,6 +362,8 @@ bool runMode(const Options &options, bool legacyReads, bool legacyWrites,
         eventLoopGaps += sample.eventLoopGapsNanoseconds;
         metrics.readActivations += sample.io.readActivations;
         metrics.continuationActivations += sample.io.continuationActivations;
+        metrics.processingBudgetExhaustions +=
+            sample.io.processingBudgetExhaustions;
         metrics.readCalls += sample.io.readCalls;
         metrics.readBytes += sample.io.readBytes;
         metrics.readWouldBlock += sample.io.readWouldBlock;
@@ -410,6 +412,8 @@ bool runMode(const Options &options, bool legacyReads, bool legacyWrites,
            << percentileMilliseconds(eventLoopGaps, 0.99)
            << " read_activations=" << metrics.readActivations
            << " continuation_activations=" << metrics.continuationActivations
+           << " processing_budget_exhaustions="
+           << metrics.processingBudgetExhaustions
            << " read_calls=" << metrics.readCalls
            << " read_eagain=" << metrics.readWouldBlock
            << " parser_submissions=" << metrics.parserSubmissions
@@ -548,7 +552,7 @@ int main(int argc, char **argv)
     options.timeoutMilliseconds = static_cast<int>(*timeout);
     options.ansi = corpus == QStringLiteral("ansi");
     QTextStream output(stdout);
-    output << "benchmark_contract=1 qt=" << qVersion() << '\n';
+    output << "benchmark_contract=2 qt=" << qVersion() << '\n';
     if (options.workload == Workload::Output) {
         if ((mode == QStringLiteral("legacy") || mode == QStringLiteral("both"))
             && !runMode(options, true, false, output)) {

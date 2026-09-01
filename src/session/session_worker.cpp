@@ -62,6 +62,7 @@ constexpr qsizetype kPtyReadBatchSize = 4 * 1024;
 constexpr qsizetype kImmediatePtyParseReadSize = 1024;
 constexpr qsizetype kMaximumReadPerActivation = 1024 * 1024;
 constexpr qsizetype kMaximumFinalRead = 8 * 1024 * 1024;
+constexpr int kMaximumPtyProcessingMilliseconds = 4;
 constexpr int kFrameCoalesceMilliseconds = 8;
 constexpr int kCompressionIdleMilliseconds = 250;
 constexpr int kCompressionStepMilliseconds = 1;
@@ -1731,6 +1732,9 @@ void SessionWorker::drainPty(bool finalDrain)
     qsizetype batchSize = 0;
     bool receivedData = false;
     bool retriedAfterWouldBlock = false;
+    bool processingBudgetExhausted = false;
+    QElapsedTimer processingTimer;
+    if (!finalDrain) processingTimer.start();
 
     ++ioMetrics_.readActivations;
     const auto submitBatch = [&] {
@@ -1764,6 +1768,13 @@ void SessionWorker::drainPty(bool finalDrain)
                 || count >= static_cast<ssize_t>(kImmediatePtyParseReadSize)
                 || batchSize >= kPtyReadBatchSize) {
                 submitBatch();
+                if (!finalDrain
+                    && processingTimer.elapsed()
+                        >= kMaximumPtyProcessingMilliseconds) {
+                    processingBudgetExhausted = true;
+                    ++ioMetrics_.processingBudgetExhaustions;
+                    break;
+                }
             }
             continue;
         }
@@ -1825,9 +1836,20 @@ void SessionWorker::drainPty(bool finalDrain)
         }
         scheduleFrame();
     }
-    if (!finalDrain && totalRead >= kMaximumReadPerActivation) {
+    if (!finalDrain
+        && (processingBudgetExhausted
+            || totalRead >= kMaximumReadPerActivation)) {
         ++ioMetrics_.continuationActivations;
-        QTimer::singleShot(0, this, &SessionWorker::readFromPty);
+        // A level-triggered readable notifier can be delivered again before
+        // due timers even after this activation returns. Keep it gated until
+        // the single queued continuation begins so dense output cannot starve
+        // frame, input, and control events.
+        if (readNotifier_ != nullptr) readNotifier_->setEnabled(false);
+        QTimer::singleShot(0, this, [this] {
+            if (masterFd_ < 0 || vt_ == nullptr) return;
+            if (readNotifier_ != nullptr) readNotifier_->setEnabled(true);
+            readFromPty();
+        });
     }
 }
 

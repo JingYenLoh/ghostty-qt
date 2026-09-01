@@ -32,6 +32,7 @@ class TerminalClipboardBridge;
 struct TerminalSessionIoMetrics {
     quint64 readActivations = 0;
     quint64 continuationActivations = 0;
+    quint64 processingBudgetExhaustions = 0;
     quint64 readCalls = 0;
     quint64 readBytes = 0;
     quint64 readWouldBlock = 0;

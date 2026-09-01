@@ -274,6 +274,7 @@ private Q_SLOTS:
     void continuesPathLookupAfterMissingInterpreter();
     void usesPinnedDefaultPathWhenUnset();
     void batchesPtyReadsBeforeParsing();
+    void yieldsSustainedPtyReadsToEventLoop();
     void drainsLargeFinalOutputBeforeClosingPty();
     void drainsLargeQueuedInputAfterPtyBackpressure();
     void routesTerminalClipboardWritesUsingLivePolicy();
@@ -3942,6 +3943,40 @@ void SessionWorkerTest::batchesPtyReadsBeforeParsing()
     // a few large read() calls. The parser batch size is the scheduler-neutral
     // contract this test needs to enforce.
     QVERIFY(metrics.maximumParserBatchBytes >= 4ULL * 1024ULL);
+    worker.shutdown();
+}
+
+void SessionWorkerTest::yieldsSustainedPtyReadsToEventLoop()
+{
+    SessionWorker worker;
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral(GHOSTTY_QT_TEST_PTY_IO_PROBE),
+        QStringLiteral("16777216"),
+        QStringLiteral("4096"),
+    };
+    options.hold = true;
+    options.scrollbackLimits.bytes = 1ULL * 1024ULL * 1024ULL;
+    options.scrollbackLimits.lines = 1'000;
+    options.runtime.scrollbackCompression = false;
+    QVERIFY(worker.initialize(options));
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 10'000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    const TerminalSessionIoMetrics metrics = worker.sessionIoMetrics();
+    QCOMPARE(metrics.readBytes, 16ULL * 1024ULL * 1024ULL);
+    QCOMPARE(metrics.parserBytes, metrics.readBytes);
+    QVERIFY(metrics.continuationActivations > 0);
+    QVERIFY(metrics.continuationActivations
+            >= metrics.processingBudgetExhaustions);
     worker.shutdown();
 }
 
