@@ -157,6 +157,8 @@ private Q_SLOTS:
     void materializesPackedKittyPixelFormats();
     void rejectsInvalidKittyPixelMaterialization();
     void publishesKittyGraphicsSnapshots();
+    void publishesRelativeKittyPlacements();
+    void publishesClientSelectedKittyAnimationFrames();
     void publishesMpvShapedKittyFrames();
     void cullsOpaqueKittyGraphicsWithoutDeletingHistory();
     void decodesKittyPngPayloads();
@@ -806,6 +808,94 @@ void GhosttyVtAdapterTest::publishesKittyGraphicsSnapshots()
              GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(disabled.update.kittyGraphicsChanged);
     QVERIFY(disabled.update.kittyGraphics->placements.isEmpty());
+}
+
+void GhosttyVtAdapterTest::publishesRelativeKittyPlacements()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry = {
+        .columns = 10,
+        .rows = 5,
+        .cellWidthPixels = 10,
+        .cellHeightPixels = 20,
+    };
+    auto adapter = GhosttyVtAdapter::create(options, {});
+    QVERIFY(adapter != nullptr);
+
+    // The second placement is two columns and one row from the first. The
+    // public render-info query resolves the relative chain to the pinned root.
+    adapter->writeVt(QByteArrayLiteral(
+        "\033[2;3H\033_Ga=T,t=d,f=24,i=1,p=1,s=1,v=1,c=1,r=1,C=1;"
+        "/wAA\033\\"
+        "\033_Ga=p,i=1,p=2,P=1,Q=1,H=2,V=1,c=1,r=1;\033\\"));
+
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+    QVERIFY(frame.kittyGraphics != nullptr);
+    QVERIFY(!frame.kittyGraphics->containsVirtualPlacements);
+    QCOMPARE(frame.kittyGraphics->placements.size(), 2);
+
+    const auto &root = frame.kittyGraphics->placements.at(0);
+    const auto &relative = frame.kittyGraphics->placements.at(1);
+    QCOMPARE(root.placementId, quint32{1});
+    QCOMPARE(root.viewportColumn, 2);
+    QCOMPARE(root.viewportRow, 1);
+    QCOMPARE(relative.placementId, quint32{2});
+    QCOMPARE(relative.viewportColumn, 4);
+    QCOMPARE(relative.viewportRow, 2);
+    QCOMPARE(relative.destinationWidthPixels, quint32{10});
+    QCOMPARE(relative.destinationHeightPixels, quint32{20});
+    QVERIFY(relative.image == root.image);
+
+    // A relative placement's lifetime follows its parent chain.
+    adapter->writeVt(QByteArrayLiteral("\033_Ga=d,d=i,i=1,p=1\033\\"));
+    GhosttyVtAdapter::RenderSnapshot deleted;
+    QCOMPARE(adapter->renderFrame(&deleted),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(deleted.update.kittyGraphicsChanged);
+    QVERIFY(deleted.update.kittyGraphics != nullptr);
+    QVERIFY(deleted.update.kittyGraphics->placements.isEmpty());
+}
+
+void GhosttyVtAdapterTest::publishesClientSelectedKittyAnimationFrames()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry = {
+        .columns = 5,
+        .rows = 3,
+        .cellWidthPixels = 10,
+        .cellHeightPixels = 20,
+    };
+    auto adapter = GhosttyVtAdapter::create(options, {});
+    QVERIFY(adapter != nullptr);
+
+    // A stopped Kitty animation changes frames only through a=a,c=N. The
+    // public image generation changes with the selected frame, keeping the
+    // adapter's generation-keyed asset cache coherent.
+    adapter->writeVt(QByteArrayLiteral(
+        "\033_Ga=T,t=d,f=24,i=1,p=1,s=1,v=1,c=1,r=1,C=1;/wAA\033\\"
+        "\033_Ga=f,t=d,f=24,i=1,s=1,v=1;AAD/\033\\"));
+
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+    QVERIFY(frame.kittyGraphics != nullptr);
+    QCOMPARE(frame.kittyGraphics->placements.size(), 1);
+    const auto root = frame.kittyGraphics->placements.constFirst().image;
+    QVERIFY(root != nullptr);
+    QCOMPARE(root->straightRgba.pixelColor(0, 0), QColor(255, 0, 0));
+
+    adapter->writeVt(QByteArrayLiteral("\033_Ga=a,i=1,c=2\033\\"));
+    GhosttyVtAdapter::RenderSnapshot selected;
+    QCOMPARE(adapter->renderFrame(&selected),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(selected.update.kittyGraphicsChanged);
+    QVERIFY(selected.update.kittyGraphics != nullptr);
+    QCOMPARE(selected.update.kittyGraphics->placements.size(), 1);
+    const auto second =
+        selected.update.kittyGraphics->placements.constFirst().image;
+    QVERIFY(second != nullptr);
+    QVERIFY(second->generation > root->generation);
+    QCOMPARE(second->straightRgba.pixelColor(0, 0), QColor(0, 0, 255));
 }
 
 void GhosttyVtAdapterTest::publishesMpvShapedKittyFrames()

@@ -589,6 +589,37 @@ ordinary-only snapshot builder with the expanded iterator, remove the
 diagnostic `containsVirtualPlacements` limitation, and add identical RHI and
 software rendering tests without changing the Qt layer or texture architecture.
 
+## Kitty graphics timed animation playback
+
+**Status:** frame storage, composition, and explicit client-selected frames are
+implemented; time-driven playback is blocked on an upstream public API.
+
+The public image-data query returns the current animation frame and changes the
+image generation whenever that frame changes. This lets ghostty-qt reuse its
+generation-keyed snapshots and textures for `a=f` frame construction and
+stopped animations advanced explicitly with `a=a,c=N`.
+
+Running and loading animations are different. Ghostty's renderer privately
+calls `ImageStorage.animationTick` with a monotonic timestamp, mutates every due
+image to its next frame, and schedules the returned next wake deadline. The
+official C terminal API exposes neither operation. Polling the current image
+generation cannot advance playback, and a frontend-side animation model would
+duplicate terminal-owned frame gaps, loading-state parking, loop limits, and
+visibility eligibility.
+
+The preferred append-only contract is a terminal animation step accepting a
+monotonic timestamp and returning whether graphics changed plus the optional
+delay until the next required step. An equivalent terminal-owned clock and
+next-wake query is also sufficient. The operation must use the same mutation
+and generation rules as Ghostty's renderer and remain valid for both screens.
+
+Public C acceptance should cover stopped, loading, and running animations;
+explicit frame selection; gapless frames; finite and infinite loops; clock
+restart; hidden or unplaced images; image deletion and replacement; and
+primary/alternate screen transitions. Once available, `SessionWorker` can arm
+one timer for the returned deadline, step on the terminal thread, and publish
+the ordinary Kitty graphics snapshot when a frame advances.
+
 ## Exact font resolution and terminal shaping
 
 **Status:** the finalized typography configuration, Qt-owned face resolution,

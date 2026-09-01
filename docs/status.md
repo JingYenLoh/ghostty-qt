@@ -45,9 +45,10 @@ for the intentional upgrade procedure.
   generated box/icon glyphs, positioned shaping, and color emoji need a wider
   public font/render contract.
 - **Kitty graphics:** ordinary RGB/RGBA transmissions, including mpv-style
-  RGB24 continuation frames, are supported. Unicode virtual placements and
-  safe handling of some upstream eviction lifetimes require libghostty
-  changes.
+  RGB24 continuation frames, relative placements rooted at ordinary
+  placements, and client-selected animation frames are supported. Unicode
+  virtual placements and timed animation playback require wider libghostty
+  APIs.
 - **Search:** the frontend performs a cooperative public-grid scan. Some
   cross-boundary and exact formatting semantics differ from Ghostty's private
   search implementation.
