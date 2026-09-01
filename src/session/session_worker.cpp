@@ -70,11 +70,8 @@ constexpr int kCursorBlinkResetThrottleMilliseconds = 500;
 constexpr int kShutdownGraceMilliseconds = 2000;
 constexpr int kPotentialActivityGraceMilliseconds = 250;
 constexpr int kForegroundActivityProbeMilliseconds = 250;
-constexpr int kSearchRowsPerChunk = 8;
-constexpr int kSearchChunkBudgetMilliseconds = 2;
 constexpr int kSearchPublishIntervalMilliseconds = 33;
 constexpr int kTerminalFileWriterThreads = 2;
-constexpr quint64 kSearchRowsPerCompressionPass = 64;
 constexpr qsizetype kMaximumInitialInputFileSize = 10 * 1024 * 1024;
 constexpr Qt::KeyboardModifiers kTrackedTerminalModifiers = Qt::ShiftModifier
     | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier;
@@ -498,151 +495,6 @@ bool hasExecutableCandidate(const QVector<QByteArray> &candidates,
     });
 }
 
-char foldSearchByte(char value)
-{
-    return value >= 'A' && value <= 'Z' ? static_cast<char>(value + ('a' - 'A'))
-                                        : value;
-}
-
-QByteArray reversedFoldedSearchNeedle(QByteArrayView needle)
-{
-    QByteArray result;
-    result.reserve(needle.size());
-    for (char value : needle | std::views::reverse) {
-        result.append(foldSearchByte(value));
-    }
-    return result;
-}
-
-bool searchNeedlesEqual(QByteArrayView left, QByteArrayView right)
-{
-    return std::ranges::equal(left, right, std::ranges::equal_to{},
-                              foldSearchByte, foldSearchByte);
-}
-
-QVector<qsizetype> searchPrefixTable(QByteArrayView pattern)
-{
-    QVector<qsizetype> prefix(pattern.size(), 0);
-    for (qsizetype index = 1, matched = 0; index < pattern.size(); ++index) {
-        while (matched > 0 && pattern.at(index) != pattern.at(matched)) {
-            matched = prefix.at(matched - 1);
-        }
-        if (pattern.at(index) == pattern.at(matched)) {
-            ++matched;
-        }
-        prefix[index] = matched;
-    }
-    return prefix;
-}
-
-// Search consumes bytes newest-to-oldest and needs only the cell belonging to
-// the oldest byte in the current needle-sized window. Keep that bounded window
-// contiguous: std::deque's segmented storage and pop-front machinery are
-// unnecessary for this fixed-capacity access pattern.
-class SearchCellRing final {
-public:
-    void reset(qsizetype capacity)
-    {
-        cells_.resize(capacity);
-        clear();
-    }
-
-    void clear() noexcept { next_ = 0; }
-
-    void append(const TerminalSearchCell &cell) noexcept
-    {
-        Q_ASSERT(!cells_.isEmpty());
-        cells_[next_] = cell;
-        if (++next_ == cells_.size()) next_ = 0;
-    }
-
-    [[nodiscard]] const TerminalSearchCell &front() const noexcept
-    {
-        // A KMP match cannot request the oldest cell until at least one whole
-        // needle has been appended, so next_ points at the full ring's front.
-        return cells_.at(next_);
-    }
-
-private:
-    QVector<TerminalSearchCell> cells_;
-    qsizetype next_ = 0;
-};
-
-std::optional<qsizetype> gridCellCount(int columns, int rows)
-{
-    if (columns <= 0 || rows <= 0) return std::nullopt;
-    const qsizetype columnCount = columns;
-    const qsizetype rowCount = rows;
-    if (columnCount > std::numeric_limits<qsizetype>::max() / rowCount) {
-        return std::nullopt;
-    }
-    return columnCount * rowCount;
-}
-
-TerminalSearchCell
-searchRowByteCell(const GhosttyVtAdapter::SearchRowSnapshot &row,
-                  qsizetype byteIndex)
-{
-    return {
-        .column = row.byteColumns.at(byteIndex),
-        .screenRow = row.screenRow,
-    };
-}
-
-TerminalSearchCell
-searchRowNewlineCell(const GhosttyVtAdapter::SearchRowSnapshot &row)
-{
-    return {
-        .column = row.newlineColumn,
-        .screenRow = row.screenRow,
-    };
-}
-
-void addVisibleSearchCells(QBitArray &destination, TerminalSearchRange range,
-                           const GhosttyVtAdapter::SearchExtent &extent)
-{
-    const std::optional<qsizetype> cellCount =
-        gridCellCount(extent.columns, extent.rows);
-    if (range.end < range.start) {
-        std::swap(range.start, range.end);
-    }
-    if (!cellCount.has_value() || destination.size() != *cellCount
-        || extent.viewportLength == 0 || range.start.column >= extent.columns
-        || range.end.column >= extent.columns
-        || range.start.screenRow >= extent.totalRows
-        || range.end.screenRow >= extent.totalRows) {
-        return;
-    }
-
-    const quint64 viewportStart = extent.viewportOffset;
-    const quint64 viewportEnd = viewportStart + extent.viewportLength;
-    const quint64 firstRow =
-        std::max<quint64>(range.start.screenRow, viewportStart);
-    const quint64 lastRowExclusive = std::min<quint64>(
-        static_cast<quint64>(range.end.screenRow) + 1U, viewportEnd);
-    if (firstRow >= lastRowExclusive) {
-        return;
-    }
-
-    for (quint64 row = firstRow; row < lastRowExclusive; ++row) {
-        const int firstColumn = row == range.start.screenRow
-            ? static_cast<int>(range.start.column)
-            : 0;
-        const int lastColumn = row == range.end.screenRow
-            ? static_cast<int>(range.end.column)
-            : extent.columns - 1;
-        const quint64 relativeRow = row - viewportStart;
-        if (relativeRow >= static_cast<quint64>(extent.rows)) {
-            continue;
-        }
-        const int viewportRow = static_cast<int>(relativeRow);
-        for (int column = firstColumn; column <= lastColumn; ++column) {
-            destination.setBit(
-                static_cast<qsizetype>(viewportRow) * extent.columns + column);
-        }
-    }
-}
-
 bool keyMayStartProcess(const TerminalKeyInput &input)
 {
     return !input.composing && input.pressed
@@ -855,51 +707,18 @@ struct SessionWorker::HyperlinkState {
 
 struct SessionWorker::SearchState {
     quint64 generation = 0;
-    quint64 dataRevision = 0;
-    QByteArray needle;
-    QByteArray reversedNeedle;
-    QVector<qsizetype> prefix;
-    qsizetype matched = 0;
-    SearchCellRing recentCells;
-    QVector<TerminalSearchRange> matches;
-    QBitArray visibleCellMask;
-    // Viewport candidates are deliberately independent of the canonical
-    // newest-to-oldest scan. This mirrors Ghostty's ViewportSearch: candidate
-    // cells may become visible before their canonical index is known, without
-    // changing counts, navigation, progress, or completion.
-    QBitArray viewportProbeCellMask;
-    quint64 viewportProbeOffset = 0;
-    quint64 viewportProbeLength = 0;
-    qint64 nextViewportProbeScreenRow = -1;
-    std::optional<GhosttyVtAdapter::SearchRowSnapshot> viewportProbeRow;
-    qsizetype viewportProbeByteIndex = 0;
-    qsizetype viewportProbeMatched = 0;
-    SearchCellRing viewportProbeRecentCells;
-    bool viewportProbeComplete = true;
-    QBitArray selectedCellMask;
-    qint64 selectedMatch = -1;
-    qint64 nextScreenRow = -1;
-    std::optional<GhosttyVtAdapter::SearchRowSnapshot> currentRow;
-    qsizetype currentRowByteIndex = 0;
-    bool currentRowBoundaryPending = false;
-    TerminalSearchCell currentRowBoundaryCell;
-    bool currentRowLogicalHasText = false;
-    bool newerLogicalContent = false;
-    bool finalBoundaryObserved = false;
-    bool finalBoundaryPending = false;
-    TerminalSearchCell finalBoundaryCell;
-    quint64 scannedRows = 0;
+    GhosttyVtAdapter::SearchProgress progress =
+        GhosttyVtAdapter::SearchProgress::Complete;
     quint64 totalRows = 0;
-    quint64 rowsSinceCompressionPass = 0;
+    quint64 totalMatches = 0;
+    qint64 selectedMatch = -1;
     int columns = 0;
     int rows = 0;
-    quint64 viewportOffset = 0;
-    quint64 viewportLength = 0;
-    GhosttyVtAdapter::SearchScreen activeScreen =
-        GhosttyVtAdapter::SearchScreen::Primary;
+    QBitArray visibleCellMask;
+    QBitArray selectedCellMask;
     bool active = false;
     bool complete = false;
-    bool seenFormattedContent = false;
+    bool feedPending = false;
     bool chunkScheduled = false;
     QElapsedTimer lastPublication;
 };
@@ -1045,7 +864,6 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
     heldTerminalModifiers_ = Qt::NoModifier;
     lastTerminalKey_.reset();
     terminalContentRevision_ = 1;
-    searchContentRevision_ = 1;
     publishedContentRevision_ = 0;
     *searchState_ = SearchState{};
     hyperlinkState_->pendingQuery.reset();
@@ -3254,7 +3072,10 @@ void SessionWorker::copySelectionOnSelect()
     case TerminalCopyOnSelectMode::Primary:
         copySelectionTo(TerminalClipboardDestination::Primary, false);
         return;
-    case TerminalCopyOnSelectMode::PrimaryAndClipboard:
+    case TerminalCopyOnSelectMode::Clipboard:
+        copySelectionTo(TerminalClipboardDestination::Standard, false);
+        return;
+    case TerminalCopyOnSelectMode::Both:
         copySelectionTo(TerminalClipboardDestination::PrimaryAndStandard,
                         false);
         return;
@@ -3310,10 +3131,7 @@ void SessionWorker::updateSelection(const TerminalSelectionDragInput &input)
     syncSelectionAutoscroll();
     if (selectionChanged) {
         markTerminalContentChanged();
-        if (searchState_->active) {
-            rebuildSearchVisibleCells();
-            publishSearchUpdate();
-        }
+        refreshSearch();
         syncSelectionAvailability();
         noteCompressionActivity();
         scheduleFrame();
@@ -3357,10 +3175,7 @@ void SessionWorker::selectionAutoscrollTick()
     // both a viewport and selection mutation even when the installed range is
     // unchanged at a scroll boundary.
     markTerminalContentChanged();
-    if (searchState_->active) {
-        rebuildSearchVisibleCells();
-        publishSearchUpdate();
-    }
+    refreshSearch();
     syncSelectionAvailability();
     noteCompressionActivity();
     scheduleFrame();
@@ -3438,7 +3253,10 @@ void SessionWorker::selectAllAction(quint64 requestId)
     case TerminalCopyOnSelectMode::Primary:
         destination = TerminalClipboardDestination::Primary;
         break;
-    case TerminalCopyOnSelectMode::PrimaryAndClipboard:
+    case TerminalCopyOnSelectMode::Clipboard:
+        destination = TerminalClipboardDestination::Standard;
+        break;
+    case TerminalCopyOnSelectMode::Both:
         destination = TerminalClipboardDestination::PrimaryAndStandard;
         break;
     }
@@ -3457,10 +3275,7 @@ void SessionWorker::adjustSelection(TerminalSelectionAdjustment adjustment)
 {
     if (vt_ != nullptr && vt_->adjustSelection(adjustment)) {
         markTerminalContentChanged();
-        if (searchState_->active) {
-            rebuildSearchVisibleCells();
-            publishSearchUpdate();
-        }
+        refreshSearch();
         syncSelectionAvailability();
         noteCompressionActivity();
         scheduleFrame();
@@ -3494,10 +3309,7 @@ void SessionWorker::adjustSelectionAction(
     }
 
     markTerminalContentChanged();
-    if (searchState_->active) {
-        rebuildSearchVisibleCells();
-        publishSearchUpdate();
-    }
+    refreshSearch();
     syncSelectionAvailability();
     noteCompressionActivity();
     scheduleFrame();
@@ -3524,20 +3336,34 @@ void SessionWorker::markTerminalContentChanged()
 
 void SessionWorker::markSearchContentChanged()
 {
-    do {
-        ++searchContentRevision_;
-    } while (searchContentRevision_ == 0);
-    restartSearch();
+    if (!searchState_->active) return;
+    searchState_->feedPending = true;
+    searchState_->complete = false;
+    scheduleSearchChunk();
+}
+
+void SessionWorker::refreshSearch()
+{
+    if (!searchState_->active || vt_ == nullptr) return;
+    const auto progress = vt_->feedSearch();
+    if (!progress.has_value() || !updateSearchSnapshot()) {
+        searchState_->complete = true;
+        searchState_->feedPending = false;
+        Q_EMIT errorOccurred(
+            QStringLiteral("libghostty search refresh failed"));
+        publishSearchUpdate();
+        return;
+    }
+    searchState_->feedPending = false;
+    publishSearchUpdate();
+    scheduleSearchChunk();
 }
 
 void SessionWorker::scrollViewport(const TerminalViewportRequest &request)
 {
     if (vt_ != nullptr && vt_->scrollViewport(request)) {
         markTerminalContentChanged();
-        if (searchState_->active) {
-            rebuildSearchVisibleCells();
-            publishSearchUpdate();
-        }
+        refreshSearch();
         noteCompressionActivity();
         scheduleFrame();
     }
@@ -3571,10 +3397,7 @@ void SessionWorker::scrollToSelectionAction(quint64 requestId)
     }
 
     markTerminalContentChanged();
-    if (searchState_->active) {
-        rebuildSearchVisibleCells();
-        publishSearchUpdate();
-    }
+    refreshSearch();
     noteCompressionActivity();
     scheduleFrame();
     result.outcome = TerminalActionOutcome::Success;
@@ -3583,81 +3406,51 @@ void SessionWorker::scrollToSelectionAction(quint64 requestId)
 
 void SessionWorker::beginSearch(quint64 generation, const QByteArray &needle)
 {
-    if (generation == 0) {
-        return;
-    }
+    if (generation == 0) return;
     if (searchState_->generation != 0 && generation != searchState_->generation
         && !sequenceTokenIsNewer(generation, searchState_->generation)) {
         return;
     }
-    if (generation != searchState_->generation && searchState_->active
-        && searchState_->dataRevision == searchContentRevision_
-        && !needle.isEmpty()
-        && searchNeedlesEqual(searchState_->needle, needle)) {
-        // Pinned Ghostty treats ASCII-case-only needle changes as unchanged,
-        // preserving progressive results and the selected match.
+
+    const bool chunkScheduled = searchState_->chunkScheduled;
+    if (vt_ == nullptr || needle.isEmpty()) {
+        if (vt_ != nullptr && !vt_->setSearchNeedle({})) {
+            Q_EMIT errorOccurred(
+                QStringLiteral("Failed to clear libghostty search"));
+        }
+        *searchState_ = SearchState{};
+        searchState_->chunkScheduled = chunkScheduled;
         searchState_->generation = generation;
-        searchState_->needle = needle;
+        searchState_->complete = true;
         publishSearchUpdate();
         return;
     }
 
-    const bool chunkScheduled = searchState_->chunkScheduled;
-    if ((searchState_->rowsSinceCompressionPass > 0
-         || searchState_->currentRow.has_value()
-         || searchState_->viewportProbeRow.has_value())
-        && compressionTimer_ != nullptr) {
-        // Public screen-coordinate cell reads restore compressed pages. Start
-        // an incremental verification pass when a query is replaced so those
-        // cold pages do not remain resident indefinitely.
-        scheduleRestoredPageCompression();
+    if (!vt_->setSearchNeedle(needle)) {
+        *searchState_ = SearchState{};
+        searchState_->chunkScheduled = chunkScheduled;
+        searchState_->generation = generation;
+        searchState_->complete = true;
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to set libghostty search needle"));
+        publishSearchUpdate();
+        return;
     }
+
     *searchState_ = SearchState{};
     searchState_->chunkScheduled = chunkScheduled;
     searchState_->generation = generation;
-    searchState_->dataRevision = searchContentRevision_;
-    searchState_->needle = needle;
-
-    if (needle.isEmpty() || vt_ == nullptr) {
-        searchState_->complete = true;
-        publishSearchUpdate();
-        return;
-    }
-
-    const std::optional<GhosttyVtAdapter::SearchExtent> extent =
-        vt_->searchExtent();
-    if (!extent.has_value()) {
-        searchState_->complete = true;
-        publishSearchUpdate();
-        return;
-    }
-    const std::optional<qsizetype> cellCount =
-        gridCellCount(extent->columns, extent->rows);
-    if (!cellCount.has_value()) {
-        searchState_->complete = true;
-        publishSearchUpdate();
-        return;
-    }
-
     searchState_->active = true;
-    searchState_->totalRows = extent->totalRows;
-    searchState_->columns = extent->columns;
-    searchState_->rows = extent->rows;
-    searchState_->viewportOffset = extent->viewportOffset;
-    searchState_->viewportLength = extent->viewportLength;
-    searchState_->activeScreen = extent->activeScreen;
-    searchState_->visibleCellMask.resize(*cellCount);
-    searchState_->viewportProbeCellMask.resize(*cellCount);
-    searchState_->selectedCellMask.resize(*cellCount);
-    searchState_->nextScreenRow = extent->totalRows == 0
-        ? -1
-        : static_cast<qint64>(extent->totalRows - 1U);
-    searchState_->reversedNeedle = reversedFoldedSearchNeedle(needle);
-    searchState_->prefix = searchPrefixTable(searchState_->reversedNeedle);
-    searchState_->recentCells.reset(searchState_->reversedNeedle.size());
-    searchState_->viewportProbeRecentCells.reset(
-        searchState_->reversedNeedle.size());
-    resetSearchViewportProbe(extent->viewportOffset, extent->viewportLength);
+    if (!updateSearchSnapshot()) {
+        searchState_->active = false;
+        searchState_->complete = true;
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to snapshot libghostty search"));
+        publishSearchUpdate();
+        return;
+    }
+    searchState_->feedPending = searchState_->progress
+        == GhosttyVtAdapter::SearchProgress::FeedRequired;
     publishSearchUpdate();
     scheduleSearchChunk();
 }
@@ -3681,42 +3474,27 @@ void SessionWorker::searchSerialized(quint64 generation,
 
 void SessionWorker::cancelSearch(quint64 generation)
 {
-    if (generation == 0) {
-        return;
-    }
+    if (generation == 0) return;
     if (searchState_->generation != 0 && generation != searchState_->generation
         && !sequenceTokenIsNewer(generation, searchState_->generation)) {
         return;
     }
-    const bool chunkScheduled = searchState_->chunkScheduled;
-    if ((searchState_->rowsSinceCompressionPass > 0
-         || searchState_->currentRow.has_value()
-         || searchState_->viewportProbeRow.has_value())
-        && compressionTimer_ != nullptr) {
-        scheduleRestoredPageCompression();
+    if (vt_ != nullptr && !vt_->setSearchNeedle({})) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to clear libghostty search"));
     }
+    const bool chunkScheduled = searchState_->chunkScheduled;
     *searchState_ = SearchState{};
     searchState_->chunkScheduled = chunkScheduled;
     searchState_->generation = generation;
-    searchState_->dataRevision = searchContentRevision_;
     searchState_->complete = true;
     publishSearchUpdate();
 }
 
-void SessionWorker::restartSearch()
-{
-    if (!searchState_->active || searchState_->generation == 0
-        || searchState_->needle.isEmpty()) {
-        return;
-    }
-    const quint64 generation = searchState_->generation;
-    const QByteArray needle = searchState_->needle;
-    beginSearch(generation, needle);
-}
-
 void SessionWorker::scheduleSearchChunk()
 {
-    if (!searchState_->active || searchState_->complete
+    if (!searchState_->active
+        || (searchState_->complete && !searchState_->feedPending)
         || searchState_->chunkScheduled) {
         return;
     }
@@ -3724,33 +3502,22 @@ void SessionWorker::scheduleSearchChunk()
     QTimer::singleShot(0, this, &SessionWorker::processSearchChunk);
 }
 
-void SessionWorker::resetSearchViewportProbe(quint64 viewportOffset,
-                                             quint64 viewportLength)
+bool SessionWorker::updateSearchSnapshot()
 {
-    SearchState &state = *searchState_;
-    state.viewportProbeCellMask.fill(false);
-    state.viewportProbeOffset = viewportOffset;
-    state.viewportProbeLength = viewportLength;
-    state.nextViewportProbeScreenRow = -1;
-    state.viewportProbeRow.reset();
-    state.viewportProbeByteIndex = 0;
-    state.viewportProbeMatched = 0;
-    state.viewportProbeRecentCells.clear();
-    state.viewportProbeComplete = true;
-
-    if (!state.active || state.complete || state.totalRows == 0
-        || viewportLength == 0 || viewportOffset >= state.totalRows) {
-        return;
-    }
-
-    const quint64 boundedLength =
-        std::min(viewportLength, state.totalRows - viewportOffset);
-    if (boundedLength == 0) return;
-
-    state.viewportProbeLength = boundedLength;
-    state.nextViewportProbeScreenRow =
-        static_cast<qint64>(viewportOffset + boundedLength - 1U);
-    state.viewportProbeComplete = false;
+    if (vt_ == nullptr) return false;
+    const auto snapshot = vt_->searchSnapshot();
+    if (!snapshot.has_value()) return false;
+    searchState_->progress = snapshot->progress;
+    searchState_->complete =
+        snapshot->progress == GhosttyVtAdapter::SearchProgress::Complete;
+    searchState_->totalRows = snapshot->totalRows;
+    searchState_->totalMatches = snapshot->totalMatches;
+    searchState_->selectedMatch = snapshot->selectedMatch;
+    searchState_->columns = snapshot->columns;
+    searchState_->rows = snapshot->rows;
+    searchState_->visibleCellMask = snapshot->visibleCellMask;
+    searchState_->selectedCellMask = snapshot->selectedCellMask;
+    return true;
 }
 
 void SessionWorker::publishSearchUpdate()
@@ -3760,360 +3527,55 @@ void SessionWorker::publishSearchUpdate()
     update.contentRevision = terminalContentRevision_;
     update.active = searchState_->active;
     update.complete = searchState_->complete;
-    update.scannedRows = searchState_->scannedRows;
+    update.scannedRows = searchState_->complete ? searchState_->totalRows : 0;
     update.totalRows = searchState_->totalRows;
-    update.totalMatches = static_cast<quint64>(searchState_->matches.size());
+    update.totalMatches = searchState_->totalMatches;
     update.selectedMatch = searchState_->selectedMatch;
     update.columns = searchState_->columns;
     update.rows = searchState_->rows;
     update.visibleCellMask = searchState_->visibleCellMask;
-    if (searchState_->active && !searchState_->complete
-        && searchState_->viewportProbeOffset == searchState_->viewportOffset
-        && searchState_->viewportProbeLength == searchState_->viewportLength
-        && searchState_->viewportProbeCellMask.size()
-            == update.visibleCellMask.size()) {
-        update.visibleCellMask |= searchState_->viewportProbeCellMask;
-    }
     update.selectedCellMask = searchState_->selectedCellMask;
     Q_EMIT searchUpdated(update);
     searchState_->lastPublication.restart();
 }
 
-void SessionWorker::rebuildSearchVisibleCells()
-{
-    searchState_->visibleCellMask.fill(false);
-    searchState_->selectedCellMask.fill(false);
-    if (!searchState_->active || vt_ == nullptr) {
-        return;
-    }
-    const std::optional<GhosttyVtAdapter::SearchExtent> extent =
-        vt_->searchExtent();
-    if (!extent.has_value() || extent->totalRows != searchState_->totalRows
-        || extent->columns != searchState_->columns
-        || extent->rows != searchState_->rows
-        || extent->activeScreen != searchState_->activeScreen) {
-        return;
-    }
-    const bool viewportProbeStale = !searchState_->complete
-        && (searchState_->viewportProbeOffset != extent->viewportOffset
-            || searchState_->viewportProbeLength != extent->viewportLength);
-    searchState_->viewportOffset = extent->viewportOffset;
-    searchState_->viewportLength = extent->viewportLength;
-    if (viewportProbeStale) {
-        resetSearchViewportProbe(extent->viewportOffset,
-                                 extent->viewportLength);
-        scheduleSearchChunk();
-    }
-    const quint64 viewportStart = extent->viewportOffset;
-    const quint64 viewportEnd = viewportStart + extent->viewportLength;
-    const auto firstVisibleCandidate = std::lower_bound(
-        searchState_->matches.cbegin(), searchState_->matches.cend(),
-        viewportEnd,
-        [](const TerminalSearchRange &range, quint64 rowExclusive) {
-            return range.start.screenRow >= rowExclusive;
-        });
-    for (auto iterator = firstVisibleCandidate;
-         iterator != searchState_->matches.cend(); ++iterator) {
-        const TerminalSearchRange &range = *iterator;
-        if (range.end.screenRow < viewportStart) {
-            // Results are newest-to-oldest and a fixed-size match's end
-            // moves monotonically upward with its start. No later result can
-            // intersect this viewport.
-            break;
-        }
-        addVisibleSearchCells(searchState_->visibleCellMask, range, *extent);
-    }
-    if (searchState_->selectedMatch >= 0
-        && searchState_->selectedMatch < searchState_->matches.size()) {
-        addVisibleSearchCells(
-            searchState_->selectedCellMask,
-            searchState_->matches.at(searchState_->selectedMatch), *extent);
-    }
-}
-
 void SessionWorker::processSearchChunk()
 {
     searchState_->chunkScheduled = false;
-    if (!searchState_->active || searchState_->complete || vt_ == nullptr) {
-        return;
+    if (!searchState_->active || vt_ == nullptr) return;
+
+    const auto previousProgress = searchState_->progress;
+    const quint64 previousMatches = searchState_->totalMatches;
+    const qint64 previousSelected = searchState_->selectedMatch;
+    const QBitArray previousVisible = searchState_->visibleCellMask;
+    const QBitArray previousSelectedMask = searchState_->selectedCellMask;
+
+    std::optional<GhosttyVtAdapter::SearchProgress> progress;
+    if (searchState_->feedPending
+        || searchState_->progress
+            == GhosttyVtAdapter::SearchProgress::FeedRequired) {
+        searchState_->feedPending = false;
+        progress = vt_->feedSearch();
+    } else {
+        progress = vt_->tickSearch();
     }
-    if (searchState_->dataRevision != searchContentRevision_) {
-        restartSearch();
-        return;
-    }
-
-    const std::optional<GhosttyVtAdapter::SearchExtent> currentExtent =
-        vt_->searchExtent();
-    if (!currentExtent.has_value()
-        || currentExtent->totalRows != searchState_->totalRows
-        || currentExtent->columns != searchState_->columns
-        || currentExtent->rows != searchState_->rows
-        || currentExtent->activeScreen != searchState_->activeScreen) {
-        restartSearch();
-        return;
-    }
-    if (searchState_->viewportProbeOffset != currentExtent->viewportOffset
-        || searchState_->viewportProbeLength != currentExtent->viewportLength) {
-        resetSearchViewportProbe(currentExtent->viewportOffset,
-                                 currentExtent->viewportLength);
-    }
-    searchState_->viewportOffset = currentExtent->viewportOffset;
-    searchState_->viewportLength = currentExtent->viewportLength;
-
-    QElapsedTimer budget;
-    budget.start();
-    int rowsLoaded = 0;
-    qsizetype bytesProcessed = 0;
-    bool chunkBudgetExhausted = false;
-    bool viewportProbeMaskChanged = false;
-    auto feedViewportProbeByte =
-        [this, extent = *currentExtent,
-         &viewportProbeMaskChanged](char byte, const TerminalSearchCell &cell) {
-            SearchState &state = *searchState_;
-            const char folded = foldSearchByte(byte);
-            while (state.viewportProbeMatched > 0
-                   && state.reversedNeedle.at(state.viewportProbeMatched)
-                       != folded) {
-                state.viewportProbeMatched =
-                    state.prefix.at(state.viewportProbeMatched - 1);
-            }
-            if (state.reversedNeedle.at(state.viewportProbeMatched) == folded) {
-                ++state.viewportProbeMatched;
-            }
-
-            state.viewportProbeRecentCells.append(cell);
-            if (state.viewportProbeMatched != state.reversedNeedle.size()) {
-                return;
-            }
-
-            // The probe intentionally searches each physical row in
-            // isolation. A match found after trimming that row's ambiguous
-            // trailing blanks is a safe canonical subset; cross-wrap and
-            // newline-spanning matches wait for the full formatter scan.
-            const TerminalSearchRange range{
-                .start = cell,
-                .end = state.viewportProbeRecentCells.front(),
-            };
-            addVisibleSearchCells(state.viewportProbeCellMask, range, extent);
-            viewportProbeMaskChanged = true;
-            state.viewportProbeMatched =
-                state.prefix.at(state.viewportProbeMatched - 1);
-        };
-
-    while (!searchState_->viewportProbeComplete) {
-        if (!searchState_->viewportProbeRow.has_value()) {
-            if (searchState_->nextViewportProbeScreenRow
-                < static_cast<qint64>(searchState_->viewportProbeOffset)) {
-                searchState_->viewportProbeComplete = true;
-                break;
-            }
-            if (rowsLoaded >= kSearchRowsPerChunk) break;
-
-            const quint32 screenRow = static_cast<quint32>(
-                searchState_->nextViewportProbeScreenRow--);
-            std::optional<GhosttyVtAdapter::SearchRowSnapshot> row =
-                vt_->snapshotSearchRow(screenRow);
-            ++searchState_->rowsSinceCompressionPass;
-            ++rowsLoaded;
-            if (!row.has_value()) {
-                searchState_->viewportProbeComplete = true;
-                break;
-            }
-
-            // Whether a wrapped row's trailing blank run survives formatting
-            // depends on later continuation rows. Dropping it here prevents
-            // false provisional highlights while retaining every match wholly
-            // inside the row's unambiguous text.
-            while (!row->text.isEmpty()
-                   && row->text.at(row->text.size() - 1) == ' ') {
-                row->text.chop(1);
-                if (!row->byteColumns.isEmpty()) row->byteColumns.removeLast();
-            }
-            searchState_->viewportProbeByteIndex = row->text.size();
-            searchState_->viewportProbeRow = std::move(*row);
-        }
-
-        if (searchState_->viewportProbeByteIndex > 0) {
-            const qsizetype index = --searchState_->viewportProbeByteIndex;
-            feedViewportProbeByte(
-                searchState_->viewportProbeRow->text.at(index),
-                searchRowByteCell(*searchState_->viewportProbeRow, index));
-            ++bytesProcessed;
-        } else {
-            // Do not carry KMP state across a physical-row boundary. The
-            // public row snapshots cannot reproduce all private PageFormatter
-            // boundary decisions cheaply enough for a provisional result.
-            searchState_->viewportProbeRow.reset();
-            searchState_->viewportProbeMatched = 0;
-            searchState_->viewportProbeRecentCells.clear();
-            continue;
-        }
-
-        if ((bytesProcessed & 63) == 0
-            && budget.elapsed() >= kSearchChunkBudgetMilliseconds) {
-            chunkBudgetExhausted = true;
-            break;
-        }
-    }
-
-    // Publish a newly discovered visible candidate before advancing the
-    // canonical stream. Besides minimizing highlight latency, this preserves
-    // the useful distinction between provisional decoration and a known
-    // newest-to-oldest result index for at least one event-loop turn.
-    const bool deferCanonicalScan = viewportProbeMaskChanged;
-
-    auto feedByte = [this, extent = *currentExtent](
-                        char byte, const TerminalSearchCell &cell) {
-        SearchState &state = *searchState_;
-        const char folded = foldSearchByte(byte);
-        while (state.matched > 0
-               && state.reversedNeedle.at(state.matched) != folded) {
-            state.matched = state.prefix.at(state.matched - 1);
-        }
-        if (state.reversedNeedle.at(state.matched) == folded) {
-            ++state.matched;
-        }
-
-        state.recentCells.append(cell);
-        if (state.matched != state.reversedNeedle.size()) {
-            return;
-        }
-
-        const TerminalSearchRange range{
-            .start = cell,
-            .end = state.recentCells.front(),
-        };
-        state.matches.append(range);
-        addVisibleSearchCells(state.visibleCellMask, range, extent);
-        state.matched = state.prefix.at(state.matched - 1);
-    };
-
-    while (!searchState_->complete && !chunkBudgetExhausted
-           && !deferCanonicalScan) {
-        if (!searchState_->currentRow.has_value()) {
-            if (searchState_->nextScreenRow < 0) {
-                // SlidingWindow appends one delimiter after the final
-                // formatted page even when PageFormatter trims every row as
-                // blank. Emit it only after the trailing rows have been
-                // inspected so they do not become independently searchable.
-                if (searchState_->finalBoundaryPending) {
-                    feedByte('\n', searchState_->finalBoundaryCell);
-                    searchState_->finalBoundaryPending = false;
-                    ++bytesProcessed;
-                }
-                break;
-            }
-            if (rowsLoaded >= kSearchRowsPerChunk) {
-                break;
-            }
-            const quint32 screenRow =
-                static_cast<quint32>(searchState_->nextScreenRow--);
-            std::optional<GhosttyVtAdapter::SearchRowSnapshot> row =
-                vt_->snapshotSearchRow(screenRow);
-            ++searchState_->rowsSinceCompressionPass;
-            ++rowsLoaded;
-            if (!row.has_value()) {
-                ++searchState_->scannedRows;
-                searchState_->complete = true;
-                break;
-            }
-            if (!searchState_->finalBoundaryObserved) {
-                // Pinned Ghostty appends a page-ending newline according to
-                // the newest physical row's wrap flag, after formatting has
-                // discarded trailing blank rows.
-                searchState_->finalBoundaryObserved = true;
-                searchState_->finalBoundaryPending = !row->wrapped;
-                searchState_->finalBoundaryCell = searchRowNewlineCell(*row);
-            }
-            if (row->wrapped && !searchState_->newerLogicalContent) {
-                // PageFormatter carries trailing blanks through a soft wrap,
-                // but emits them only if a later continuation contains text.
-                // Scanning newest-to-oldest tells us that before consuming
-                // this row, so discard an orphaned pending blank run here.
-                while (!row->text.isEmpty()
-                       && row->text.at(row->text.size() - 1) == ' ') {
-                    row->text.chop(1);
-                    row->byteColumns.removeLast();
-                }
-            }
-            if (!searchState_->seenFormattedContent && row->text.isEmpty()) {
-                searchState_->newerLogicalContent = false;
-                ++searchState_->scannedRows;
-                continue;
-            }
-            if (searchState_->seenFormattedContent) {
-                searchState_->currentRowBoundaryPending = !row->wrapped;
-                searchState_->currentRowBoundaryCell =
-                    searchRowNewlineCell(*row);
-            } else {
-                searchState_->currentRowBoundaryPending =
-                    searchState_->finalBoundaryPending;
-                // SlidingWindow maps its appended newline to the last byte
-                // PageFormatter retained, not to any trimmed blank row below
-                // it. This keeps a selected match anchored to visible text.
-                searchState_->currentRowBoundaryCell =
-                    searchRowNewlineCell(*row);
-                searchState_->finalBoundaryPending = false;
-            }
-            searchState_->currentRowLogicalHasText = !row->text.isEmpty()
-                || (row->wrapped && searchState_->newerLogicalContent);
-            searchState_->currentRowByteIndex = row->text.size();
-            searchState_->currentRow = std::move(*row);
-        }
-
-        if (searchState_->currentRowBoundaryPending) {
-            feedByte('\n', searchState_->currentRowBoundaryCell);
-            searchState_->currentRowBoundaryPending = false;
-            ++bytesProcessed;
-        } else if (searchState_->currentRowByteIndex > 0) {
-            const qsizetype index = --searchState_->currentRowByteIndex;
-            feedByte(searchState_->currentRow->text.at(index),
-                     searchRowByteCell(*searchState_->currentRow, index));
-            ++bytesProcessed;
-        } else {
-            searchState_->seenFormattedContent = true;
-            searchState_->newerLogicalContent =
-                searchState_->currentRowLogicalHasText;
-            searchState_->currentRow.reset();
-            ++searchState_->scannedRows;
-            continue;
-        }
-
-        if ((bytesProcessed & 63) == 0
-            && budget.elapsed() >= kSearchChunkBudgetMilliseconds) {
-            break;
-        }
-    }
-
-    if (searchState_->nextScreenRow < 0
-        && !searchState_->currentRow.has_value()) {
+    if (!progress.has_value() || !updateSearchSnapshot()) {
         searchState_->complete = true;
+        Q_EMIT errorOccurred(QStringLiteral("libghostty search step failed"));
+        publishSearchUpdate();
+        return;
     }
-    if (searchState_->complete) {
-        // Canonical results are now authoritative. Rebuild once so a
-        // conservative probe false-negative (for example a soft-wrap span)
-        // is replaced by the exact final viewport mask.
-        searchState_->viewportProbeCellMask.fill(false);
-        searchState_->viewportProbeRow.reset();
-        searchState_->viewportProbeRecentCells.clear();
-        searchState_->viewportProbeComplete = true;
-        rebuildSearchVisibleCells();
-    }
-    if (compressionTimer_ != nullptr
-        && (searchState_->complete
-            || searchState_->rowsSinceCompressionPass
-                >= kSearchRowsPerCompressionPass)) {
-        // Unlike Ghostty's internal search window, the public grid-ref API
-        // cannot decode a compressed page into temporary owned storage. Its
-        // read restores the page, so interleave the library's bounded
-        // compression traversal to cap residency and recover cold history.
-        searchState_->rowsSinceCompressionPass = 0;
-        scheduleRestoredPageCompression();
-    }
-    if (viewportProbeMaskChanged || searchState_->complete
+
+    const bool visibleChanged = previousVisible != searchState_->visibleCellMask
+        || previousSelectedMask != searchState_->selectedCellMask;
+    const bool scalarChanged = previousProgress != searchState_->progress
+        || previousMatches != searchState_->totalMatches
+        || previousSelected != searchState_->selectedMatch;
+    if (visibleChanged || searchState_->complete
         || !searchState_->lastPublication.isValid()
-        || searchState_->lastPublication.elapsed()
-            >= kSearchPublishIntervalMilliseconds) {
+        || (scalarChanged
+            && searchState_->lastPublication.elapsed()
+                >= kSearchPublishIntervalMilliseconds)) {
         publishSearchUpdate();
     }
     scheduleSearchChunk();
@@ -4123,38 +3585,29 @@ void SessionWorker::navigateSearch(quint64 generation,
                                    TerminalSearchDirection direction)
 {
     if (generation == 0 || generation != searchState_->generation
-        || !searchState_->active) {
-        return;
-    }
-    if (searchState_->matches.isEmpty()) {
-        // Search navigation is an instantaneous mailbox action upstream. If
-        // the progressive scan has not produced a result yet, the request is
-        // discarded rather than replayed against a later result set.
+        || !searchState_->active || vt_ == nullptr) {
         return;
     }
 
-    const qint64 count = static_cast<qint64>(searchState_->matches.size());
-    if (direction == TerminalSearchDirection::Next) {
-        searchState_->selectedMatch = searchState_->selectedMatch < 0
-            ? 0
-            : (searchState_->selectedMatch + 1) % count;
-    } else {
-        searchState_->selectedMatch = searchState_->selectedMatch < 0
-            ? count - 1
-            : (searchState_->selectedMatch + count - 1) % count;
+    bool viewportChanged = false;
+    const auto result = vt_->navigateSearch(direction, &viewportChanged);
+    if (result == GhosttyVtAdapter::SearchNavigationResult::Failed) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("libghostty search navigation failed"));
+        return;
     }
-
-    const TerminalSearchRange &range =
-        searchState_->matches.at(searchState_->selectedMatch);
-    const bool viewportChanged =
-        vt_ != nullptr && vt_->scrollSearchRangeIntoView(range);
+    if (!updateSearchSnapshot()) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to snapshot libghostty search"));
+        return;
+    }
     if (viewportChanged) {
         markTerminalContentChanged();
         noteCompressionActivity();
         scheduleFrame();
     }
-    rebuildSearchVisibleCells();
     publishSearchUpdate();
+    scheduleSearchChunk();
 }
 
 void SessionWorker::searchSelectionAction(quint64 requestId)
@@ -4588,10 +4041,7 @@ void SessionWorker::publishFrame()
         // viewport mutation before taking this frame snapshot so observers
         // never see a transient pre-scroll update.
         markTerminalContentChanged();
-        if (searchState_->active) {
-            rebuildSearchVisibleCells();
-            publishSearchUpdate();
-        }
+        refreshSearch();
         noteCompressionActivity();
     }
     GhosttyVtAdapter::RenderSnapshot snapshot;
@@ -4642,10 +4092,7 @@ void SessionWorker::publishFrame()
             refreshTrackedHyperlink(hyperlinkState_->publishedState
                                     == TerminalHyperlinkState::Hidden);
         }
-        if (searchState_->active) {
-            rebuildSearchVisibleCells();
-            publishSearchUpdate();
-        }
+        refreshSearch();
     }
 }
 

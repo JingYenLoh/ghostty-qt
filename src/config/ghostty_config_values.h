@@ -53,11 +53,6 @@ struct MouseScrollMultiplier {
     bool operator==(const MouseScrollMultiplier &) const = default;
 };
 
-enum class MiddleClickAction {
-    PrimaryPaste,
-    Ignore,
-};
-
 enum class MouseShiftCapture {
     False,
     True,

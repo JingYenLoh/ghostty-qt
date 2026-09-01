@@ -49,9 +49,6 @@ for the intentional upgrade procedure.
   placements, and client-selected animation frames are supported. Unicode
   virtual placements and timed animation playback require wider libghostty
   APIs.
-- **Search:** the frontend performs a cooperative public-grid scan. Some
-  cross-boundary and exact formatting semantics differ from Ghostty's private
-  search implementation.
 - **Clipboard and files:** terminal clipboard reads and writes support
   `allow`/`deny`/`ask`, including Kitty MIME transactions, session password
   grants, paste events, and the live `clipboard-write-limit-bytes` policy; plain

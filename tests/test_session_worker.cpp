@@ -1190,10 +1190,10 @@ void SessionWorkerTest::prioritizesVisibleSearchResults()
         return false;
     };
 
-    // The canonical scan starts at the newest row, far away from this old
-    // viewport. Bounded probe turns must nevertheless publish the visible
-    // candidate without assigning it a canonical count or navigation index.
-    // Instrumented cold-page reads can consume a whole 2 ms turn themselves.
+    // Ghostty's terminal-owned viewport search publishes the visible match
+    // while its canonical search is still running. The canonical count may
+    // already contain that match; unlike the old frontend probe, it is never
+    // deliberately hidden from navigation.
     worker.search(1, QByteArrayLiteral("old-probe"));
     QVERIFY(driveVisibleProbe(1));
     const std::optional<TerminalSearchUpdate> firstVisible =
@@ -1201,7 +1201,7 @@ void SessionWorkerTest::prioritizesVisibleSearchResults()
     QVERIFY(firstVisible.has_value());
     QVERIFY(firstVisible->active);
     QVERIFY(!firstVisible->complete);
-    QCOMPARE(firstVisible->totalMatches, quint64(0));
+    QCOMPARE(firstVisible->totalMatches, quint64(1));
     QCOMPARE(firstVisible->selectedMatch, qint64(-1));
     QCOMPARE(firstVisible->scannedRows, quint64(0));
     QVERIFY(firstVisible->visibleCellMask.count(true) > 0);
@@ -1210,23 +1210,23 @@ void SessionWorkerTest::prioritizesVisibleSearchResults()
     worker.navigateSearch(1, TerminalSearchDirection::Next);
     const TerminalSearchUpdate afterEarlyNavigation =
         *latestSearchUpdate(searchSpy, 1);
-    QCOMPARE(afterEarlyNavigation.totalMatches, quint64(0));
-    QCOMPARE(afterEarlyNavigation.selectedMatch, qint64(-1));
+    QCOMPARE(afterEarlyNavigation.totalMatches, quint64(1));
+    QCOMPARE(afterEarlyNavigation.selectedMatch, qint64(0));
     QVERIFY(afterEarlyNavigation.visibleCellMask.count(true) > 0);
 
     // Viewport-relative provisional bits must disappear rather than decorate
     // unrelated live rows, then be recomputed when the old viewport returns.
     worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Bottom});
     const TerminalSearchUpdate atBottom = *latestSearchUpdate(searchSpy, 1);
-    QCOMPARE(atBottom.totalMatches, quint64(0));
-    QCOMPARE(atBottom.selectedMatch, qint64(-1));
+    QCOMPARE(atBottom.totalMatches, quint64(1));
+    QCOMPARE(atBottom.selectedMatch, qint64(0));
     QCOMPARE(atBottom.visibleCellMask.count(true), qsizetype(0));
 
     worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
     QVERIFY(driveVisibleProbe(1));
     const TerminalSearchUpdate restoredViewport =
         *latestSearchUpdate(searchSpy, 1);
-    QCOMPARE(restoredViewport.totalMatches, quint64(0));
+    QCOMPARE(restoredViewport.totalMatches, quint64(1));
     QVERIFY(restoredViewport.visibleCellMask.count(true) > 0);
 
     // A replacement clears the old provisional result immediately. Any
@@ -1314,14 +1314,14 @@ void SessionWorkerTest::preservesFormattedSearchBoundaries()
     QVERIFY(!initial->complete);
     QCOMPARE(initial->totalMatches, quint64(0));
 
-    // Navigation is an instantaneous mailbox operation. A request made
-    // before the first progressive chunk finds a result must not be replayed.
+    // Native navigation feeds current terminal data before selecting, so an
+    // early request can select a match immediately rather than being dropped.
     worker.navigateSearch(1, TerminalSearchDirection::Next);
     QTRY_VERIFY_WITH_TIMEOUT(latestSearchUpdate(searchSpy, 1).has_value()
                                  && latestSearchUpdate(searchSpy, 1)->complete,
                              5000);
     QCOMPARE(latestSearchUpdate(searchSpy, 1)->totalMatches, quint64(1));
-    QCOMPARE(latestSearchUpdate(searchSpy, 1)->selectedMatch, qint64(-1));
+    QCOMPARE(latestSearchUpdate(searchSpy, 1)->selectedMatch, qint64(0));
 
     // The two spaces fill the final cells of the first physical row. They
     // remain part of the logical line when the following text soft-wraps.
@@ -5490,8 +5490,10 @@ void SessionWorkerTest::appliesLiveScrollbackCompressionPolicy()
     QVERIFY(compressedSearch.has_value());
     QVERIFY(compressedSearch->complete);
     QCOMPARE(compressedSearch->totalMatches, quint64(1000));
-    QVERIFY(compressionTimer->isActive());
-    QCOMPARE(compressionTimer->interval(), 1);
+    // Native Ghostty search reads compressed history into search-owned
+    // storage and does not restore terminal pages, so it has no compression
+    // recovery pass to schedule.
+    QVERIFY(!compressionTimer->isActive());
 
     int recoveryPasses = 0;
     for (; recoveryPasses < 4096; ++recoveryPasses) {
@@ -5503,7 +5505,6 @@ void SessionWorkerTest::appliesLiveScrollbackCompressionPolicy()
         }
         QCOMPARE(compressionTimer->interval(), 1);
     }
-    QVERIFY(recoveryPasses > 0);
     QVERIFY(recoveryPasses < 4096);
 
     runtime.scrollbackCompression = false;
@@ -6837,7 +6838,21 @@ void SessionWorkerTest::autoCopiesOnlyCommittedSelectionsAndSelectAll()
     selectionSpy.clear();
 
     options.runtime.selectionClipboard.copyOnSelect =
-        TerminalCopyOnSelectMode::PrimaryAndClipboard;
+        TerminalCopyOnSelectMode::Clipboard;
+    worker.applyRuntimeOptions(options.runtime);
+    worker.beginSelection(selectionPress(0, 0));
+    worker.updateSelection(selectionDrag(9, 0));
+    worker.endSelection(9, 0);
+    QCOMPARE(clipboardSpy.count(), 1);
+    QCOMPARE(qvariant_cast<TerminalClipboardDestination>(
+                 clipboardSpy.constFirst().at(1)),
+             TerminalClipboardDestination::Standard);
+
+    worker.clearSelection();
+    clipboardSpy.clear();
+    selectionSpy.clear();
+    options.runtime.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Both;
     worker.applyRuntimeOptions(options.runtime);
     QCOMPARE(clipboardSpy.count(), 0);
 

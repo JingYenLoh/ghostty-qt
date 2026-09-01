@@ -73,24 +73,25 @@ terminalClipboardWriteTargets(TerminalClipboardDestination destination,
     switch (destination) {
     case TerminalClipboardDestination::Standard: return {.standard = true};
     case TerminalClipboardDestination::Primary:
-        return supportsPrimary
-            ? TerminalClipboardWriteTargets{.primary = true}
-            : TerminalClipboardWriteTargets{.standard = true};
+        return {.primary = supportsPrimary};
     case TerminalClipboardDestination::PrimaryAndStandard:
         return {.standard = true, .primary = supportsPrimary};
     }
     return {};
 }
 
-constexpr TerminalClipboardSource
-terminalMiddleClickSource(TerminalCopyOnSelectMode copyOnSelect,
-                          bool supportsPrimary)
+constexpr std::optional<TerminalClipboardSource>
+terminalMiddleClickSource(MiddleClickAction action, bool supportsPrimary)
 {
-    if (copyOnSelect == TerminalCopyOnSelectMode::PrimaryAndClipboard
-        || !supportsPrimary) {
+    switch (action) {
+    case MiddleClickAction::PrimaryPaste:
+        if (supportsPrimary) return TerminalClipboardSource::Primary;
+        return std::nullopt;
+    case MiddleClickAction::ClipboardPaste:
         return TerminalClipboardSource::Standard;
+    case MiddleClickAction::Ignore: return std::nullopt;
     }
-    return TerminalClipboardSource::Primary;
+    return std::nullopt;
 }
 
 // These are GUI adapters: callers must remain on the QGuiApplication thread.
@@ -104,11 +105,9 @@ writeTerminalClipboard(QClipboard *clipboard, const QString &text,
                                           const TerminalClipboardWrite &write);
 // A present empty string is distinct from a clipboard without a text MIME
 // representation. Explicit primary reads never fall back to the standard
-// clipboard; middle-click fallback remains a separate policy below.
+// clipboard.
 std::optional<QString> readTerminalClipboard(QClipboard *clipboard,
                                              TerminalClipboardSource source);
-QString readMiddleClickClipboard(QClipboard *clipboard,
-                                 TerminalCopyOnSelectMode copyOnSelect);
 
 // Applies Ghostty's finalized ordered map to plain selection text. This is
 // worker-safe and independent of QClipboard; GUI adapters remain below.

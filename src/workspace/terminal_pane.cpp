@@ -4921,19 +4921,18 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
         beginLocalSelection(*event, modifiers);
     } else if (event->button() == Qt::MiddleButton) {
         QClipboard *const clipboard = QGuiApplication::clipboard();
-        if (options_.middleClickAction == MiddleClickAction::PrimaryPaste
-            && clipboard != nullptr) {
-            const QString text = readMiddleClickClipboard(
-                clipboard, options_.selectionClipboard.copyOnSelect);
-            if (!text.isEmpty()) {
-                const TerminalClipboardSource source =
-                    terminalMiddleClickSource(
-                        options_.selectionClipboard.copyOnSelect,
-                        clipboard->supportsSelection());
-                pasteText(text,
-                          source == TerminalClipboardSource::Standard
-                              ? TerminalClipboardLocation::Standard
-                              : TerminalClipboardLocation::Primary);
+        if (clipboard != nullptr) {
+            const auto source = terminalMiddleClickSource(
+                options_.middleClickAction, clipboard->supportsSelection());
+            if (source.has_value()) {
+                const QString text = readTerminalClipboard(clipboard, *source)
+                                         .value_or(QString{});
+                if (!text.isEmpty()) {
+                    pasteText(text,
+                              *source == TerminalClipboardSource::Standard
+                                  ? TerminalClipboardLocation::Standard
+                                  : TerminalClipboardLocation::Primary);
+                }
             }
         }
     } else if (event->button() == Qt::RightButton) {

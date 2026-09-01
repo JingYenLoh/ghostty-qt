@@ -685,28 +685,26 @@ void TerminalTypesTest::resolvesClipboardRoutingWithoutPlatformAssumptions()
 
     verifyTargets(TerminalClipboardDestination::Standard, false, true, false);
     verifyTargets(TerminalClipboardDestination::Standard, true, true, false);
-    verifyTargets(TerminalClipboardDestination::Primary, false, true, false);
+    verifyTargets(TerminalClipboardDestination::Primary, false, false, false);
     verifyTargets(TerminalClipboardDestination::Primary, true, false, true);
     verifyTargets(TerminalClipboardDestination::PrimaryAndStandard, false, true,
                   false);
     verifyTargets(TerminalClipboardDestination::PrimaryAndStandard, true, true,
                   true);
 
-    for (const TerminalCopyOnSelectMode mode : {
-             TerminalCopyOnSelectMode::Disabled,
-             TerminalCopyOnSelectMode::Primary,
-         }) {
-        QCOMPARE(terminalMiddleClickSource(mode, false),
-                 TerminalClipboardSource::Standard);
-        QCOMPARE(terminalMiddleClickSource(mode, true),
-                 TerminalClipboardSource::Primary);
-    }
-    QCOMPARE(terminalMiddleClickSource(
-                 TerminalCopyOnSelectMode::PrimaryAndClipboard, false),
+    QCOMPARE(terminalMiddleClickSource(MiddleClickAction::PrimaryPaste, false),
+             std::nullopt);
+    QCOMPARE(terminalMiddleClickSource(MiddleClickAction::PrimaryPaste, true),
+             TerminalClipboardSource::Primary);
+    QCOMPARE(
+        terminalMiddleClickSource(MiddleClickAction::ClipboardPaste, false),
+        TerminalClipboardSource::Standard);
+    QCOMPARE(terminalMiddleClickSource(MiddleClickAction::ClipboardPaste, true),
              TerminalClipboardSource::Standard);
-    QCOMPARE(terminalMiddleClickSource(
-                 TerminalCopyOnSelectMode::PrimaryAndClipboard, true),
-             TerminalClipboardSource::Standard);
+    QCOMPARE(terminalMiddleClickSource(MiddleClickAction::Ignore, false),
+             std::nullopt);
+    QCOMPARE(terminalMiddleClickSource(MiddleClickAction::Ignore, true),
+             std::nullopt);
 }
 
 void TerminalTypesTest::validatesTerminalOriginatedClipboardWrites()

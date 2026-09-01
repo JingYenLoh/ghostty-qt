@@ -456,7 +456,7 @@
         },
         "copy-on-select": {
           "status": "partial",
-          "note": "Linux false, primary-only true, and clipboard destination modes apply live, including standard fallback when primary selection is unavailable. Automatic copies use the same live trim and clipboard-codepoint-map path as explicit plain copies, but currently contain only plain text instead of Ghostty's mixed plain-plus-HTML payload; the missing exact public formatter contract is tracked in REQUIRES_UPSTREAM.md."
+          "note": "The finalized none, primary, clipboard, and both modes apply live with Ghostty 1.4 semantics. Primary-only copying has no effect when the platform lacks a selection clipboard; clipboard always targets the standard clipboard, and both targets every supported location. Backward-compatible true/false input is canonicalized by Ghostty before the versioned export. Automatic copies use the same live trim and clipboard-codepoint-map path as explicit plain copies, but currently contain only plain text instead of Ghostty's mixed plain-plus-HTML payload; the missing exact public formatter contract is tracked in REQUIRES_UPSTREAM.md."
         },
         "cursor-click-to-move": {
           "status": "blocked_upstream",
@@ -649,7 +649,7 @@
         },
         "middle-click-action": {
           "status": "supported",
-          "note": "Linux primary-paste and ignore reload live; primary paste follows Ghostty's copy-on-select-dependent source choice and primary-to-standard fallback while terminal mouse reporting retains precedence."
+          "note": "Primary-paste, clipboard-paste, and ignore reload live while terminal mouse reporting retains precedence. Primary-paste reads only the selection clipboard and does nothing when that location is unsupported; clipboard-paste always reads the standard clipboard. The source no longer depends on copy-on-select."
         },
         "minimum-contrast": {
           "status": "supported",
@@ -1337,8 +1337,8 @@
           "note": "Root and named-table sequences flush only their staged leaders. A normally consumed binding suppresses its terminating key, an explicitly unconsumed binding subsequently encodes that key, broad fanout flushes inactive-pane sequences, and an invocation without an active sequence is a successful no-op."
         },
         "end_search": {
-          "status": "partial",
-          "note": "Stops the cooperative pane scan, clears its highlights, and hides the pane-local Qt overlay. The public libghostty-vt artifact omits Ghostty's xev-dependent search thread, so this uses the frontend search foundation."
+          "status": "supported",
+          "note": "Clears the terminal-owned libghostty search needle and cached pane decorations, cancels generation-tagged frontend work, and hides the pane-local Qt overlay."
         },
         "equalize_splits": {
           "status": "supported",
@@ -1390,8 +1390,8 @@
           "note": "Moves the source surface's complete tab and split tree into a new window while retaining its live PTYs plus stable tab, pane, split, and surface identities. A sole tab is left in place, matching Ghostty's GTK behavior."
         },
         "navigate_search": {
-          "status": "partial",
-          "note": "Supports exact previous/next grammar, cyclic newest-to-oldest navigation, selected-result highlighting, and off-viewport scrolling. An independent row-local probe provisionally highlights wholly contained matches in the current viewport without changing canonical counts or navigation; soft-wrap, newline, and viewport-edge-spanning candidates can still wait for the bottom-up scan. Terminal-data mutation restarts that scan, and inactive-screen results are not preserved independently."
+          "status": "supported",
+          "note": "Uses libghostty's exact cyclic newest-to-oldest previous/next selection, selected-result identity and highlighting, current-data feed, primary/alternate caches, and upstream viewport scrolling."
         },
         "new_split": {
           "status": "supported",
@@ -1500,12 +1500,12 @@
           "note": "Pins the viewport to the top of scrollback through libghostty's tagged viewport API."
         },
         "search": {
-          "status": "partial",
-          "note": "Replaces the literal needle without changing search-UI visibility, and an empty needle stops matching while leaving the overlay alone. An independent visible-row probe supplies provisional wholly row-local candidates without changing canonical progress, counts, ordering, completion, or navigation. The generation-cancelled bottom-up scan uses public grid references, whose reads temporarily restore compressed pages and therefore interleave bounded recompression. Flat public rows cannot exactly reproduce internal page-boundary delimiters or every blank-cell point mapping; mutations restart the scan, soft-wrap, newline, and viewport-edge-spanning candidates can await canonical discovery, and only the active screen has results."
+          "status": "supported",
+          "note": "Replaces the literal needle without changing search-UI visibility, and an empty needle stops matching while leaving the overlay alone. A host-driven libghostty search session supplies the exact formatter-derived byte stream, ASCII case folding, cross-wrap/page matches, progressive totals and completion, viewport highlights, primary/alternate caches, reflow/pruning reconciliation, and compressed-history search without restoring terminal pages. Feed runs on the session thread and bounded ticks yield through the Qt event loop."
         },
         "search_selection": {
-          "status": "partial",
-          "note": "When a terminal selection exists, its exact untrimmed text becomes the needle and opens the pane overlay; a valid empty selection opens and focuses while retaining the previous entry text, matching pinned GTK sequencing. Without a selection the worker-authoritative correlated action is not performed. Local and broad chains commit the ordered overlay effect before continuing; search execution uses the cooperative frontend foundation."
+          "status": "supported",
+          "note": "When a terminal selection exists, its exact untrimmed text becomes the native libghostty search needle and opens the pane overlay; a valid empty selection opens and focuses while retaining the previous entry text, matching Ghostty sequencing. Without a selection the worker-authoritative correlated action is not performed. Local and broad chains commit the ordered overlay effect before continuing."
         },
         "select_all": {
           "status": "supported",
@@ -1537,8 +1537,8 @@
           "note": "The exact void action validates its originating stable PaneId, focuses that pane without changing topology, and asks Qt's platform input method to show the on-screen keyboard."
         },
         "start_search": {
-          "status": "partial",
-          "note": "Opens and focuses a pane-local Qt overlay, retaining and selecting its prior text without starting work for an empty needle. A non-focusing grip drags within the pane and snaps independently to the nearest corner for each pane. Status remains partial because the upstream xev-dependent search thread is unavailable in libghostty-vt."
+          "status": "supported",
+          "note": "Opens and focuses a pane-local Qt overlay, retaining and selecting its prior text without starting work for an empty needle. A non-focusing grip drags within the pane and snaps independently to the nearest corner for each pane. Search work uses libghostty's host-driven feed/tick API and therefore requires no xev thread in the frontend."
         },
         "text": {
           "status": "supported",

@@ -986,58 +986,6 @@ compressed/restored pages. Once available, ghostty-qt can replace only the
 worker formatter step, retain its secure temporary-file and ordered GUI-effect
 pipeline, and promote the three actions after VT/HTML differential tests pass.
 
-## Authoritative terminal search
-
-**Status:** the Qt search overlay and a cooperative public-grid search are
-implemented; `search`, `start_search`, `end_search`, `navigate_search`, and
-`search_selection` remain partial.
-
-Ghostty's authoritative search uses `ActiveSearch`, `PageListSearch`,
-`ViewportSearch`, and `ScreenSearch`. It searches Ghostty's formatter-derived
-byte stream with ASCII case folding, retains exact page-to-cell highlight
-chunks, handles matches across soft wraps and page boundaries, incrementally
-feeds compressed history, refreshes mutable active content, preserves caches
-for primary and alternate screens, and keeps a newest-relative selected match
-valid across pruning and mutation. Its `terminal.search.Thread` adds bounded
-background progress and notifications but is compiled as `void` for the
-standalone library because it depends on xev.
-
-The frontend implementation can inspect public grid rows, but flat rows do not
-expose Ghostty's exact formatter delimiters or stable multi-page highlights.
-Repeatedly restoring public grid references also cannot reproduce the private
-searcher's bounded feed/cache lifecycle. An independent provisional pass now
-finds matches wholly contained by each visible physical row, so ordinary
-row-local highlights in old history do not wait for the canonical bottom-up
-scan. That conservative pass does not join soft wraps, feed newline bytes, or
-inspect outside the viewport; spanning candidates can therefore still await
-canonical discovery. Approximate blank-cell mapping and loss of inactive-screen
-search state also remain.
-
-### Required upstream contract
-
-Official libghostty-vt needs a public opaque search session backed by the
-existing core searchers. It need not export the xev thread: a host-driven,
-budgeted `step` API is sufficient if it supports needle replacement and stop,
-mutation/resize reconciliation, both screen caches, total/completion state,
-viewport highlight snapshots, next/previous cyclic selection, selected-match
-identity, and the same viewport scroll performed by Ghostty navigation.
-
-Results must use owned or explicitly scoped public ranges that can represent a
-match spanning rows/pages without exposing private node pointers. The contract
-must define invalidation after terminal writes, reflow, pruning, screen
-replacement, reset, and session destruction, and it must let the worker bound
-work without changing search order or final results.
-
-### Upstream acceptance evidence and follow-up
-
-Differential tests should cover ASCII case folding, non-ASCII UTF-8, empty and
-changed needles, hard and soft wraps, page-boundary matches, blank cells, wide
-graphemes, primary/alternate switching, compressed history, resize/reflow,
-pruning, active output mutation, cyclic navigation, selected-result scrolling,
-and completion/total notifications. ghostty-qt can then retain its Qt overlay
-while replacing the cooperative scanner with the public session and promote all
-five search actions together.
-
 ## Public terminal-inspection data and VT action observation
 
 **Status:** the pane-scoped Qt inspector exposes a substantial public snapshot

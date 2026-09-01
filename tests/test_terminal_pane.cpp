@@ -4931,7 +4931,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     };
     reloaded.selectionClipboard = {
         .trimTrailingSpaces = false,
-        .copyOnSelect = TerminalCopyOnSelectMode::PrimaryAndClipboard,
+        .copyOnSelect = TerminalCopyOnSelectMode::Both,
         .clearOnTyping = false,
         .clearOnCopy = true,
     };
@@ -5673,8 +5673,7 @@ void TerminalPaneTest::writesClipboardDestinations()
                      QStringLiteral("primary-write"));
         QCOMPARE(clipboard->text(QClipboard::Clipboard), standardSentinel);
     } else {
-        QTRY_COMPARE(clipboard->text(QClipboard::Clipboard),
-                     QStringLiteral("primary-write"));
+        QCOMPARE(clipboard->text(QClipboard::Clipboard), standardSentinel);
     }
 
     resetClipboards();
@@ -5768,8 +5767,7 @@ void TerminalPaneTest::copiesRawEffectiveSurfaceTitle()
     options.workingDirectory = QDir::currentPath();
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
-    options.selectionClipboard.copyOnSelect =
-        TerminalCopyOnSelectMode::PrimaryAndClipboard;
+    options.selectionClipboard.copyOnSelect = TerminalCopyOnSelectMode::Both;
 
     TerminalPane pane(options);
     QClipboard *const clipboard = QGuiApplication::clipboard();
@@ -5912,23 +5910,24 @@ void TerminalPaneTest::reloadsMiddleClickClipboardPolicy()
     };
 
     pressMiddleButton(Qt::ShiftModifier);
-    QCOMPARE(pasted.count(), 1);
-    QCOMPARE(pasted.constLast().constFirst().toString(),
-             supportsPrimary ? primaryText : standardText);
+    QCOMPARE(pasted.count(), supportsPrimary ? 1 : 0);
+    if (supportsPrimary) {
+        QCOMPARE(pasted.constLast().constFirst().toString(), primaryText);
+    }
     QCOMPARE(unsafe.count(), 0);
 
     LaunchOptions reloaded = options;
-    reloaded.selectionClipboard.copyOnSelect =
-        TerminalCopyOnSelectMode::PrimaryAndClipboard;
+    reloaded.middleClickAction = MiddleClickAction::ClipboardPaste;
     pane.applyRuntimeOptions(reloaded);
     pressMiddleButton(Qt::ShiftModifier);
-    QCOMPARE(pasted.count(), 2);
+    const int clipboardPasteCount = supportsPrimary ? 2 : 1;
+    QCOMPARE(pasted.count(), clipboardPasteCount);
     QCOMPARE(pasted.constLast().constFirst().toString(), standardText);
     QCOMPARE(unsafe.count(), 0);
 
     pressMiddleButton(Qt::NoModifier);
     QCOMPARE(mouse.count(), 1);
-    QCOMPARE(pasted.count(), 2);
+    QCOMPARE(pasted.count(), clipboardPasteCount);
     QCOMPARE(unsafe.count(), 0);
 
     // The user policy restores ordinary middle-click behavior even while the
@@ -5939,14 +5938,14 @@ void TerminalPaneTest::reloadsMiddleClickClipboardPolicy()
     QVERIFY(!controller->mouseTracking());
     pressMiddleButton(Qt::NoModifier);
     QCOMPARE(mouse.count(), 1);
-    QCOMPARE(pasted.count(), 3);
+    QCOMPARE(pasted.count(), clipboardPasteCount + 1);
     QCOMPARE(pasted.constLast().constFirst().toString(), standardText);
     QCOMPARE(unsafe.count(), 0);
 
     reloaded.middleClickAction = MiddleClickAction::Ignore;
     pane.applyRuntimeOptions(reloaded);
     pressMiddleButton(Qt::NoModifier);
-    QCOMPARE(pasted.count(), 3);
+    QCOMPARE(pasted.count(), clipboardPasteCount + 1);
     QCOMPARE(unsafe.count(), 0);
 
     clipboard->clear(QClipboard::Clipboard);
@@ -7130,6 +7129,7 @@ void TerminalPaneTest::appliesMouseShiftCaptureAcrossPointerRoutes()
     };
     options.hold = true;
     options.mouseReporting = true;
+    options.middleClickAction = MiddleClickAction::ClipboardPaste;
     options.selectionClipboard.copyOnSelect =
         TerminalCopyOnSelectMode::Disabled;
 
@@ -7352,9 +7352,8 @@ void TerminalPaneTest::routesAllPasteEntryPointsThroughController()
     };
     options.hold = true;
     options.clipboardPaste.protection = false;
-    options.selectionClipboard.copyOnSelect =
-        TerminalCopyOnSelectMode::PrimaryAndClipboard;
-    options.middleClickAction = MiddleClickAction::PrimaryPaste;
+    options.selectionClipboard.copyOnSelect = TerminalCopyOnSelectMode::Both;
+    options.middleClickAction = MiddleClickAction::ClipboardPaste;
 
     TerminalPane pane(options);
     auto *controller = pane.findChild<TerminalController *>();

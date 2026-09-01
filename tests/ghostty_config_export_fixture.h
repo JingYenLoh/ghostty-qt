@@ -652,7 +652,7 @@ inline QJsonObject object()
 {
     const QJsonObject baseline = keybindings();
     return {
-        {QStringLiteral("version"), 7},
+        {QStringLiteral("version"), 8},
         {QStringLiteral("values"), values()},
         {QStringLiteral("keybindings"), baseline},
         {QStringLiteral("default-keybindings"), baseline},

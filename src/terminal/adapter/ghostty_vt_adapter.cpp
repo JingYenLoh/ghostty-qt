@@ -1176,6 +1176,8 @@ public:
             || ghostty_selection_gesture_event_new(
                    nullptr, &selectionReleaseEvent_,
                    GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_RELEASE)
+                != GHOSTTY_SUCCESS
+            || ghostty_search_new(nullptr, &search_, terminal_)
                 != GHOSTTY_SUCCESS) {
             return false;
         }
@@ -1339,6 +1341,10 @@ public:
 
     void destroy()
     {
+        if (search_ != nullptr) {
+            ghostty_search_free(search_);
+            search_ = nullptr;
+        }
         if (selectionReleaseEvent_ != nullptr) {
             ghostty_selection_gesture_event_free(selectionReleaseEvent_);
             selectionReleaseEvent_ = nullptr;
@@ -4155,6 +4161,226 @@ public:
         return true;
     }
 
+    std::optional<GhosttyVtAdapter::SearchProgress> searchProgress() const
+    {
+        GhosttySearchStatus status = GHOSTTY_SEARCH_STATUS_COMPLETE;
+        if (search_ == nullptr
+            || ghostty_search_get(search_, GHOSTTY_SEARCH_DATA_STATUS, &status)
+                != GHOSTTY_SUCCESS) {
+            return std::nullopt;
+        }
+        switch (status) {
+        case GHOSTTY_SEARCH_STATUS_RUNNING:
+            return GhosttyVtAdapter::SearchProgress::Running;
+        case GHOSTTY_SEARCH_STATUS_FEED_REQUIRED:
+            return GhosttyVtAdapter::SearchProgress::FeedRequired;
+        case GHOSTTY_SEARCH_STATUS_COMPLETE:
+            return GhosttyVtAdapter::SearchProgress::Complete;
+        default: return std::nullopt;
+        }
+    }
+
+    bool setSearchNeedle(QByteArrayView needle)
+    {
+        if (search_ == nullptr) return false;
+        if (needle.isEmpty()) {
+            return ghostty_search_set(search_, GHOSTTY_SEARCH_OPT_NEEDLE,
+                                      nullptr)
+                == GHOSTTY_SUCCESS;
+        }
+        const GhosttyString value{
+            .ptr = reinterpret_cast<const uint8_t *>(needle.data()),
+            .len = static_cast<size_t>(needle.size()),
+        };
+        return ghostty_search_set(search_, GHOSTTY_SEARCH_OPT_NEEDLE, &value)
+            == GHOSTTY_SUCCESS;
+    }
+
+    std::optional<GhosttyVtAdapter::SearchProgress> feedSearch()
+    {
+        if (search_ == nullptr
+            || ghostty_search_feed(search_) != GHOSTTY_SUCCESS) {
+            return std::nullopt;
+        }
+        return searchProgress();
+    }
+
+    std::optional<GhosttyVtAdapter::SearchProgress> tickSearch()
+    {
+        GhosttySearchStatus status = GHOSTTY_SEARCH_STATUS_COMPLETE;
+        if (search_ == nullptr
+            || ghostty_search_tick(search_, &status) != GHOSTTY_SUCCESS) {
+            return std::nullopt;
+        }
+        switch (status) {
+        case GHOSTTY_SEARCH_STATUS_RUNNING:
+            return GhosttyVtAdapter::SearchProgress::Running;
+        case GHOSTTY_SEARCH_STATUS_FEED_REQUIRED:
+            return GhosttyVtAdapter::SearchProgress::FeedRequired;
+        case GHOSTTY_SEARCH_STATUS_COMPLETE:
+            return GhosttyVtAdapter::SearchProgress::Complete;
+        default: return std::nullopt;
+        }
+    }
+
+    bool searchSelections(GhosttySearchData data,
+                          QVector<GhosttySelection> *selections)
+    {
+        if (search_ == nullptr || selections == nullptr) return false;
+        GhosttySelectionBuffer buffer{};
+        GhosttyResult result = ghostty_search_get(search_, data, &buffer);
+        if (result == GHOSTTY_SUCCESS) {
+            selections->clear();
+            return buffer.len == 0;
+        }
+        if (result != GHOSTTY_OUT_OF_SPACE
+            || buffer.len
+                > static_cast<size_t>(std::numeric_limits<qsizetype>::max())) {
+            return false;
+        }
+        try {
+            selections->resize(static_cast<qsizetype>(buffer.len));
+        } catch (...) {
+            return false;
+        }
+        buffer.ptr = selections->data();
+        buffer.cap = static_cast<size_t>(selections->size());
+        buffer.len = 0;
+        if (ghostty_search_get(search_, data, &buffer) != GHOSTTY_SUCCESS
+            || buffer.len > buffer.cap) {
+            return false;
+        }
+        selections->resize(static_cast<qsizetype>(buffer.len));
+        return true;
+    }
+
+    void addSearchSelection(QBitArray &mask, const GhosttySelection &selection,
+                            int columns, int rows) const
+    {
+        GhosttyPointCoordinate start{};
+        GhosttyPointCoordinate end{};
+        if (ghostty_terminal_point_from_grid_ref(
+                terminal_, &selection.start, GHOSTTY_POINT_TAG_VIEWPORT, &start)
+                != GHOSTTY_SUCCESS
+            || ghostty_terminal_point_from_grid_ref(
+                   terminal_, &selection.end, GHOSTTY_POINT_TAG_VIEWPORT, &end)
+                != GHOSTTY_SUCCESS) {
+            return;
+        }
+
+        if (columns <= 0 || rows <= 0 || start.x >= columns || end.x >= columns
+            || start.y >= static_cast<uint32_t>(rows)
+            || end.y >= static_cast<uint32_t>(rows)) {
+            return;
+        }
+        if (std::tie(end.y, end.x) < std::tie(start.y, start.x)) {
+            std::swap(start, end);
+        }
+        for (uint32_t row = start.y; row <= end.y; ++row) {
+            const int firstColumn = row == start.y ? start.x : 0;
+            const int lastColumn = row == end.y ? end.x : columns - 1;
+            for (int column = firstColumn; column <= lastColumn; ++column) {
+                mask.setBit(static_cast<qsizetype>(row) * columns + column);
+            }
+        }
+    }
+
+    std::optional<GhosttyVtAdapter::SearchSnapshot> searchSnapshot()
+    {
+        const auto progress = searchProgress();
+        const auto extent = searchExtent();
+        if (!progress.has_value() || !extent.has_value()) return std::nullopt;
+        const auto cellCount = static_cast<quint64>(extent->columns)
+            * static_cast<quint64>(extent->rows);
+        if (cellCount
+            > static_cast<quint64>(std::numeric_limits<qsizetype>::max())) {
+            return std::nullopt;
+        }
+
+        size_t totalMatches = 0;
+        if (ghostty_search_get(search_, GHOSTTY_SEARCH_DATA_TOTAL_MATCHES,
+                               &totalMatches)
+            != GHOSTTY_SUCCESS) {
+            return std::nullopt;
+        }
+
+        GhosttyVtAdapter::SearchSnapshot snapshot{
+            .progress = *progress,
+            .totalRows = extent->totalRows,
+            .totalMatches = static_cast<quint64>(totalMatches),
+            .selectedMatch = -1,
+            .columns = extent->columns,
+            .rows = extent->rows,
+            .visibleCellMask = {},
+            .selectedCellMask = {},
+        };
+        snapshot.visibleCellMask.resize(static_cast<qsizetype>(cellCount));
+        snapshot.selectedCellMask.resize(static_cast<qsizetype>(cellCount));
+
+        QVector<GhosttySelection> viewportMatches;
+        if (!searchSelections(GHOSTTY_SEARCH_DATA_VIEWPORT_MATCHES,
+                              &viewportMatches)) {
+            return std::nullopt;
+        }
+        for (const GhosttySelection &selection : viewportMatches) {
+            addSearchSelection(snapshot.visibleCellMask, selection,
+                               extent->columns, extent->rows);
+        }
+
+        size_t selectedIndex = 0;
+        const GhosttyResult selectedIndexResult = ghostty_search_get(
+            search_, GHOSTTY_SEARCH_DATA_SELECTED_INDEX, &selectedIndex);
+        if (selectedIndexResult == GHOSTTY_SUCCESS) {
+            if (selectedIndex
+                > static_cast<size_t>(std::numeric_limits<qint64>::max())) {
+                return std::nullopt;
+            }
+            snapshot.selectedMatch = static_cast<qint64>(selectedIndex);
+            GhosttySelection selected{
+                .size = sizeof(GhosttySelection),
+                .start = {},
+                .end = {},
+                .rectangle = false,
+            };
+            if (ghostty_search_get(search_, GHOSTTY_SEARCH_DATA_SELECTED_MATCH,
+                                   &selected)
+                != GHOSTTY_SUCCESS) {
+                return std::nullopt;
+            }
+            addSearchSelection(snapshot.selectedCellMask, selected,
+                               extent->columns, extent->rows);
+        } else if (selectedIndexResult != GHOSTTY_NO_VALUE) {
+            return std::nullopt;
+        }
+        return snapshot;
+    }
+
+    GhosttyVtAdapter::SearchNavigationResult
+    navigateSearch(TerminalSearchDirection direction, bool *viewportChanged)
+    {
+        if (viewportChanged != nullptr) *viewportChanged = false;
+        const auto before = searchExtent();
+        const GhosttyResult result =
+            ghostty_search_set(search_,
+                               direction == TerminalSearchDirection::Next
+                                   ? GHOSTTY_SEARCH_OPT_SELECT_NEXT
+                                   : GHOSTTY_SEARCH_OPT_SELECT_PREV,
+                               nullptr);
+        if (result == GHOSTTY_NO_VALUE) {
+            return GhosttyVtAdapter::SearchNavigationResult::NoMatch;
+        }
+        if (result != GHOSTTY_SUCCESS || !feedSearch().has_value()) {
+            return GhosttyVtAdapter::SearchNavigationResult::Failed;
+        }
+        const auto after = searchExtent();
+        if (viewportChanged != nullptr && before.has_value()
+            && after.has_value()) {
+            *viewportChanged = before->viewportOffset != after->viewportOffset
+                || before->viewportLength != after->viewportLength;
+        }
+        return GhosttyVtAdapter::SearchNavigationResult::Selected;
+    }
+
     std::uint64_t compressionActivity() const
     {
         uint64_t activity = 0;
@@ -5740,6 +5966,7 @@ private:
     GhosttySelectionGestureEvent selectionDragEvent_ = nullptr;
     GhosttySelectionGestureEvent selectionAutoscrollTickEvent_ = nullptr;
     GhosttySelectionGestureEvent selectionReleaseEvent_ = nullptr;
+    GhosttySearch search_ = nullptr;
     QVector<uint32_t> selectionWordChars_;
     quint32 clickRepeatIntervalMilliseconds_ = 500;
     std::optional<quint64> lastSelectionPressTimestampNanoseconds_;
@@ -6059,6 +6286,34 @@ bool GhosttyVtAdapter::adjustSelection(TerminalSelectionAdjustment adjustment)
 bool GhosttyVtAdapter::scrollViewport(const TerminalViewportRequest &request)
 {
     return impl_->scrollViewport(request);
+}
+
+bool GhosttyVtAdapter::setSearchNeedle(QByteArrayView needle)
+{
+    return impl_->setSearchNeedle(needle);
+}
+
+std::optional<GhosttyVtAdapter::SearchProgress> GhosttyVtAdapter::feedSearch()
+{
+    return impl_->feedSearch();
+}
+
+std::optional<GhosttyVtAdapter::SearchProgress> GhosttyVtAdapter::tickSearch()
+{
+    return impl_->tickSearch();
+}
+
+std::optional<GhosttyVtAdapter::SearchSnapshot>
+GhosttyVtAdapter::searchSnapshot()
+{
+    return impl_->searchSnapshot();
+}
+
+GhosttyVtAdapter::SearchNavigationResult
+GhosttyVtAdapter::navigateSearch(TerminalSearchDirection direction,
+                                 bool *viewportChanged)
+{
+    return impl_->navigateSearch(direction, viewportChanged);
 }
 
 std::optional<GhosttyVtAdapter::SearchExtent>

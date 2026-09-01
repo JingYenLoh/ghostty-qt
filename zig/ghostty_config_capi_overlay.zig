@@ -425,7 +425,7 @@ fn configJson(
     var json: std.json.Stringify = .{ .writer = &output.writer };
     try json.beginObject();
     try json.objectField("version");
-    try json.write(@as(u8, 7));
+    try json.write(@as(u8, 8));
 
     {
         var config = try loadSelectedConfig(

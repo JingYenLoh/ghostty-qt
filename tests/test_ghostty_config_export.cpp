@@ -400,7 +400,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(std::get<quint32>(clipboardMap.at(4).replacement),
              quint32{0x1fffff});
     QCOMPARE(values.selectionClipboard.copyOnSelect,
-             TerminalCopyOnSelectMode::PrimaryAndClipboard);
+             TerminalCopyOnSelectMode::Clipboard);
     QVERIFY(!values.selectionClipboard.clearOnTyping);
     QVERIFY(values.selectionClipboard.clearOnCopy);
     QCOMPARE(values.selectionWordChars,
@@ -980,10 +980,11 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
     verifyMappings(
         QLatin1StringView("copy-on-select"),
         std::to_array<std::pair<QLatin1StringView, TerminalCopyOnSelectMode>>({
-            {QLatin1StringView("false"), TerminalCopyOnSelectMode::Disabled},
-            {QLatin1StringView("true"), TerminalCopyOnSelectMode::Primary},
+            {QLatin1StringView("none"), TerminalCopyOnSelectMode::Disabled},
+            {QLatin1StringView("primary"), TerminalCopyOnSelectMode::Primary},
             {QLatin1StringView("clipboard"),
-             TerminalCopyOnSelectMode::PrimaryAndClipboard},
+             TerminalCopyOnSelectMode::Clipboard},
+            {QLatin1StringView("both"), TerminalCopyOnSelectMode::Both},
         }),
         [](const GhosttyConfigValues &values) {
             return values.selectionClipboard.copyOnSelect;
@@ -1023,6 +1024,8 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
         std::to_array<std::pair<QLatin1StringView, MiddleClickAction>>({
             {QLatin1StringView("primary-paste"),
              MiddleClickAction::PrimaryPaste},
+            {QLatin1StringView("clipboard-paste"),
+             MiddleClickAction::ClipboardPaste},
             {QLatin1StringView("ignore"), MiddleClickAction::Ignore},
         }),
         [](const GhosttyConfigValues &values) {

@@ -123,6 +123,23 @@ void writeFragmented(GhosttyVtAdapter *adapter, const QByteArray &bytes)
     }
 }
 
+bool runSearchToCompletion(GhosttyVtAdapter *adapter)
+{
+    for (int step = 0; step < 1024; ++step) {
+        const auto snapshot = adapter->searchSnapshot();
+        if (!snapshot.has_value()) return false;
+        if (snapshot->progress == GhosttyVtAdapter::SearchProgress::Complete) {
+            return true;
+        }
+        const auto progress =
+            snapshot->progress == GhosttyVtAdapter::SearchProgress::FeedRequired
+            ? adapter->feedSearch()
+            : adapter->tickSearch();
+        if (!progress.has_value()) return false;
+    }
+    return false;
+}
+
 QString frameRowText(const TerminalFrame &frame, int row)
 {
     QString result;
@@ -194,6 +211,7 @@ private Q_SLOTS:
     void snapshotsLogicalLineBytesAcrossGraphemesAndWideWraps();
     void snapshotsPhysicalSearchRowsAcrossHistoryAndScreens();
     void searchSnapshotsFollowLiveDeccolmDimensions();
+    void searchesWholeTerminalWithNativeSession();
     void tracksTextRangesAcrossReflowViewportAndScreenChanges();
     void invalidatesTrackedTextRangesAfterCoveredTextMutation();
     void installsTrackedTextRangesAsSelections();
@@ -2472,6 +2490,69 @@ void GhosttyVtAdapterTest::searchSnapshotsFollowLiveDeccolmDimensions()
     QVERIFY(row.has_value());
     QCOMPARE(row->text, QByteArrayLiteral("wide-grid"));
     QCOMPARE(row->byteColumns.size(), row->text.size());
+
+    QVERIFY(adapter->setSearchNeedle(QByteArrayLiteral("wide-grid")));
+    QVERIFY(runSearchToCompletion(adapter.get()));
+    const auto search = adapter->searchSnapshot();
+    QVERIFY(search.has_value());
+    QCOMPARE(search->columns, 132);
+    QCOMPARE(search->rows, 3);
+    QCOMPARE(search->visibleCellMask.size(), qsizetype{132 * 3});
+    QVERIFY(search->visibleCellMask.count(true) > 0);
+}
+
+void GhosttyVtAdapterTest::searchesWholeTerminalWithNativeSession()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 16;
+    options.geometry.rows = 3;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+    adapter->writeVt(QByteArrayLiteral(
+        "old ERROR row\r\nrow-1\r\nrow-2\r\nrow-3\r\nrow-4\r\n"
+        "new error row"));
+
+    QVERIFY(adapter->setSearchNeedle(QByteArrayLiteral("error")));
+    auto snapshot = adapter->searchSnapshot();
+    QVERIFY(snapshot.has_value());
+    QCOMPARE(snapshot->progress,
+             GhosttyVtAdapter::SearchProgress::FeedRequired);
+    QCOMPARE(snapshot->totalMatches, quint64{0});
+
+    QVERIFY(runSearchToCompletion(adapter.get()));
+
+    snapshot = adapter->searchSnapshot();
+    QVERIFY(snapshot.has_value());
+    QCOMPARE(snapshot->progress, GhosttyVtAdapter::SearchProgress::Complete);
+    QCOMPARE(snapshot->totalMatches, quint64{2});
+    QCOMPARE(snapshot->selectedMatch, qint64{-1});
+    QVERIFY(snapshot->visibleCellMask.count(true) > 0);
+
+    bool viewportChanged = false;
+    QCOMPARE(adapter->navigateSearch(TerminalSearchDirection::Next,
+                                     &viewportChanged),
+             GhosttyVtAdapter::SearchNavigationResult::Selected);
+    snapshot = adapter->searchSnapshot();
+    QVERIFY(snapshot.has_value());
+    QCOMPARE(snapshot->selectedMatch, qint64{0});
+    QVERIFY(snapshot->selectedCellMask.count(true) > 0);
+
+    QCOMPARE(adapter->navigateSearch(TerminalSearchDirection::Next,
+                                     &viewportChanged),
+             GhosttyVtAdapter::SearchNavigationResult::Selected);
+    QVERIFY(viewportChanged);
+    snapshot = adapter->searchSnapshot();
+    QVERIFY(snapshot.has_value());
+    QCOMPARE(snapshot->selectedMatch, qint64{1});
+    QVERIFY(snapshot->selectedCellMask.count(true) > 0);
+
+    QVERIFY(adapter->setSearchNeedle({}));
+    snapshot = adapter->searchSnapshot();
+    QVERIFY(snapshot.has_value());
+    QCOMPARE(snapshot->progress, GhosttyVtAdapter::SearchProgress::Complete);
+    QCOMPARE(snapshot->totalMatches, quint64{0});
+    QCOMPARE(snapshot->selectedMatch, qint64{-1});
+    QCOMPARE(snapshot->visibleCellMask.count(true), qsizetype{0});
 }
 
 void GhosttyVtAdapterTest::

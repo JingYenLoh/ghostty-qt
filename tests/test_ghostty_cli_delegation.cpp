@@ -1172,7 +1172,7 @@ void GhosttyCliDelegationTest::listsPinnedThemes()
     QCOMPARE(all->exitStatus, QProcess::NormalExit);
     QCOMPARE(all->exitCode, 0);
     QVERIFY(all->standardError.isEmpty());
-    QCOMPARE(all->standardOutput.count('\n'), 602);
+    QCOMPARE(all->standardOutput.count('\n'), 606);
     QVERIFY(all->standardOutput.startsWith(
         QByteArrayLiteral("0x96f (resources)\n")));
     QVERIFY(all->standardOutput.contains(
@@ -1188,9 +1188,11 @@ void GhosttyCliDelegationTest::listsPinnedThemes()
              qPrintable(dark.has_value() ? QString{} : dark.error()));
     QCOMPARE(dark->exitCode, 0);
     QVERIFY(dark->standardError.isEmpty());
-    QCOMPARE(dark->standardOutput.count('\n'), 473);
+    QCOMPARE(dark->standardOutput.count('\n'), 475);
     QVERIFY(dark->standardOutput.contains(
         QByteArrayLiteral("Dracula (resources)\n")));
+    QVERIFY(dark->standardOutput.contains(
+        QByteArrayLiteral("Grok Night (resources)\n")));
 
     auto light = run({QStringLiteral("+list-themes"), QStringLiteral("--plain"),
                       QStringLiteral("--color=light")});
@@ -1198,9 +1200,11 @@ void GhosttyCliDelegationTest::listsPinnedThemes()
              qPrintable(light.has_value() ? QString{} : light.error()));
     QCOMPARE(light->exitCode, 0);
     QVERIFY(light->standardError.isEmpty());
-    QCOMPARE(light->standardOutput.count('\n'), 129);
+    QCOMPARE(light->standardOutput.count('\n'), 131);
     QVERIFY(light->standardOutput.contains(
         QByteArrayLiteral("3024 Day (resources)\n")));
+    QVERIFY(light->standardOutput.contains(
+        QByteArrayLiteral("Grok Day (resources)\n")));
 
     auto paths = run({QStringLiteral("+list-themes"), QStringLiteral("--plain"),
                       QStringLiteral("--path")});
@@ -1226,7 +1230,7 @@ void GhosttyCliDelegationTest::listsPinnedThemes()
              qPrintable(withUser.has_value() ? QString{} : withUser.error()));
     QCOMPARE(withUser->exitCode, 0);
     QVERIFY(withUser->standardError.isEmpty());
-    QCOMPARE(withUser->standardOutput.count('\n'), 603);
+    QCOMPARE(withUser->standardOutput.count('\n'), 607);
     QVERIFY(withUser->standardOutput.contains(
         QByteArrayLiteral("Qt Fixture (user)\n")));
 

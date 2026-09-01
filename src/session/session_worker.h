@@ -263,12 +263,10 @@ private:
     void markTerminalContentChanged();
     void markSearchContentChanged();
     void beginSearch(quint64 generation, const QByteArray &needle);
-    void restartSearch();
     void scheduleSearchChunk();
+    void refreshSearch();
+    bool updateSearchSnapshot();
     void publishSearchUpdate();
-    void rebuildSearchVisibleCells();
-    void resetSearchViewportProbe(quint64 viewportOffset,
-                                  quint64 viewportLength);
     void refreshTrackedHyperlink(bool force = false);
     void processDeferredEffects();
     void drainPty(bool finalDrain);
@@ -384,7 +382,6 @@ private:
     bool mouseTracking_ = false;
     bool keyboardActionMode_ = false;
     quint64 terminalContentRevision_ = 1;
-    quint64 searchContentRevision_ = 1;
     quint64 publishedContentRevision_ = 0;
     std::optional<uint64_t> compressionActivity_;
     bool compressionTraversalPending_ = false;

@@ -316,6 +316,29 @@ public:
         bool wrapped = false;
     };
 
+    enum class SearchProgress : quint8 {
+        Running,
+        FeedRequired,
+        Complete,
+    };
+
+    enum class SearchNavigationResult : quint8 {
+        Selected,
+        NoMatch,
+        Failed,
+    };
+
+    struct SearchSnapshot {
+        SearchProgress progress = SearchProgress::Complete;
+        quint64 totalRows = 0;
+        quint64 totalMatches = 0;
+        qint64 selectedMatch = -1;
+        int columns = 0;
+        int rows = 0;
+        QBitArray visibleCellMask;
+        QBitArray selectedCellMask;
+    };
+
     static std::unique_ptr<GhosttyVtAdapter> create(const Options &options,
                                                     Callbacks callbacks = {});
     ~GhosttyVtAdapter();
@@ -390,6 +413,15 @@ public:
     bool selectAll();
     bool adjustSelection(TerminalSelectionAdjustment adjustment);
     bool scrollViewport(const TerminalViewportRequest &request);
+    // Whole-terminal search stays owned by libghostty so matches retain the
+    // exact formatter, screen, reflow, pruning, and selection semantics. Feed
+    // is the brief terminal-owning phase; tick advances copied search data.
+    bool setSearchNeedle(QByteArrayView needle);
+    std::optional<SearchProgress> feedSearch();
+    std::optional<SearchProgress> tickSearch();
+    std::optional<SearchSnapshot> searchSnapshot();
+    SearchNavigationResult navigateSearch(TerminalSearchDirection direction,
+                                          bool *viewportChanged);
     std::optional<SearchExtent> searchExtent() const;
     std::optional<SearchRowSnapshot> snapshotSearchRow(quint32 screenRow) const;
     QVector<QPoint>

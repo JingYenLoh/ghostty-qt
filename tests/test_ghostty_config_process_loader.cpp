@@ -1417,10 +1417,10 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
             "clipboard-codepoint-map = U+1F642=U+1F47B\n"
             "clipboard-paste-protection = 0\n"
             "clipboard-paste-bracketed-safe = t\n"
-            "copy-on-select = clipboard\n"
+            "copy-on-select = both\n"
             "selection-clear-on-typing = 0\n"
             "selection-clear-on-copy = t\n"
-            "middle-click-action = ignore\n"
+            "middle-click-action = clipboard-paste\n"
             "keybind = clear\n"
             "keybind = ctrl+a=ignore\n"
             "keybind = ctrl+a=unbind\n"
@@ -1485,10 +1485,11 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
     QVERIFY(!result->values.clipboardPaste.protection);
     QVERIFY(result->values.clipboardPaste.bracketedSafe);
     QCOMPARE(result->values.selectionClipboard.copyOnSelect,
-             TerminalCopyOnSelectMode::PrimaryAndClipboard);
+             TerminalCopyOnSelectMode::Both);
     QVERIFY(!result->values.selectionClipboard.clearOnTyping);
     QVERIFY(result->values.selectionClipboard.clearOnCopy);
-    QCOMPARE(result->values.middleClickAction, MiddleClickAction::Ignore);
+    QCOMPARE(result->values.middleClickAction,
+             MiddleClickAction::ClipboardPaste);
 
     ConfigFixture::writeFile(fixture.preferredPath, {});
     const auto defaults = queryRealConfigExport(helperPath, fixture);

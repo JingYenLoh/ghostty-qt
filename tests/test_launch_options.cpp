@@ -226,7 +226,7 @@ GhosttyConfigSnapshot completeSnapshot()
     values.confirmCloseMode = ConfirmCloseMode::Always;
     values.selectionClipboard = {
         .trimTrailingSpaces = false,
-        .copyOnSelect = TerminalCopyOnSelectMode::PrimaryAndClipboard,
+        .copyOnSelect = TerminalCopyOnSelectMode::Both,
         .clearOnTyping = false,
         .clearOnCopy = true,
         .codepointMap =
@@ -1317,7 +1317,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QCOMPARE(cliResult.confirmCloseMode, ConfirmCloseMode::Always);
     QVERIFY(!cliResult.selectionClipboard.trimTrailingSpaces);
     QCOMPARE(cliResult.selectionClipboard.copyOnSelect,
-             TerminalCopyOnSelectMode::PrimaryAndClipboard);
+             TerminalCopyOnSelectMode::Both);
     QVERIFY(!cliResult.selectionClipboard.clearOnTyping);
     QVERIFY(cliResult.selectionClipboard.clearOnCopy);
     QCOMPARE(cliResult.selectionClipboard.codepointMap.size(), qsizetype{2});
@@ -1664,7 +1664,8 @@ void LaunchOptionsTest::mapsClipboardModes()
     for (const TerminalCopyOnSelectMode configured : {
              TerminalCopyOnSelectMode::Disabled,
              TerminalCopyOnSelectMode::Primary,
-             TerminalCopyOnSelectMode::PrimaryAndClipboard,
+             TerminalCopyOnSelectMode::Clipboard,
+             TerminalCopyOnSelectMode::Both,
          }) {
         GhosttyConfigSnapshot snapshot = completeSnapshot();
         snapshot.values.selectionClipboard.copyOnSelect = configured;
@@ -1688,6 +1689,7 @@ void LaunchOptionsTest::mapsClipboardModes()
 
     for (const MiddleClickAction configured : {
              MiddleClickAction::PrimaryPaste,
+             MiddleClickAction::ClipboardPaste,
              MiddleClickAction::Ignore,
          }) {
         GhosttyConfigSnapshot snapshot = completeSnapshot();
@@ -2241,7 +2243,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.configuredTitle = QStringLiteral("configured title");
     options.selectionClipboard = {
         .trimTrailingSpaces = false,
-        .copyOnSelect = TerminalCopyOnSelectMode::PrimaryAndClipboard,
+        .copyOnSelect = TerminalCopyOnSelectMode::Both,
         .clearOnTyping = false,
         .clearOnCopy = true,
         .codepointMap =
@@ -2531,7 +2533,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
              QColor(QStringLiteral("#123456")));
     const TerminalSelectionClipboardOptions expectedClipboard{
         .trimTrailingSpaces = false,
-        .copyOnSelect = TerminalCopyOnSelectMode::PrimaryAndClipboard,
+        .copyOnSelect = TerminalCopyOnSelectMode::Both,
         .clearOnTyping = false,
         .clearOnCopy = true,
         .codepointMap =

@@ -392,10 +392,6 @@ void printTiming(QTextStream &output, QStringView name,
 
 int main(int argc, char **argv)
 {
-    constexpr qsizetype searchRowMapBytesPerByte =
-        sizeof(GhosttyVtAdapter::SearchRowSnapshot::Column);
-    static_assert(searchRowMapBytesPerByte == 2);
-
     QCoreApplication application(argc, argv);
     QCoreApplication::setApplicationName(
         QStringLiteral("bench-terminal-search"));
@@ -693,13 +689,12 @@ int main(int argc, char **argv)
            << " columns=" << options.columns
            << " viewport_rows=" << options.viewportRows
            << " marker_stride=" << options.markerStride
-           << " row_map_bytes_per_byte=" << searchRowMapBytesPerByte
            << " expected_matches=" << expectedMatches
            << " scroll_total=" << frame.scrollTotal
            << " target_offset=" << targetOffset
            << " compression=" << (options.compression ? "enabled" : "resident")
            << " iterations=" << options.iterations << '\n';
-    output << "scenario=canonical ";
+    output << "scenario=native_search ";
     printTiming(output, u"first_visible", firstVisibleTiming);
     output << ' ';
     printTiming(output, u"completion", completionTiming);

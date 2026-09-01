@@ -161,11 +161,3 @@ std::optional<QString> readTerminalClipboard(QClipboard *clipboard,
     }
     return mimeData->text();
 }
-
-QString readMiddleClickClipboard(QClipboard *clipboard,
-                                 TerminalCopyOnSelectMode copyOnSelect)
-{
-    const TerminalClipboardSource source = terminalMiddleClickSource(
-        copyOnSelect, clipboard != nullptr && clipboard->supportsSelection());
-    return readTerminalClipboard(clipboard, source).value_or(QString{});
-}

@@ -349,10 +349,12 @@ its still-owned temporary directory removes any unclaimed artifact.
 
 ## Search, links, and inspector
 
-Search uses public terminal snapshots and runs cooperatively so large history
-does not monopolize the session thread. Results carry content revisions and
-are merged incrementally. A visible-row probe can provide early candidates
-while the canonical history scan continues.
+Search is owned by a public libghostty search session. Short terminal-owning
+feeds reconcile output, viewport, reflow, pruning, and active-screen changes;
+bounded ticks advance copied history between Qt event-loop turns. The worker
+publishes upstream totals, selected-match identity, and exact viewport
+selection ranges without restoring compressed terminal pages or reconstructing
+Ghostty's formatter byte stream.
 
 OSC 8 links use terminal metadata. Default URL/path detection uses a narrow
 project-owned Zig/C matcher built from Ghostty's pinned expression and

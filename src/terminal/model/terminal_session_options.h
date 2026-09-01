@@ -62,7 +62,14 @@ struct GhosttyShellIntegrationFeatures {
 enum class TerminalCopyOnSelectMode : quint8 {
     Disabled,
     Primary,
-    PrimaryAndClipboard,
+    Clipboard,
+    Both,
+};
+
+enum class MiddleClickAction : quint8 {
+    PrimaryPaste,
+    ClipboardPaste,
+    Ignore,
 };
 
 enum class TerminalClipboardDestination : quint8 {
