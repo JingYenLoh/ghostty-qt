@@ -396,6 +396,20 @@ int hexDigit(char value)
     return -1;
 }
 
+GhosttyClipboardLocation
+toGhosttyClipboardLocation(TerminalClipboardLocation location)
+{
+    switch (location) {
+    case TerminalClipboardLocation::Standard:
+        return GHOSTTY_CLIPBOARD_LOCATION_STANDARD;
+    case TerminalClipboardLocation::Selection:
+        return GHOSTTY_CLIPBOARD_LOCATION_SELECTION;
+    case TerminalClipboardLocation::Primary:
+        return GHOSTTY_CLIPBOARD_LOCATION_PRIMARY;
+    }
+    Q_UNREACHABLE_RETURN(GHOSTTY_CLIPBOARD_LOCATION_STANDARD);
+}
+
 std::optional<quint8> parseZigHexByte(char first, char second)
 {
     if (first == '+') {
@@ -1830,18 +1844,8 @@ public:
             }
         }
 
-        GhosttyClipboardLocation location;
-        switch (options.location) {
-        case TerminalClipboardLocation::Standard:
-            location = GHOSTTY_CLIPBOARD_LOCATION_STANDARD;
-            break;
-        case TerminalClipboardLocation::Selection:
-            location = GHOSTTY_CLIPBOARD_LOCATION_SELECTION;
-            break;
-        case TerminalClipboardLocation::Primary:
-            location = GHOSTTY_CLIPBOARD_LOCATION_PRIMARY;
-            break;
-        }
+        const GhosttyClipboardLocation location =
+            toGhosttyClipboardLocation(options.location);
         constexpr QByteArrayView plainMime("text/plain");
         const GhosttyString mime{
             .ptr = reinterpret_cast<const uint8_t *>(plainMime.data()),
