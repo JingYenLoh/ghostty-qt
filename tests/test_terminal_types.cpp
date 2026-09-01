@@ -76,6 +76,7 @@ private Q_SLOTS:
     void rejectsMalformedUpdateWithoutMutation();
     void validatesStrictDirtyRowOrder();
     void preservesCopyOnWriteAcrossIndependentDeltas();
+    void chunksRetainedRowsAcrossTallFrames();
     void rejectsUnrepresentableFrameSize();
     void indexesOsc8CellsAcrossSparseUpdates();
     void rejectsMalformedOsc8UpdatesAtomically();
@@ -321,7 +322,7 @@ void TerminalTypesTest::validatesStrictDirtyRowOrder()
         [&baseline](QVector<TerminalRowUpdate> dirtyRows,
                     bool fullFrame = false) {
             TerminalFrame frame = baseline;
-            const auto *const rowTable = frame.cells.rowTableData();
+            const auto *const rowTable = frame.cells.rowChunkTableData();
             QVector<const TerminalCell *> rowPayloads;
             rowPayloads.reserve(frame.rows);
             for (int row = 0; row < frame.rows; ++row) {
@@ -336,7 +337,7 @@ void TerminalTypesTest::validatesStrictDirtyRowOrder()
             update.contentRevision = 8;
 
             QVERIFY(!applyTerminalUpdate(frame, update));
-            QCOMPARE(frame.cells.rowTableData(), rowTable);
+            QCOMPARE(frame.cells.rowChunkTableData(), rowTable);
             for (int row = 0; row < frame.rows; ++row) {
                 QCOMPARE(frame.cells.rowData(row), rowPayloads.at(row));
             }
@@ -403,7 +404,8 @@ void TerminalTypesTest::preservesCopyOnWriteAcrossIndependentDeltas()
     }
     const QColor *const paletteStorage = frame.palette.constData();
     const TerminalFrame renderSnapshot = frame;
-    QCOMPARE(frame.cells.rowTableData(), renderSnapshot.cells.rowTableData());
+    QCOMPARE(frame.cells.rowChunkTableData(),
+             renderSnapshot.cells.rowChunkTableData());
     for (int row = 0; row < frame.rows; ++row) {
         QCOMPARE(frame.cells.rowData(row), renderSnapshot.cells.rowData(row));
     }
@@ -416,6 +418,9 @@ void TerminalTypesTest::preservesCopyOnWriteAcrossIndependentDeltas()
     QVERIFY(rowOnly.palette.isEmpty());
     TerminalFrameApplyMetrics metrics;
     QVERIFY(applyTerminalUpdate(frame, rowOnly, &metrics));
+    QCOMPARE(metrics.rowChunkTableAllocations, quint64{1});
+    QCOMPARE(metrics.rowChunkTableDetaches, quint64{1});
+    QCOMPARE(metrics.rowChunkHeadersCopied, quint64{1});
     QCOMPARE(metrics.rowTableAllocations, quint64{1});
     QCOMPARE(metrics.rowTableDetaches, quint64{1});
     QCOMPARE(metrics.rowHeadersCopied, quint64{3});
@@ -425,7 +430,8 @@ void TerminalTypesTest::preservesCopyOnWriteAcrossIndependentDeltas()
     QCOMPARE(metrics.terminalCellsCopied, quint64{0});
     QCOMPARE(frame.palette.constData(), paletteStorage);
     QCOMPARE(renderSnapshot.palette.constData(), paletteStorage);
-    QVERIFY(frame.cells.rowTableData() != renderSnapshot.cells.rowTableData());
+    QVERIFY(frame.cells.rowChunkTableData()
+            != renderSnapshot.cells.rowChunkTableData());
     QCOMPARE(frame.cells.rowData(0), renderSnapshot.cells.rowData(0));
     QVERIFY(frame.cells.rowData(1) != renderSnapshot.cells.rowData(1));
     QCOMPARE(frame.cells.rowData(2), renderSnapshot.cells.rowData(2));
@@ -435,7 +441,7 @@ void TerminalTypesTest::preservesCopyOnWriteAcrossIndependentDeltas()
     QCOMPARE(renderSnapshot.cells.at(0).text, QStringLiteral("a"));
     QCOMPARE(renderSnapshot.cells.cell(1, 0).text, QStringLiteral("c"));
 
-    const auto *const rowTable = frame.cells.rowTableData();
+    const auto *const rowTable = frame.cells.rowChunkTableData();
     QVector<const TerminalCell *> rowPayloads;
     rowPayloads.reserve(frame.rows);
     for (int row = 0; row < frame.rows; ++row) {
@@ -452,6 +458,9 @@ void TerminalTypesTest::preservesCopyOnWriteAcrossIndependentDeltas()
     colorsOnly.contentRevision = 3;
     TerminalFrameApplyMetrics metadataMetrics;
     QVERIFY(applyTerminalUpdate(frame, colorsOnly, &metadataMetrics));
+    QCOMPARE(metadataMetrics.rowChunkTableAllocations, quint64{0});
+    QCOMPARE(metadataMetrics.rowChunkTableDetaches, quint64{0});
+    QCOMPARE(metadataMetrics.rowChunkHeadersCopied, quint64{0});
     QCOMPARE(metadataMetrics.rowTableAllocations, quint64{0});
     QCOMPARE(metadataMetrics.rowTableDetaches, quint64{0});
     QCOMPARE(metadataMetrics.rowHeadersCopied, quint64{0});
@@ -459,7 +468,7 @@ void TerminalTypesTest::preservesCopyOnWriteAcrossIndependentDeltas()
     QCOMPARE(metadataMetrics.rowPayloadsReused, quint64{3});
     QCOMPARE(metadataMetrics.cellPayloadAllocations, quint64{0});
     QCOMPARE(metadataMetrics.terminalCellsCopied, quint64{0});
-    QCOMPARE(frame.cells.rowTableData(), rowTable);
+    QCOMPARE(frame.cells.rowChunkTableData(), rowTable);
     for (int row = 0; row < frame.rows; ++row) {
         QCOMPARE(frame.cells.rowData(row), rowPayloads.at(row));
     }
@@ -470,6 +479,59 @@ void TerminalTypesTest::preservesCopyOnWriteAcrossIndependentDeltas()
     QCOMPARE(frame.cursorColumn, 1);
     QCOMPARE(frame.scrollOffset, quint64{3});
     QCOMPARE(frame.contentRevision, quint64{3});
+}
+
+void TerminalTypesTest::chunksRetainedRowsAcrossTallFrames()
+{
+    TerminalUpdate full;
+    full.columns = 2;
+    full.rows = 65;
+    full.fullFrame = true;
+    full.dirtyRows.reserve(full.rows);
+    for (int row = 0; row < full.rows; ++row) {
+        full.dirtyRows.append(textRow(row, {u"a", u"b"}));
+    }
+
+    TerminalFrame frame;
+    QVERIFY(applyTerminalUpdate(frame, full));
+    QCOMPARE(frame.cells.rowChunkCount(), qsizetype{3});
+    const TerminalFrame retained = frame;
+    const auto *const retainedChunkTable = retained.cells.rowChunkTableData();
+    const auto *const firstChunk = retained.cells.rowChunkData(0);
+    const auto *const middleChunk = retained.cells.rowChunkData(32);
+    const auto *const finalChunk = retained.cells.rowChunkData(64);
+    const TerminalCell *const cleanFirstRow = retained.cells.rowData(0);
+    const TerminalCell *const cleanMiddleRow = retained.cells.rowData(32);
+
+    TerminalUpdate partial;
+    partial.columns = full.columns;
+    partial.rows = full.rows;
+    partial.dirtyRows = {
+        textRow(1, {u"x", u"y"}),
+        textRow(64, {u"z", u"w"}),
+    };
+    TerminalFrameApplyMetrics metrics;
+    QVERIFY(applyTerminalUpdate(frame, partial, &metrics));
+    QCOMPARE(metrics.rowChunkTableAllocations, quint64{1});
+    QCOMPARE(metrics.rowChunkTableDetaches, quint64{1});
+    QCOMPARE(metrics.rowChunkHeadersCopied, quint64{3});
+    QCOMPARE(metrics.rowTableAllocations, quint64{2});
+    QCOMPARE(metrics.rowTableDetaches, quint64{2});
+    QCOMPARE(metrics.rowHeadersCopied, quint64{33});
+    QCOMPARE(metrics.cellPayloadAllocations, quint64{0});
+    QCOMPARE(metrics.terminalCellsCopied, quint64{0});
+
+    QCOMPARE(retained.cells.rowChunkTableData(), retainedChunkTable);
+    QVERIFY(frame.cells.rowChunkTableData() != retainedChunkTable);
+    QVERIFY(frame.cells.rowChunkData(0) != firstChunk);
+    QCOMPARE(frame.cells.rowChunkData(32), middleChunk);
+    QVERIFY(frame.cells.rowChunkData(64) != finalChunk);
+    QCOMPARE(frame.cells.rowData(0), cleanFirstRow);
+    QCOMPARE(frame.cells.rowData(32), cleanMiddleRow);
+    QCOMPARE(frame.cells.cell(1, 0).text, QStringLiteral("x"));
+    QCOMPARE(frame.cells.cell(64, 0).text, QStringLiteral("z"));
+    QCOMPARE(retained.cells.cell(1, 0).text, QStringLiteral("a"));
+    QCOMPARE(retained.cells.cell(64, 0).text, QStringLiteral("a"));
 }
 
 void TerminalTypesTest::rejectsUnrepresentableFrameSize()

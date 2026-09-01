@@ -541,9 +541,10 @@ struct TerminalRowPresentation {
 };
 
 // Retained terminal cells remain logically flat for callers, but each physical
-// row owns an independently implicitly-shared QVector payload. A render-thread
-// frame copy therefore keeps every row alive without forcing the next dirty-row
-// update to detach and copy the complete viewport.
+// row owns an independently implicitly-shared QVector payload. Row headers are
+// grouped into small implicitly-shared chunks, so a render-thread frame copy
+// keeps every row alive while the next sparse update detaches only its affected
+// chunks instead of copying the complete viewport's row table.
 //
 // Mutation is intentionally limited to applyTerminalUpdate(). Render consumers
 // should prefer rowAt() or cell(row, column) in row-major loops; at() and the
@@ -552,6 +553,8 @@ struct TerminalRowPresentation {
 class TerminalFrameCellStorage final {
 public:
     using Row = QVector<TerminalCell>;
+    using RowChunk = QVector<Row>;
+    static constexpr int RowsPerChunk = 32;
 
     class const_iterator final {
     public:
@@ -661,24 +664,28 @@ public:
     [[nodiscard]] qsizetype size() const noexcept { return size_; }
     [[nodiscard]] bool isEmpty() const noexcept { return size_ == 0; }
     [[nodiscard]] int columnCount() const noexcept { return columns_; }
-    [[nodiscard]] qsizetype rowCount() const noexcept { return rows_.size(); }
+    [[nodiscard]] qsizetype rowCount() const noexcept { return rowCount_; }
 
     [[nodiscard]] const TerminalCell &at(qsizetype index) const
     {
         Q_ASSERT(index >= 0 && index < size_ && columns_ > 0);
         const qsizetype row = index / columns_;
         const qsizetype column = index - row * columns_;
-        return rows_.at(row).at(column);
+        return rowAt(static_cast<int>(row)).at(column);
     }
     [[nodiscard]] const TerminalCell &operator[](qsizetype index) const
     {
         return at(index);
     }
     [[nodiscard]] const TerminalCell &constFirst() const { return at(0); }
-    [[nodiscard]] const Row &rowAt(int row) const { return rows_.at(row); }
+    [[nodiscard]] const Row &rowAt(int row) const
+    {
+        Q_ASSERT(row >= 0 && row < rowCount_);
+        return rowChunks_.at(row / RowsPerChunk).at(row % RowsPerChunk);
+    }
     [[nodiscard]] const TerminalCell &cell(int row, int column) const
     {
-        return rows_.at(row).at(column);
+        return rowAt(row).at(column);
     }
 
     [[nodiscard]] const_iterator begin() const noexcept { return cbegin(); }
@@ -696,17 +703,36 @@ public:
 
     // These identities are intended for deterministic copy-on-write tests and
     // benchmark counters. They expose no mutable storage.
-    [[nodiscard]] const Row *rowTableData() const noexcept
+    [[nodiscard]] qsizetype rowChunkCount() const noexcept
     {
-        return rows_.constData();
+        return rowChunks_.size();
+    }
+    [[nodiscard]] qsizetype rowChunkSizeForRow(int row) const
+    {
+        Q_ASSERT(row >= 0 && row < rowCount_);
+        return rowChunks_.at(row / RowsPerChunk).size();
+    }
+    [[nodiscard]] const RowChunk *rowChunkTableData() const noexcept
+    {
+        return rowChunks_.constData();
+    }
+    [[nodiscard]] const Row *rowChunkData(int row) const
+    {
+        Q_ASSERT(row >= 0 && row < rowCount_);
+        return rowChunks_.at(row / RowsPerChunk).constData();
     }
     [[nodiscard]] const TerminalCell *rowData(int row) const
     {
-        return rows_.at(row).constData();
+        return rowAt(row).constData();
     }
-    [[nodiscard]] bool rowTableIsDetached() const noexcept
+    [[nodiscard]] bool rowChunkTableIsDetached() const noexcept
     {
-        return rows_.isDetached();
+        return rowChunks_.isDetached();
+    }
+    [[nodiscard]] bool rowChunkIsDetached(int row) const
+    {
+        Q_ASSERT(row >= 0 && row < rowCount_);
+        return rowChunks_.at(row / RowsPerChunk).isDetached();
     }
 
 private:
@@ -715,19 +741,27 @@ private:
         Q_ASSERT(columns > 0 && rows > 0);
         columns_ = columns;
         size_ = static_cast<qsizetype>(columns) * rows;
-        rows_ = QVector<Row>(rows);
+        rowCount_ = rows;
+        rowChunks_ = QVector<RowChunk>((rows + RowsPerChunk - 1)
+                                       / RowsPerChunk);
+        for (int chunk = 0; chunk < rowChunks_.size(); ++chunk) {
+            const int firstRow = chunk * RowsPerChunk;
+            rowChunks_[chunk].resize(
+                std::min(RowsPerChunk, rows - firstRow));
+        }
     }
 
     void replaceRow(int row, const Row &cells)
     {
-        Q_ASSERT(row >= 0 && row < rows_.size());
+        Q_ASSERT(row >= 0 && row < rowCount_);
         Q_ASSERT(cells.size() == columns_);
-        rows_[row] = cells;
+        rowChunks_[row / RowsPerChunk][row % RowsPerChunk] = cells;
     }
 
     int columns_ = 0;
+    int rowCount_ = 0;
     qsizetype size_ = 0;
-    QVector<Row> rows_;
+    QVector<RowChunk> rowChunks_;
 
     friend struct TerminalFrameCellStorageAccess;
 };
@@ -747,6 +781,9 @@ struct TerminalFrameCellStorageAccess final {
 };
 
 struct TerminalFrameApplyMetrics {
+    quint64 rowChunkTableAllocations = 0;
+    quint64 rowChunkTableDetaches = 0;
+    quint64 rowChunkHeadersCopied = 0;
     quint64 rowTableAllocations = 0;
     quint64 rowTableDetaches = 0;
     quint64 rowHeadersCopied = 0;
@@ -987,18 +1024,40 @@ applyTerminalUpdate(TerminalFrame &frame, const TerminalUpdate &update,
     }
 
     if (metrics != nullptr) {
+        const bool sharedRowChunkTable =
+            !frame.cells.rowChunkTableIsDetached();
         metrics->rowPayloadsInstalled =
             static_cast<quint64>(update.dirtyRows.size());
         metrics->rowPayloadsReused = update.fullFrame
             ? 0
             : static_cast<quint64>(update.rows - update.dirtyRows.size());
         if (update.fullFrame) {
-            metrics->rowTableAllocations = 1;
+            metrics->rowChunkTableAllocations = 1;
+            metrics->rowTableAllocations = static_cast<quint64>(
+                (update.rows + TerminalFrameCellStorage::RowsPerChunk - 1)
+                / TerminalFrameCellStorage::RowsPerChunk);
         } else if (!update.dirtyRows.isEmpty()
-                   && !frame.cells.rowTableIsDetached()) {
-            metrics->rowTableAllocations = 1;
-            metrics->rowTableDetaches = 1;
-            metrics->rowHeadersCopied = static_cast<quint64>(update.rows);
+                   && sharedRowChunkTable) {
+            metrics->rowChunkTableAllocations = 1;
+            metrics->rowChunkTableDetaches = 1;
+            metrics->rowChunkHeadersCopied =
+                static_cast<quint64>(frame.cells.rowChunkCount());
+        }
+        if (!update.fullFrame) {
+            int previousChunk = -1;
+            for (const TerminalRowUpdate &row : update.dirtyRows) {
+                const int chunk =
+                    row.row / TerminalFrameCellStorage::RowsPerChunk;
+                if (chunk == previousChunk) continue;
+                previousChunk = chunk;
+                if (sharedRowChunkTable
+                    || !frame.cells.rowChunkIsDetached(row.row)) {
+                    ++metrics->rowTableAllocations;
+                    ++metrics->rowTableDetaches;
+                    metrics->rowHeadersCopied += static_cast<quint64>(
+                        frame.cells.rowChunkSizeForRow(row.row));
+                }
+            }
         }
     }
 

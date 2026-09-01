@@ -9,23 +9,6 @@ Every experiment must use a Release build, compare identical environments and
 workloads, report deterministic work counters alongside timings, and preserve
 latency, ordering, and rendering correctness. Short timing runs are advisory.
 
-## Retained-frame row-table ownership
-
-A partial terminal update can detach and copy the outer table of row headers
-when a renderer snapshot still shares it. Cell payloads remain shared, so this
-is bounded by viewport height, but very tall grids may make the header copy
-visible.
-
-Profile one-row and four-row updates at normal and deliberately tall viewport
-sizes. If the outer-table detach is material, compare a chunked row table or a
-small mutation journal against the current representation. A viable change
-must keep full-frame performance stable and retain zero cell-payload
-allocations and zero copied `TerminalCell` objects during partial apply.
-
-Use `bench-terminal-frame-materialization` for the ownership and work-counter
-contract, then confirm any end-to-end effect with the dirty-row scenarios in
-`bench-terminal-pane-renderer`.
-
 ## Renderer color representation and conversion
 
 Retained renderer colors may be candidates for a packed representation if a

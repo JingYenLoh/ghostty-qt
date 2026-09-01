@@ -77,6 +77,9 @@ struct Measurement {
 void accumulateApplyMetrics(TerminalFrameApplyMetrics *total,
                             const TerminalFrameApplyMetrics &sample)
 {
+    total->rowChunkTableAllocations += sample.rowChunkTableAllocations;
+    total->rowChunkTableDetaches += sample.rowChunkTableDetaches;
+    total->rowChunkHeadersCopied += sample.rowChunkHeadersCopied;
     total->rowTableAllocations += sample.rowTableAllocations;
     total->rowTableDetaches += sample.rowTableDetaches;
     total->rowHeadersCopied += sample.rowHeadersCopied;
@@ -476,14 +479,14 @@ bool validateCellMaterializationTopology(
 }
 
 struct RetainedFrameIdentity {
-    const TerminalFrameCellStorage::Row *rowTable = nullptr;
+    const TerminalFrameCellStorage::RowChunk *rowChunkTable = nullptr;
     QVector<const TerminalCell *> rowPayloads;
 };
 
 RetainedFrameIdentity captureRetainedFrameIdentity(const TerminalFrame &frame)
 {
     RetainedFrameIdentity identity;
-    identity.rowTable = frame.cells.rowTableData();
+    identity.rowChunkTable = frame.cells.rowChunkTableData();
     identity.rowPayloads.reserve(frame.rows);
     for (int row = 0; row < frame.rows; ++row) {
         identity.rowPayloads.append(frame.cells.rowData(row));
@@ -498,8 +501,10 @@ bool validateRetainedFrameSharing(const TerminalFrame &retainedFrame,
                                   const TerminalFrameApplyMetrics &metrics,
                                   quint64 *checksum, QString *error)
 {
-    if (retainedFrame.cells.rowTableData() != retainedIdentity.rowTable
-        || frame.cells.rowTableData() == retainedIdentity.rowTable) {
+    if (retainedFrame.cells.rowChunkTableData()
+            != retainedIdentity.rowChunkTable
+        || frame.cells.rowChunkTableData()
+            == retainedIdentity.rowChunkTable) {
         *error = QStringLiteral(
             "retained frame did not preserve an independent row table");
         return false;
@@ -549,11 +554,33 @@ bool validateRetainedFrameSharing(const TerminalFrame &retainedFrame,
         ? 0
         : static_cast<quint64>(update.rows)
             - static_cast<quint64>(update.dirtyRows.size());
-    const quint64 expectedDetaches = update.fullFrame ? 0 : 1;
-    const quint64 expectedHeaders =
-        update.fullFrame ? 0 : static_cast<quint64>(update.rows);
-    if (metrics.rowTableAllocations != 1
-        || metrics.rowTableDetaches != expectedDetaches
+    const quint64 expectedChunkCount = static_cast<quint64>(
+        (update.rows + TerminalFrameCellStorage::RowsPerChunk - 1)
+        / TerminalFrameCellStorage::RowsPerChunk);
+    quint64 expectedDirtyChunks = 0;
+    quint64 expectedHeaders = 0;
+    int previousChunk = -1;
+    if (!update.fullFrame) {
+        for (const TerminalRowUpdate &row : update.dirtyRows) {
+            const int chunk =
+                row.row / TerminalFrameCellStorage::RowsPerChunk;
+            if (chunk == previousChunk) continue;
+            previousChunk = chunk;
+            ++expectedDirtyChunks;
+            expectedHeaders += static_cast<quint64>(std::min(
+                TerminalFrameCellStorage::RowsPerChunk,
+                update.rows
+                    - chunk * TerminalFrameCellStorage::RowsPerChunk));
+        }
+    }
+    if (metrics.rowChunkTableAllocations != 1
+        || metrics.rowChunkTableDetaches != (update.fullFrame ? 0 : 1)
+        || metrics.rowChunkHeadersCopied
+            != (update.fullFrame ? 0 : expectedChunkCount)
+        || metrics.rowTableAllocations
+            != (update.fullFrame ? expectedChunkCount : expectedDirtyChunks)
+        || metrics.rowTableDetaches
+            != (update.fullFrame ? 0 : expectedDirtyChunks)
         || metrics.rowHeadersCopied != expectedHeaders
         || metrics.rowPayloadsInstalled != expectedInstalled
         || metrics.rowPayloadsReused != expectedReused
@@ -737,6 +764,9 @@ void printMeasurement(const BenchmarkOptions &options, Workload workload,
     const quint64 rowHeaderBytesCopied =
         measurement.applyMetrics.rowHeadersCopied
         * sizeof(TerminalFrameCellStorage::Row);
+    const quint64 rowChunkHeaderBytesCopied =
+        measurement.applyMetrics.rowChunkHeadersCopied
+        * sizeof(TerminalFrameCellStorage::RowChunk);
     const quint64 terminalCellBytesCopied =
         measurement.applyMetrics.terminalCellsCopied * sizeof(TerminalCell);
     const quint64 retainedCellBytesReused =
@@ -754,7 +784,7 @@ void printMeasurement(const BenchmarkOptions &options, Workload workload,
     QTextStream output(stdout);
     output.setRealNumberNotation(QTextStream::FixedNotation);
     output.setRealNumberPrecision(2);
-    output << "benchmark=terminal-frame-materialization benchmark_contract=4"
+    output << "benchmark=terminal-frame-materialization benchmark_contract=5"
            << " workload="
            << (workload == Workload::FullFrame ? "full-frame" : "dirty-row")
            << " corpus=" << corpusName(options.corpus)
@@ -790,6 +820,14 @@ void printMeasurement(const BenchmarkOptions &options, Workload workload,
             / seconds(endToEnd.totalNanoseconds)
            << '\n';
     output << "storage retained_snapshots=" << measurement.retainedSnapshots
+           << " row_chunk_table_allocations="
+           << measurement.applyMetrics.rowChunkTableAllocations
+           << " row_chunk_table_detaches="
+           << measurement.applyMetrics.rowChunkTableDetaches
+           << " row_chunk_headers_copied="
+           << measurement.applyMetrics.rowChunkHeadersCopied
+           << " row_chunk_header_bytes_copied="
+           << rowChunkHeaderBytesCopied
            << " row_table_allocations="
            << measurement.applyMetrics.rowTableAllocations
            << " row_table_detaches="
