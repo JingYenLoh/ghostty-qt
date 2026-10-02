@@ -2,6 +2,8 @@
 
 The checked-in CMake presets are the supported entry points. All builds require
 C++23 and use the project-local Zig executable at `.local/bin/zig`.
+The default configuration helper also requires EGL development headers and
+libraries; the local packaging recipes declare that dependency.
 
 | Preset | Toolchain | Purpose |
 | --- | --- | --- |

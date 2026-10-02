@@ -1271,6 +1271,32 @@ void TerminalInspectorModel::rebuildSnapshot()
                         vt.kittyKeyboardFlags);
         keyboard.insert(QStringLiteral("kittyFlags"), kittyFlags);
 
+        renderer.insert(QStringLiteral("compressionSupported"),
+                        vt.compressionSupported);
+        renderer.insert(QStringLiteral("primaryPages"),
+                        QVariant::fromValue(vt.primaryPages));
+        renderer.insert(QStringLiteral("primaryVirtualBytes"),
+                        QVariant::fromValue(vt.primaryVirtualBytes));
+        renderer.insert(QStringLiteral("primaryResidentBytes"),
+                        QVariant::fromValue(vt.primaryResidentBytes));
+        renderer.insert(QStringLiteral("primaryCompressedPages"),
+                        QVariant::fromValue(vt.primaryCompressedPages));
+        renderer.insert(QStringLiteral("primaryCompressedBytes"),
+                        QVariant::fromValue(vt.primaryCompressedBytes));
+        renderer.insert(QStringLiteral("primaryImageBytes"),
+                        QVariant::fromValue(vt.primaryImageBytes));
+        renderer.insert(QStringLiteral("alternatePages"),
+                        QVariant::fromValue(vt.alternatePages));
+        renderer.insert(QStringLiteral("alternateVirtualBytes"),
+                        QVariant::fromValue(vt.alternateVirtualBytes));
+        renderer.insert(QStringLiteral("alternateResidentBytes"),
+                        QVariant::fromValue(vt.alternateResidentBytes));
+        renderer.insert(QStringLiteral("alternateCompressedPages"),
+                        QVariant::fromValue(vt.alternateCompressedPages));
+        renderer.insert(QStringLiteral("alternateCompressedBytes"),
+                        QVariant::fromValue(vt.alternateCompressedBytes));
+        renderer.insert(QStringLiteral("alternateImageBytes"),
+                        QVariant::fromValue(vt.alternateImageBytes));
         renderer.insert(QStringLiteral("kittyProtocolAvailable"),
                         vt.kittyGraphicsAvailable);
         if (vt.kittyGraphicsAvailable) {

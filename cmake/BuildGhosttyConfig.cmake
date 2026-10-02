@@ -66,7 +66,7 @@ endif()
 file(GLOB staged_theme_sources LIST_DIRECTORIES FALSE "${THEMES_SOURCE_DIR}/*")
 list(LENGTH staged_theme_sources staged_theme_count)
 if(
-    NOT staged_theme_count EQUAL 607
+    NOT staged_theme_count EQUAL 617
     OR NOT EXISTS "${THEMES_SOURCE_DIR}/3024 Day"
     OR NOT EXISTS "${THEMES_SOURCE_DIR}/3024 Night"
     OR NOT EXISTS "${THEMES_SOURCE_DIR}/Dracula"
@@ -76,7 +76,7 @@ if(
     message(
         FATAL_ERROR
         "Pinned Ghostty theme inventory is incomplete: "
-        "expected 607 files, found ${staged_theme_count}"
+        "expected 617 files, found ${staged_theme_count}"
     )
 endif()
 

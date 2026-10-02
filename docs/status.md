@@ -17,7 +17,9 @@ desktop feature set, but does not yet claim complete Ghostty frontend parity.
 Implemented areas include PTYs and process lifecycle, retained rendering, tabs
 and recursive splits, multiple windows, quick terminal, configuration and
 keybindings, search, links, clipboard writes, shell integration, terminfo,
-desktop activation, systemd integration, custom shaders, and ordinary Kitty
+desktop activation, command-finished notifications, synchronized-output holds,
+OSC 22 pointer requests, memory inspection, systemd integration, custom shaders,
+and ordinary Kitty
 graphics placements. Terminal-requested clipboard reads and Kitty clipboard
 paste events are mediated through the same pane-local permission model as
 clipboard writes.
@@ -55,7 +57,7 @@ for the intentional upgrade procedure.
   terminal-file actions also work. Exact styled VT/HTML selection copies and
   styled VT/HTML file variants still need upstream APIs.
 - **Semantic and diagnostic state:** prompt navigation, semantic clearing, and
-  several terminal-state queries and notification/reporting semantics remain
+  several terminal-state queries and title/color-reporting semantics remain
   partial or blocked on public libghostty state.
 - **Links:** OSC 8 and the pinned default URL/path matcher work. User-defined
   link expressions remain blocked because the pinned upstream parser does not

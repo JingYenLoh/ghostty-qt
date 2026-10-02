@@ -168,6 +168,11 @@ class GhosttyVtAdapterTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void reportsCommandLifecycleAndResets();
+    void ordersCommandAndProtocolNotifications();
+    void capturesSynchronizedOutput();
+    void queriesMouseShapesAndMemory();
+    void honorsUpstreamParserFixes();
     void rendersTerminalValuesAndEffects();
     void normalizesDesktopNotificationEffects();
     void normalizesProgressReportEffects();
@@ -4850,6 +4855,142 @@ void GhosttyVtAdapterTest::mapsEverySelectionAdjustment()
     QCOMPARE(*pageDown, QStringLiteral("row-3\nrow-4\nro"));
     QCOMPARE(*end,
              QStringLiteral("row-3\nrow-4\nrow-5\nrow-6\nrow-7\nrow-8\nrow-9"));
+}
+
+void GhosttyVtAdapterTest::reportsCommandLifecycleAndResets()
+{
+    QStringList events;
+    GhosttyVtAdapter::Callbacks callbacks;
+    callbacks.commandStarted = [&] { events.append(QStringLiteral("start")); };
+    callbacks.commandFinished = [&](std::optional<qint32> code) {
+        events.append(code ? QString::number(*code) : QStringLiteral("absent"));
+        return TerminalCommandFinishedEffects{};
+    };
+    callbacks.reset = [&] { events.append(QStringLiteral("reset")); };
+    auto adapter = GhosttyVtAdapter::create({}, callbacks);
+    QVERIFY(adapter);
+    adapter->writeVt(
+        QByteArrayLiteral("\033]133;C\007\033]133;C\007\033]133;D;-1"));
+    QCOMPARE(events,
+             QStringList({QStringLiteral("start"), QStringLiteral("start")}));
+    adapter->writeVt(QByteArrayLiteral(
+        "\007\033]133;D\007\033]133;D;999999999999999\007\033[!p\033c"));
+    QCOMPARE(events,
+             QStringList({QStringLiteral("start"), QStringLiteral("start"),
+                          QStringLiteral("-1"), QStringLiteral("absent"),
+                          QStringLiteral("absent"), QStringLiteral("reset")}));
+    adapter->reset();
+    QCOMPARE(events.last(), QStringLiteral("reset"));
+    QCOMPARE(events.count(QStringLiteral("reset")), 2);
+}
+
+void GhosttyVtAdapterTest::ordersCommandAndProtocolNotifications()
+{
+    GhosttyVtAdapter::Callbacks callbacks;
+    callbacks.commandFinished = [](std::optional<qint32>) {
+        return TerminalCommandFinishedEffects{
+            .bell = true,
+            .notification =
+                TerminalDesktopNotification{.title = QStringLiteral("command"),
+                                            .body = QStringLiteral("middle")}};
+    };
+    auto adapter = GhosttyVtAdapter::create({}, callbacks);
+    QVERIFY(adapter);
+    adapter->writeVt(
+        QByteArrayLiteral("\033]9;before\007\033]133;D;0\007\033]9;after\007"));
+    const auto effects = adapter->takeDeferredEffects();
+    QVERIFY(effects.bell);
+    QCOMPARE(effects.desktopNotifications.size(), 3);
+    QCOMPARE(effects.desktopNotifications.at(0).body, QStringLiteral("before"));
+    QCOMPARE(effects.desktopNotifications.at(1).body, QStringLiteral("middle"));
+    QCOMPARE(effects.desktopNotifications.at(2).body, QStringLiteral("after"));
+}
+
+void GhosttyVtAdapterTest::capturesSynchronizedOutput()
+{
+    auto adapter = GhosttyVtAdapter::create({});
+    QVERIFY(adapter);
+    GhosttyVtAdapter::RenderSnapshot snapshot;
+    adapter->writeVt(QByteArrayLiteral("AB\033[?2026h\033[HXY"));
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(snapshot.renderHeld);
+    QVERIFY(snapshot.update.fullFrame);
+    QCOMPARE(snapshot.update.dirtyRows.first().cells.at(0).text,
+             QStringLiteral("A"));
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Retry);
+    // The intervening completed frame must survive another hold in one write.
+    adapter->writeVt(QByteArrayLiteral("Z\033[?2026l\033[?2026h\033[H123"));
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QCOMPARE(snapshot.update.dirtyRows.first().cells.at(0).text,
+             QStringLiteral("X"));
+    QCOMPARE(snapshot.update.dirtyRows.first().cells.at(2).text,
+             QStringLiteral("Z"));
+    // Repeated sets do not extend the timeout.
+    QTest::qWait(1050);
+    adapter->writeVt(QByteArrayLiteral("\033[?2026h"));
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(!snapshot.renderHeld);
+    QCOMPARE(snapshot.update.dirtyRows.first().cells.at(0).text,
+             QStringLiteral("1"));
+    adapter->writeVt(QByteArrayLiteral("\033[?2026h\033[H456"));
+    QVERIFY(adapter->resize({}));
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(!snapshot.renderHeld);
+    QCOMPARE(snapshot.update.dirtyRows.first().cells.at(0).text,
+             QStringLiteral("4"));
+    adapter->writeVt(QByteArrayLiteral("\033[?2026h\033c"));
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(!snapshot.renderHeld);
+}
+
+void GhosttyVtAdapterTest::queriesMouseShapesAndMemory()
+{
+    auto adapter = GhosttyVtAdapter::create({});
+    QVERIFY(adapter);
+    QCOMPARE(adapter->takeDeferredEffects().mouseShape,
+             TerminalMouseShape::Text);
+    adapter->writeVt(QByteArrayLiteral("\033]22;pointer"));
+    QCOMPARE(adapter->takeDeferredEffects().mouseShape,
+             TerminalMouseShape::Text);
+    adapter->writeVt(QByteArrayLiteral("\007"));
+    QCOMPARE(adapter->takeDeferredEffects().mouseShape,
+             TerminalMouseShape::Pointer);
+    adapter->writeVt(QByteArrayLiteral("\033]22;invalid\033\\"));
+    QCOMPARE(adapter->takeDeferredEffects().mouseShape,
+             TerminalMouseShape::Pointer);
+    adapter->writeVt(QByteArrayLiteral("\033]22;\033\\"));
+    QCOMPARE(adapter->takeDeferredEffects().mouseShape,
+             TerminalMouseShape::Text);
+    auto memory = adapter->inspectorSnapshot();
+    QCOMPARE(memory.status, TerminalInspectorStatus::Ready);
+    QVERIFY(memory.primaryPages > 0);
+    QVERIFY(memory.primaryResidentBytes > 0);
+    QVERIFY(memory.primaryVirtualBytes >= memory.primaryResidentBytes);
+    QCOMPARE(memory.alternatePages, quint64{0});
+    adapter->writeVt(QByteArrayLiteral("\033[?1049h"));
+    memory = adapter->inspectorSnapshot();
+    QVERIFY(memory.alternatePages > 0);
+}
+
+void GhosttyVtAdapterTest::honorsUpstreamParserFixes()
+{
+    auto adapter = GhosttyVtAdapter::create({});
+    QVERIFY(adapter);
+    adapter->writeVt(
+        QByteArrayLiteral("\033]2;cancelled\030\033]2;also cancelled\032"));
+    QVERIFY(adapter->takeDeferredEffects().title.isNull());
+    const QColor original = adapter->inspectorSnapshot().effectivePalette.at(1);
+    adapter->writeVt(QByteArrayLiteral("\033]4;1;#123456\007"));
+    QCOMPARE(adapter->inspectorSnapshot().effectivePalette.at(1),
+             QColor(QStringLiteral("#123456")));
+    adapter->writeVt(QByteArrayLiteral("\033c"));
+    QCOMPARE(adapter->inspectorSnapshot().effectivePalette.at(1), original);
 }
 
 QTEST_GUILESS_MAIN(GhosttyVtAdapterTest)

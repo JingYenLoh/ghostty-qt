@@ -20,6 +20,7 @@ BuildRequires:  gcc-c++
 BuildRequires:  git
 BuildRequires:  kf6-kwindowsystem-devel
 BuildRequires:  layer-shell-qt-devel >= 6.6.4
+BuildRequires:  libglvnd-devel
 BuildRequires:  libxkbcommon-devel
 BuildRequires:  ninja-build
 BuildRequires:  ncurses

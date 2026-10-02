@@ -61,6 +61,19 @@ struct TerminalInspectorSnapshot {
     QVector<QColor> effectivePalette;
     QVector<QColor> defaultPalette;
 
+    bool compressionSupported = false;
+    quint64 primaryPages = 0;
+    quint64 primaryVirtualBytes = 0;
+    quint64 primaryResidentBytes = 0;
+    quint64 primaryCompressedPages = 0;
+    quint64 primaryCompressedBytes = 0;
+    quint64 primaryImageBytes = 0;
+    quint64 alternatePages = 0;
+    quint64 alternateVirtualBytes = 0;
+    quint64 alternateResidentBytes = 0;
+    quint64 alternateCompressedPages = 0;
+    quint64 alternateCompressedBytes = 0;
+    quint64 alternateImageBytes = 0;
     quint8 kittyKeyboardFlags = 0;
     bool kittyGraphicsAvailable = false;
     quint64 kittyImageStorageLimitBytes = 0;

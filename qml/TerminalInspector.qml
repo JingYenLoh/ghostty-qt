@@ -986,6 +986,57 @@ Item {
 
                 InspectorPage {
                     SectionHeading {
+                        text: qsTr("Terminal memory")
+                    }
+                    InspectorRow {
+                        name: qsTr("Primary pages")
+                        value: host.display(host.renderer.primaryPages)
+                    }
+                    InspectorRow {
+                        name: qsTr("Primary resident pages")
+                        value: host.bytes(host.renderer.primaryResidentBytes)
+                    }
+                    InspectorRow {
+                        name: qsTr("Primary reserved pages")
+                        value: host.bytes(host.renderer.primaryVirtualBytes)
+                    }
+                    InspectorRow {
+                        name: qsTr("Primary compressed pages")
+                        value: host.display(host.renderer.primaryCompressedPages)
+                    }
+                    InspectorRow {
+                        name: qsTr("Primary compressed data")
+                        value: host.bytes(host.renderer.primaryCompressedBytes)
+                    }
+                    InspectorRow {
+                        name: qsTr("Primary images")
+                        value: host.bytes(host.renderer.primaryImageBytes)
+                    }
+                    InspectorRow {
+                        name: qsTr("Alternate pages")
+                        value: host.display(host.renderer.alternatePages)
+                    }
+                    InspectorRow {
+                        name: qsTr("Alternate resident pages")
+                        value: host.bytes(host.renderer.alternateResidentBytes)
+                    }
+                    InspectorRow {
+                        name: qsTr("Alternate reserved pages")
+                        value: host.bytes(host.renderer.alternateVirtualBytes)
+                    }
+                    InspectorRow {
+                        name: qsTr("Alternate compressed pages")
+                        value: host.display(host.renderer.alternateCompressedPages)
+                    }
+                    InspectorRow {
+                        name: qsTr("Alternate compressed data")
+                        value: host.bytes(host.renderer.alternateCompressedBytes)
+                    }
+                    InspectorRow {
+                        name: qsTr("Alternate images")
+                        value: host.bytes(host.renderer.alternateImageBytes)
+                    }
+                    SectionHeading {
                         text: qsTr("Scene graph")
                     }
                     InspectorRow {

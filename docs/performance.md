@@ -114,3 +114,17 @@ For GPU attribution, capture a warmed frame with the existing RenderDoc helper
 scripts. If a profile shows libghostty dominates a workload, optimize or
 report that layer upstream instead of duplicating its parser or terminal state
 in the Qt frontend.
+
+## Available upstream follow-ups
+
+The October 2026 pin exposes render overscan, stable row identities, and
+compression during snapshot restoration. Overscan can support a future smooth
+scroll animation, but currently remains at its zero default: the frontend
+scrolls in whole rows. Row identities alone do not justify skipping work;
+upstream still conservatively marks rows dirty when scrolling.
+
+Session restoration is not implemented, so no snapshot decoder exists here to
+configure. When restoration is added, enable COMPRESS_HISTORY to avoid a full
+uncompressed-history memory spike. The inspector's per-screen memory query is
+available now; use it for measurements without adding a page walk to every
+render or PTY write.

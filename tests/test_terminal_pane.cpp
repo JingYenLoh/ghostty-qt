@@ -425,6 +425,7 @@ class TerminalPaneTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void appliesRequestedMouseShape();
     void disabledCustomShadersAvoidOffscreenRenderLayers();
     void delegatedCustomShaderRenderingTearsDownDirectPaintNode();
     void lifecycleExitClockDefersWorkspacePaneDestruction();
@@ -6828,6 +6829,23 @@ void TerminalPaneTest::cancelsSelectionWhenMouseGrabIsRevoked()
 
     delete pane;
     window.close();
+}
+
+void TerminalPaneTest::appliesRequestedMouseShape()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral(
+            "printf '\\033[?1002h\\033]22;wait\\007'; exec cat >/dev/null")};
+    TerminalPane pane(options);
+    pane.setSize(QSizeF(320, 160));
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller);
+    QTRY_COMPARE_WITH_TIMEOUT(controller->mouseShape(),
+                              TerminalMouseShape::Wait, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(pane.cursor().shape(), Qt::WaitCursor, 5000);
 }
 
 void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()

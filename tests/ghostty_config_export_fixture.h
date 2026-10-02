@@ -390,6 +390,12 @@ inline QJsonObject values()
                  sidedModifier(QStringLiteral("ctrl"),
                                QStringLiteral("right"))),
          }},
+        {QStringLiteral("notify-on-command-finish"), QStringLiteral("never")},
+        {QStringLiteral("notify-on-command-finish-action"),
+         QJsonObject{{QStringLiteral("bell"), true},
+                     {QStringLiteral("notify"), false}}},
+        {QStringLiteral("notify-on-command-finish-after"),
+         QStringLiteral("5000000000")},
         {QStringLiteral("wait-after-command"), true},
         {QStringLiteral("abnormal-command-exit-runtime"), 731},
         {QStringLiteral("shell-integration"), QStringLiteral("fish")},
@@ -652,7 +658,7 @@ inline QJsonObject object()
 {
     const QJsonObject baseline = keybindings();
     return {
-        {QStringLiteral("version"), 8},
+        {QStringLiteral("version"), 9},
         {QStringLiteral("values"), values()},
         {QStringLiteral("keybindings"), baseline},
         {QStringLiteral("default-keybindings"), baseline},

@@ -621,6 +621,8 @@ TerminalPane::TerminalPane(
     });
     connect(controller_, &TerminalController::currentDirectoryChanged, this,
             &TerminalPane::currentDirectoryChanged);
+    connect(controller_, &TerminalController::mouseShapeChanged, this,
+            &TerminalPane::syncPointerCursor);
     connect(controller_, &TerminalController::terminalMouseTrackingChanged,
             this, [this] {
                 clearHyperlinkHover();
@@ -2465,6 +2467,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.abnormalCommandExitRuntimeMilliseconds =
         options.abnormalCommandExitRuntimeMilliseconds;
     updated.waitAfterCommand = options.waitAfterCommand;
+    updated.commandNotification = options.commandNotification;
     updated.resizeOverlay = options.resizeOverlay;
     updated.customShaders = options.customShaders;
     updated.keybindSource = options.keybindSource;
@@ -5047,6 +5050,49 @@ void TerminalPane::setInspectorCellPicking(bool picking)
     Q_EMIT inspectorCellPickingChanged();
 }
 
+namespace {
+Qt::CursorShape terminalPointerShape(TerminalMouseShape shape)
+{
+    switch (shape) {
+    case TerminalMouseShape::Default: return Qt::ArrowCursor;
+    case TerminalMouseShape::ContextMenu: return Qt::ArrowCursor;
+    case TerminalMouseShape::Help: return Qt::WhatsThisCursor;
+    case TerminalMouseShape::Pointer: return Qt::PointingHandCursor;
+    case TerminalMouseShape::Progress: return Qt::BusyCursor;
+    case TerminalMouseShape::Wait: return Qt::WaitCursor;
+    case TerminalMouseShape::Cell: return Qt::CrossCursor;
+    case TerminalMouseShape::Crosshair: return Qt::CrossCursor;
+    case TerminalMouseShape::Text: return Qt::IBeamCursor;
+    case TerminalMouseShape::VerticalText: return Qt::IBeamCursor;
+    case TerminalMouseShape::Alias: return Qt::DragLinkCursor;
+    case TerminalMouseShape::Copy: return Qt::DragCopyCursor;
+    case TerminalMouseShape::Move: return Qt::SizeAllCursor;
+    case TerminalMouseShape::NoDrop: return Qt::ForbiddenCursor;
+    case TerminalMouseShape::NotAllowed: return Qt::ForbiddenCursor;
+    case TerminalMouseShape::Grab: return Qt::OpenHandCursor;
+    case TerminalMouseShape::Grabbing: return Qt::ClosedHandCursor;
+    case TerminalMouseShape::AllScroll: return Qt::SizeAllCursor;
+    case TerminalMouseShape::ColResize: return Qt::SizeHorCursor;
+    case TerminalMouseShape::RowResize: return Qt::SizeVerCursor;
+    case TerminalMouseShape::NResize: return Qt::SizeVerCursor;
+    case TerminalMouseShape::EResize: return Qt::SizeHorCursor;
+    case TerminalMouseShape::SResize: return Qt::SizeVerCursor;
+    case TerminalMouseShape::WResize: return Qt::SizeHorCursor;
+    case TerminalMouseShape::NeResize: return Qt::SizeBDiagCursor;
+    case TerminalMouseShape::NwResize: return Qt::SizeFDiagCursor;
+    case TerminalMouseShape::SeResize: return Qt::SizeFDiagCursor;
+    case TerminalMouseShape::SwResize: return Qt::SizeBDiagCursor;
+    case TerminalMouseShape::EwResize: return Qt::SizeHorCursor;
+    case TerminalMouseShape::NsResize: return Qt::SizeVerCursor;
+    case TerminalMouseShape::NeswResize: return Qt::SizeBDiagCursor;
+    case TerminalMouseShape::NwseResize: return Qt::SizeFDiagCursor;
+    case TerminalMouseShape::ZoomIn: return Qt::CrossCursor;
+    case TerminalMouseShape::ZoomOut: return Qt::CrossCursor;
+    }
+    return Qt::IBeamCursor;
+}
+} // namespace
+
 void TerminalPane::syncPointerCursor()
 {
     if (mouseHiddenWhileTyping_) {
@@ -5062,6 +5108,11 @@ void TerminalPane::syncPointerCursor()
         // Shift is required to show the rectangle-select crosshair even when
         // the configured policy would retain Shift in application input.
         setCursor(Qt::CrossCursor);
+    } else if (controller_->terminalMouseTracking()
+               && hoverModifiers_.testFlag(Qt::ShiftModifier)) {
+        setCursor(Qt::IBeamCursor);
+    } else if (controller_->mouseShape() != TerminalMouseShape::Text) {
+        setCursor(terminalPointerShape(controller_->mouseShape()));
     } else if (controller_->terminalMouseTracking()
                && !hoverModifiers_.testFlag(Qt::ShiftModifier)) {
         // DEC mouse tracking uses the ordinary pointer. Shift temporarily

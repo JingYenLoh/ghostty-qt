@@ -190,6 +190,13 @@ public:
         // The sink must synchronously consume or retain them.
         std::function<void(QByteArrayView)> writePty;
         std::function<QByteArray()> queryMachineHostName;
+        // Synchronous worker effects in parser order. No Ghostty storage
+        // escapes.
+        std::function<void()> commandStarted;
+        std::function<TerminalCommandFinishedEffects(std::optional<qint32>)>
+            commandFinished;
+        std::function<void()> reset;
+
         std::function<std::optional<TerminalClipboardReadReply>(
             const TerminalClipboardReadRequest &)>
             clipboardRead;
@@ -212,6 +219,7 @@ public:
 
         TerminalUpdate update;
         bool mouseTracking = false;
+        bool renderHeld = false;
         // Deterministic C-boundary topology for profiles and microbenchmarks.
         // The two primary queries fetch render-state and raw-cell fields;
         // extended graphemes and compact background-only cells need the
@@ -260,6 +268,7 @@ public:
         QString title;
         QByteArray currentDirectory;
         bool bell = false;
+        TerminalMouseShape mouseShape = TerminalMouseShape::Text;
         QVector<TerminalClipboardWriteRequest> clipboardWrites;
         QVector<TerminalDesktopNotification> desktopNotifications;
         QVector<TerminalProgressReport> progressReports;

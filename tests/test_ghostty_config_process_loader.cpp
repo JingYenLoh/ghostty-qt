@@ -220,6 +220,7 @@ class GhosttyConfigProcessLoaderTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void realHelperExportsCommandNotifications();
     void derivesXdgHomeFromEitherCandidateOrder();
     void invokesStableTwoQueryTransaction();
     void forwardsSelectedColorSchemeToEveryConfigQuery();
@@ -3047,6 +3048,43 @@ void GhosttyConfigProcessLoaderTest::
     QCOMPARE(actionFor('c'), QStringList({QStringLiteral(R"(csi:\xc3\xa9)")}));
     QCOMPARE(actionFor('d'), QStringList({QStringLiteral(R"(esc:\\x7f)")}));
     QCOMPARE(actionFor('e'), QStringList({QStringLiteral(R"(text:\\q)")}));
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsCommandNotifications()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty())
+        QSKIP("The pinned Ghostty config helper is disabled");
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.commandNotification,
+             TerminalCommandNotificationOptions{});
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("notify-on-command-finish = unfocused\n"
+                          "notify-on-command-finish-action = no-bell,notify\n"
+                          "notify-on-command-finish-after = 1s 123ns\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.commandNotification.policy,
+             TerminalCommandNotificationPolicy::Unfocused);
+    QVERIFY(!result->values.commandNotification.bell);
+    QVERIFY(result->values.commandNotification.notify);
+    QCOMPARE(result->values.commandNotification.afterNanoseconds,
+             quint64{1'000'000'123});
+    result = queryRealConfigExport(
+        helperPath, fixture,
+        {QStringLiteral("--notify-on-command-finish=always"),
+         QStringLiteral("--notify-on-command-finish-after=600y")});
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.commandNotification.policy,
+             TerminalCommandNotificationPolicy::Always);
+    QCOMPARE(result->values.commandNotification.afterNanoseconds,
+             std::numeric_limits<quint64>::max());
 }
 
 QTEST_GUILESS_MAIN(GhosttyConfigProcessLoaderTest)

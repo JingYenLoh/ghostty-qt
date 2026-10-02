@@ -68,7 +68,7 @@ comptime {
 }
 
 /// Export one complete, finalized configuration generation as the
-/// project-private JSON v7 schema. The returned JSON or companion diagnostic
+/// project-private JSON v9 schema. The returned JSON or companion diagnostic
 /// allocation follows ghostty_string_s ownership and is released by
 /// ghostty_string_free.
 export fn ghostty_qt_config_json(
@@ -425,7 +425,7 @@ fn configJson(
     var json: std.json.Stringify = .{ .writer = &output.writer };
     try json.beginObject();
     try json.objectField("version");
-    try json.write(@as(u8, 8));
+    try json.write(@as(u8, 9));
 
     {
         var config = try loadSelectedConfig(
@@ -663,6 +663,17 @@ fn writeValues(
     try writeInitialInput(json, &config.input);
     try json.objectField("key-remap");
     try writeKeyRemaps(json, &config.@"key-remap");
+    try json.objectField("notify-on-command-finish");
+    try json.write(@tagName(config.@"notify-on-command-finish"));
+    try json.objectField("notify-on-command-finish-action");
+    try json.beginObject();
+    try json.objectField("bell");
+    try json.write(config.@"notify-on-command-finish-action".bell);
+    try json.objectField("notify");
+    try json.write(config.@"notify-on-command-finish-action".notify);
+    try json.endObject();
+    try json.objectField("notify-on-command-finish-after");
+    try writeDecimalUint64(json, config.@"notify-on-command-finish-after".duration);
     try json.objectField("wait-after-command");
     try json.write(config.@"wait-after-command");
     try json.objectField("abnormal-command-exit-runtime");

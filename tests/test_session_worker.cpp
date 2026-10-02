@@ -230,6 +230,10 @@ class SessionWorkerTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void keepsHeldFramesSeparateFromLiveInputState();
+    void appliesLiveCommandNotificationPolicy();
+    void notifiesCommandCompletion_data();
+    void notifiesCommandCompletion();
     void runsCommandThroughPty();
     void publishesDesktopNotificationsInParserOrder();
     void publishesProgressReportsInParserOrder();
@@ -7701,6 +7705,149 @@ void SessionWorkerTest::interactiveShellTracksForegroundJobs()
              errorSpy.isEmpty()
                  ? ""
                  : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::keepsHeldFramesSeparateFromLiveInputState()
+{
+    qRegisterMetaType<TerminalInspectorSnapshot>();
+    SessionWorker worker;
+    QSignalSpy updates(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy tracking(&worker, &SessionWorker::mouseTrackingChanged);
+    QSignalSpy snapshots(&worker,
+                         &SessionWorker::terminalInspectorSnapshotReady);
+    QSignalSpy exits(&worker, &SessionWorker::sessionExited);
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.hold = true;
+    options.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral(
+            "stty -echo; printf 'before\\033[?2026h\\033[2J\\033[Hafter\\033[?1002h'; read answer; printf '\\033[?2026l'")};
+    QVERIFY(worker.initialize(options));
+    QTRY_VERIFY_WITH_TIMEOUT(updatesContain(updates, QStringLiteral("before")),
+                             5000);
+    QCOMPARE(tracking.count(), 1);
+    QVERIFY(tracking.first().first().toBool());
+    const auto held = accumulatedFrame(updates);
+    QVERIFY(!frameText(held).contains(QStringLiteral("after")));
+    worker.inspectTerminal(1);
+    const auto live = snapshots.last().at(1).value<TerminalInspectorSnapshot>();
+    QVERIFY(live.contentRevision > held.contentRevision);
+    worker.sendRawText(QByteArrayLiteral("done\\n"));
+    QTRY_COMPARE_WITH_TIMEOUT(exits.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(updatesContain(updates, QStringLiteral("after")),
+                             5000);
+    QVERIFY(accumulatedFrame(updates).contentRevision > held.contentRevision);
+    worker.shutdown();
+}
+
+void SessionWorkerTest::appliesLiveCommandNotificationPolicy()
+{
+    qRegisterMetaType<TerminalDesktopNotification>();
+    SessionWorker worker;
+    QSignalSpy updates(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy notifications(&worker,
+                             &SessionWorker::desktopNotificationRequested);
+    QSignalSpy bells(&worker, &SessionWorker::bell);
+    QSignalSpy exits(&worker, &SessionWorker::sessionExited);
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.hold = true;
+    options.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral(
+            "stty -echo; printf '\\033]133;C\\007running-command'; read answer; printf '\\033]133;D;0\\007'")};
+    QVERIFY(worker.initialize(options));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("running-command")), 5000);
+    // A command started under never still gets a timer, and the current
+    // focus/action/threshold policy at its end governs the notification.
+    auto runtime = options.runtime;
+    runtime.commandNotification = {
+        .policy = TerminalCommandNotificationPolicy::Unfocused,
+        .bell = false,
+        .notify = true,
+        .afterNanoseconds = 0};
+    worker.applyRuntimeOptions(runtime);
+    worker.setFocused(false);
+    worker.sendRawText(QByteArrayLiteral("done\\n"));
+    QTRY_COMPARE_WITH_TIMEOUT(exits.count(), 1, 5000);
+    QCOMPARE(notifications.count(), 1);
+    QCOMPARE(bells.count(), 0);
+    worker.shutdown();
+}
+
+void SessionWorkerTest::notifiesCommandCompletion_data()
+{
+    QTest::addColumn<int>("policy");
+    QTest::addColumn<bool>("focused");
+    QTest::addColumn<quint64>("threshold");
+    QTest::addColumn<QByteArray>("sequence");
+    QTest::addColumn<int>("count");
+    QTest::addColumn<int>("status");
+    const QByteArray command("\033]133;C\007\033]133;D;7\007");
+    QTest::newRow("never") << 0 << false << quint64{0} << command << 0 << 7;
+    QTest::newRow("unfocused") << 1 << false << quint64{0} << command << 1 << 7;
+    QTest::newRow("focused") << 1 << true << quint64{0} << command << 0 << 7;
+    QTest::newRow("always") << 2 << true << quint64{0} << command << 1 << 7;
+    QTest::newRow("threshold")
+        << 2 << false << std::numeric_limits<quint64>::max() << command << 0
+        << 7;
+    QTest::newRow("missing-start")
+        << 2 << false << quint64{0} << QByteArray("\033]133;D;7\007") << 0 << 7;
+    QTest::newRow("reset") << 2 << false << quint64{0}
+                           << QByteArray("\033]133;C\007\033c\033]133;D;7\007")
+                           << 0 << 7;
+    QTest::newRow("negative")
+        << 2 << false << quint64{0}
+        << QByteArray("\033]133;C\007\033]133;D;-1\007") << 1 << 1;
+    QTest::newRow("absent")
+        << 2 << false << quint64{0}
+        << QByteArray("\033]133;C\007\033]133;D\007") << 1 << 0;
+    QTest::newRow("repeated-end")
+        << 2 << false << quint64{0} << command + QByteArray("\033]133;D;7\007")
+        << 1 << 7;
+}
+
+void SessionWorkerTest::notifiesCommandCompletion()
+{
+    QFETCH(int, policy);
+    QFETCH(bool, focused);
+    QFETCH(quint64, threshold);
+    QFETCH(QByteArray, sequence);
+    QFETCH(int, count);
+    QFETCH(int, status);
+    qRegisterMetaType<TerminalDesktopNotification>();
+    SessionWorker worker;
+    worker.setFocused(focused);
+    QSignalSpy notifications(&worker,
+                             &SessionWorker::desktopNotificationRequested);
+    QSignalSpy bells(&worker, &SessionWorker::bell);
+    QSignalSpy exits(&worker, &SessionWorker::sessionExited);
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.command =
+        TerminalCommand::direct({QByteArrayLiteral("/bin/printf"), sequence});
+    options.hold = true;
+    options.runtime.commandNotification = {
+        .policy = static_cast<TerminalCommandNotificationPolicy>(policy),
+        .bell = true,
+        .notify = true,
+        .afterNanoseconds = threshold};
+    QVERIFY(worker.initialize(options));
+    QTRY_COMPARE_WITH_TIMEOUT(exits.count(), 1, 5000);
+    QCOMPARE(notifications.count(), count);
+    QCOMPARE(bells.count(), count);
+    if (count) {
+        const auto notification = qvariant_cast<TerminalDesktopNotification>(
+            notifications.first().first());
+        QCOMPARE(notification.title,
+                 status == 0 ? QStringLiteral("Command Succeeded")
+                             : QStringLiteral("Command Failed"));
+        QVERIFY(notification.body.endsWith(
+            QStringLiteral("exited with code %1.").arg(status)));
+    }
     worker.shutdown();
 }
 

@@ -174,6 +174,7 @@ Q_SIGNALS:
     // controller owns the one-way display decoding for QML properties.
     void currentDirectoryChanged(const QByteArray &directory);
     void mouseTrackingChanged(bool enabled);
+    void mouseShapeChanged(TerminalMouseShape shape);
     void keyboardActionModeChanged(bool enabled);
     void clipboardTextReady(const QString &text,
                             TerminalClipboardDestination destination);
@@ -270,6 +271,7 @@ private:
     void publishSearchUpdate();
     void refreshTrackedHyperlink(bool force = false);
     void processDeferredEffects();
+    TerminalCommandFinishedEffects commandFinished(std::optional<qint32> code);
     void drainPty(bool finalDrain);
     void notePotentialActivity();
     void scheduleActivityReconciliation(int delayMilliseconds);
@@ -380,6 +382,9 @@ private:
     bool directPtyWrites_ = true;
     TerminalSessionIoMetrics ioMetrics_;
     bool shuttingDown_ = false;
+    bool focused_ = false;
+    QElapsedTimer commandTimer_;
+    TerminalMouseShape mouseShape_ = TerminalMouseShape::Text;
     bool mouseTracking_ = false;
     bool keyboardActionMode_ = false;
     quint64 terminalContentRevision_ = 1;

@@ -234,6 +234,7 @@
         "unfocused-split-fill",
         "unfocused-split-opacity",
         "vt-kam-allowed",
+        "vt-window-resize-allowed",
         "wait-after-command",
         "window-colorspace",
         "window-decoration",
@@ -431,7 +432,7 @@
         },
         "clipboard-write-limit-bytes": {
           "status": "supported",
-          "note": "The optional exact uint64 value crosses strict schema-v7 as canonical decimal text, defaults to 64 MiB, maps unlimited to SIZE_MAX, and updates the public libghostty-vt terminal option live. Kitty OSC 5522 transactions that exceed the limit receive EFBIG before the embedder callback; construction, reload, finite, unlimited, and rejection paths are tested."
+          "note": "The optional exact uint64 value crosses strict schema-v9 as canonical decimal text, defaults to 64 MiB, maps unlimited to SIZE_MAX, and updates the public libghostty-vt terminal option live. Kitty OSC 5522 transactions that exceed the limit receive EFBIG before the embedder callback; construction, reload, finite, unlimited, and rejection paths are tested."
         },
         "command": {
           "status": "supported",
@@ -656,16 +657,16 @@
           "note": "The finalized f64 threshold defaults to 1, is clamped to [1, 21] by Ghostty, and reloads every existing pane without terminal or PTY replacement. The Qt renderer mirrors Ghostty's Linux cell shader: bold, inverse, selection/search colors, and faint alpha resolve first; WCAG contrast then uses linear premultiplied color against the effective cell background, replacing a strictly lower ratio with opaque white or black according to the stronger extreme, with ties choosing black. Glyphs and decorations are evaluated independently, the five pinned terminal-graphics codepoint ranges exempt only their glyph, block cursor text overrides contrast last, and cursor sprites participate after cursor opacity. Background images and Kitty content are composed independently, and minimum contrast intentionally does not sample their pixels; color emoji remains unavailable and the existing Qt preedit overlay remains a frontend-owned approximation."
         },
         "notify-on-command-finish": {
-          "status": "blocked_upstream",
-          "note": "Exact never, unfocused, and always policy needs Ghostty's normalized OSC 133 command-finished event. Standalone public libghostty-vt retains semantic prompt rows but does not publish command start/finish timing to its host."
+          "status": "supported",
+          "note": "Never, unfocused, and always reload live. Ordered public semantic prompt callbacks start/restart and finish a worker-owned monotonic timer. Completion without a start is ignored; RIS and the explicit reset action discard the timer. Focus and current configuration are sampled when the command ends. No PTY byte parser is used."
         },
         "notify-on-command-finish-action": {
-          "status": "blocked_upstream",
-          "note": "Bell and native-notification actions depend on the missing standalone libghostty-vt command-finished effect and cannot be reconstructed exactly from rendered prompt rows."
+          "status": "supported",
+          "note": "The finalized independent bell/notify flags reload live. Bells use the existing pane bell policy; native notifications use the desktop-notifications gate, rate limiting, and stable window/pane activation service. Absent or malformed exit status becomes zero; parsed values outside 0..255 become one, matching full Ghostty."
         },
         "notify-on-command-finish-after": {
-          "status": "blocked_upstream",
-          "note": "The exact duration threshold depends on ordered, normalized OSC 133 command-start and command-finish effects, which standalone public libghostty-vt does not expose. Matching pinned Ghostty, the embedding surface owns the monotonic clock and computes the C-to-D duration."
+          "status": "supported",
+          "note": "The finalized u64 nanosecond duration crosses schema v9 as a decimal string without precision loss. Notification requires elapsed monotonic time strictly greater than the live threshold, matching Ghostty. Notification text truncates duration to milliseconds and formats Ghostty's units."
         },
         "mouse-hide-while-typing": {
           "status": "supported",
@@ -673,7 +674,7 @@
         },
         "mouse-reporting": {
           "status": "supported",
-          "note": "The default-true policy gates terminal-requested DEC mouse tracking per pane without changing raw terminal mode. The conjunction is reevaluated per pointer event. Independently of that frontend gate, ordinary non-overlapping raw DEC state changes the base pointer from an I-beam to an arrow, while Shift temporarily restores the I-beam regardless of mouse-shift-capture policy. Reported physical buttons clear selection and reset repeat-click history, motion does neither, and wheels plus captured fractional scrolling clear selection while preserving that history. Raw DEC capture still governs live mouse-shift-capture modifier normalization; reload replaces local runtime toggles, and future panes use configured state. Arbitrary OSC 22 application shapes and full Ghostty's overlapping-mode transition ordering remain blocked on a public effective-shape query tracked in REQUIRES_UPSTREAM.md."
+          "note": "The default-true policy gates terminal-requested DEC mouse tracking per pane without changing raw terminal mode. The conjunction is reevaluated per pointer event. Independently of that frontend gate, ordinary non-overlapping raw DEC state changes the base pointer from an I-beam to an arrow, while Shift temporarily restores the I-beam regardless of mouse-shift-capture policy. Reported physical buttons clear selection and reset repeat-click history, motion does neither, and wheels plus captured fractional scrolling clear selection while preserving that history. Raw DEC capture still governs live mouse-shift-capture modifier normalization; reload replaces local runtime toggles, and future panes use configured state. OSC 22 shapes now reach the pane through the public requested-shape query and map to Qt cursors. Standalone DEC-mode/RIS effective-shape transitions and explicit text versus baseline text remain indistinguishable; exact parity is tracked in REQUIRES_UPSTREAM.md."
         },
         "mouse-scroll-multiplier": {
           "status": "supported",
@@ -855,7 +856,7 @@
         "gtk-single-instance": {
           "status": "not_applicable",
           "scope": "gtk_only",
-          "note": "The upstream GTK key is not consumed. The private schema-v7 export retains its raw value only as an unused compatibility field; ghostty-qt owns equivalent process arbitration through single-instance in $XDG_CONFIG_HOME/ghostty-qt/config and --single-instance."
+          "note": "The upstream GTK key is not consumed. The private schema-v9 export retains its raw value only as an unused compatibility field; ghostty-qt owns equivalent process arbitration through single-instance in $XDG_CONFIG_HOME/ghostty-qt/config and --single-instance."
         },
         "gtk-tabs-location": {
           "status": "not_applicable",
@@ -1156,11 +1157,15 @@
         },
         "working-directory": {
           "status": "supported",
-          "note": "The shared-config value supplies initial panes plus new-tab, split, and new-window fallback. Raw POSIX bytes remain lossless through strict schema-v7 export, CLI parsing, launch snapshots, worker chdir/PWD, OSC 7, controllers, and inheritance; QString is only the GUI display projection. Original-process classification preserves Ghostty's unset desktop-launch home default versus probable-CLI inherit behavior across reloads. Explicit home/tilde paths, symlink-sensitive spelling, live future-surface updates, composite source identity, NUL rejection, and pinned stale-PWD/non-fatal-chdir fallback are tested."
+          "note": "The shared-config value supplies initial panes plus new-tab, split, and new-window fallback. Raw POSIX bytes remain lossless through strict schema-v9 export, CLI parsing, launch snapshots, worker chdir/PWD, OSC 7, controllers, and inheritance; QString is only the GUI display projection. Original-process classification preserves Ghostty's unset desktop-launch home default versus probable-CLI inherit behavior across reloads. Explicit home/tilde paths, symlink-sensitive spelling, live future-surface updates, composite source identity, NUL rejection, and pinned stale-PWD/non-fatal-chdir fallback are tested."
         },
         "x11-instance-name": {
           "status": "not_applicable",
           "scope": "x11"
+        },
+        "vt-window-resize-allowed": {
+          "status": "blocked_upstream",
+          "note": "Ghostty parses the default-false policy, but standalone libghostty-vt discards CSI 8 t and exposes no window-resize request effect. The Qt frontend cannot implement it without a public normalized request callback."
         }
       }
     },
@@ -1371,7 +1376,7 @@
         "inspector": {
           "status": "partial",
           "scope": "qt_mapping",
-          "note": "Accepts the exact toggle/show/hide grammar as an executable, pane-scoped frontend action and preserves the originating stable pane identity. A separate dependency-free Qt window combines frontend/render state with a request-driven, worker-authoritative public libghostty-vt snapshot: active screen, cursor position, DEC visibility and pending wrap, viewport/scrollback and pixel geometry, mouse tracking, effective/default colors and palette value differences, Kitty keyboard/storage policy, all 42 ANSI/DEC modes, and the sampled content revision. It permits one correlated periodic request in flight on a 250 ms timer that exists only while open; no Ghostty handle crosses threads and stale responses are discarded. A one-shot, strict-hit cell picker additionally reports viewport cell text/codepoints, content and width roles, protection and semantic metadata, raw style/color sources, hyperlink URI, and row wrap/prompt state while consuming its complete pointer gesture ahead of normal terminal input. A dedicated virtualized Events tab retains at most 256 pane-local copied summaries for root and pane keybinding decisions, forwarded input requests, bounded worker encoding/staging outcomes, coalesced terminal frames, and state transitions, with per-key-event trace IDs plus sequence tokens, category/text filtering, pause accounting, clear, and strict payload bounds. Worker rows retain the byte count attributed to each key operation—zero when no bytes were encoded—and at most a 64-byte prefix; within one keyboard-trace generation, staged keys receive per-key final dispositions without exposing a combined atomic PTY write. Keyboard trace allocation and event retention exist only while the inspector is open and unpaused. Fresh generations reject late results across pause or close/reopen boundaries, and an ordered worker update clears staged diagnostic metadata without changing functional input bytes. Paste contents and heavy terminal/graphics values remain omitted. Exact raw VT action traces, inactive-screen state, and page-allocation internals still require upstream diagnostic APIs."
+          "note": "Accepts the exact toggle/show/hide grammar as an executable, pane-scoped frontend action and preserves the originating stable pane identity. A separate dependency-free Qt window combines frontend/render state with a request-driven, worker-authoritative public libghostty-vt snapshot: active screen, cursor position, DEC visibility and pending wrap, viewport/scrollback and pixel geometry, mouse tracking, effective/default colors and palette value differences, Kitty keyboard/storage policy, all 43 ANSI/DEC modes, and the sampled content revision. It permits one correlated periodic request in flight on a 250 ms timer that exists only while open; no Ghostty handle crosses threads and stale responses are discarded. A one-shot, strict-hit cell picker additionally reports viewport cell text/codepoints, content and width roles, protection and semantic metadata, raw style/color sources, hyperlink URI, and row wrap/prompt state while consuming its complete pointer gesture ahead of normal terminal input. A dedicated virtualized Events tab retains at most 256 pane-local copied summaries for root and pane keybinding decisions, forwarded input requests, bounded worker encoding/staging outcomes, coalesced terminal frames, and state transitions, with per-key-event trace IDs plus sequence tokens, category/text filtering, pause accounting, clear, and strict payload bounds. Worker rows retain the byte count attributed to each key operation—zero when no bytes were encoded—and at most a 64-byte prefix; within one keyboard-trace generation, staged keys receive per-key final dispositions without exposing a combined atomic PTY write. Keyboard trace allocation and event retention exist only while the inspector is open and unpaused. Fresh generations reject late results across pause or close/reopen boundaries, and an ordered worker update clears staged diagnostic metadata without changing functional input bytes. Paste contents and heavy terminal/graphics values remain omitted. Exact raw VT action traces, inactive-screen state, and page-allocation internals still require upstream diagnostic APIs. Request-driven memory inspection additionally reports primary and alternate page counts, resident/reserved/compressed page bytes, compressed page counts, and image bytes without restoring history."
         },
         "jump_to_prompt": {
           "status": "blocked_upstream",

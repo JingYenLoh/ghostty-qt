@@ -53,6 +53,7 @@ class GhosttyConfigExportTest : public QObject {
 
 private Q_SLOTS:
     void parsesEveryValueWithExactSemantics();
+    void parsesCommandNotificationPolicy();
     void normalizesBoundaryValues();
     void parsesEveryEnumSpelling();
     void parsesEveryTypographyAlternative();
@@ -549,6 +550,41 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(!inverse->values.windowAppearance.titlebarBackground.has_value());
     QVERIFY(!inverse->values.windowAppearance.titlebarForeground.has_value());
     QVERIFY(!inverse->values.waitAfterCommand);
+}
+
+void GhosttyConfigExportTest::parsesCommandNotificationPolicy()
+{
+    for (const QString &policy :
+         {QStringLiteral("never"), QStringLiteral("unfocused"),
+          QStringLiteral("always")}) {
+        auto input = withValue(
+            object(), QStringLiteral("notify-on-command-finish"), policy);
+        input =
+            withValue(input, QStringLiteral("notify-on-command-finish-after"),
+                      QStringLiteral("18446744073709551615"));
+        input =
+            withValue(input, QStringLiteral("notify-on-command-finish-action"),
+                      QJsonObject{{QStringLiteral("bell"), false},
+                                  {QStringLiteral("notify"), true}});
+        const auto result = parseGhosttyConfigExportJson(json(input));
+        QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+        QCOMPARE(result->values.commandNotification.afterNanoseconds,
+                 std::numeric_limits<quint64>::max());
+        QVERIFY(!result->values.commandNotification.bell);
+        QVERIFY(result->values.commandNotification.notify);
+    }
+    for (const QJsonValue &invalid :
+         {QJsonValue(5.0), QJsonValue(QStringLiteral("-1")),
+          QJsonValue(QStringLiteral("18446744073709551616"))})
+        QVERIFY(!parseGhosttyConfigExportJson(json(withValue(
+            object(), QStringLiteral("notify-on-command-finish-after"),
+            invalid))));
+    QVERIFY(!parseGhosttyConfigExportJson(
+        json(withValue(object(), QStringLiteral("notify-on-command-finish"),
+                       QStringLiteral("sometimes")))));
+    QVERIFY(!parseGhosttyConfigExportJson(json(
+        withValue(object(), QStringLiteral("notify-on-command-finish-action"),
+                  QJsonObject{{QStringLiteral("bell"), true}}))));
 }
 
 void GhosttyConfigExportTest::normalizesBoundaryValues()

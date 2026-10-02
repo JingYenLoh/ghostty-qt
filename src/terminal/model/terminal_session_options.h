@@ -120,6 +120,22 @@ enum class TerminalClipboardAccess : quint8 {
     Deny,
 };
 
+enum class TerminalCommandNotificationPolicy {
+    Never,
+    Unfocused,
+    Always
+};
+
+struct TerminalCommandNotificationOptions {
+    TerminalCommandNotificationPolicy policy =
+        TerminalCommandNotificationPolicy::Never;
+    bool bell = true;
+    bool notify = false;
+    quint64 afterNanoseconds = 5'000'000'000ULL;
+
+    bool operator==(const TerminalCommandNotificationOptions &) const = default;
+};
+
 enum class RightClickAction {
     ContextMenu,
     Paste,
@@ -166,6 +182,7 @@ struct TerminalSessionRuntimeOptions {
     // A child that exits while this live policy is enabled remains readable
     // until a terminal-encoded key dismisses it.
     bool waitAfterCommand = false;
+    TerminalCommandNotificationOptions commandNotification;
 
     bool operator==(const TerminalSessionRuntimeOptions &) const = default;
 };

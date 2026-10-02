@@ -19,6 +19,45 @@
 #include <iterator>
 #include <memory>
 
+// Project-owned pointer shapes; the adapter maps the public Ghostty enum.
+enum class TerminalMouseShape : quint8 {
+    Default,
+    ContextMenu,
+    Help,
+    Pointer,
+    Progress,
+    Wait,
+    Cell,
+    Crosshair,
+    Text,
+    VerticalText,
+    Alias,
+    Copy,
+    Move,
+    NoDrop,
+    NotAllowed,
+    Grab,
+    Grabbing,
+    AllScroll,
+    ColResize,
+    RowResize,
+    NResize,
+    EResize,
+    SResize,
+    WResize,
+    NeResize,
+    NwResize,
+    SeResize,
+    SwResize,
+    EwResize,
+    NsResize,
+    NeswResize,
+    NwseResize,
+    ZoomIn,
+    ZoomOut,
+};
+Q_DECLARE_METATYPE(TerminalMouseShape)
+
 // The renderer needs the original SGR foreground source in addition to the
 // resolved RGB value. Ghostty's bold-color=bright behavior only promotes the
 // first eight palette entries; direct RGB and the remaining palette entries
@@ -742,12 +781,11 @@ private:
         columns_ = columns;
         size_ = static_cast<qsizetype>(columns) * rows;
         rowCount_ = rows;
-        rowChunks_ = QVector<RowChunk>((rows + RowsPerChunk - 1)
-                                       / RowsPerChunk);
+        rowChunks_ =
+            QVector<RowChunk>((rows + RowsPerChunk - 1) / RowsPerChunk);
         for (int chunk = 0; chunk < rowChunks_.size(); ++chunk) {
             const int firstRow = chunk * RowsPerChunk;
-            rowChunks_[chunk].resize(
-                std::min(RowsPerChunk, rows - firstRow));
+            rowChunks_[chunk].resize(std::min(RowsPerChunk, rows - firstRow));
         }
     }
 
@@ -1024,8 +1062,7 @@ applyTerminalUpdate(TerminalFrame &frame, const TerminalUpdate &update,
     }
 
     if (metrics != nullptr) {
-        const bool sharedRowChunkTable =
-            !frame.cells.rowChunkTableIsDetached();
+        const bool sharedRowChunkTable = !frame.cells.rowChunkTableIsDetached();
         metrics->rowPayloadsInstalled =
             static_cast<quint64>(update.dirtyRows.size());
         metrics->rowPayloadsReused = update.fullFrame
@@ -1036,8 +1073,7 @@ applyTerminalUpdate(TerminalFrame &frame, const TerminalUpdate &update,
             metrics->rowTableAllocations = static_cast<quint64>(
                 (update.rows + TerminalFrameCellStorage::RowsPerChunk - 1)
                 / TerminalFrameCellStorage::RowsPerChunk);
-        } else if (!update.dirtyRows.isEmpty()
-                   && sharedRowChunkTable) {
+        } else if (!update.dirtyRows.isEmpty() && sharedRowChunkTable) {
             metrics->rowChunkTableAllocations = 1;
             metrics->rowChunkTableDetaches = 1;
             metrics->rowChunkHeadersCopied =

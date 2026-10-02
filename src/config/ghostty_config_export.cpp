@@ -40,6 +40,9 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("initial-command"),
     QLatin1StringView("input"),
     QLatin1StringView("key-remap"),
+    QLatin1StringView("notify-on-command-finish"),
+    QLatin1StringView("notify-on-command-finish-action"),
+    QLatin1StringView("notify-on-command-finish-after"),
     QLatin1StringView("wait-after-command"),
     QLatin1StringView("abnormal-command-exit-runtime"),
     QLatin1StringView("env"),
@@ -1803,6 +1806,46 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }
+    {
+        constexpr QLatin1StringView name("notify-on-command-finish");
+        auto parsedValue = readString(fieldValue(name), context(name));
+        if (!parsedValue)
+            return std::unexpected(std::move(parsedValue.error()));
+        if (*parsedValue == QLatin1StringView("never"))
+            result.commandNotification.policy =
+                TerminalCommandNotificationPolicy::Never;
+        else if (*parsedValue == QLatin1StringView("unfocused"))
+            result.commandNotification.policy =
+                TerminalCommandNotificationPolicy::Unfocused;
+        else if (*parsedValue == QLatin1StringView("always"))
+            result.commandNotification.policy =
+                TerminalCommandNotificationPolicy::Always;
+        else
+            return std::unexpected(context(name)
+                                   + QStringLiteral(" has unsupported value"));
+    }
+    {
+        constexpr QLatin1StringView name("notify-on-command-finish-action");
+        constexpr auto fields = std::to_array<QLatin1StringView>(
+            {QLatin1StringView("bell"), QLatin1StringView("notify")});
+        auto parsedValue =
+            readExactObject(fieldValue(name), context(name), fields);
+        if (!parsedValue)
+            return std::unexpected(std::move(parsedValue.error()));
+        auto bell = readBoolean(parsedValue->value(fields[0]),
+                                childContext(context(name), fields[0]));
+        auto notify = readBoolean(parsedValue->value(fields[1]),
+                                  childContext(context(name), fields[1]));
+        if (!bell) return std::unexpected(std::move(bell.error()));
+        if (!notify) return std::unexpected(std::move(notify.error()));
+        result.commandNotification.bell = *bell;
+        result.commandNotification.notify = *notify;
+    }
+    if (auto parsed = assign(
+            QLatin1StringView("notify-on-command-finish-after"),
+            result.commandNotification.afterNanoseconds, readDecimalUint64);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
     if (auto parsed = assignBoolean(QLatin1StringView("wait-after-command"),
                                     result.waitAfterCommand);
         !parsed) {

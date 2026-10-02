@@ -185,6 +185,7 @@ struct GhosttyConfigValues {
     // reads remain deferred until the future session starts.
     QVector<TerminalInitialInput> initialInput;
     bool waitAfterCommand = false;
+    TerminalCommandNotificationOptions commandNotification;
     // Ghostty stores this threshold as an exact u32 millisecond count rather
     // than Config.Duration. It remains live policy for a running surface.
     quint32 abnormalCommandExitRuntimeMilliseconds = 250;

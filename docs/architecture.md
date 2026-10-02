@@ -449,7 +449,7 @@ GTK-prefixed settings are not aliases for Qt settings.
 
 The complete Ghostty application parser is not part of `libghostty-vt`.
 `ghostty-qt-config-helper` therefore links a private revision-matched
-`ghostty-internal` library and exports a strict schema-v7 value projection.
+`ghostty-internal` library and exports a strict schema-v9 value projection.
 The GUI process never parses human-oriented `+show-config` output.
 
 The process boundary contains the private Zig application API and lets the main
@@ -568,3 +568,38 @@ Run and filter tests using the workflows in
 [Development and CI](development.md). Future performance experiments and their
 benchmark and GPU-qualification entry points are documented separately in
 [Performance](performance.md).
+
+## Upstream VT integration at the October 2026 pin
+
+Command lifecycle callbacks run synchronously on SessionWorker. Only start,
+optional exit status, and reset cross the adapter boundary; the worker owns the
+monotonic timer and live policy. The schema-v9 export carries the full u64
+notification threshold as a decimal string. Native notifications retain stable
+pane identity through the existing rate-limited desktop service.
+
+Render-hold callbacks capture a complete owned frame at the exact start of
+synchronized output. Subsequent terminal output remains hidden until release,
+resize, reset, or the one-second host timeout. Consecutive holds replace the
+pending complete frame, so a completed intermediate frame is not lost even
+when both transitions arrive in one VT write. The terminal continues parsing
+and delivering non-render effects while held. Held frames retain an older
+content revision so coordinate queries reject stale visual state; raw mouse
+tracking and shape changes continue independently. Local scrolling or starting
+a selection releases the hold.
+
+The inspector queries upstream page/image memory only on requested snapshots;
+this page walk never restores compressed history. Mouse shape is independent
+input presentation state, published after VT writes rather than tied to render
+frames. Its remaining effective-state limitations are in REQUIRES_UPSTREAM.md.
+
+The private embedded helper now links EGL and the pinned EGL loader, which
+upstream leaves to its host executable. The URL matcher source shadow includes
+the shared translate-c package. The theme inventory contains 617 files.
+
+The pin also brings Bash prompt-hook/exit-status fixes, wide-character and
+hard-line word-selection fixes, saved-cursor/pending-wrap reflow repairs, OSC
+CAN/SUB cancellation, OSC 105 routing, and palette reset on RIS. These execute
+inside the staged official shell resources or public VT implementation. The
+custom-shader selection foreground/background layout already matched compiled
+GLSL; upstream now uses the same order. Unknown OSC callbacks expose only
+unrecognized identifiers, so they do not close the full VT-inspector gap.

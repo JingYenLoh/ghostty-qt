@@ -233,6 +233,7 @@ toTerminalSessionRuntimeOptions(const LaunchOptions &options)
         .abnormalCommandExitRuntimeMilliseconds =
             options.abnormalCommandExitRuntimeMilliseconds,
         .waitAfterCommand = options.waitAfterCommand,
+        .commandNotification = options.commandNotification,
     };
 }
 
@@ -289,6 +290,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     result.abnormalCommandExitRuntimeMilliseconds =
         config.abnormalCommandExitRuntimeMilliseconds;
     result.waitAfterCommand = config.waitAfterCommand;
+    result.commandNotification = config.commandNotification;
     result.environment = config.environment;
     result.shellIntegration = config.shellIntegration;
     result.shellIntegrationFeatures = config.shellIntegrationFeatures;

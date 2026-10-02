@@ -200,8 +200,9 @@ TerminalController::TerminalController(
         QVector<QPoint>, TerminalSessionRuntimeOptions,
         TerminalClipboardDestination, TerminalClipboardWriteRequest,
         TerminalClipboardReadRequest, TerminalClipboardReadReply,
-        TerminalClipboardWriteReply, TerminalDesktopNotification,
-        TerminalProgressReport, TerminalActionResult, TerminalWriteFileAction,
+        TerminalMouseShape, TerminalClipboardWriteReply,
+        TerminalDesktopNotification, TerminalProgressReport,
+        TerminalActionResult, TerminalWriteFileAction,
         TerminalInspectorSnapshot, TerminalInspectorCellSnapshot,
         TerminalKeyboardTraceDecision, TerminalKeyboardTraceResult>();
 
@@ -245,6 +246,14 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
             if (currentDirectory_.bytes() == directory) return;
             currentDirectory_ = directory;
             Q_EMIT currentDirectoryChanged(currentDirectory());
+        },
+        Qt::QueuedConnection);
+    connect(
+        worker, &SessionWorker::mouseShapeChanged, this,
+        [this](TerminalMouseShape shape) {
+            if (mouseShape_ == shape) return;
+            mouseShape_ = shape;
+            Q_EMIT mouseShapeChanged();
         },
         Qt::QueuedConnection);
     connect(

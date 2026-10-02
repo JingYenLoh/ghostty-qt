@@ -1172,7 +1172,7 @@ void GhosttyCliDelegationTest::listsPinnedThemes()
     QCOMPARE(all->exitStatus, QProcess::NormalExit);
     QCOMPARE(all->exitCode, 0);
     QVERIFY(all->standardError.isEmpty());
-    QCOMPARE(all->standardOutput.count('\n'), 607);
+    QCOMPARE(all->standardOutput.count('\n'), 617);
     QVERIFY(all->standardOutput.startsWith(
         QByteArrayLiteral("0x96f (resources)\n")));
     QVERIFY(all->standardOutput.contains(
@@ -1190,7 +1190,7 @@ void GhosttyCliDelegationTest::listsPinnedThemes()
              qPrintable(dark.has_value() ? QString{} : dark.error()));
     QCOMPARE(dark->exitCode, 0);
     QVERIFY(dark->standardError.isEmpty());
-    QCOMPARE(dark->standardOutput.count('\n'), 476);
+    QCOMPARE(dark->standardOutput.count('\n'), 483);
     QVERIFY(dark->standardOutput.contains(
         QByteArrayLiteral("Dracula (resources)\n")));
     QVERIFY(dark->standardOutput.contains(
@@ -1204,7 +1204,7 @@ void GhosttyCliDelegationTest::listsPinnedThemes()
              qPrintable(light.has_value() ? QString{} : light.error()));
     QCOMPARE(light->exitCode, 0);
     QVERIFY(light->standardError.isEmpty());
-    QCOMPARE(light->standardOutput.count('\n'), 131);
+    QCOMPARE(light->standardOutput.count('\n'), 134);
     QVERIFY(light->standardOutput.contains(
         QByteArrayLiteral("3024 Day (resources)\n")));
     QVERIFY(light->standardOutput.contains(
@@ -1234,7 +1234,7 @@ void GhosttyCliDelegationTest::listsPinnedThemes()
              qPrintable(withUser.has_value() ? QString{} : withUser.error()));
     QCOMPARE(withUser->exitCode, 0);
     QVERIFY(withUser->standardError.isEmpty());
-    QCOMPARE(withUser->standardOutput.count('\n'), 608);
+    QCOMPARE(withUser->standardOutput.count('\n'), 618);
     QVERIFY(withUser->standardOutput.contains(
         QByteArrayLiteral("Qt Fixture (user)\n")));
 

@@ -965,6 +965,11 @@ bool SessionWorker::createTerminal()
         .enquiryResponse = options_.runtime.enquiryResponse,
     };
     GhosttyVtAdapter::Callbacks callbacks;
+    callbacks.commandStarted = [this] { commandTimer_.start(); };
+    callbacks.commandFinished = [this](std::optional<qint32> code) {
+        return commandFinished(code);
+    };
+    callbacks.reset = [this] { commandTimer_.invalidate(); };
     callbacks.writePty = [this](QByteArrayView data) { queuePtyWrite(data); };
     if (clipboardBridge_ != nullptr) {
         callbacks.clipboardRead =
@@ -2715,6 +2720,7 @@ QByteArray SessionWorker::encodeMouse(const TerminalMouseInput &input)
 
 void SessionWorker::setFocused(bool focused)
 {
+    focused_ = focused;
     if (vt_ != nullptr) {
         if (!focused) {
             releaseHeldTerminalModifiers();
@@ -4074,12 +4080,14 @@ void SessionWorker::publishFrame()
     if (result != GhosttyVtAdapter::RenderResult::Ready) {
         return;
     }
-    if (snapshot.mouseTracking != mouseTracking_) {
-        mouseTracking_ = snapshot.mouseTracking;
-        Q_EMIT mouseTrackingChanged(mouseTracking_);
-    }
+    if (snapshot.renderHeld) scheduleFrame();
     TerminalUpdate &update = snapshot.update;
-    update.contentRevision = terminalContentRevision_;
+    // A hold snapshot predates the rest of its VT write. Retain the older
+    // revision so coordinate-based queries cannot accept it as live state.
+    const quint64 frameRevision = snapshot.renderHeld
+        ? publishedContentRevision_
+        : terminalContentRevision_;
+    update.contentRevision = frameRevision;
     update.resetCursorBlink = cursorBlinkResetPending_;
     bool hyperlinkMayHaveChanged = update.fullFrame || update.scrollbarChanged
         || !hyperlinkState_->viewport.hasFrame()
@@ -4104,18 +4112,63 @@ void SessionWorker::publishFrame()
         && !hyperlinkState_->viewport.apply(update)) {
         hyperlinkState_->viewport.clear();
     }
-    const bool revisionChanged =
-        publishedContentRevision_ != terminalContentRevision_;
+    const bool revisionChanged = publishedContentRevision_ != frameRevision;
     if (update.hasChanges() || revisionChanged) {
         cursorBlinkResetPending_ = false;
-        publishedContentRevision_ = terminalContentRevision_;
+        publishedContentRevision_ = frameRevision;
         Q_EMIT terminalUpdated(update);
-        if (hyperlinkMayHaveChanged) {
+        if (hyperlinkMayHaveChanged && !snapshot.renderHeld) {
             refreshTrackedHyperlink(hyperlinkState_->publishedState
                                     == TerminalHyperlinkState::Hidden);
         }
         refreshSearch();
     }
+}
+
+TerminalCommandFinishedEffects
+SessionWorker::commandFinished(std::optional<qint32> code)
+{
+    TerminalCommandFinishedEffects effects;
+    if (!commandTimer_.isValid()) return effects;
+    const quint64 duration =
+        static_cast<quint64>(std::max<qint64>(0, commandTimer_.nsecsElapsed()));
+    commandTimer_.invalidate();
+    const auto &options = options_.runtime.commandNotification;
+    if (options.policy == TerminalCommandNotificationPolicy::Never
+        || (options.policy == TerminalCommandNotificationPolicy::Unfocused
+            && focused_)
+        || duration <= options.afterNanoseconds)
+        return effects;
+    effects.bell = options.bell;
+    if (!options.notify) return effects;
+    // Match the full runtime's u8 normalization: absent/malformed => 0,
+    // parsed values outside the byte range => 1.
+    const qint32 raw = code.value_or(0);
+    const int status = raw >= 0 && raw <= 255 ? raw : 1;
+    quint64 milliseconds = duration / 1'000'000;
+    QStringList parts;
+    const std::array<std::pair<quint64, QLatin1StringView>, 7> units{{
+        {31'536'000'000ULL, QLatin1StringView("y")},
+        {604'800'000, QLatin1StringView("w")},
+        {86'400'000, QLatin1StringView("d")},
+        {3'600'000, QLatin1StringView("h")},
+        {60'000, QLatin1StringView("m")},
+        {1'000, QLatin1StringView("s")},
+        {1, QLatin1StringView("ms")},
+    }};
+    for (const auto &[factor, suffix] : units) {
+        if (milliseconds >= factor) {
+            parts.append(QString::number(milliseconds / factor) + suffix);
+            milliseconds %= factor;
+        }
+    }
+    effects.notification = TerminalDesktopNotification{
+        .title = status == 0 ? tr("Command Succeeded") : tr("Command Failed"),
+        .body = tr("Command took %1 and exited with code %2.")
+                    .arg(parts.join(QLatin1Char(' ')))
+                    .arg(status),
+    };
+    return effects;
 }
 
 void SessionWorker::processDeferredEffects()
@@ -4125,6 +4178,15 @@ void SessionWorker::processDeferredEffects()
     }
     const GhosttyVtAdapter::DeferredEffects effects =
         vt_->takeDeferredEffects();
+    const bool tracking = vt_->mouseTracking();
+    if (tracking != mouseTracking_) {
+        mouseTracking_ = tracking;
+        Q_EMIT mouseTrackingChanged(mouseTracking_);
+    }
+    if (mouseShape_ != effects.mouseShape) {
+        mouseShape_ = effects.mouseShape;
+        Q_EMIT mouseShapeChanged(mouseShape_);
+    }
     if (!effects.title.isNull()) {
         Q_EMIT titleChanged(effects.title);
     }

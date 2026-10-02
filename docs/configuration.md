@@ -65,6 +65,7 @@ The supported slice includes common settings across these areas:
 | Background and images | opacity, per-cell opacity, background images, and Kitty image storage limits |
 | Clipboard and selection | copy-on-select, trimming and clearing policy, protected paste, `clipboard-write` |
 | Search and links | search colors, `link-url`, and `link-previews` |
+| Command completion | `notify-on-command-finish`, `notify-on-command-finish-action`, `notify-on-command-finish-after` |
 | Bell | `bell-features`, `bell-audio-path`, and `bell-audio-volume` |
 | Linux integration | cgroup mode, hard-failure policy, memory limit, and process limit |
 | Quick terminal | position, screen, size, autohide, and keyboard interactivity |

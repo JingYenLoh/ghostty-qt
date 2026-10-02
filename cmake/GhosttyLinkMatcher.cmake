@@ -106,6 +106,22 @@ foreach(
     )
 endforeach()
 
+# Oniguruma now imports Ghostty's shared C translation package.
+file(
+    GLOB GHOSTTY_QT_LINK_MATCHER_TRANSLATE_C_SOURCES
+    CONFIGURE_DEPENDS
+    "${GHOSTTY_SOURCE_DIR}/pkg/translate-c/*.zig"
+    "${GHOSTTY_SOURCE_DIR}/pkg/translate-c/*.zig.zon"
+)
+foreach(_source IN LISTS GHOSTTY_QT_LINK_MATCHER_TRANSLATE_C_SOURCES)
+    cmake_path(GET _source FILENAME _name)
+    configure_file(
+        "${_source}"
+        "${GHOSTTY_QT_LINK_MATCHER_SOURCE_DIR}/translate-c/${_name}"
+        COPYONLY
+    )
+endforeach()
+
 add_custom_command(
     OUTPUT
         "${GHOSTTY_QT_LINK_MATCHER_LIBRARY}"
@@ -128,6 +144,7 @@ add_custom_command(
         "${CMAKE_CURRENT_SOURCE_DIR}/zig/link_matcher/build.zig.zon"
         "${CMAKE_CURRENT_SOURCE_DIR}/zig/link_matcher/matcher.zig"
         "${GHOSTTY_SOURCE_DIR}/src/config/url.zig"
+        ${GHOSTTY_QT_LINK_MATCHER_TRANSLATE_C_SOURCES}
         ${GHOSTTY_QT_LINK_MATCHER_ONIGURUMA_SOURCES}
         ${GHOSTTY_QT_LINK_MATCHER_APPLE_SDK_SOURCES}
     COMMENT "Building pinned Ghostty URL/path matcher"

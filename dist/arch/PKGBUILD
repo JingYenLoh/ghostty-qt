@@ -12,6 +12,7 @@ depends=(
     'glibc'
     'kwindowsystem'
     'layer-shell-qt'
+    'libglvnd'
     'libxkbcommon'
     'qt6-base'
     'qt6-declarative'

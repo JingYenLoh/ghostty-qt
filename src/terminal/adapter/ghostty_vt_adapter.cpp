@@ -8,6 +8,7 @@
 
 #include <QBuffer>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QHash>
 #include <QImageReader>
@@ -1143,6 +1144,20 @@ public:
         ghostty_terminal_set(
             terminal_, GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE,
             reinterpret_cast<const void *>(&Impl::clipboardWriteCallback));
+        if (ghostty_terminal_set(
+                terminal_, GHOSTTY_TERMINAL_OPT_SEMANTIC_PROMPT,
+                reinterpret_cast<const void *>(&Impl::semanticPromptCallback))
+                != GHOSTTY_SUCCESS
+            || ghostty_terminal_set(
+                   terminal_, GHOSTTY_TERMINAL_OPT_RESET,
+                   reinterpret_cast<const void *>(&Impl::resetCallback))
+                != GHOSTTY_SUCCESS
+            || ghostty_terminal_set(
+                   terminal_, GHOSTTY_TERMINAL_OPT_RENDER_HOLD,
+                   reinterpret_cast<const void *>(&Impl::renderHoldCallback))
+                != GHOSTTY_SUCCESS) {
+            return false;
+        }
         if (!updateClipboardReadCallback()) {
             return false;
         }
@@ -1494,6 +1509,7 @@ public:
     void reset()
     {
         ghostty_terminal_reset(terminal_);
+        if (callbacks_.reset) callbacks_.reset();
         normalizeKeyboardAfterCommandExit_ = false;
 
         // A full terminal reset invalidates selection grid references and
@@ -2180,6 +2196,27 @@ public:
         snapshot.scrollOffset = scrollbar.offset;
         snapshot.scrollLength = scrollbar.len;
         snapshot.kittyKeyboardFlags = kittyKeyboardFlags;
+        // Inspection is request-driven: this walks pages without restoring
+        // compressed history and must not run in the per-frame hot path.
+        GhosttyTerminalMemoryUsage memory{};
+        memory.size = sizeof(memory);
+        if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_MEMORY_USAGE,
+                                 &memory)
+            != GHOSTTY_SUCCESS)
+            return snapshot;
+        snapshot.compressionSupported = memory.compression_supported;
+        snapshot.primaryPages = memory.primary_pages;
+        snapshot.primaryVirtualBytes = memory.primary_virtual_bytes;
+        snapshot.primaryResidentBytes = memory.primary_resident_bytes;
+        snapshot.primaryCompressedPages = memory.primary_compressed_pages;
+        snapshot.primaryCompressedBytes = memory.primary_compressed_bytes;
+        snapshot.primaryImageBytes = memory.primary_image_bytes;
+        snapshot.alternatePages = memory.alternate_pages;
+        snapshot.alternateVirtualBytes = memory.alternate_virtual_bytes;
+        snapshot.alternateResidentBytes = memory.alternate_resident_bytes;
+        snapshot.alternateCompressedPages = memory.alternate_compressed_pages;
+        snapshot.alternateCompressedBytes = memory.alternate_compressed_bytes;
+        snapshot.alternateImageBytes = memory.alternate_image_bytes;
 
         const auto queryColor = [this](GhosttyTerminalData data,
                                        QColor *result) {
@@ -3468,6 +3505,7 @@ public:
 
     bool beginSelection(const TerminalSelectionPressInput &input)
     {
+        cancelRenderHold();
         if (!std::isfinite(input.surfaceX) || !std::isfinite(input.surfaceY)) {
             return false;
         }
@@ -3913,6 +3951,8 @@ public:
 
     bool scrollViewport(const TerminalViewportRequest &request)
     {
+        // Local navigation must remain responsive while a program holds output.
+        cancelRenderHold();
         GhosttyTerminalScrollViewport scroll{};
         switch (request.kind) {
         case TerminalViewportRequest::Kind::Top:
@@ -4634,12 +4674,34 @@ public:
 
     RenderResult renderFrame(RenderSnapshot *snapshot)
     {
-        if (snapshot == nullptr
-            || ghostty_render_state_update(renderState_, terminal_)
-                != GHOSTTY_SUCCESS) {
+        if (snapshot == nullptr) return RenderResult::Unavailable;
+        if (renderHoldTimer_.isValid()) {
+            if (renderHoldTimer_.elapsed() < 1000) {
+                if (heldFrame_) {
+                    *snapshot = std::move(*heldFrame_);
+                    heldFrame_.reset();
+                    snapshot->renderHeld = true;
+                    return RenderResult::Ready;
+                }
+                // Keep the worker timer alive to enforce the bounded hold.
+                return RenderResult::Retry;
+            }
+            cancelRenderHold();
+        }
+        if (ghostty_render_state_update(renderState_, terminal_)
+            != GHOSTTY_SUCCESS) {
             return RenderResult::Unavailable;
         }
 
+        snapshot->renderHeld = false;
+        if (!hasPublishedFrame_) {
+            const GhosttyRenderStateDirty full =
+                GHOSTTY_RENDER_STATE_DIRTY_FULL;
+            if (ghostty_render_state_set(
+                    renderState_, GHOSTTY_RENDER_STATE_OPTION_DIRTY, &full)
+                != GHOSTTY_SUCCESS)
+                return RenderResult::Retry;
+        }
         GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FULL;
         uint16_t columns = 0;
         uint16_t rows = 0;
@@ -5190,6 +5252,116 @@ public:
     DeferredEffects takeDeferredEffects()
     {
         DeferredEffects effects;
+        GhosttyMouseShape shape = GHOSTTY_MOUSE_SHAPE_TEXT;
+        if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE,
+                                 &shape)
+            == GHOSTTY_SUCCESS) {
+            switch (shape) {
+            case GHOSTTY_MOUSE_SHAPE_DEFAULT:
+                effects.mouseShape = TerminalMouseShape::Default;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_CONTEXT_MENU:
+                effects.mouseShape = TerminalMouseShape::ContextMenu;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_HELP:
+                effects.mouseShape = TerminalMouseShape::Help;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_POINTER:
+                effects.mouseShape = TerminalMouseShape::Pointer;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_PROGRESS:
+                effects.mouseShape = TerminalMouseShape::Progress;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_WAIT:
+                effects.mouseShape = TerminalMouseShape::Wait;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_CELL:
+                effects.mouseShape = TerminalMouseShape::Cell;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_CROSSHAIR:
+                effects.mouseShape = TerminalMouseShape::Crosshair;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_TEXT:
+                effects.mouseShape = TerminalMouseShape::Text;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_VERTICAL_TEXT:
+                effects.mouseShape = TerminalMouseShape::VerticalText;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_ALIAS:
+                effects.mouseShape = TerminalMouseShape::Alias;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_COPY:
+                effects.mouseShape = TerminalMouseShape::Copy;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_MOVE:
+                effects.mouseShape = TerminalMouseShape::Move;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_NO_DROP:
+                effects.mouseShape = TerminalMouseShape::NoDrop;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_NOT_ALLOWED:
+                effects.mouseShape = TerminalMouseShape::NotAllowed;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_GRAB:
+                effects.mouseShape = TerminalMouseShape::Grab;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_GRABBING:
+                effects.mouseShape = TerminalMouseShape::Grabbing;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_ALL_SCROLL:
+                effects.mouseShape = TerminalMouseShape::AllScroll;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_COL_RESIZE:
+                effects.mouseShape = TerminalMouseShape::ColResize;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_ROW_RESIZE:
+                effects.mouseShape = TerminalMouseShape::RowResize;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_N_RESIZE:
+                effects.mouseShape = TerminalMouseShape::NResize;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_E_RESIZE:
+                effects.mouseShape = TerminalMouseShape::EResize;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_S_RESIZE:
+                effects.mouseShape = TerminalMouseShape::SResize;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_W_RESIZE:
+                effects.mouseShape = TerminalMouseShape::WResize;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_NE_RESIZE:
+                effects.mouseShape = TerminalMouseShape::NeResize;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_NW_RESIZE:
+                effects.mouseShape = TerminalMouseShape::NwResize;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_SE_RESIZE:
+                effects.mouseShape = TerminalMouseShape::SeResize;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_SW_RESIZE:
+                effects.mouseShape = TerminalMouseShape::SwResize;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_EW_RESIZE:
+                effects.mouseShape = TerminalMouseShape::EwResize;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_NS_RESIZE:
+                effects.mouseShape = TerminalMouseShape::NsResize;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_NESW_RESIZE:
+                effects.mouseShape = TerminalMouseShape::NeswResize;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_NWSE_RESIZE:
+                effects.mouseShape = TerminalMouseShape::NwseResize;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_ZOOM_IN:
+                effects.mouseShape = TerminalMouseShape::ZoomIn;
+                break;
+            case GHOSTTY_MOUSE_SHAPE_ZOOM_OUT:
+                effects.mouseShape = TerminalMouseShape::ZoomOut;
+                break;
+            default: break;
+            }
+        }
         if (titleDirty_) {
             titleDirty_ = false;
             GhosttyString title{};
@@ -5300,6 +5472,84 @@ private:
             impl->callbacks_.writePty(QByteArrayView(impl->enquiryResponse_));
         }
         return {};
+    }
+
+    static void
+    semanticPromptCallback(GhosttyTerminal, void *userdata,
+                           const GhosttyTerminalSemanticPrompt *event) noexcept
+    {
+        auto *impl = static_cast<Impl *>(userdata);
+        if (impl == nullptr || event == nullptr) return;
+        try {
+            if (event->kind == GHOSTTY_SEMANTIC_PROMPT_OUTPUT_START
+                && impl->callbacks_.commandStarted)
+                impl->callbacks_.commandStarted();
+            else if (event->kind == GHOSTTY_SEMANTIC_PROMPT_COMMAND_END
+                     && impl->callbacks_.commandFinished) {
+                const auto effects = impl->callbacks_.commandFinished(
+                    event->has_exit_code
+                        ? std::optional<qint32>(event->exit_code)
+                        : std::nullopt);
+                impl->bellPending_ |= effects.bell;
+                if (effects.notification) {
+                    const QByteArray title =
+                        effects.notification->title.toUtf8();
+                    const QByteArray body = effects.notification->body.toUtf8();
+                    GhosttyTerminalDesktopNotification notification{};
+                    notification.size = sizeof(notification);
+                    notification.title = {
+                        reinterpret_cast<const uint8_t *>(title.constData()),
+                        static_cast<size_t>(title.size())};
+                    notification.body = {
+                        reinterpret_cast<const uint8_t *>(body.constData()),
+                        static_cast<size_t>(body.size())};
+                    impl->desktopNotification(&notification);
+                }
+            }
+        } catch (...) {
+            // Never unwind through the C parser.
+        }
+    }
+
+    static void resetCallback(GhosttyTerminal, void *userdata) noexcept
+    {
+        auto *impl = static_cast<Impl *>(userdata);
+        if (impl == nullptr) return;
+        try {
+            if (impl->callbacks_.reset) impl->callbacks_.reset();
+            // Preserve the frontend base title, matching the reset binding.
+            impl->pendingCurrentDirectory_ = QByteArrayLiteral("");
+        } catch (...) {}
+    }
+
+    void cancelRenderHold()
+    {
+        if (!renderHoldTimer_.isValid()) return;
+        GhosttyTerminalModeConfig mode{.mode = GHOSTTY_MODE_SYNC_OUTPUT,
+                                       .value = false};
+        ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_MODE, &mode);
+        renderHoldTimer_.invalidate();
+        heldFrame_.reset();
+        hasPublishedFrame_ = false;
+    }
+
+    static void renderHoldCallback(GhosttyTerminal, void *userdata,
+                                   bool held) noexcept
+    {
+        auto *impl = static_cast<Impl *>(userdata);
+        if (impl == nullptr) return;
+        impl->renderHoldTimer_.invalidate();
+        impl->heldFrame_.reset();
+        // A captured frame may never have reached the GUI. Make both hold
+        // snapshots and release frames complete replacements.
+        impl->hasPublishedFrame_ = false;
+        if (!held) return;
+        try {
+            RenderSnapshot snapshot;
+            if (impl->renderFrame(&snapshot) == RenderResult::Ready)
+                impl->heldFrame_ = std::move(snapshot);
+        } catch (...) {}
+        impl->renderHoldTimer_.start();
     }
 
     static void bellCallback(GhosttyTerminal, void *userdata)
@@ -5983,6 +6233,8 @@ private:
     bool hasPublishedFrame_ = false;
     bool titleDirty_ = false;
     std::optional<QByteArray> pendingCurrentDirectory_;
+    QElapsedTimer renderHoldTimer_;
+    std::optional<RenderSnapshot> heldFrame_;
     bool bellPending_ = false;
     TerminalColorScheme colorScheme_ = TerminalColorScheme::Light;
     TerminalClipboardAccess clipboardReadAccess_ = TerminalClipboardAccess::Ask;

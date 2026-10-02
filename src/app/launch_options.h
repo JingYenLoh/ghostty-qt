@@ -45,6 +45,7 @@ struct LaunchOptions {
     // Shared live wait policy. The CLI --hold bit below remains a distinct
     // initial-session override.
     bool waitAfterCommand = false;
+    TerminalCommandNotificationOptions commandNotification;
     // The CLI accepts Ghostty's bare true spelling and explicit booleans.
     // Preserve their origin so config-helper forwarding and startup
     // arbitration cannot mistake an explicit value for the built-in default.

@@ -16,7 +16,7 @@
 // built-ins for user configuration. Private construction prevents a loader
 // from manufacturing a partial generation outside the strict parser.
 struct GhosttyConfigExport {
-    static constexpr int CurrentSchemaVersion = 8;
+    static constexpr int CurrentSchemaVersion = 9;
 
     GhosttyConfigValues values;
     GhosttyKeybindConfig keybindings;

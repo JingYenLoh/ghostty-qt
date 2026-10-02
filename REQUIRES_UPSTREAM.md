@@ -155,116 +155,35 @@ Once the query is present in an official, publicly reachable Ghostty commit:
 6. Promote `mouse-shift-capture` to supported in
    `docs/ghostty-parity.json`.
 
-## Terminal mouse-shape state query
+## Exact effective terminal mouse shape
 
-**Status:** Ghostty's initial I-beam, DEC-tracking arrow, Shift override, and
-rectangle/link/hidden cursor priorities are implemented; arbitrary
-application-requested OSC 22 shapes are blocked on an upstream public query.
+**Status:** OSC 22 requested shapes are integrated through the public query;
+full-runtime DEC-mode and RIS transitions remain blocked upstream.
 
-Full Ghostty owns one terminal mouse shape. It starts as `text`, enabling DEC
-mouse modes 9, 1000, 1002, or 1003 changes it to `default`, disabling those
-modes changes it back to `text`, and RIS restores `text`. A recognized
-`OSC 22;<name>` request can replace that state with any of Ghostty's 34
-W3C-derived shapes. Unknown or empty names leave the prior shape unchanged.
+Checked against `83edd491e3024ae5e50393d62877b8897da1cccd` on 2026-10-02.
+`GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE` exposes all 34 requested shapes through
+both getters. The adapter copies this value after VT writes, the worker and
+controller publish a project-owned enum, and the pane maps it to Qt cursors.
+Typing concealment, inspector picking, accepted links, rectangle selection,
+and Shift under DEC tracking retain priority. Qt collapses vertical text,
+context-menu, zoom, and single-edge resize shapes to available native cursors.
 
-Public `libghostty-vt` exposes only whether any DEC mouse mode is active.
-Its private `Terminal.mouse_shape` receives recognized OSC 22 values, but
-`GhosttyTerminalData` has no mouse-shape member and the public OSC command-data
-API does not expose the parsed name. The similarly named enum and action in
-`ghostty.h` belong to Ghostty's full application-runtime API, not the
-`ghostty/vt.h` embedding API used here.
+The standalone handler still changes only `flags.mouse_event` on DEC tracking
+transitions. Its `Terminal.fullReset` does not reset `mouse_shape`, unlike full
+Ghostty's stream handler. Empty OSC 22 now restores `text` in standalone VT,
+while full Ghostty chooses `default` under tracking and `text` otherwise.
+Consequently the public state cannot distinguish an explicit OSC 22 `text`
+request from the initial/reset baseline. Qt retains its tracking-derived arrow
+for that baseline; non-text requests use their mapped shape until replaced.
 
-There is an additional contract gap: the standalone VT stream handler stores
-OSC 22 values but does not mirror full Ghostty's mouse-mode and RIS shape
-transitions. Exposing that field without aligning those transitions would
-still return the wrong effective state. The existing public mouse-tracking
-query also collapses the individual DEC mode bits to an any-mode boolean.
-Full Ghostty instead updates one current mouse-event state on each individual
-mode transition, so resetting one of multiple overlapping mode bits can select
-`text` even while the public any-mode result remains true. That ordering edge
-cannot be reconstructed from the current query.
-
-ghostty-qt therefore derives the publicly distinguishable baseline: an I-beam
-without raw DEC tracking, an arrow with raw tracking, and an I-beam while
-Shift is held under raw tracking. This is exact for the ordinary
-non-overlapping tracking path but cannot recover the transition-order edge
-above. The existing pane arbiter places
-typing concealment, an accepted hyperlink hand, and rectangle-selection
-crosshair above that baseline. It intentionally uses raw terminal state rather
-than the independent frontend `mouse-reporting` or `mouse-shift-capture`
-policies.
-
-### Why ghostty-qt does not inspect PTY bytes
-
-Mirroring OSC 22 outside libghostty-vt would require a second streaming escape
-parser. It would have to reproduce fragmented OSC input, BEL versus ST
-termination, cancellation and malformed-input behavior, every canonical name
-and alias, unknown-name retention, DEC-mode side effects, and RIS ordering.
-That duplicate state could silently diverge whenever Ghostty's parser or shape
-catalog changes.
-
-A local Ghostty source patch would expose the private field but violates this
-repository's official-submodule policy. The base-state implementation is
-therefore preferable to claiming partial OSC 22 support through byte
-inspection.
-
-### Required upstream contract
-
-Official libghostty-vt needs an append-only typed query for the current
-effective terminal mouse shape. A minimal compatible design would:
-
-- define a public C enum containing Ghostty's complete mouse-shape catalog;
-- append a `GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE` member whose output type is that
-  enum and support it through both `ghostty_terminal_get` and
-  `ghostty_terminal_get_multi`;
-- report `text` for a new terminal;
-- expose the latest recognized OSC 22 request after
-  `ghostty_terminal_vt_write` returns, including fragmented input;
-- retain the previous value for empty, unknown, malformed, or cancelled
-  requests;
-- align the standalone VT handler with full Ghostty by applying `default` on
-  DEC mouse-mode enable, `text` on disable, and `text` on RIS;
-- preserve the latest individual transition semantics when multiple DEC mouse
-  mode bits overlap rather than deriving shape from an any-mode reduction;
-- preserve the existing public enum ordinals and ABI layouts; and
-- keep pointer presentation policy, hyperlink state, and keyboard modifiers
-  outside the terminal query.
-
-The query must expose terminal state rather than a Qt or GTK cursor name.
-Frontend runtimes remain responsible for choosing the closest native cursor
-where their toolkit cannot represent a W3C shape exactly.
-
-### Upstream acceptance evidence
-
-Public C API tests should verify:
-
-- initial `text`;
-- every canonical OSC 22 name and every supported xterm/foot alias;
-- fragmented OSC input matching a single complete write;
-- BEL and ST terminators;
-- empty, unknown, malformed, and cancelled requests preserving prior state;
-- later valid requests replacing earlier ones;
-- each supported DEC mouse mode changing the shape to `default` and its reset
-  changing the shape to `text`, including ordering around a custom shape;
-- RIS restoring `text`; and
-- identical typed results from the single and multi-data getters.
-
-### ghostty-qt follow-up after upstream support lands
-
-Once the query and matching state transitions are present in an official,
-publicly reachable Ghostty commit:
-
-1. Update `GHOSTTY_REVISION` and the official submodule gitlink together.
-2. Add a project-owned mouse-shape enum to the adapter snapshot and refresh it
-   after terminal writes and resets alongside DEC mouse-tracking state.
-3. Publish changes through a dedicated worker/controller signal; mouse shape
-   is input presentation state, not render-cell metadata.
-4. Map every shape to the closest Qt cursor while documenting unavoidable
-   collapses such as vertical text and directional resize variants.
-5. Keep blank, accepted-link, and modifier-driven rectangle/base transitions
-   above the terminal-requested shape according to pinned Surface behavior.
-6. Add adapter and pane tests for the complete upstream matrix before
-   declaring OSC 22 pointer shapes supported.
+Exact parity needs upstream to own the effective shape transitions: `default`
+on each DEC tracking enable, `text` on each disable and RIS, and the full
+runtime's empty-OSC reset policy. Overlapping tracking modes must preserve
+individual transition order rather than an any-mode reduction. Public tests
+must cover interleaved OSC requests, all tracking modes, overlaps, fragmented
+input, invalid names, empty OSC, RIS, and single/multi getters. Once available,
+Qt can use the effective query directly and remove its baseline approximation.
+No frontend byte observer or local Ghostty runtime patch is needed or allowed.
 
 ## Semantic prompt viewport navigation
 
@@ -803,7 +722,7 @@ reinterpreting the original text.
 ### ghostty-qt follow-up after upstream support lands
 
 After an official pinned revision exposes the completed grammar, extend the
-schema-v7 configuration export with ordered structured link rules, route their
+schema-v9 configuration export with ordered structured link rules, route their
 typed actions through the existing stable-pane pipeline, add differential
 parser/matcher/action tests, and only then promote `link` from
 `blocked_upstream`.
@@ -1082,106 +1001,43 @@ changes, and live policy changes while the cursor is default versus explicit.
 Afterward ghostty-qt can replace the boolean setter with the tri-state option
 and promote `cursor-style-blink` without changing renderer timers.
 
-## Standalone command lifecycle and report policy
+## Standalone title and color-report policy
 
-**Status:** exact configured-base title replies remain partial;
-command-finished notifications and color-report format are blocked on upstream
-public contracts.
+**Status:** configured-base title replies remain partial; color-report format
+remains blocked upstream. Command-finished notifications are implemented.
 
-ghostty-qt links the public standalone terminal library described by
-`ghostty/vt/terminal.h`. Ghostty's broader embedded application API in
-`ghostty.h` has application-runtime action types for some of these events, but
-adopting that runtime would replace the project's terminal/session ownership
-model rather than extend the standalone terminal it already uses.
+Checked against `83edd491e3024ae5e50393d62877b8897da1cccd` on 2026-10-02.
+The public semantic prompt and RIS callbacks now supply ordered command
+lifecycle events. ghostty-qt starts/restarts a monotonic worker timer on output
+start, consumes it once on command end, and cancels it on RIS or explicit
+reset. The host normalizes optional i32 exit codes using full Ghostty's rules
+(absent/malformed to zero, outside u8 to one). Live notification policy, focus,
+strict duration threshold, bell effects, rate limiting, and stable pane
+activation use the existing frontend paths. The three
+`notify-on-command-finish*` configuration keys no longer require upstream work.
 
-The standalone stream still has the following gaps:
+Two independent public contracts are still missing:
 
-- It records OSC 133 semantic prompt rows, but does not publish Ghostty's exact
-  ordered command-start/command-finished lifecycle. In full Ghostty the stream
-  emits start/stop messages; `Surface`, not the parser, owns the clock and
-  calculates elapsed wall time between them.
-- Its CSI 21 t implementation reports the terminal's internal OSC title rather
-  than the configured frontend base title.
-- It answers OSC 4, OSC 10, and OSC 11 color queries internally without a host
-  option for Ghostty's `none`, `8-bit`, or `16-bit` report formats.
+- `title-report`: CSI 21 t reports the terminal's internal OSC title rather than
+  the configured frontend base title. Upstream needs a configured-title setter
+  or synchronous normalized report-title callback.
+- `osc-color-report-format`: OSC 4/10/11 replies have no host policy for Ghostty's
+  `none`, `8-bit`, and `16-bit` modes. Upstream needs an append-only runtime
+  option applied before its internal query path emits a reply.
 
-The affected configuration keys are:
+Acceptance tests should cover configured titles masking OSC updates, exact
+CSI 21 t response bytes, and OSC color replies across all three policies with
+palette/default-color changes. The frontend must consume these contracts on
+SessionWorker rather than inspect PTY bytes or issue duplicate query replies.
 
-- `title-report`;
-- `notify-on-command-finish`;
-- `notify-on-command-finish-action`;
-- `notify-on-command-finish-after`;
-- `osc-color-report-format`.
+## Program-requested window resizing
 
-### Why ghostty-qt does not inspect PTY bytes
+**Status:** `vt-window-resize-allowed` is blocked on a public standalone effect.
 
-A second parser in `SessionWorker` would need to duplicate Ghostty's fragmented
-OSC/CSI parsing, cancellation, malformed-input handling, OSC 133 metadata,
-reset behavior, query reply ordering, and mode interactions. It could emit a
-duplicate reply after libghostty-vt already handled the same sequence, and it
-would silently diver as Ghostty's parser evolves.
-
-Inferring command completion from rendered semantic rows is also insufficient.
-Rows do not preserve the exact ordered C/D events, missing-marker behavior, or
-exit-code normalization needed for the documented notification threshold. The
-embedding Surface must start and stop its own clock at those events, matching
-full Ghostty. The project therefore keeps these items explicitly blocked rather
-than installing a parallel byte observer.
-
-### Required upstream contracts
-
-Official standalone `libghostty-vt` should add append-only, synchronous host
-effects for command started and command finished, with the finished effect
-carrying the normalized exit status, including Ghostty's pinned fallback for an
-absent or out-of-range value. Exposing these two ordered effects is narrower
-and more stable than exposing all OSC 133 syntax. The embedding surface owns
-elapsed timing, as full Ghostty does. If upstream instead adds duration to the
-terminal effect, that would be a new ownership model and must document its
-clock source, reset, missing-marker, and suspension semantics rather than being
-described as pinned parity.
-
-These effects should follow the existing callback contract: they occur during
-`ghostty_terminal_vt_write`, are non-reentrant, retain borrowed data only for
-the callback, and preserve terminal input order.
-
-Exact title reporting additionally needs either:
-
-- a setter for the host-visible configured base title; or
-- a normalized report-title callback that lets the host return that exact base
-  title synchronously.
-
-Color reporting needs a construction/runtime option matching Ghostty's
-`none`, `8-bit`, and `16-bit` enum before the internal OSC query path emits a
-reply.
-
-Every new enum member, terminal option, callback, and value struct must follow
-the library's existing append-only ABI rules.
-
-### Upstream acceptance evidence
-
-Public C tests should cover:
-
-- OSC 133 C/D ordering, repeated C, D without C, missing/malformed/out-of-range
-  exit status, reset, and interleaved terminal output, plus a full-runtime test
-  proving that the embedding Surface starts/stops the duration clock;
-- CSI 21 t enabled with a configured title masking OSC updates and exact
-  response bytes;
-- OSC 4/10/11 under none, 8-bit, and 16-bit reporting, including palette and
-  current default-color changes.
-
-### ghostty-qt follow-up after upstream support lands
-
-Once the required contracts are present in an official, publicly reachable
-Ghostty commit:
-
-1. Update `GHOSTTY_REVISION` and the official submodule gitlink together.
-2. Start and stop the command clock on ordered worker effects. Keep focus, live
-   configuration, duration thresholds, and bell decisions atomic on the
-   worker, and copy every borrowed payload before returning from its callback.
-3. Resolve a command-finished notification click through the current `PaneId`,
-   no-op after closure, and otherwise select the correct tab/split, focus it,
-   and activate its existing window.
-4. Pass configured report-title content and color-report policy through typed
-   adapter options rather than parsing terminal bytes.
-5. Add adapter, worker-ordering, pane-lifetime, live-reload, focus, rate-limit,
-   and activation tests before promoting the affected parity entries.
+The pinned full runtime supports CSI 8 t with configuration, minimum-size,
+screen-bound, and window-state restrictions. Standalone `stream_terminal.zig`
+explicitly discards `.resize_window`. A public ordered effect must report the
+requested rows/columns, including the zero/omitted dimension semantics. The Qt
+host can then enforce policy and single-pane/tab, quick-terminal, tiled,
+maximized/fullscreen, screen-size, and minimum-size checks before requesting a
+native window resize. Parsing the PTY independently is not an acceptable path.

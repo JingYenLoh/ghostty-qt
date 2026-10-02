@@ -73,6 +73,7 @@ public:
         return terminalMouseTracking_ && mouseReportingEnabled_;
     }
     bool terminalMouseTracking() const { return terminalMouseTracking_; }
+    TerminalMouseShape mouseShape() const { return mouseShape_; }
     bool mouseReportingEnabled() const { return mouseReportingEnabled_; }
     bool keyboardActionMode() const { return keyboardActionMode_; }
     bool keyboardInputSuppressed() const
@@ -235,6 +236,7 @@ Q_SIGNALS:
     void titleChanged(const QString &title);
     void currentDirectoryChanged(const QString &directory);
     void terminalMouseTrackingChanged(bool enabled);
+    void mouseShapeChanged();
     void mouseTrackingChanged(bool enabled);
     void keyboardActionModeChanged(bool enabled);
     void runningChanged(bool running);
@@ -404,6 +406,7 @@ private:
     QSet<quint64> pendingTerminalActionRequests_;
     std::optional<QString> baseTitle_;
     TerminalPath currentDirectory_;
+    TerminalMouseShape mouseShape_ = TerminalMouseShape::Text;
     bool terminalMouseTracking_ = false;
     bool mouseReportingEnabled_ = true;
     bool keyboardActionMode_ = false;
