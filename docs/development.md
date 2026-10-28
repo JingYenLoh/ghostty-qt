@@ -89,7 +89,7 @@ ctest --preset sanitize -j"$(nproc)" --output-on-failure
 ```
 
 The preset enables ASan and UBSan for project C/C++ targets and uses Ghostty's
-`ReleaseSafe` Zig mode. Zig archives and the private configuration helper are
+`safe` Zig mode. Zig archives and the private configuration helper are
 not Clang-instrumented, although failures may still surface at an instrumented
 C++ boundary.
 

@@ -874,12 +874,18 @@ parsePaneActionView(GhosttySerializedActionView parsed)
             PaneAction::ScrollPageFractional{.fraction = *fraction}};
     }
 
-    if (name == QLatin1StringView("scroll_page_lines")) {
+    if (name == QLatin1StringView("scroll_page_lines")
+        || name == QLatin1StringView("jump_to_prompt")) {
         if (!parameter.has_value()) return std::nullopt;
         const std::optional<qint64> lines = parseSignedInteger(*parameter);
         if (!lines.has_value() || *lines < std::numeric_limits<qint16>::min()
             || *lines > std::numeric_limits<qint16>::max()) {
             return std::nullopt;
+        }
+        if (name == QLatin1StringView("jump_to_prompt")) {
+            return GhosttyPaneAction{PaneAction::JumpToPrompt{
+                .delta = static_cast<qint16>(*lines),
+            }};
         }
         return GhosttyPaneAction{PaneAction::ScrollPageLines{
             .lines = static_cast<qint16>(*lines),

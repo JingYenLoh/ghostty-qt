@@ -4513,6 +4513,10 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                 return scroll(TerminalViewportRequest::Kind::Delta,
                               value.lines);
             },
+            [&scroll](const PaneAction::JumpToPrompt &value) {
+                return scroll(TerminalViewportRequest::Kind::PromptDelta,
+                              value.delta);
+            },
             [this](const PaneAction::IncreaseFontSize &value) {
                 const float current = static_cast<float>(fontPointSize());
                 const float delta = clampFontActionValue(value.points, 0.0F);

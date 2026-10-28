@@ -24,8 +24,8 @@ if [ ! -f "$repo_root/ghostty/CMakeLists.txt" ]; then
     fail "initialize the Ghostty submodule first: git submodule update --init --recursive"
 fi
 
-if [ ! -x "$zig" ] || [ "$("$zig" version)" != 0.16.0 ]; then
-    fail "bootstrap the required Zig 0.16.0 toolchain first: ./scripts/bootstrap-zig.sh"
+if [ ! -x "$zig" ] || [ "$("$zig" version)" != 0.17.0 ]; then
+    fail "bootstrap the required Zig 0.17.0 toolchain first: ./scripts/bootstrap-zig.sh"
 fi
 
 project_version=$(sed -n \

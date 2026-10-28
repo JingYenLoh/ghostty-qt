@@ -104,6 +104,7 @@ struct FakeHelperReport final {
     QList<QByteArray> arguments;
     QByteArray workingDirectory;
     QByteArray environmentSentinel;
+    QByteArray term;
     QByteArray standardInput;
 };
 
@@ -170,8 +171,9 @@ parseFakeHelperReport(const QByteArray &output)
     }
     auto workingDirectory = takeField("CWD");
     auto environmentSentinel = takeField("ENV");
+    auto term = takeField("TERM");
     auto standardInput = takeField("STDIN");
-    if (!workingDirectory || !environmentSentinel || !standardInput) {
+    if (!workingDirectory || !environmentSentinel || !term || !standardInput) {
         return std::unexpected(QStringLiteral("incomplete fake-helper report"));
     }
     if (offset != output.size()) {
@@ -179,6 +181,7 @@ parseFakeHelperReport(const QByteArray &output)
     }
     report.workingDirectory = std::move(*workingDirectory);
     report.environmentSentinel = std::move(*environmentSentinel);
+    report.term = std::move(*term);
     report.standardInput = std::move(*standardInput);
     return report;
 }
@@ -277,13 +280,10 @@ std::optional<unsigned int> fileMode(const QString &path)
 }
 
 QList<QByteArray> forwardedSshArguments(const QString &program,
-                                        QByteArrayView term,
                                         const QList<QByteArray> &arguments)
 {
     QList<QByteArray> result{
         QFile::encodeName(program),
-        QByteArrayLiteral("-o"),
-        QByteArrayLiteral("SetEnv=TERM=") + term.toByteArray(),
         QByteArrayLiteral("-o"),
         QByteArrayLiteral("SendEnv=COLORTERM"),
         QByteArrayLiteral("-o"),
@@ -660,7 +660,7 @@ void GhosttyCliDelegationTest::delegatesPinnedSshChildContract()
              qPrintable(report.has_value() ? QString{} : report.error()));
     QCOMPARE(
         report->arguments,
-        forwardedSshArguments(fakeSsh, "xterm-256color",
+        forwardedSshArguments(fakeSsh,
                               {
                                   QByteArrayLiteral("--rare-ssh-option"),
                                   QByteArrayLiteral("fixture.example"),
@@ -671,6 +671,7 @@ void GhosttyCliDelegationTest::delegatesPinnedSshChildContract()
     QCOMPARE(report->environmentSentinel,
              QByteArrayLiteral("ssh-child-environment"));
     QCOMPARE(report->standardInput, standardInput);
+    QCOMPARE(report->term, QByteArrayLiteral("xterm-256color"));
 
     auto signaled = runProcess(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
                                {
@@ -767,9 +768,11 @@ void GhosttyCliDelegationTest::exercisesPinnedSshTerminfoCache()
     QVERIFY2(failedReport.has_value(),
              qPrintable(failedReport.has_value() ? QString{}
                                                  : failedReport.error()));
-    QCOMPARE(failedReport->arguments,
-             forwardedSshArguments(fakeSsh, "xterm-256color",
-                                   {QByteArrayLiteral("fixture-alias")}));
+    QCOMPARE(
+        failedReport->arguments,
+        forwardedSshArguments(fakeSsh, {QByteArrayLiteral("fixture-alias")}));
+
+    QCOMPARE(failedReport->term, QByteArrayLiteral("xterm-256color"));
 
     clearArtifacts();
     environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_SSH_INSTALL_EXIT"),
@@ -788,9 +791,10 @@ void GhosttyCliDelegationTest::exercisesPinnedSshTerminfoCache()
     QVERIFY2(installedReport.has_value(),
              qPrintable(installedReport.has_value() ? QString{}
                                                     : installedReport.error()));
-    QCOMPARE(installedReport->arguments,
-             forwardedSshArguments(fakeSsh, "xterm-ghostty",
-                                   {QByteArrayLiteral("fixture-alias")}));
+    QCOMPARE(
+        installedReport->arguments,
+        forwardedSshArguments(fakeSsh, {QByteArrayLiteral("fixture-alias")}));
+    QCOMPARE(installedReport->term, QByteArrayLiteral("xterm-ghostty"));
     QVERIFY(isRegularFile(cachePath));
     QCOMPARE(fileMode(cachePath), std::optional<unsigned int>(0600U));
     const auto cacheContents = readFile(cachePath);
@@ -810,9 +814,10 @@ void GhosttyCliDelegationTest::exercisesPinnedSshTerminfoCache()
     QVERIFY2(cachedReport.has_value(),
              qPrintable(cachedReport.has_value() ? QString{}
                                                  : cachedReport.error()));
-    QCOMPARE(cachedReport->arguments,
-             forwardedSshArguments(fakeSsh, "xterm-ghostty",
-                                   {QByteArrayLiteral("fixture-alias")}));
+    QCOMPARE(
+        cachedReport->arguments,
+        forwardedSshArguments(fakeSsh, {QByteArrayLiteral("fixture-alias")}));
+    QCOMPARE(cachedReport->term, QByteArrayLiteral("xterm-ghostty"));
     QVERIFY(!cached->standardError.contains(
         QByteArrayLiteral("Setting up xterm-ghostty")));
     QVERIFY(
@@ -1172,7 +1177,7 @@ void GhosttyCliDelegationTest::listsPinnedThemes()
     QCOMPARE(all->exitStatus, QProcess::NormalExit);
     QCOMPARE(all->exitCode, 0);
     QVERIFY(all->standardError.isEmpty());
-    QCOMPARE(all->standardOutput.count('\n'), 617);
+    QCOMPARE(all->standardOutput.count('\n'), 819);
     QVERIFY(all->standardOutput.startsWith(
         QByteArrayLiteral("0x96f (resources)\n")));
     QVERIFY(all->standardOutput.contains(
@@ -1190,7 +1195,7 @@ void GhosttyCliDelegationTest::listsPinnedThemes()
              qPrintable(dark.has_value() ? QString{} : dark.error()));
     QCOMPARE(dark->exitCode, 0);
     QVERIFY(dark->standardError.isEmpty());
-    QCOMPARE(dark->standardOutput.count('\n'), 483);
+    QCOMPARE(dark->standardOutput.count('\n'), 637);
     QVERIFY(dark->standardOutput.contains(
         QByteArrayLiteral("Dracula (resources)\n")));
     QVERIFY(dark->standardOutput.contains(
@@ -1204,7 +1209,7 @@ void GhosttyCliDelegationTest::listsPinnedThemes()
              qPrintable(light.has_value() ? QString{} : light.error()));
     QCOMPARE(light->exitCode, 0);
     QVERIFY(light->standardError.isEmpty());
-    QCOMPARE(light->standardOutput.count('\n'), 134);
+    QCOMPARE(light->standardOutput.count('\n'), 182);
     QVERIFY(light->standardOutput.contains(
         QByteArrayLiteral("3024 Day (resources)\n")));
     QVERIFY(light->standardOutput.contains(
@@ -1234,7 +1239,7 @@ void GhosttyCliDelegationTest::listsPinnedThemes()
              qPrintable(withUser.has_value() ? QString{} : withUser.error()));
     QCOMPARE(withUser->exitCode, 0);
     QVERIFY(withUser->standardError.isEmpty());
-    QCOMPARE(withUser->standardOutput.count('\n'), 618);
+    QCOMPARE(withUser->standardOutput.count('\n'), 820);
     QVERIFY(withUser->standardOutput.contains(
         QByteArrayLiteral("Qt Fixture (user)\n")));
 

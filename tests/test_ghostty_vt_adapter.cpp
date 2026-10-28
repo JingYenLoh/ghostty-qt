@@ -221,6 +221,7 @@ private Q_SLOTS:
     void invalidatesTrackedTextRangesAfterCoveredTextMutation();
     void installsTrackedTextRangesAsSelections();
     void selectsAndNavigatesViewportAtomically();
+    void navigatesSemanticPrompts();
     void mapsAndRevealsSearchRanges();
     void formatsSelectionWithConfigurableTrimming();
     void selectsCellsWordsAndQueriesSelectionContainment();
@@ -3711,7 +3712,8 @@ void GhosttyVtAdapterTest::preparesPasteUsingExactSafetyPolicy()
 
     expectReady(prepare(QString{}), {});
     expectReady(prepare(QStringLiteral("plain")), QByteArrayLiteral("plain"));
-    expectReady(prepare(QStringLiteral("one\rtwo")),
+    expectConfirmation(prepare(QStringLiteral("one\rtwo")));
+    expectReady(prepare(QStringLiteral("one\rtwo"), true, true, true),
                 QByteArrayLiteral("one\rtwo"));
     expectConfirmation(prepare(QStringLiteral("one\ntwo")));
 
@@ -3725,6 +3727,9 @@ void GhosttyVtAdapterTest::preparesPasteUsingExactSafetyPolicy()
     expectReady(prepare(arbitraryEscape), QByteArrayLiteral("one [31mtwo"));
 
     adapter->writeVt(QByteArrayLiteral("\033[?2004h"));
+    expectReady(prepare(QStringLiteral("one\rtwo")),
+                QByteArrayLiteral("\033[200~one\rtwo\033[201~"));
+    expectConfirmation(prepare(QStringLiteral("one\rtwo"), true, false));
     expectReady(prepare(QStringLiteral("one\ntwo")),
                 QByteArrayLiteral("\033[200~one\ntwo\033[201~"));
     expectConfirmation(prepare(QStringLiteral("one\ntwo"), true, false));
@@ -3932,6 +3937,57 @@ void GhosttyVtAdapterTest::selectsAndNavigatesViewportAtomically()
     const QString all = adapter->selectedText();
     QVERIFY(all.startsWith(QStringLiteral("row-0")));
     QVERIFY(all.endsWith(QStringLiteral("row-7")));
+}
+
+void GhosttyVtAdapterTest::navigatesSemanticPrompts()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 20;
+    options.geometry.rows = 2;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+    // Feed fragmented OSC markers, including a continuation that must not
+    // become a separate navigation destination.
+    const QByteArray transcript =
+        QByteArrayLiteral("\x1b]133;P;k=i\aone\r\n"
+                          "\x1b]133;P;k=c\acontinued\r\n"
+                          "\x1b]133;B\ainput\r\n"
+                          "\x1b]133;C\aoutput\r\n"
+                          "\x1b]133;P;k=i\atwo\r\n"
+                          "\x1b]133;B\ainput\r\n"
+                          "\x1b]133;C\aoutput\r\n"
+                          "\x1b]133;P;k=i\athree");
+    for (char byte : transcript) adapter->writeVt(QByteArray(1, byte));
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+    const quint64 liveOffset = frame.scrollOffset;
+    const auto jump = [&](qint64 delta) {
+        adapter->scrollViewport({
+            .kind = TerminalViewportRequest::Kind::PromptDelta,
+            .delta = delta,
+        });
+        renderInto(adapter.get(), &frame);
+    };
+    jump(-1);
+    QCOMPARE(frame.scrollOffset, quint64{4});
+    QCOMPARE(frameRowText(frame, 0).trimmed(), QStringLiteral("two"));
+    jump(-1);
+    QCOMPARE(frame.scrollOffset, quint64{0});
+    jump(1);
+    QCOMPARE(frame.scrollOffset, quint64{4});
+    jump(0);
+    QCOMPARE(frame.scrollOffset, quint64{4});
+    jump(-32768);
+    QCOMPARE(frame.scrollOffset, quint64{0});
+    jump(32767);
+    QCOMPARE(frame.scrollOffset, liveOffset);
+
+    adapter->reset();
+    adapter->writeVt(QByteArrayLiteral("a\r\nb\r\nc\r\nd"));
+    renderInto(adapter.get(), &frame);
+    const quint64 unmarkedOffset = frame.scrollOffset;
+    jump(-1);
+    QCOMPARE(frame.scrollOffset, unmarkedOffset);
 }
 
 void GhosttyVtAdapterTest::mapsAndRevealsSearchRanges()

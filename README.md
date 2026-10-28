@@ -37,7 +37,7 @@ boundary.
 - KDE's `qqc2-desktop-style` is an optional runtime integration for controls
   matching the Plasma style.
 - A C++23 compiler and standard library, CMake 3.24 or newer, Ninja, and Zig
-  exactly 0.16.0.
+  exactly 0.17.0.
 - `pkg-config`, libwayland-client, libxkbcommon and Fontconfig development
   files, Git, `patch`, Python 3.10 or newer, `tic`, Linux PTY headers, and
   `libutil`.

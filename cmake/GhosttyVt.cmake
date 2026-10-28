@@ -5,23 +5,41 @@ include_guard(GLOBAL)
 # Keep the Zig-built engine identical between ordinary Debug and Release C++
 # builds. Ghostty writes every configuration into its source-tree zig-out
 # directory, so presets must not be built concurrently in one checkout.
-set(_GHOSTTY_QT_DEFAULT_ZIG_FLAGS "")
-if(NOT CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo|MinSizeRel)$")
-    set(_GHOSTTY_QT_DEFAULT_ZIG_FLAGS "-Doptimize=ReleaseFast")
-endif()
+set(_GHOSTTY_QT_DEFAULT_ZIG_FLAGS "-Doptimize=fast")
 set(GHOSTTY_ZIG_BUILD_FLAGS
     "${_GHOSTTY_QT_DEFAULT_ZIG_FLAGS}"
     CACHE STRING
     "Additional flags passed to Ghostty's Zig build"
 )
 
-# Mirror the optimization flag appended by Ghostty's CMake wrapper so the
-# source-tree output guard distinguishes sanitizer and ordinary libraries
-# without needlessly rebuilding between our Debug and Release presets.
-set(GHOSTTY_QT_EFFECTIVE_LIB_VT_ZIG_FLAGS ${GHOSTTY_ZIG_BUILD_FLAGS})
-if(CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo|MinSizeRel)$")
-    list(APPEND GHOSTTY_QT_EFFECTIVE_LIB_VT_ZIG_FLAGS "-Doptimize=ReleaseFast")
+# Accept existing local build caches from the previous pinned Zig toolchain.
+foreach(
+    _mode
+    IN
+    ITEMS
+        "ReleaseFast=fast"
+        "ReleaseSafe=safe"
+        "ReleaseSmall=small"
+        "Debug=debug"
+)
+    string(REPLACE "=" ";" _pair "${_mode}")
+    list(GET _pair 0 _old)
+    list(GET _pair 1 _new)
+    string(
+        REPLACE "-Doptimize=${_old}"
+        "-Doptimize=${_new}"
+        GHOSTTY_ZIG_BUILD_FLAGS
+        "${GHOSTTY_ZIG_BUILD_FLAGS}"
+    )
+endforeach()
+if(NOT GHOSTTY_ZIG_BUILD_FLAGS MATCHES "-Doptimize=")
+    list(APPEND GHOSTTY_ZIG_BUILD_FLAGS "-Doptimize=fast")
 endif()
+
+# The upstream CMake wrapper still appends the pre-0.17 ReleaseFast spelling
+# for release configurations. Supply optimization explicitly and suppress that
+# mapping while adding its targets below; keep the official checkout pristine.
+set(GHOSTTY_QT_EFFECTIVE_LIB_VT_ZIG_FLAGS ${GHOSTTY_ZIG_BUILD_FLAGS})
 string(
     JOIN " "
     GHOSTTY_QT_EFFECTIVE_LIB_VT_ZIG_FLAGS_TEXT
@@ -32,7 +50,7 @@ find_program(GHOSTTY_QT_ZIG_EXECUTABLE zig)
 if(NOT GHOSTTY_QT_ZIG_EXECUTABLE)
     message(
         FATAL_ERROR
-        "Zig 0.16.0 was not found on PATH. Install that exact toolchain "
+        "Zig 0.17.0 was not found on PATH. Install that exact toolchain "
         "before configuring ghostty-qt."
     )
 endif()
@@ -44,11 +62,11 @@ execute_process(
 )
 if(
     NOT GHOSTTY_QT_ZIG_VERSION_RESULT EQUAL 0
-    OR NOT GHOSTTY_QT_ZIG_VERSION STREQUAL "0.16.0"
+    OR NOT GHOSTTY_QT_ZIG_VERSION STREQUAL "0.17.0"
 )
     message(
         FATAL_ERROR
-        "The pinned Ghostty revision requires Zig 0.16.0; found "
+        "The pinned Ghostty revision requires Zig 0.17.0; found "
         "'${GHOSTTY_QT_ZIG_VERSION}' at ${GHOSTTY_QT_ZIG_EXECUTABLE}."
     )
 endif()
@@ -112,11 +130,15 @@ if(
 endif()
 
 # Ghostty's wrapper invokes Zig and exports the ghostty-vt-static target.
+set(_GHOSTTY_QT_SAVED_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
+set(CMAKE_BUILD_TYPE "")
 add_subdirectory(
     "${GHOSTTY_SOURCE_DIR}"
     "${CMAKE_CURRENT_BINARY_DIR}/ghostty"
     EXCLUDE_FROM_ALL
 )
+set(CMAKE_BUILD_TYPE "${_GHOSTTY_QT_SAVED_BUILD_TYPE}")
+unset(_GHOSTTY_QT_SAVED_BUILD_TYPE)
 
 get_target_property(
     GHOSTTY_QT_LIB_VT_SHARED_LIBRARY

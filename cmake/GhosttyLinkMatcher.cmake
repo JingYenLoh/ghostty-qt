@@ -6,7 +6,7 @@ include_guard(GLOBAL)
 # matcher in a narrow project-owned C ABI instead of broadening that upstream
 # library. Both the expression and engine package come directly from the pinned
 # checkout; no private terminal handle crosses this boundary.
-set(_GHOSTTY_QT_LINK_MATCHER_OPTIMIZE "ReleaseFast")
+set(_GHOSTTY_QT_LINK_MATCHER_OPTIMIZE "fast")
 if(GHOSTTY_ZIG_BUILD_FLAGS MATCHES "-Doptimize=([A-Za-z]+)")
     set(_GHOSTTY_QT_LINK_MATCHER_OPTIMIZE "${CMAKE_MATCH_1}")
 endif()

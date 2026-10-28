@@ -1892,6 +1892,25 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsApplicationLifetime()
     QVERIFY(!result->values.quitAfterLastWindowClosedDelay.has_value());
     QCOMPARE(result->values.scrollbar, ScrollbarPolicy::System);
     QVERIFY(!result->defaultKeybindings.root.isEmpty());
+    for (const auto &action : {QStringLiteral("jump_to_prompt:-1"),
+                               QStringLiteral("jump_to_prompt:1")}) {
+        const auto &defaults = result->defaultKeybindings.root;
+        const auto binding =
+            std::ranges::find_if(defaults, [&](const auto &entry) {
+                return entry.actions == QStringList{action};
+            });
+        QVERIFY(binding != defaults.cend());
+        QCOMPARE(binding->sequence.size(), 1);
+        const auto &trigger = binding->sequence.constFirst();
+        QCOMPARE(trigger.kind, GhosttyKeybindKeyKind::Physical);
+        QCOMPARE(trigger.physicalName,
+                 action.endsWith(QStringLiteral(":-1"))
+                     ? QStringLiteral("arrow_up")
+                     : QStringLiteral("arrow_down"));
+        QCOMPARE(trigger.modifiers,
+                 quint8(GhosttyKeybindCtrl | GhosttyKeybindShift));
+        QVERIFY(binding->flags.consumed);
+    }
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsLinuxCgroup()

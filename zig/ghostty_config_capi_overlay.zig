@@ -189,9 +189,9 @@ fn shellIntegrationMode(
     mode: []const u8,
 ) !?shell_integration.Shell {
     if (std.mem.eql(u8, mode, "detect")) return null;
-    inline for (@typeInfo(shell_integration.Shell).@"enum".fields) |field| {
-        if (std.mem.eql(u8, mode, field.name))
-            return @field(shell_integration.Shell, field.name);
+    inline for (@typeInfo(shell_integration.Shell).@"enum".field_names) |name| {
+        if (std.mem.eql(u8, mode, name))
+            return @field(shell_integration.Shell, name);
     }
     return error.InvalidShellIntegrationMode;
 }
@@ -1108,7 +1108,7 @@ fn writeDecimalUint64(json: *std.json.Stringify, number: u64) !void {
     // Qt's JSON representation is double-valued. Use canonical decimal text
     // so every u64, including maxInt(u64), crosses the private schema exactly.
     var buffer: [32]u8 = undefined;
-    try json.write(try std.fmt.bufPrint(&buffer, "{d}", .{number}));
+    try json.write(try std.mem.print(&buffer, "{d}", .{number}));
 }
 
 fn writeOptionalDecimalUint64(json: *std.json.Stringify, value: ?u64) !void {
@@ -1250,7 +1250,22 @@ fn writeActionValue(
     const value_info = @typeInfo(Value);
     switch (Value) {
         void => {},
-        []const u8 => try std.zig.stringEscape(value, writer),
+        []const u8 => {
+            // The wire grammar is byte-oriented. Zig 0.17's stringEscape
+            // preserves UTF-8, which would change our established payloads.
+            for (value) |byte| switch (byte) {
+                '\n' => try writer.writeAll("\\n"),
+                '\r' => try writer.writeAll("\\r"),
+                '\t' => try writer.writeAll("\\t"),
+                '\\' => try writer.writeAll("\\\\"),
+                '"' => try writer.writeAll("\\\""),
+                0x20...0x21, 0x23...0x5b, 0x5d...0x7e => try writer.writeByte(byte),
+                else => {
+                    try writer.writeAll("\\x");
+                    try writer.printInt(byte, 16, .lower, .{ .width = 2, .fill = '0' });
+                },
+            };
+        },
         else => switch (value_info) {
             .@"enum" => try writer.print("{t}", .{value}),
             .float => try writer.print("{d}", .{value}),
@@ -1262,9 +1277,9 @@ fn writeActionValue(
                 }
                 if (!info.is_tuple)
                     @compileError("unhandled action value: " ++ @typeName(Value));
-                inline for (info.fields, 0..) |field, index| {
-                    try writeActionValue(writer, @field(value, field.name));
-                    if (index + 1 < info.fields.len)
+                inline for (info.field_names, 0..) |name, index| {
+                    try writeActionValue(writer, @field(value, name));
+                    if (index + 1 < info.field_names.len)
                         try writer.writeAll(",");
                 }
             },
@@ -1532,7 +1547,7 @@ fn writeMetricModifierOrder(json: *std.json.Stringify, config: *const Config) !v
 
 fn writeRgb(json: *std.json.Stringify, color: anytype) !void {
     var buf: [7]u8 = undefined;
-    try json.write(try std.fmt.bufPrint(
+    try json.write(try std.mem.print(
         &buf,
         "#{x:0>2}{x:0>2}{x:0>2}",
         .{ color.r, color.g, color.b },
@@ -1593,7 +1608,7 @@ fn writeConfigFiles(json: *std.json.Stringify, paths: *const Config.RepeatablePa
     var buf: [std.fs.max_path_bytes + 1]u8 = undefined;
     for (paths.value.items) |path| {
         const value = switch (path) {
-            .optional => |optional| try std.fmt.bufPrint(&buf, "?{s}", .{optional}),
+            .optional => |optional| try std.mem.print(&buf, "?{s}", .{optional}),
             .required => |required| required,
         };
         try json.write(value);

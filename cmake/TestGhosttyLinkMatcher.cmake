@@ -26,8 +26,8 @@ endif()
 
 execute_process(
     COMMAND
-        "${ZIG_EXECUTABLE}" build test -j2 --cache-dir "${CACHE_DIR}"
-        --global-cache-dir "${GLOBAL_CACHE_DIR}"
+        "${CMAKE_COMMAND}" -E env "ZIG_GLOBAL_CACHE_DIR=${GLOBAL_CACHE_DIR}"
+        "ZIG_LOCAL_CACHE_DIR=${CACHE_DIR}" "${ZIG_EXECUTABLE}" build test -j2
         "-Dghostty-url-path=${URL_SOURCE}" "-Doptimize=${OPTIMIZE}" --summary
         failures
     WORKING_DIRECTORY "${SOURCE_DIR}"

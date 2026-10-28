@@ -33,13 +33,13 @@ endif()
 
 execute_process(
     COMMAND
-        "${ZIG_EXECUTABLE}" build -j2 --cache-dir "${CACHE_DIR}"
-        --global-cache-dir "${GLOBAL_CACHE_DIR}" -Dapp-runtime=none
-        -Demit-exe=false -Demit-lib-vt=false -Demit-docs=false
-        -Demit-themes=true -Demit-terminfo=false -Demit-xcframework=false
-        -Dsentry=false -Di18n=false -Dsimd=false
-        -Dfont-backend=fontconfig_freetype -fsys=fontconfig
-        -Doptimize=ReleaseFast --prefix "${PREFIX}" --summary failures
+        "${CMAKE_COMMAND}" -E env "ZIG_GLOBAL_CACHE_DIR=${GLOBAL_CACHE_DIR}"
+        "ZIG_LOCAL_CACHE_DIR=${CACHE_DIR}" "${ZIG_EXECUTABLE}" build -j2
+        -Dapp-runtime=none -Demit-exe=false -Demit-lib-vt=false
+        -Demit-docs=false -Demit-themes=true -Demit-terminfo=false
+        -Demit-xcframework=false -Dsentry=false -Di18n=false -Dsimd=false
+        -Dfont-backend=fontconfig_freetype -fsys=fontconfig -Doptimize=fast
+        --prefix "${PREFIX}" --summary failures
     WORKING_DIRECTORY "${SOURCE_DIR}"
     RESULT_VARIABLE zig_result
 )
@@ -66,7 +66,7 @@ endif()
 file(GLOB staged_theme_sources LIST_DIRECTORIES FALSE "${THEMES_SOURCE_DIR}/*")
 list(LENGTH staged_theme_sources staged_theme_count)
 if(
-    NOT staged_theme_count EQUAL 617
+    NOT staged_theme_count EQUAL 819
     OR NOT EXISTS "${THEMES_SOURCE_DIR}/3024 Day"
     OR NOT EXISTS "${THEMES_SOURCE_DIR}/3024 Night"
     OR NOT EXISTS "${THEMES_SOURCE_DIR}/Dracula"
@@ -76,7 +76,7 @@ if(
     message(
         FATAL_ERROR
         "Pinned Ghostty theme inventory is incomplete: "
-        "expected 617 files, found ${staged_theme_count}"
+        "expected 819 files, found ${staged_theme_count}"
     )
 endif()
 

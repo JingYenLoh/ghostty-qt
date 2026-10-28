@@ -140,6 +140,7 @@
         "gtk-quick-terminal-layer",
         "gtk-quick-terminal-namespace",
         "gtk-single-instance",
+        "gtk-tabs-inverted",
         "gtk-tabs-location",
         "gtk-titlebar",
         "gtk-titlebar-hide-when-maximized",
@@ -235,6 +236,8 @@
         "unfocused-split-opacity",
         "vt-kam-allowed",
         "vt-window-resize-allowed",
+        "vt-xt-checksum-extension",
+        "vt-xt-checksum-report",
         "wait-after-command",
         "window-colorspace",
         "window-decoration",
@@ -412,7 +415,7 @@
         },
         "clipboard-paste-bracketed-safe": {
           "status": "supported",
-          "note": "The live default-true policy is layered over ghostty_terminal_paste: newlines are trusted only in bracketed-paste mode, an embedded end fence remains unsafe, and the accepted retry is encoded against current terminal state."
+          "note": "The live default-true policy is layered over ghostty_terminal_paste: newlines and carriage returns are trusted only in bracketed-paste mode, an embedded end fence remains unsafe, and the accepted retry is encoded against current terminal state."
         },
         "clipboard-paste-protection": {
           "status": "supported",
@@ -622,7 +625,7 @@
         },
         "image-storage-limit": {
           "status": "supported",
-          "note": "The exact finalized u32 byte limit defaults to 320,000,000, initializes both libghostty screens, and applies live without recreating the pane or PTY. Zero disables and clears image storage. Ordinary Kitty placements, including relative chains rooted at ordinary placements, use owned generation-stamped snapshots and retained Qt textures across all three z layers. Client-selected animation frames update those same generation-keyed assets; timed playback remains blocked because the public API exposes neither the terminal animation tick nor its next wake deadline. A reverse render-order pass omits an older placement only after a successfully imported fully opaque placement at the same z and exact physical destination covers it, preserving libghostty state so later deletion can reveal the predecessor. Every asset retains one packed straight-alpha RGBA8 CPU image and one GPU texture; explicit raw RHI upload plus shader-time premultiplication preserves straight-alpha filtering while halving the former translucent two-plane footprint. Unicode virtual placements, including relative chains rooted at them, remain partial because public libghostty-vt does not expose their expanded viewport fragments. Renderer CPU/GPU mirrors remain additional to the configured Ghostty storage budget."
+          "note": "The exact finalized u32 byte limit defaults to 320,000,000, initializes both libghostty screens, and applies live without recreating the pane or PTY. Zero disables and clears image storage. Ordinary Kitty placements, including relative chains rooted at ordinary placements, use owned generation-stamped snapshots and retained Qt textures across all three z layers. Client-selected animation frames update those same generation-keyed assets; timed playback remains a frontend integration task; the pinned public API now provides an animation tick and next wake deadline. A reverse render-order pass omits an older placement only after a successfully imported fully opaque placement at the same z and exact physical destination covers it, preserving libghostty state so later deletion can reveal the predecessor. Every asset retains one packed straight-alpha RGBA8 CPU image and one GPU texture; explicit raw RHI upload plus shader-time premultiplication preserves straight-alpha filtering while halving the former translucent two-plane footprint. Unicode virtual placements, including relative chains rooted at them, remain partial pending integration of the new public render-state image iterator and its expanded viewport fragments. Renderer CPU/GPU mirrors remain additional to the configured Ghostty storage budget."
         },
         "keybind": {
           "status": "partial",
@@ -1164,8 +1167,21 @@
           "scope": "x11"
         },
         "vt-window-resize-allowed": {
-          "status": "blocked_upstream",
-          "note": "Ghostty parses the default-false policy, but standalone libghostty-vt discards CSI 8 t and exposes no window-resize request effect. The Qt frontend cannot implement it without a public normalized request callback."
+          "status": "planned",
+          "note": "The pinned public resize-window callback now reports CSI 8 t requests. Qt policy transport and guarded native window resizing remain to be implemented."
+        },
+        "gtk-tabs-inverted": {
+          "status": "not_applicable",
+          "scope": "gtk_only",
+          "note": "GTK tab close-button positioning is not consumed by the Qt frontend."
+        },
+        "vt-xt-checksum-extension": {
+          "status": "planned",
+          "note": "The public reset-time checksum-extension bitmask is available. Config transport and live application remain to be implemented alongside vt-xt-checksum-report."
+        },
+        "vt-xt-checksum-report": {
+          "status": "planned",
+          "note": "The public opt-in checksum-report policy is available; the frontend currently retains the disabled libghostty default. Config transport and live application remain to be implemented."
         }
       }
     },
@@ -1379,8 +1395,8 @@
           "note": "Accepts the exact toggle/show/hide grammar as an executable, pane-scoped frontend action and preserves the originating stable pane identity. A separate dependency-free Qt window combines frontend/render state with a request-driven, worker-authoritative public libghostty-vt snapshot: active screen, cursor position, DEC visibility and pending wrap, viewport/scrollback and pixel geometry, mouse tracking, effective/default colors and palette value differences, Kitty keyboard/storage policy, all 43 ANSI/DEC modes, and the sampled content revision. It permits one correlated periodic request in flight on a 250 ms timer that exists only while open; no Ghostty handle crosses threads and stale responses are discarded. A one-shot, strict-hit cell picker additionally reports viewport cell text/codepoints, content and width roles, protection and semantic metadata, raw style/color sources, hyperlink URI, and row wrap/prompt state while consuming its complete pointer gesture ahead of normal terminal input. A dedicated virtualized Events tab retains at most 256 pane-local copied summaries for root and pane keybinding decisions, forwarded input requests, bounded worker encoding/staging outcomes, coalesced terminal frames, and state transitions, with per-key-event trace IDs plus sequence tokens, category/text filtering, pause accounting, clear, and strict payload bounds. Worker rows retain the byte count attributed to each key operation—zero when no bytes were encoded—and at most a 64-byte prefix; within one keyboard-trace generation, staged keys receive per-key final dispositions without exposing a combined atomic PTY write. Keyboard trace allocation and event retention exist only while the inspector is open and unpaused. Fresh generations reject late results across pause or close/reopen boundaries, and an ordered worker update clears staged diagnostic metadata without changing functional input bytes. Paste contents and heavy terminal/graphics values remain omitted. Exact raw VT action traces, inactive-screen state, and page-allocation internals still require upstream diagnostic APIs. Request-driven memory inspection additionally reports primary and alternate page counts, resident/reserved/compressed page bytes, compressed page counts, and image bytes without restoring history."
         },
         "jump_to_prompt": {
-          "status": "blocked_upstream",
-          "note": "Official libghostty-vt does not expose Ghostty's prompt-delta viewport operation. The required public contract and acceptance evidence are tracked in REQUIRES_UPSTREAM.md; ghostty-qt carries neither a Qt scrollback scan nor a local Ghostty patch."
+          "status": "supported",
+          "note": "Parses the exact signed i16 grammar and dispatches prompt deltas on the session thread through the public viewport API. Ghostty owns continuation grouping, compressed history traversal, clamping, and return to the active screen. Finalized Ctrl+Shift+Up/Down defaults use this route."
         },
         "last_tab": {
           "status": "supported",

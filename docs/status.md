@@ -18,11 +18,10 @@ Implemented areas include PTYs and process lifecycle, retained rendering, tabs
 and recursive splits, multiple windows, quick terminal, configuration and
 keybindings, search, links, clipboard writes, shell integration, terminfo,
 desktop activation, command-finished notifications, synchronized-output holds,
-OSC 22 pointer requests, memory inspection, systemd integration, custom shaders,
-and ordinary Kitty
-graphics placements. Terminal-requested clipboard reads and Kitty clipboard
-paste events are mediated through the same pane-local permission model as
-clipboard writes.
+OSC 22 pointer requests, prompt navigation, memory inspection, systemd
+integration, custom shaders, and ordinary Kitty graphics placements.
+Terminal-requested clipboard reads and Kitty clipboard paste events are
+mediated through the same pane-local permission model as clipboard writes.
 
 ## Parity source of truth
 
@@ -49,16 +48,17 @@ for the intentional upgrade procedure.
 - **Kitty graphics:** ordinary RGB/RGBA transmissions, including mpv-style
   RGB24 continuation frames, relative placements rooted at ordinary
   placements, and client-selected animation frames are supported. Unicode
-  virtual placements and timed animation playback require wider libghostty
-  APIs.
+  virtual placements and timed animation playback now have public libghostty
+  APIs; frontend integration and renderer qualification remain.
 - **Clipboard and files:** terminal clipboard reads and writes support
   `allow`/`deny`/`ask`, including Kitty MIME transactions, session password
   grants, paste events, and the live `clipboard-write-limit-bytes` policy; plain
   terminal-file actions also work. Exact styled VT/HTML selection copies and
   styled VT/HTML file variants still need upstream APIs.
-- **Semantic and diagnostic state:** prompt navigation, semantic clearing, and
-  several terminal-state queries and title/color-reporting semantics remain
-  partial or blocked on public libghostty state.
+- **Semantic and diagnostic state:** semantic clearing, several terminal-state
+  queries, and title/color-reporting semantics remain
+  partial or blocked on public libghostty state. Program-requested resizing
+  now has a public callback and awaits guarded Qt window integration.
 - **Links:** OSC 8 and the pinned default URL/path matcher work. User-defined
   link expressions remain blocked because the pinned upstream parser does not
   implement their CLI grammar.

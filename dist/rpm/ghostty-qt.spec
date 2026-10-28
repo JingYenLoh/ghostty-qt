@@ -56,8 +56,8 @@ test -x "%{ghostty_qt_zig}" || {
     echo 'Bootstrap the project-local Zig toolchain first.' >&2
     exit 1
 }
-test "$("%{ghostty_qt_zig}" version)" = 0.16.0 || {
-    echo 'ghostty-qt requires the project-local Zig 0.16.0 toolchain.' >&2
+test "$("%{ghostty_qt_zig}" version)" = 0.17.0 || {
+    echo 'ghostty-qt requires the project-local Zig 0.17.0 toolchain.' >&2
     exit 1
 }
 

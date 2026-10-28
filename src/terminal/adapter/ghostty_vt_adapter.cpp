@@ -3962,6 +3962,7 @@ public:
             scroll.tag = GHOSTTY_SCROLL_VIEWPORT_BOTTOM;
             break;
         case TerminalViewportRequest::Kind::Delta:
+        case TerminalViewportRequest::Kind::PromptDelta:
             if (request.delta == 0) return false;
             if (request.delta
                     < static_cast<qint64>(std::numeric_limits<intptr_t>::min())
@@ -3969,8 +3970,14 @@ public:
                        std::numeric_limits<intptr_t>::max())) {
                 return false;
             }
-            scroll.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
-            scroll.value.delta = static_cast<intptr_t>(request.delta);
+            if (request.kind == TerminalViewportRequest::Kind::PromptDelta) {
+                scroll.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA_PROMPT;
+                scroll.value.delta_prompt =
+                    static_cast<intptr_t>(request.delta);
+            } else {
+                scroll.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
+                scroll.value.delta = static_cast<intptr_t>(request.delta);
+            }
             break;
         case TerminalViewportRequest::Kind::Row:
             scroll.tag = GHOSTTY_SCROLL_VIEWPORT_ROW;

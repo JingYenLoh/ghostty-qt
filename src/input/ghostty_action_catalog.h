@@ -85,6 +85,10 @@ struct ScrollPageLines {
     qint16 lines = 0;
     bool operator==(const ScrollPageLines &) const = default;
 };
+struct JumpToPrompt {
+    qint16 delta = 0;
+    bool operator==(const JumpToPrompt &) const = default;
+};
 
 struct IncreaseFontSize {
     float points = 0.0F;
@@ -217,9 +221,10 @@ using GhosttyPaneAction = std::variant<
     GhosttyPaneActions::ScrollToSelection, GhosttyPaneActions::ScrollToRow,
     GhosttyPaneActions::ScrollPageUp, GhosttyPaneActions::ScrollPageDown,
     GhosttyPaneActions::ScrollPageFractional,
-    GhosttyPaneActions::ScrollPageLines, GhosttyPaneActions::IncreaseFontSize,
-    GhosttyPaneActions::DecreaseFontSize, GhosttyPaneActions::SetFontSize,
-    GhosttyPaneActions::ResetFontSize, GhosttyPaneActions::ActivateKeyTable,
+    GhosttyPaneActions::ScrollPageLines, GhosttyPaneActions::JumpToPrompt,
+    GhosttyPaneActions::IncreaseFontSize, GhosttyPaneActions::DecreaseFontSize,
+    GhosttyPaneActions::SetFontSize, GhosttyPaneActions::ResetFontSize,
+    GhosttyPaneActions::ActivateKeyTable,
     GhosttyPaneActions::ActivateKeyTableOnce,
     GhosttyPaneActions::DeactivateKeyTable,
     GhosttyPaneActions::DeactivateAllKeyTables, GhosttyPaneActions::SelectAll,

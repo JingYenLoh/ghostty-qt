@@ -10808,6 +10808,8 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
     };
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("ctrl+shift+arrow_up=jump_to_prompt:-1"),
+        QStringLiteral("ctrl+shift+arrow_down=jump_to_prompt:1"),
         QStringLiteral("performable:alt+u=scroll_to_selection"),
         QStringLiteral("performable:alt+i=adjust_selection:left"),
         QStringLiteral("alt+y=select_all"),
@@ -10830,6 +10832,22 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
         controller, &TerminalController::selectionAdjustmentActionRequested);
     QSignalSpy terminalActions(controller,
                                &TerminalController::terminalActionReady);
+
+    for (const auto key : {Qt::Key_Up, Qt::Key_Down}) {
+        QKeyEvent press(QEvent::KeyPress, key,
+                        Qt::ControlModifier | Qt::ShiftModifier);
+        QCoreApplication::sendEvent(&pane, &press);
+        QCOMPARE(scrolls.count(), 1);
+        const auto request = qvariant_cast<TerminalViewportRequest>(
+            scrolls.constFirst().constFirst());
+        QCOMPARE(request.kind, TerminalViewportRequest::Kind::PromptDelta);
+        QCOMPARE(request.delta, key == Qt::Key_Up ? qint64(-1) : qint64(1));
+        QKeyEvent release(QEvent::KeyRelease, key,
+                          Qt::ControlModifier | Qt::ShiftModifier);
+        QCoreApplication::sendEvent(&pane, &release);
+        QCOMPARE(forwarded.count(), 0);
+        scrolls.clear();
+    }
 
     // Before the first worker frame, page actions use the worker's actual
     // 24-row startup geometry rather than the legacy 20-row fallback.
@@ -10919,6 +10937,10 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
     // Binary32 multiplication happens before truncation toward zero.
     QCOMPARE(requestAt(7).delta,
              static_cast<qint64>(-0.2F * static_cast<float>(requestedRows)));
+
+    QVERIFY(executeScroll(QStringLiteral("jump_to_prompt:-2")));
+    QCOMPARE(requestAt(8).kind, TerminalViewportRequest::Kind::PromptDelta);
+    QCOMPARE(requestAt(8).delta, qint64(-2));
 
     const int beforeUnsafe = scrolls.count();
     QVERIFY(!pane.executeConfiguredAction(
@@ -12513,13 +12535,14 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
               Qt::LeftButton, Qt::ControlModifier);
     sendMouse(QEvent::MouseMove, validSecondPosition, Qt::NoButton,
               Qt::LeftButton, Qt::ControlModifier);
+    // Assert while the drag is active. After release, a queued worker frame
+    // may legitimately restore hover at the stationary Ctrl-held pointer.
+    QVERIFY(pane->cursor().shape() != Qt::PointingHandCursor);
     sendMouse(QEvent::MouseButtonRelease, validSecondPosition, Qt::LeftButton,
               Qt::NoButton, Qt::ControlModifier);
     QTest::qWait(50);
     QCOMPARE(openCount, 1);
     QCOMPARE(selectionUpdated.count(), selectionUpdatesBeforeDrag + 1);
-
-    QVERIFY(pane->cursor().shape() != Qt::PointingHandCursor);
 
     // Focus loss cancels the accepted hover, and a late result cannot
     // resurrect it after cancellation.

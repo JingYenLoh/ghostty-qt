@@ -65,8 +65,10 @@ action retains Ghostty's standard-file behavior. See
 ## Known compatibility differences
 
 The most visible remaining differences are exact Ghostty font shaping and
-fallback, Kitty Unicode virtual placements, terminal-requested clipboard
-reads, exact styled selection formatting, and semantic prompt operations.
+fallback, Kitty Unicode virtual placements and timed playback, exact styled
+selection formatting, semantic screen clearing, and prompt click movement.
+Prompt navigation through `jump_to_prompt` and Ctrl+Shift+Up/Down is supported
+when the shell supplies semantic prompt markers.
 
 [Project status](status.md) summarizes these gaps. The
 [parity manifest](ghostty-parity.json) and

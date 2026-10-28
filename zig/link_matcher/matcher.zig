@@ -65,38 +65,38 @@ export fn ghostty_qt_link_matcher_find_next(
     search_offset: usize,
     out_match: ?*Match,
 ) c_int {
-    const value = matcher orelse return @intFromEnum(Status.invalid_argument);
-    const output = out_match orelse return @intFromEnum(Status.invalid_argument);
+    const value = matcher orelse return @backingInt(Status.invalid_argument);
+    const output = out_match orelse return @backingInt(Status.invalid_argument);
     if (search_offset > input_length or
         (input_length > 0 and input_pointer == null))
     {
-        return @intFromEnum(Status.invalid_argument);
+        return @backingInt(Status.invalid_argument);
     }
 
     output.* = .{ .begin = 0, .end = 0 };
-    if (search_offset == input_length) return @intFromEnum(Status.no_match);
+    if (search_offset == input_length) return @backingInt(Status.no_match);
 
     const input = input_pointer.?[0..input_length];
     var match_parameter = oni.MatchParam.init() catch
-        return @intFromEnum(Status.engine_error);
+        return @backingInt(Status.engine_error);
     defer match_parameter.deinit();
     match_parameter.setRetryLimitInSearch(oni_search_retry_limit) catch
-        return @intFromEnum(Status.engine_error);
+        return @backingInt(Status.engine_error);
 
     var region = value.regex.searchWithParam(
         input[search_offset..],
         .{},
         &match_parameter,
     ) catch |err| switch (err) {
-        error.Mismatch => return @intFromEnum(Status.no_match),
-        else => return @intFromEnum(Status.engine_error),
+        error.Mismatch => return @backingInt(Status.no_match),
+        else => return @backingInt(Status.engine_error),
     };
     defer region.deinit();
 
     const starts = region.starts();
     const ends = region.ends();
     if (starts.len == 0 or ends.len == 0 or starts[0] < 0 or ends[0] < 0) {
-        return @intFromEnum(Status.engine_error);
+        return @backingInt(Status.engine_error);
     }
 
     output.* = .{
@@ -105,9 +105,9 @@ export fn ghostty_qt_link_matcher_find_next(
     };
     if (output.end <= output.begin or output.end > input_length) {
         output.* = .{ .begin = 0, .end = 0 };
-        return @intFromEnum(Status.engine_error);
+        return @backingInt(Status.engine_error);
     }
-    return @intFromEnum(Status.match);
+    return @backingInt(Status.match);
 }
 
 test "C boundary finds successive matches at byte offsets" {
@@ -118,7 +118,7 @@ test "C boundary finds successive matches at byte offsets" {
     const input = "see https://example.com then src/config/url.zig";
     var found: Match = undefined;
     try std.testing.expectEqual(
-        @intFromEnum(Status.match),
+        @backingInt(Status.match),
         ghostty_qt_link_matcher_find_next(
             matcher,
             input.ptr,
@@ -133,7 +133,7 @@ test "C boundary finds successive matches at byte offsets" {
     );
 
     try std.testing.expectEqual(
-        @intFromEnum(Status.match),
+        @backingInt(Status.match),
         ghostty_qt_link_matcher_find_next(
             matcher,
             input.ptr,
@@ -151,7 +151,7 @@ test "C boundary finds successive matches at byte offsets" {
 test "C boundary rejects invalid arguments without dereferencing them" {
     var found: Match = undefined;
     try std.testing.expectEqual(
-        @intFromEnum(Status.invalid_argument),
+        @backingInt(Status.invalid_argument),
         ghostty_qt_link_matcher_find_next(null, null, 0, 0, &found),
     );
 
@@ -159,7 +159,7 @@ test "C boundary rejects invalid arguments without dereferencing them" {
         return error.TestUnexpectedResult;
     defer ghostty_qt_link_matcher_destroy(matcher);
     try std.testing.expectEqual(
-        @intFromEnum(Status.invalid_argument),
+        @backingInt(Status.invalid_argument),
         ghostty_qt_link_matcher_find_next(matcher, null, 1, 0, &found),
     );
 }

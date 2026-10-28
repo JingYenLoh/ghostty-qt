@@ -77,7 +77,7 @@ if(CONFIG_HELPER_NAME)
     )
     list(LENGTH relocated_theme_files relocated_theme_count)
     if(
-        NOT relocated_theme_count EQUAL 617
+        NOT relocated_theme_count EQUAL 819
         OR NOT EXISTS "${relocated_themes}/3024 Day"
         OR NOT EXISTS "${relocated_themes}/3024 Night"
         OR NOT EXISTS "${relocated_themes}/Dracula"
@@ -87,7 +87,7 @@ if(CONFIG_HELPER_NAME)
         message(
             FATAL_ERROR
             "Relocated pinned theme inventory is incomplete: "
-            "expected 617 files, found ${relocated_theme_count}"
+            "expected 819 files, found ${relocated_theme_count}"
         )
     endif()
 

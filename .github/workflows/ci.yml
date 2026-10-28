@@ -97,7 +97,7 @@ jobs:
 
       - name: Verify pinned inputs
         run: |
-          test "$(./.local/bin/zig version)" = "0.16.0"
+          test "$(./.local/bin/zig version)" = "0.17.0"
           test "$(git -C ghostty rev-parse HEAD)" = "$(cat GHOSTTY_REVISION)"
           test "$(qmake -query QT_VERSION)" = "${{ matrix.qt_version }}"
           test -f "$RUNNER_TEMP/layershellqt/lib/cmake/LayerShellQt/LayerShellQtConfig.cmake"

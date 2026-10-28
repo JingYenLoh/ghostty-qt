@@ -55,8 +55,8 @@ prepare()
         return 1
     fi
 
-    if [[ ! -x "$_zig" ]] || [[ $("$_zig" version) != 0.16.0 ]]; then
-        printf 'error: bootstrap the required Zig 0.16.0 toolchain first:\n' >&2
+    if [[ ! -x "$_zig" ]] || [[ $("$_zig" version) != 0.17.0 ]]; then
+        printf 'error: bootstrap the required Zig 0.17.0 toolchain first:\n' >&2
         printf '  %q/scripts/bootstrap-zig.sh\n' "$_repo_root" >&2
         return 1
     fi

@@ -16,7 +16,7 @@ optimization candidates belong in [Performance](performance.md).
 | Terminal engine | Zig-built static `libghostty-vt` | VT parsing, screen state, selection, and input encoding |
 | Configuration | Qt services plus a private helper process | Shared Ghostty parsing and strict Qt-owned configuration |
 | Linux integration | Wayland, D-Bus, portals, systemd protocols | Activation, shortcuts, notifications, quick terminal, and cgroups |
-| Build | CMake/Ninja plus Zig 0.16.0 | Qt targets, pinned Ghostty, resources, and tests |
+| Build | CMake/Ninja plus Zig 0.17.0 | Qt targets, pinned Ghostty, resources, and tests |
 
 C++ is the host language because Qt and QML expose native C++ ownership and
 rendering APIs. The terminal runtime remains Zig-owned behind the public
@@ -571,6 +571,15 @@ benchmark and GPU-qualification entry points are documented separately in
 
 ## Upstream VT integration at the October 2026 pin
 
+The October 28 update uses Zig 0.17 and public prompt-delta viewport scrolling.
+`jump_to_prompt` is parsed as a signed i16 and sent as a value-only viewport
+request to SessionWorker; Ghostty owns prompt grouping and history traversal.
+The same update brings carriage-return paste protection, cancelled APC
+discarding, and cursor/hyperlink lifetime fixes after history pruning.
+Expanded Kitty placements, animation ticks, and window-resize callbacks are
+now public contracts awaiting frontend integration, as recorded in
+REQUIRES_UPSTREAM.md.
+
 Command lifecycle callbacks run synchronously on SessionWorker. Only start,
 optional exit status, and reset cross the adapter boundary; the worker owns the
 monotonic timer and live policy. The schema-v9 export carries the full u64
@@ -594,7 +603,7 @@ frames. Its remaining effective-state limitations are in REQUIRES_UPSTREAM.md.
 
 The private embedded helper now links EGL and the pinned EGL loader, which
 upstream leaves to its host executable. The URL matcher source shadow includes
-the shared translate-c package. The theme inventory contains 617 files.
+the shared translate-c package. The theme inventory contains 819 files.
 
 The pin also brings Bash prompt-hook/exit-status fixes, wide-character and
 hard-line word-selection fixes, saved-cursor/pending-wrap reflow repairs, OSC

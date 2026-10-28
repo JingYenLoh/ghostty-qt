@@ -102,6 +102,7 @@ int main(int argc, char *argv[])
     const std::string workingDirectory =
         std::filesystem::current_path(pathError).native();
     if (pathError) return 74;
+    const char *const term = std::getenv("TERM");
     const char *const sentinel = std::getenv("GHOSTTY_QT_CLI_SENTINEL");
 
     if (std::fprintf(stdout, "PID %lld\nARGC %d\n",
@@ -116,6 +117,9 @@ int main(int argc, char *argv[])
         || !writeField("ENV",
                        sentinel == nullptr ? std::string_view{}
                                            : std::string_view(sentinel))
+        || !writeField("TERM",
+                       term == nullptr ? std::string_view{}
+                                       : std::string_view(term))
         || !writeField("STDIN", inputView)) {
         return 74;
     }

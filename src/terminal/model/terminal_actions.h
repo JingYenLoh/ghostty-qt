@@ -14,6 +14,7 @@ struct TerminalViewportRequest {
         Delta,
         Row,
         Selection,
+        PromptDelta,
     };
 
     Kind kind = Kind::Delta;

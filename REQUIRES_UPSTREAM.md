@@ -187,96 +187,15 @@ No frontend byte observer or local Ghostty runtime patch is needed or allowed.
 
 ## Semantic prompt viewport navigation
 
-**Status:** blocked on an upstream public API.
+**Status:** unblocked and integrated at `6ba144158577d033ccb6ed4b574e4013957c9161`
+on 2026-10-28.
 
-Public `libghostty-vt` does not currently expose Ghostty's exact
-`jump_to_prompt:<i16>` operation or its prompt iterator. Ghostty already has
-the required internal prompt traversal:
-
-- `PageList.Scroll.delta_prompt` and `PageList.scrollPrompt` perform the
-  compressed-scrollback-safe traversal.
-- `Screen.scroll` and the terminal action path already delegate to that
-  implementation.
-- Ghostty's Linux defaults bind physical `Ctrl+Shift+Up` and
-  `Ctrl+Shift+Down` to `jump_to_prompt:-1` and `jump_to_prompt:1`.
-
-The public `GhosttyTerminalScrollViewportTag` currently exposes top, bottom,
-row-delta, and absolute-row scrolling, but not prompt-delta scrolling.
-
-### Why ghostty-qt does not scan prompts itself
-
-A public-API-only Qt implementation is technically possible. The scrollbar
-data exposes the absolute viewport offset, full-screen grid references can
-read historical rows, `GhosttyRowSemanticPrompt` distinguishes prompts from
-continuations, and absolute-row scrolling can move to a discovered row.
-Ghostty also restores compressed pages when those public grid references are
-read.
-
-That fallback would not reuse Ghostty's exact semantic traversal. It would
-duplicate private prompt-grouping and direction rules in C++, repeatedly scan
-the page list without a public iterator, and require the caller to serialize
-the scan against terminal mutations. Public screen-point coordinates are also
-limited to `uint32_t`, while Ghostty's history and scrolling types can represent
-larger offsets. Changes to Ghostty's continuation or orphan-prompt behavior
-could therefore silently diverge from ghostty-qt.
-
-The project intentionally rejects that local scanner in favor of exact,
-maintainable parity. The feature remains blocked until upstream exposes the
-existing prompt-delta operation through the public terminal API.
-
-### Required upstream contract
-
-The official `libghostty-vt` API needs an append-only prompt-delta viewport
-variant that:
-
-- accepts a pointer-sized signed delta;
-- treats negative values as jumps toward older prompts and positive values as
-  jumps toward newer prompts;
-- treats zero as a no-op;
-- clamps when no further prompt exists in the requested direction;
-- skips OSC 133 prompt-continuation rows;
-- returns to the active screen when forward traversal reaches the live area;
-- delegates to Ghostty's existing prompt iterator so compressed pages are
-  restored and traversed by Ghostty rather than reimplemented by Qt; and
-- preserves the existing public enum ordinals and tagged-union ABI.
-
-A minimal compatible shape would append a
-`GHOSTTY_SCROLL_VIEWPORT_DELTA_PROMPT` tag, add an `intptr_t delta_prompt`
-member to the already padded viewport value union, and route that tag through
-`ghostty_terminal_scroll_viewport` to the existing internal
-`.delta_prompt` behavior. The exact API shape remains an upstream decision.
-
-### Upstream acceptance evidence
-
-The upstream change should exercise the public C representation with real OSC
-133 metadata and verify:
-
-- primary prompts plus `OSC 133;P;k=c` continuations;
-- positive and negative multi-prompt jumps;
-- zero-delta behavior;
-- repeated and oversized jumps clamping at both ends; and
-- forward traversal returning to the active screen.
-
-### ghostty-qt follow-up after upstream support lands
-
-Once the API is present in an official, publicly reachable Ghostty commit:
-
-1. Update `GHOSTTY_REVISION` and the submodule gitlink together.
-2. Add a typed `PromptDelta` viewport request while reusing the existing
-   pane-to-controller-to-worker route.
-3. Parse the exact signed `i16` `jump_to_prompt` grammar.
-4. Map the request to the new public `libghostty-vt` tag without scanning
-   scrollback in Qt.
-5. Verify the finalized default `Ctrl+Shift+Up/Down` bindings and their
-   consumed key-event behavior.
-6. Add adapter tests for OSC 133 prompts, continuations, clamping, and active
-   screen return.
-7. Promote `jump_to_prompt` in `docs/ghostty-parity.json`; automatic
-   shell-script injection is already provided by the pinned helper.
-
-Command notifications remain a separate parity stage. Shell-script injection
-is implemented, while prompt-aware close detection currently uses public
-row/cell semantic metadata; the exact live-state gap is recorded below.
+The public `GHOSTTY_SCROLL_VIEWPORT_DELTA_PROMPT` variant delegates to
+Ghostty's prompt traversal, including continuation grouping, compressed
+history, clamping, and return to the active screen. `jump_to_prompt:<i16>`
+now uses the existing typed pane/controller/worker viewport route. The
+finalized Ctrl+Shift+Up/Down defaults become executable without a Qt prompt
+scanner or a local Ghostty patch.
 
 ## Semantic prompt cursor click movement
 
@@ -469,75 +388,36 @@ commit:
 
 ## Expanded Kitty Unicode placement rendering
 
-**Status:** ordinary Kitty placements are implemented; Unicode virtual
-placements are blocked on an upstream public API.
+**Status:** upstream contract available at
+`6ba144158577d033ccb6ed4b574e4013957c9161`; frontend integration pending.
 
-Official `libghostty-vt` exposes decoded image bytes, image and storage
-generations, ordinary placement iteration, layer ordering, source rectangles,
-physical destination sizes, and viewport positions. That is sufficient for
-ghostty-qt to render ordinary placements without borrowing a terminal-owned
-handle across threads.
+Public render-state image iteration now resolves Unicode placeholder
+fragments and fixed placements, in renderer order, with image generations,
+source rectangles, clipping, and destination geometry. The separate
+`GHOSTTY_RENDER_STATE_DATA_IMAGE_PLACEMENTS_GENERATION` stamp lets a host
+track placement changes independently of storage pixel changes.
 
-Virtual placements are different. A `U=1` placement is only a definition.
-Ghostty's renderer privately scans visible cells for U+10EEEE placeholders,
-decodes placement and image IDs from combining codepoints, applies per-cell
-row bookkeeping, and expands each match into a clipped render fragment.
-`ghostty_kitty_graphics_placement_render_info()` intentionally marks a virtual
-definition invisible and the public iterator does not expose those expanded
-fragments. Reimplementing the placeholder scan in Qt would duplicate
-terminal-owned rules and could diverge across reflow, scrollback compression,
-wide cells, and future protocol changes.
-
-The preferred append-only contract is an expanded-render-placement iterator
-for a terminal viewport. Each result should identify the image and placement
-generations, image and placement IDs, z index, viewport cell origin, physical
-pixel offset and destination size, and resolved source rectangle. Results must
-cover both ordinary and virtual fragments in Ghostty renderer order, or expose
-an explicit kind while preserving an equivalent stable sort. All returned
-handles and pixel pointers may remain borrowed under the existing
-no-terminal-mutation lifetime rule.
-
-Public C acceptance should cover multiple placeholders for one definition,
-combining-codepoint IDs, clipping on all viewport edges, wide and spacer
-cells, scrolling and reflow, primary/alternate screens, deletion and image
-replacement generations, malformed placeholders, and no-placeholder
-definitions.
-
-After that contract reaches an official commit, ghostty-qt can replace its
-ordinary-only snapshot builder with the expanded iterator, remove the
-diagnostic `containsVirtualPlacements` limitation, and add identical RHI and
-software rendering tests without changing the Qt layer or texture architecture.
+ghostty-qt still uses ordinary placement iteration. Replace that snapshot
+builder with the render-state iterator, preserve borrowed-handle lifetimes on
+the worker, and qualify virtual fragments and relative chains in both the
+software and RHI renderers before claiming complete placement support. Keep
+image pixel-generation caching separate from the placement generation.
 
 ## Kitty graphics timed animation playback
 
-**Status:** frame storage, composition, and explicit client-selected frames are
-implemented; time-driven playback is blocked on an upstream public API.
+**Status:** upstream contract available at
+`6ba144158577d033ccb6ed4b574e4013957c9161`; frontend integration pending.
 
-The public image-data query returns the current animation frame and changes the
-image generation whenever that frame changes. This lets ghostty-qt reuse its
-generation-keyed snapshots and textures for `a=f` frame construction and
-stopped animations advanced explicitly with `a=a,c=N`.
+`ghostty_kitty_graphics_animation_tick` accepts a monotonic millisecond time,
+advances due frames using Ghostty's own playback rules, and returns the next
+absolute wake time or `GHOSTTY_NO_VALUE` when nothing is playing. It mutates
+image storage, so borrowed image handles and pixel pointers must be discarded.
 
-Running and loading animations are different. Ghostty's renderer privately
-calls `ImageStorage.animationTick` with a monotonic timestamp, mutates every due
-image to its next frame, and schedules the returned next wake deadline. The
-official C terminal API exposes neither operation. Polling the current image
-generation cannot advance playback, and a frontend-side animation model would
-duplicate terminal-owned frame gaps, loading-state parking, loop limits, and
-visibility eligibility.
-
-The preferred append-only contract is a terminal animation step accepting a
-monotonic timestamp and returning whether graphics changed plus the optional
-delay until the next required step. An equivalent terminal-owned clock and
-next-wake query is also sufficient. The operation must use the same mutation
-and generation rules as Ghostty's renderer and remain valid for both screens.
-
-Public C acceptance should cover stopped, loading, and running animations;
-explicit frame selection; gapless frames; finite and infinite loops; clock
-restart; hidden or unplaced images; image deletion and replacement; and
-primary/alternate screen transitions. Once available, `SessionWorker` can arm
-one timer for the returned deadline, step on the terminal thread, and publish
-the ordinary Kitty graphics snapshot when a frame advances.
+The remaining work is a worker-owned timer using the same monotonic timebase,
+rearmed after terminal mutations and ticks, with generation-aware snapshot
+publication. Cover loading and stopped states, finite loops, screen changes,
+image replacement/deletion, and shutdown. Existing explicit client-selected
+animation frames remain supported.
 
 ## Exact font resolution and terminal shaping
 
@@ -1032,12 +912,15 @@ SessionWorker rather than inspect PTY bytes or issue duplicate query replies.
 
 ## Program-requested window resizing
 
-**Status:** `vt-window-resize-allowed` is blocked on a public standalone effect.
+**Status:** upstream contract available at
+`6ba144158577d033ccb6ed4b574e4013957c9161`; frontend integration pending.
 
-The pinned full runtime supports CSI 8 t with configuration, minimum-size,
-screen-bound, and window-state restrictions. Standalone `stream_terminal.zig`
-explicitly discards `.resize_window`. A public ordered effect must report the
-requested rows/columns, including the zero/omitted dimension semantics. The Qt
-host can then enforce policy and single-pane/tab, quick-terminal, tiled,
-maximized/fullscreen, screen-size, and minimum-size checks before requesting a
-native window resize. Parsing the PTY independently is not an acceptable path.
+`GHOSTTY_TERMINAL_OPT_RESIZE_WINDOW` now reports ordered CSI 8 t grid requests
+through `GhosttyTerminalResizeWindowFn`, with zero dimensions meaning keep the
+current size. The callback does not resize the terminal itself.
+
+The Qt host still needs to transport the default-false
+`vt-window-resize-allowed` policy and enforce single-pane/tab, quick-terminal,
+tiled, maximized/fullscreen, screen-size, and minimum-size restrictions before
+requesting a native resize. Deliver copied requests from the session worker to
+the GUI; let the resulting compositor geometry drive the normal PTY resize.

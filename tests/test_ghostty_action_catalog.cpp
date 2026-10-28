@@ -1234,6 +1234,16 @@ void GhosttyActionCatalogTest::parsesPaneActions()
                  .lines,
              qint16(32767));
 
+    QCOMPARE(std::get<PaneAction::JumpToPrompt>(parse("jump_to_prompt:-32_768"))
+                 .delta,
+             qint16(-32768));
+    QCOMPARE(std::get<PaneAction::JumpToPrompt>(parse("jump_to_prompt:+32_767"))
+                 .delta,
+             qint16(32767));
+    QCOMPARE(
+        std::get<PaneAction::JumpToPrompt>(parse("jump_to_prompt:0")).delta,
+        qint16(0));
+
     QVERIFY(std::holds_alternative<PaneAction::SelectAll>(parse("select_all")));
 
     const GhosttyPaneAction csi = parse("csi:38:2:255:0:0m");
@@ -1460,6 +1470,11 @@ void GhosttyActionCatalogTest::rejectsMalformedPaneActions()
         QStringLiteral("scroll_page_fractional:nan"),
         QStringLiteral("scroll_page_fractional:-infinity"),
         QStringLiteral("scroll_page_fractional:1e20"),
+        QStringLiteral("jump_to_prompt"),
+        QStringLiteral("jump_to_prompt:"),
+        QStringLiteral("jump_to_prompt:-32769"),
+        QStringLiteral("jump_to_prompt:32768"),
+        QStringLiteral("jump_to_prompt:1.5"),
         QStringLiteral("scroll_page_lines"),
         QStringLiteral("scroll_page_lines:-32769"),
         QStringLiteral("scroll_page_lines:32768"),
